@@ -27,5 +27,6 @@ export const CONFIG = {
   authUrl: `${host}:${PORTS.auth}`,
   traceUrl: `${host}:${PORTS.trace}`,
   minio: { endpoint: "http://127.0.0.1:4610", accessKey: "demo-minio", secretKey: "demo-minio-secret", bucket: "smart-imaging" },
+  archive: { dir: process.env.ARCHIVE_DIR ?? "/tmp/smart-imaging-demo/archive", bucket: "smart-imaging-archive" },
   orthanc: { base: "http://127.0.0.1:4611", user: "demo-proxy", password: "demo-orthanc-secret" },
 };

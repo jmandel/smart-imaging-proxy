@@ -43,6 +43,8 @@ export interface InstanceRecord {
   sopClass: string;
   /** Top-level bulk elements, by tag, as offsets into the decoded stored PS3.10 file. */
   bulk?: Record<string, { offset: number; length: number }>;
+  /** The transfer syntax as received, when ingest normalized it to something else. */
+  sourceSyntax?: string;
   offers: Offer[];
 }
 
