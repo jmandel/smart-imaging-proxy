@@ -9,7 +9,7 @@ export interface Scope { study: string; series?: string; instance?: string; only
 export interface OpenOptions { /** The client accepts `Content-Encoding: zstd`, so stored zstd objects can pass through. */ passthroughZstd?: boolean; }
 
 /** A complete plan: known before anything is opened, so `Content-Length` is known up front. */
-export interface PlannedPart { sop: string; syntax: string; encoding: "none" | "zstd"; /** Exact bytes this part's body yields. */ bytes: number; }
+export interface PlannedPart { sop: string; syntax: string; encoding: "none" | "zstd"; /** Exact bytes this part's body yields. */ bytes: number; /** Exact bytes of the instance once any `encoding` is removed, which lets a passed-through part state its `Content-Length`. */ decodedBytes?: number; }
 
 export type BackendErrorKind = "NotFound" | "NotAcceptable" | "Unavailable" | "CannotDecode" | "Unknown";
 export class BackendError extends Error {
@@ -39,7 +39,7 @@ export interface Backend {
   openInstances(scope: Scope, plan: PlanItem[], options?: OpenOptions): Promise<PartStream>;
   /** DICOM JSON items. Bulk references are returned as `bulk:<ref>`, never as raw URLs. */
   getMetadata(scope: Scope): Promise<any[]>;
-  openBulk(study: string, series: string, instance: string, ref: string): Promise<{ contentType: string; body: AsyncIterable<Uint8Array> }>;
+  openBulk(study: string, series: string, instance: string, ref: string, /** The study version a signed context names. Absent means current. */ version?: number): Promise<{ contentType: string; body: AsyncIterable<Uint8Array> }>;
   /** Raw upstream behavior, shown side by side in the demo. Absent on store-backed backends. */
   rawProbe?(path: string, accept: string): Promise<{ status: number; contentType: string | null; partSyntaxLabel: string | null; bodyPreview: string }>;
 }

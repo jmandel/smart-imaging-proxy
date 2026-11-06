@@ -1,5 +1,7 @@
 // Streaming multipart/related reader and writer. The reader reports whether the closing
 // boundary was actually seen, which is how truncated upstream responses are detected.
+import { createHash } from "node:crypto";
+
 export type PartEvent =
   | { type: "start"; headers: Record<string, string> }
   | { type: "data"; bytes: Uint8Array }
@@ -37,6 +39,7 @@ export async function* readMultipart(body: AsyncIterable<Uint8Array>, boundary: 
       return true;
     } catch { ended = true; return false; }
   };
+  try {
   while (true) {
     if (state === "preamble") {
       const i = indexOf(buf, delim);
@@ -77,9 +80,15 @@ export async function* readMultipart(body: AsyncIterable<Uint8Array>, boundary: 
       await more();
     }
   }
+  } finally {
+    // A consumer that stops early also stops the read underneath, whatever it was reading.
+    await iter.return?.();
+  }
 }
 
 export const newBoundary = () => `smart-imaging-${crypto.randomUUID()}`;
+/** The same request gets the same boundary, whichever encoding it travels in. */
+export const stableBoundary = (identity: string) => `smart-imaging-${createHash("sha256").update(identity).digest("hex").slice(0, 36)}`;
 export const partHeader = (boundary: string, headers: Record<string, string>) =>
   enc.encode(`--${boundary}\r\n${Object.entries(headers).map(([k, v]) => `${k}: ${v}`).join("\r\n")}\r\n\r\n`);
 export const partFooter = enc.encode("\r\n");

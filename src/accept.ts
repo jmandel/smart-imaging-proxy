@@ -50,3 +50,18 @@ export function parseAccept(header: string | null, expect: "dicom" | "metadata" 
   items.sort((a, b) => b.q - a.q || a.order - b.order);
   return { kind: expect, plan: items.map(({ syntax, q }) => ({ syntax, q })) };
 }
+
+/**
+ * Whether `Accept-Encoding` names zstd with a non-zero weight. `*` doesn't count: identity always
+ * works, so a client gets zstd only by saying so.
+ */
+export function acceptsZstd(header: string | null): boolean {
+  for (const item of (header ?? "").split(",")) {
+    const [coding, ...params] = item.split(";").map(s => s.trim().toLowerCase());
+    if (coding !== "zstd") continue;
+    const q = params.find(p => /^q\s*=/.test(p))?.split("=")[1]?.trim();
+    if (q === undefined) return true;
+    return /^(0(\.\d{0,3})?|1(\.0{0,3})?)$/.test(q) && Number(q) > 0;
+  }
+  return false;
+}

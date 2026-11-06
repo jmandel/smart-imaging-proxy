@@ -78,7 +78,7 @@ export async function adminApi(stack: Stack, req: Request, url: URL, hooks: { fo
     return status();
   }
   if (p === "/signing-key/rotate" && m === "POST") {
-    stack.imaging.rotateSigningKey();
+    await stack.rotateSigningKey();
     return status();
   }
 

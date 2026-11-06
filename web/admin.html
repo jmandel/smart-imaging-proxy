@@ -125,7 +125,7 @@
     <ul class="rows controls">
       <li><span>Ends every access and refresh token in the active store, while a signed URL or cached decision already issued keeps working until it expires, which is the revocation window.</span><button class="danger" id="revoke-all">Revoke all tokens</button></li>
       <li><span>Clears every decision the proxy has cached, so its next request for each goes back to the Imaging Server.</span><button class="danger" id="flush-cache">Flush proxy decision cache</button></li>
-      <li><span>Replaces the Imaging Server's signing key and retires the old one, so every signed URL already issued loses the instant path at once. Each request on one then goes to the Imaging Server, and a currently valid token still gets what policy allows.</span><button class="danger" id="rotate-key">Rotate signing key</button></li>
+      <li><span>Replaces the Imaging Server's signing key and retires the old one. This screen tells this demo's proxy to refetch its keys, so every signed URL already issued loses the instant path at once here. A proxy that isn't told learns from the Imaging Server's public keys within 60 seconds, when its copy expires. After that, each request on an old URL goes to the Imaging Server, and a currently valid token still gets what policy allows.</span><button class="danger" id="rotate-key">Rotate signing key</button></li>
     </ul>
     <p class="msg" id="tokens-msg" role="status"></p>
   </section>

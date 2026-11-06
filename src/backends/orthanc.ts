@@ -66,6 +66,7 @@ export class OrthancBackend implements Backend {
         if (!boundary) return "truncated";
         const events = readMultipart(asIterable(r.body!), boundary);
         let done: "complete" | "truncated" | undefined;
+        try {
         // One part at a time: the consumer drains each body before asking for the next.
         let pending = await events.next();
         while (!pending.done && pending.value.type !== "complete" && pending.value.type !== "truncated") {
@@ -87,6 +88,10 @@ export class OrthancBackend implements Backend {
         if (!done && !pending.done && pending.value.type === "truncated") done = "truncated";
         if (!done && pending.done) done = "truncated";
         if (done === "truncated") return "truncated";
+        } finally {
+          // Reached early when the consumer stops, and this is what cancels the upstream read.
+          await events.return(undefined);
+        }
       }
       return "complete";
     }

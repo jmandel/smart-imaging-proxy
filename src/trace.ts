@@ -102,7 +102,7 @@ function captureResponse(res: Response, done: (m: CapturedMessage) => void): Res
       } catch (e) { finish(); c.error(e); }
     },
     cancel(reason) { finish(); return reader.cancel(reason); },
-  });
+  }, { highWaterMark: 0 });
   return new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers });
 }
 const nowMs = () => performance.timeOrigin + performance.now();
@@ -139,6 +139,8 @@ export function check(service: Service, name: string, ok: boolean, attrs: Record
 
 export const runInSession = <T>(session: string, fn: () => T) => als.run({ session, trace: hex(16), span: "" }, fn);
 export const currentContext = () => als.getStore();
+/** Runs `fn` as part of a span, for work a stream does long after its handler returned. */
+export const inSpan = <T>(ctx: Current, fn: () => T) => als.run(ctx, fn);
 
 export const traceparentOf = (c: { trace: string; span: string }) => `00-${c.trace}-${c.span || "0000000000000000"}-01`;
 const headersFor = (c: Current | undefined): Record<string, string> =>

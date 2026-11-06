@@ -26,7 +26,7 @@ export function hasImagingScope(scope: string, level: "patient" | "system"): boo
 
 export function createImagingServer(opts: { base: string; clinicalFhirBase: string; proxyBase: () => string; introspect: (token: string) => Promise<any>; serviceSecret: string; manifest: any; keyStore: PolicyStore; store: () => PolicyStore }) {
   let key = opts.keyStore.currentSigningKey();
-  // The proxy shares this map, so a rotation reaches it at once.
+  // This server's own view. A proxy reads the same keys from /.well-known/jwks.json.
   const keys = new Map([[key.kid, key.publicKey]]);
   let outage = false;
   const decisions: any[] = [];
@@ -288,7 +288,7 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
     setOutage(on: boolean) { outage = on; },
     get outage() { return outage; },
     get signingKid() { return key.kid; },
-    /** URLs signed with the old key stop verifying here and at the proxy, right away. */
+    /** URLs signed with the old key stop verifying here right away, and at a proxy once it refetches its keys. */
     rotateSigningKey() {
       key = opts.keyStore.rotateSigningKey();
       keys.clear();
