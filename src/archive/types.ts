@@ -78,6 +78,10 @@ export interface StudyDocument {
   sourcePatientId?: string;
   sourcePatientIssuer?: string;
   site?: string;
+  /** ISO 8601. Absent means the catalog derives it from `date`. */
+  lastUpdated?: string;
+  /** Absent means `available`. */
+  status?: "registered" | "available" | "cancelled";
   series: { uid: string; number: number; modality: string; instanceCount: number }[];
 }
 
@@ -108,6 +112,8 @@ export interface CatalogStudy {
   version: number;
   seriesCount: number;
   instanceCount: number;
+  /** Size of the uncompressed hierarchy, which search's page budget is measured in. */
+  hierarchyBytes: number;
   series: { uid: string; number: number; modality: string; instanceCount: number }[];
 }
 
@@ -141,9 +147,12 @@ export interface CatalogStore {
   /** FHIR Patient for a source identity, if it's linked. */
   patientFor(source: string, sourcePatientId: string): string | undefined;
   linkPatient(source: string, sourcePatientId: string, patient: string): void;
+  /** The sites one patient has studies at. */
+  sitesFor(patient: string): string[];
   /** Every study, for the demo's own displays and for tests. Search must not use this. */
   allStudies(): CatalogStudy[];
-  stats(): { studies: number; series: number; hierarchyBytes: number; path: string };
+  /** `hierarchyBytes` is as stored, compressed. `hierarchyRawBytes` is the same data uncompressed. */
+  stats(): { studies: number; series: number; hierarchyBytes: number; hierarchyRawBytes: number; path: string };
   close(): void;
 }
 

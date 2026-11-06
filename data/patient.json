@@ -6,5 +6,8 @@
   "dicomName": "Example^Josh",
   "birthDate": "1982-01-01",
   "gender": "male",
-  "mrn": "JEXAMPLE01"
+  "mrn": "JEXAMPLE01",
+  "otherPatients": [
+    { "id": "robin-example", "mrn": "REXAMPLE01", "_note": "Robin has an account and a Patient ID, and no studies link to it, so Robin's search is a real empty result." }
+  ]
 }

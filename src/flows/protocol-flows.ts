@@ -1,6 +1,6 @@
 import { tfetch } from "../trace";
 import { EVRLE, JPEG_BASELINE, JPEG_LOSSLESS, J2K_LOSSLESS, PRIVATE_DEMO, isStandard } from "../syntax";
-import { ACCEPT_ANY, studyOptions, type Flow, type Ctx } from "./runtime";
+import { ACCEPT_ANY, siteOptions, studyOptions, type Flow, type Ctx } from "./runtime";
 import { CONFIG } from "../config";
 
 const WRIST = "xr-wrist-left-2012", SLIDE = "slide-lung-2023", MRI = "mri-brain-2020";
@@ -14,6 +14,9 @@ async function loginAndSearch(c: Ctx, user = "josh") {
   c.state.studies = r.studies;
   return r;
 }
+const studiesOn = (b: any): any[] => b.entry.filter((e: any) => e.resource.resourceType === "ImagingStudy").map((e: any) => e.resource);
+/** The guide's rule for response-local Endpoints: each one is in the same Bundle as its study. */
+const endpointsOnPage = (b: any) => studiesOn(b).every(s => s.endpoint.every((r: any) => b.entry.some((e: any) => e.fullUrl === r.reference && e.resource.resourceType === "Endpoint")));
 const labelled = (r: { parts: { syntax?: string }[] }) => r.parts.every(p => !!p.syntax);
 
 export const protocolFlows: Flow[] = [
@@ -147,7 +150,7 @@ export const protocolFlows: Flow[] = [
     steps: [
       { id: "setup", title: "Search", actor: "App", doc: `<p>Stored data: most instances are Explicit VR Little Endian (<code>.1.2.1</code>). The slide is JPEG Baseline. The left wrist also has a JPEG Lossless variant on the store-backed backends.</p>`, run: async c => {
         await loginAndSearch(c);
-        c.check("All studies available", Object.keys(c.state.studies).length === c.manifest.studies.length);
+        c.check("All studies available", Object.keys(c.state.studies).length === c.studies().length);
       } },
       { id: "uncompressed", title: "Uncompressed, with no *", actor: "App", doc: `<p>A client that lists only what it decodes never gets an unusable download. This was Griffin's central point.</p>`, run: async c => {
         const s = c.state.studies[WRIST];
@@ -164,8 +167,8 @@ export const protocolFlows: Flow[] = [
       { id: "as-stored", title: "As stored, with *", actor: "App", doc: `<p>The whole-slide study mixes JPEG Baseline tile levels with uncompressed images. Under <code>*</code>, each instance keeps its own stored syntax, with no added lossy compression, and each part says which it is.</p>`, run: async c => {
         const s = c.state.studies[SLIDE];
         const r = await c.retrieve("App", "Accept *", c.studyUrl(s.base, s.uid), c.state.token, ACCEPT_ANY);
-        const stored = c.study(SLIDE).series.flatMap((x: any) => x.instances.map((n: any) => n.representations.find((y: any) => y.stored).syntax));
-        c.check("Each part keeps its stored syntax", r.status === 200 && r.parts.length === stored.length && r.parts.every(p => stored.includes(p.syntax)) && r.parts.some(p => p.syntax === JPEG_BASELINE), [...new Set(r.parts.map(p => p.syntax))].join(", "));
+        const stored = [EVRLE, JPEG_BASELINE];
+        c.check("Each part keeps its stored syntax", r.status === 200 && r.parts.length === s.resource.numberOfInstances && r.parts.every(p => stored.includes(p.syntax ?? "")) && r.parts.some(p => p.syntax === JPEG_BASELINE), [...new Set(r.parts.map(p => p.syntax))].join(", "));
       } },
       { id: "lossy", title: "The lossy exception", actor: "App", doc: `<p>The guide excuses servers from <code>.1.2.1</code> when pixel data is available only in a standard lossy syntax. Some of this study's instances are JPEG Baseline, and the store-backed backends use that exception, so a <code>.1.2.1</code>-only request for the study gets <code>406</code>. Orthanc can decode it, which also conforms.</p>`, run: async c => {
         const s = c.state.studies[SLIDE];
@@ -259,6 +262,78 @@ export const protocolFlows: Flow[] = [
         const denied = await tfetch("app", "Retrieve the BulkDataURI with no token", c.state.uri);
         await denied.body?.cancel();
         c.check("It needs a token too", denied.status === 401, `status ${denied.status}`);
+      } },
+    ],
+  },
+  {
+    id: "paged-search", number: 14, group: "protocol", title: "Paged search",
+    summary: "The app asks for a few studies at a time and follows next links, while policy runs again on every page.",
+    shows: "A cursor says where a search got to and grants nothing: changing policy between pages changes the next page, and a tampered cursor is refused.",
+    steps: [
+      { id: "first", title: "Ask for a small page", actor: "App", doc: `<p><code>_count</code> sets the page size. The default is 20, and the most a page holds is 100. <code>total</code> counts every study this caller may see, across all pages. A page always carries the Endpoint for each study on it, even when the request omits <code>_include</code>.</p>`,
+        inputs: () => [{ id: "count", label: "Studies per page", type: "select", options: ["1", "2", "3", "6"].map(v => ({ value: v, label: v })), default: "2" }],
+        run: async (c, i) => {
+          const t = await c.launch("josh");
+          c.state.token = t.access_token;
+          c.state.count = Number(i.count);
+          c.state.query = `${CONFIG.imagingUrl}/fhir/ImagingStudy?patient=josh-example&_count=${c.state.count}`;
+          const r = await c.searchPage("First page", c.state.token, c.state.query);
+          const all = c.studies().length;
+          c.state.first = r;
+          c.check("The page holds what was asked for", studiesOn(r.body).length === Math.min(c.state.count, all), `${studiesOn(r.body).length} studies on this page`);
+          c.check("total counts every study, across all pages", r.body.total === all, `total ${r.body.total}`);
+          c.check("A next link is there when more remain", !!r.next === c.state.count < all);
+          c.check("Each study's Endpoint is on the same page", endpointsOnPage(r.body));
+        } },
+      { id: "follow", title: "Follow next to the end", actor: "App", doc: `<p>The app treats the <code>next</code> URL as opaque. Studies come newest first, in a stable order, and each page is evaluated when it's asked for.</p>`, run: async c => {
+        const seen: string[] = studiesOn(c.state.first.body).map(s => s.id);
+        let next = c.state.first.next as string | undefined, pages = 1, onSamePage = endpointsOnPage(c.state.first.body);
+        while (next) {
+          pages++;
+          const r = await c.searchPage(`Page ${pages}`, c.state.token, next);
+          seen.push(...studiesOn(r.body).map(s => s.id));
+          onSamePage &&= endpointsOnPage(r.body);
+          next = r.next;
+        }
+        const expected = [...c.studies()].sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "") || b.pk - a.pk).map(s => s.id);
+        c.check("It took the expected number of pages", pages === Math.ceil(expected.length / c.state.count), `${pages} pages at ${c.state.count} per page`);
+        c.check("Every study came back once, newest first", JSON.stringify(seen) === JSON.stringify(expected), seen.join(", "));
+        c.check("Every page carried its own Endpoints", onSamePage);
+      } },
+      { id: "policy", title: "Policy changes between pages", actor: "Imaging Server", doc: `<p>The app reads page 1, and then a site is taken away from this app. The cursor in the <code>next</code> link was issued before that, and it makes no difference: policy runs again, so page 2 and its <code>total</code> reflect the change. Putting the site back makes the same URL return those studies again.</p>`,
+        inputs: c => [{ id: "site", label: "Site to take away after page 1", type: "select", options: siteOptions(c), default: "Riverside Hospital" }],
+        run: async (c, i) => {
+          const first = await c.searchPage("Page 1, before the change", c.state.token, c.state.query);
+          const onFirst = studiesOn(first.body).map(s => s.id);
+          const remaining = c.studies().filter(s => s.site !== i.site);
+          c.setRules([{ id: "site-removed", description: `This app may no longer see ${i.site}`, when: { client: "portal-app", user: "josh" }, allow: { sites: c.sites().filter(s => s !== i.site) } }]);
+          if (!first.next) { c.check("Everything fit on page 1, so there's no page 2 to change", true); c.setRules([]); return; }
+          const second = await c.searchPage("Page 2, after the change", c.state.token, first.next);
+          const onSecond = studiesOn(second.body).map(s => s.id);
+          c.check(`Page 2 has nothing from ${i.site}`, second.status === 200 && onSecond.every(id => c.siteOf(id) !== i.site), onSecond.join(", ") || "no studies");
+          c.check("total now counts only what this caller may see", second.body.total === remaining.length, `total ${second.body.total}`);
+          c.check("Page 2 doesn't repeat page 1", onSecond.every(id => !onFirst.includes(id)));
+          c.setRules([]);
+          const restored = await c.searchPage("The same next URL, with the site back", c.state.token, first.next);
+          c.check("The same URL follows policy again", restored.status === 200 && restored.body.total === c.studies().length && studiesOn(restored.body).length > 0, `total ${restored.body.total}`);
+        } },
+      { id: "tamper", title: "Tamper with the cursor", actor: "Attacker", doc: `<p>A cursor is signed with a key only the Imaging Server holds, and it carries a hash of the search's filters. An edited cursor gets <code>400</code>, and so does a valid cursor sent with different filters. A valid cursor doesn't help a caller who can't search this patient.</p>`, run: async c => {
+        const first = await c.searchPage("Get a next link", c.state.token, `${CONFIG.imagingUrl}/fhir/ImagingStudy?patient=josh-example&_count=1`);
+        const next = new URL(first.next!);
+        const cursor = next.searchParams.get("_cursor")!;
+        const [payload, mac] = cursor.split(".");
+        const claims = JSON.parse(Buffer.from(payload!, "base64url").toString());
+        const forged = new URL(next);
+        forged.searchParams.set("_cursor", `${Buffer.from(JSON.stringify({ ...claims, p: 1 })).toString("base64url")}.${mac}`);
+        const a = await c.searchPage("An edited position", c.state.token, forged.toString(), "Attacker");
+        c.check("400, with an OperationOutcome", a.status === 400 && a.body.resourceType === "OperationOutcome", `status ${a.status}`);
+        const refiltered = new URL(next);
+        refiltered.searchParams.set("identifier", "EXMRI2020");
+        const b = await c.searchPage("A valid cursor with a changed filter", c.state.token, refiltered.toString(), "Attacker");
+        c.check("A changed filter gets 400", b.status === 400 && b.body.resourceType === "OperationOutcome", `status ${b.status}`);
+        const robin = await c.launch("robin");
+        const d = await c.searchPage("A valid cursor with someone else's token", robin.access_token, next.toString(), "Attacker");
+        c.check("The cursor grants nothing: 403", d.status === 403, `status ${d.status}`);
       } },
     ],
   },

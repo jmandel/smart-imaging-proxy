@@ -17,13 +17,34 @@ import { createCollector } from "./trace-collector";
 import type { TraceStoreConfig } from "./trace-store";
 import { createStores, type StoreConfig, type StoreName } from "./policy-store";
 import { clockOffset, resetClock, setClockOffset } from "./clock";
+import type { CatalogStore } from "./archive/types";
+import { createCatalog, orthancCatalogPath, seedPatientLinks } from "./catalog";
+import { rebuildFromArchive } from "./catalog-archive";
+import { catalogFromOrthanc } from "./catalog-orthanc";
 
 export type BackendName = "static-files" | "minio" | "orthanc";
 
-/** With no store config, the saved store is in memory: only src/main.ts reads the POLICY_* settings. */
-export async function startStack(root: string, opts: { store?: StoreConfig; traces?: TraceStoreConfig; purgeIntervalMs?: number } = {}) {
+/**
+ * With no store config, the saved store is in memory, and with no catalog path, so are the catalogs:
+ * only src/main.ts reads the POLICY_* and CATALOG_DB settings.
+ */
+export async function startStack(root: string, opts: { store?: StoreConfig; traces?: TraceStoreConfig; purgeIntervalMs?: number; catalog?: string } = {}) {
   const stores = createStores(opts.store ?? { mode: "memory" });
-  const manifest = await Bun.file(join(root, "data/manifest.json")).json();
+  const catalogPath = opts.catalog ?? ":memory:";
+  const catalogs = { archive: createCatalog(catalogPath), orthanc: createCatalog(orthancCatalogPath(catalogPath)) };
+  const patients = await Bun.file(join(root, "data/patient.json")).json();
+  seedPatientLinks(catalogs.archive, patients);
+  seedPatientLinks(catalogs.orthanc, patients);
+  // The catalog is derived, so an empty one is built from the archive. scripts/build-catalog.ts rebuilds a full one.
+  if (catalogs.archive.stats().studies === 0) {
+    const report = await rebuildFromArchive(fileStore(CONFIG.archive.dir), catalogs.archive);
+    for (const u of report.unlinked) console.warn(`Skipped study ${u.study}: Patient ID ${u.sourcePatientId ?? "(none)"} isn't linked to a patient`);
+  }
+  // Fronting Orthanc needs only its query API. If it's down, its catalog stays empty until the next start.
+  if (catalogs.orthanc.stats().studies === 0) {
+    try { await catalogFromOrthanc(catalogs.orthanc, CONFIG.orthanc, await Bun.file(join(root, "data/orthanc-catalog.json")).json()); }
+    catch (e) { console.warn(`The Orthanc catalog wasn't built: ${String(e)}`); }
+  }
   const serviceSecret = randomBytes(24).toString("base64url");
   const collector = createCollector(root, opts.traces);
   setTraceSink(CONFIG.traceUrl);
@@ -45,7 +66,7 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
     const r = await tfetch("imaging-fhir", "introspect the token", `${CONFIG.authUrl}/introspect`, { method: "POST", headers: { Authorization: `Bearer ${serviceSecret}`, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token }) });
     return r.ok ? r.json() : { active: false };
   };
-  const imaging = createImagingServer({ base: `${CONFIG.imagingUrl}/fhir`, clinicalFhirBase: `${CONFIG.authUrl}/fhir`, proxyBase: () => CONFIG.proxyUrl, introspect, serviceSecret, manifest, keyStore: stores.saved, store: () => stores.active });
+  const imaging = createImagingServer({ base: `${CONFIG.imagingUrl}/fhir`, clinicalFhirBase: `${CONFIG.authUrl}/fhir`, proxyBase: () => CONFIG.proxyUrl, introspect, serviceSecret, catalog: () => catalogFor(current), keyStore: stores.saved, store: () => stores.active });
 
   let truncateAfter: number | undefined;
   const wrap = (b: Backend) => withTruncation(b, () => truncateAfter);
@@ -55,6 +76,8 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
     orthanc: wrap(new OrthancBackend(CONFIG.orthanc)),
   };
   let current: BackendName = "static-files";
+  /** Search and decisions read the catalog that describes what the selected backend holds. */
+  function catalogFor(b: BackendName): CatalogStore { return b === "orthanc" ? catalogs.orthanc : catalogs.archive; }
 
   const proxy = createProxy({ publicBase: () => CONFIG.proxyUrl, keys: imaging.publicKeys, decisionUrl: `${CONFIG.imagingUrl}/access/v1/evaluation`, serviceSecret, backend: () => backends[current] });
 
@@ -68,7 +91,9 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
   /** Checks a backend works and reports what it declares. */
   async function selfTest(name: BackendName) {
     const b = backends[name];
-    const study = manifest.studies.find((s: any) => s.id === "xr-wrist-left-2012").uid;
+    const held = catalogFor(name).allStudies();
+    const study = (held.find(s => s.id === "xr-wrist-left-2012") ?? held[0])?.uid;
+    if (!study) return { name, ok: false, capabilities: b.capabilities(), detail: "no studies in this backend's catalog" };
     try {
       const series = await b.listSeries(study);
       return { name, ok: series.length > 0, capabilities: b.capabilities(), detail: `${series.length} series in the fixture study` };
@@ -98,12 +123,15 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
   purgeTimer.unref();
 
   return {
-    auth, imaging, proxy, backends, manifest, collector, stores,
+    auth, imaging, proxy, backends, collector, stores, catalogs,
+    /** The catalog in use. Its `allStudies` is for the demo's displays and tests. */
+    get catalog() { return catalogFor(current); },
+    get catalogSource() { return current === "orthanc" ? "orthanc" as const : "archive" as const; },
     get backend() { return current; },
     setBackend(n: BackendName) { current = n; },
     setTruncateAfter(n: number | undefined) { truncateAfter = n; },
     selfTest,
-    stop() { clearInterval(purgeTimer); servers.forEach(s => s.stop(true)); stores.close(); collector.close(); },
+    stop() { clearInterval(purgeTimer); servers.forEach(s => s.stop(true)); stores.close(); collector.close(); catalogs.archive.close(); catalogs.orthanc.close(); },
     useStore,
     purgeTokens,
     /** Empties the scratch store. The saved store isn't touched, and the active store doesn't change. */

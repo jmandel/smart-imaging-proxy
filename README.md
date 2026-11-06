@@ -14,7 +14,7 @@ Requires Bun, Docker, and DCMTK.
 
 ```sh
 bun run fetch-data          # downloads the sample data, verifying checksums
-bun run ingest              # builds the archive and data/manifest.json. Safe to re-run
+bun run ingest              # builds the archive. Safe to re-run
 docker compose up -d        # MinIO and Orthanc, stored under /tmp by default
 bun run load                # copies the archive to MinIO, and adds any study Orthanc lacks
 bun run start
@@ -61,10 +61,11 @@ reports/quarantine.json                                       inputs left out of
 |---|---|
 | `src/proxy.ts` | The proxy: fast path, `can_i`, DICOMweb conformance |
 | `src/imaging-server.ts` | Search, policy, signed contexts, the decision API |
+| `src/catalog.ts` | The SQLite catalog search reads. It's rebuildable: `scripts/build-catalog.ts` from the archive, `scripts/catalog-from-orthanc.ts` from Orthanc's QIDO-RS API |
 | `src/auth-server.ts` | SMART Backend Services, a demo consent step, introspection |
 | `src/archive/` | The archive format: its contract, reader, object stores, and ingest |
 | `src/backends/` | Static files and MinIO (`archive.ts`), and Orthanc (`orthanc.ts`) |
-| `src/flows/` | The 13 flows, shared by the web page and tests |
+| `src/flows/` | The flows, shared by the web page and tests |
 | `src/trace.ts`, `src/trace-collector.ts` | Spans, correlation, and the live stream |
 | `web/` | The flow player and live trace pages |
 

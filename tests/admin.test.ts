@@ -42,6 +42,16 @@ describe("pages", () => {
 });
 
 describe("status", () => {
+  test("reports the catalog in use: its source, path, counts and bytes", async () => {
+    const s = await ok("GET", "/api/admin/status");
+    expect(s.catalog).toMatchObject({ source: "archive", path: ":memory:", studies: 6 });
+    expect(s.catalog.series).toBeGreaterThan(6);
+    expect(s.catalog.hierarchyBytes).toBeGreaterThan(0);
+    expect(s.catalog.hierarchyRawBytes).toBeGreaterThan(s.catalog.hierarchyBytes);
+    await ok("POST", "/api/admin/backend", { backend: "orthanc" });
+    expect((await ok("GET", "/api/admin/status")).catalog.source).toBe("orthanc");
+    expect(await (await call("GET", "/admin")).text()).toContain('id="catalog-stats"');
+  });
   test("reports both stores: mode, path, durability, schema version, and row counts", async () => {
     stack.imaging.setPolicy({ rules: [RULE], delegations: [DELEGATION], appGrants: [GRANT] });
     const s = await ok("GET", "/api/admin/status");
@@ -196,7 +206,7 @@ describe("outage", () => {
     expect((await ok("POST", "/api/admin/outage", { on: true })).outage).toBe(true);
     await refused("POST", "/api/admin/outage", { on: "yes" }, "on must be");
     const t = await scriptedLaunch("josh");
-    const uid = stack.manifest.studies[0].uid;
+    const uid = stack.catalog.allStudies()[0]!.uid;
     const get = () => fetch(`${CONFIG.proxyUrl}/wado/-/studies/${uid}`, { headers: { Authorization: `Bearer ${t.access_token}`, Accept: "multipart/related; type=application/dicom; transfer-syntax=*" } });
     const during = await get();
     await during.body?.cancel();

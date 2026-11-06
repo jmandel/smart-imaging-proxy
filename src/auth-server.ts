@@ -20,7 +20,6 @@ export const USERS: Record<string, DemoUser> = {
   "alex-neighbor": { name: "Alex Neighbor", fhirUser: "RelatedPerson/alex-neighbor" },
 };
 const userOf = (name: string): DemoUser | undefined => Object.hasOwn(USERS, name) ? USERS[name] : undefined;
-export const ALL_SITES = ["Lakeside Imaging", "Riverside Hospital", "Northside Pathology"];
 const PATIENT_NAMES: Record<string, string> = { "josh-example": "Josh Example", "robin-example": "Robin Example" };
 
 export interface AccessSummary {

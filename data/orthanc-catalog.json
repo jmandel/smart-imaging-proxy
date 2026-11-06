@@ -1,0 +1,11 @@
+{
+  "_note": "What DICOM doesn't state about the studies in Orthanc: the FHIR id, a display title, and the site, by accession. This stands in for an operator's configuration when fronting an existing archive.",
+  "studies": {
+    "EXMRI2020": { "id": "mri-brain-2020", "title": "MRI BRAIN WITHOUT CONTRAST", "site": "Lakeside Imaging" },
+    "EXCT2012": { "id": "ct-abdomen-pelvis-2012", "title": "CT ABDOMEN AND PELVIS WITH ORAL AND IV CONTRAST", "site": "Riverside Hospital" },
+    "EXCR2012A": { "id": "xr-wrist-left-2012", "title": "XR WRIST LEFT, 3 VIEWS", "site": "Riverside Hospital" },
+    "EXCR2012B": { "id": "xr-hand-wrist-right-2012", "title": "XR HAND AND WRIST RIGHT, 3 VIEWS", "site": "Riverside Hospital" },
+    "EXCR2012C": { "id": "xr-hand-right-2012", "title": "XR HAND RIGHT, 3 VIEWS, PORTABLE", "site": "Riverside Hospital" },
+    "EXSL2023": { "id": "slide-lung-2023", "title": "LUNG, DIGITAL SLIDE, H&E", "site": "Northside Pathology" }
+  }
+}

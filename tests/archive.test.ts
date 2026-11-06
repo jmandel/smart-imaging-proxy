@@ -17,7 +17,6 @@ import { withTruncation } from "../src/backends/truncation";
 import { BackendError, type Backend, type PartStream } from "../src/backends/types";
 import { CONFIG } from "../src/config";
 import { parsePart10, readFileMeta } from "../src/dicom";
-import { SITES } from "../src/imaging-server";
 import { closing, newBoundary, partFooter, partHeader, readMultipart } from "../src/multipart";
 import { EVRLE, isStandard, JPEG_BASELINE, JPEG_LOSSLESS, PRIVATE_DEMO } from "../src/syntax";
 
@@ -200,9 +199,9 @@ describe("Format", () => {
     expect(items[0]["00100020"].Value[0]).toBe("PID-1");
   });
 
-  test("each study in the source data carries the site the Imaging Server uses", async () => {
+  test("each study in the source data carries a site", async () => {
     const def = await Bun.file(join(import.meta.dir, "../data/studies.source.json")).json();
-    expect(Object.fromEntries(def.studies.map((s: any) => [s.id, s.site]))).toEqual(SITES);
+    expect(def.studies.every((s: any) => typeof s.site === "string" && s.site.length > 0)).toBe(true);
   });
 
   test("Implicit VR and deflated inputs are stored as Explicit VR, recording what they were", async () => {
@@ -957,7 +956,12 @@ describe("Local files and MinIO", () => {
   describe("the real archive", () => {
     const dirStore = () => fileStore(CONFIG.archive.dir);
     const bucketStore = () => s3Store(client(CONFIG.archive.bucket));
-    const manifest = () => Bun.file(join(import.meta.dir, "../data/manifest.json")).json();
+    const SITES = () => Bun.file(join(import.meta.dir, "../data/studies.source.json")).json().then((d: any) => Object.fromEntries(d.studies.map((s: any) => [s.id, s.site])));
+    const manifest = async () => {
+      const reader = new ArchiveReader(dirStore());
+      const uids = (await listAll(dirStore())).filter(k => k.endsWith("/current.json")).map(k => k.split("/")[1]!);
+      return { studies: await Promise.all(uids.map(async uid => reader.study(uid, await reader.currentVersion(uid)))) };
+    };
 
     test("the bucket holds exactly what the directory holds", async () => {
       const a = dirStore(), b = bucketStore();
@@ -972,10 +976,11 @@ describe("Local files and MinIO", () => {
 
     test("studies say where they came from, and who the images say they're of", async () => {
       const m = await manifest();
+      const sites: any = await SITES();
       const reader = new ArchiveReader(dirStore());
       for (const s of m.studies) {
         const doc = await reader.study(s.uid, await reader.currentVersion(s.uid));
-        expect(doc).toMatchObject({ format: ARCHIVE_FORMAT, id: s.id, uid: s.uid, site: SITES[s.id], sourcePatientId: "JEXAMPLE01", accession: s.accession });
+        expect(doc).toMatchObject({ format: ARCHIVE_FORMAT, id: s.id, uid: s.uid, site: sites[s.id], sourcePatientId: "JEXAMPLE01", accession: s.accession });
         expect(doc.series.map(x => x.uid)).toEqual(s.series.map((x: any) => x.uid));
       }
     });

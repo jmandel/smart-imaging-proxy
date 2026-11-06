@@ -111,6 +111,12 @@
     <div class="msg" id="backend-msg" role="status"></div>
   </section>
 
+  <section aria-labelledby="h-catalog">
+    <h2 id="h-catalog">Catalog</h2>
+    <div id="catalog-stats"></div>
+    <p class="note">What search reads, chosen by the backend above. The catalog holds no policy and can be rebuilt from its source: <code>bun scripts/build-catalog.ts</code> for the archive, and <code>bun scripts/catalog-from-orthanc.ts</code> for Orthanc.</p>
+  </section>
+
   <section aria-labelledby="h-outage">
     <h2 id="h-outage">Decision service</h2>
     <p id="outage-state"></p>

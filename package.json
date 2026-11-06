@@ -6,6 +6,8 @@
     "fetch-data": "bun scripts/fetch-data.ts",
     "ingest": "bun scripts/ingest.ts",
     "load": "bun scripts/load-backends.ts",
+    "build-catalog": "bun scripts/build-catalog.ts",
+    "catalog-from-orthanc": "bun scripts/catalog-from-orthanc.ts",
     "start": "bun src/main.ts",
     "test": "bun test"
   }

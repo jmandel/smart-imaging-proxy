@@ -1,4 +1,4 @@
-// Builds the archive from data/sources, and data/manifest.json from what's live in it. Re-runnable:
+// Builds the archive from data/sources. Re-runnable:
 // an unchanged study writes nothing, and a changed one writes a new version.
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -58,27 +58,6 @@ const run = await ingestStudies(store, inputs, {
 
 // Kept until the Imaging Server reads the catalog. Describes what's live, whatever this run did.
 const reader = new ArchiveReader(store, { currentTtlMs: 0 });
-const manifest: any = { studies: [] };
-for (const r of run.results) {
-  if (!r.uid || !r.version) continue;
-  const doc = await reader.study(r.uid, r.version);
-  const entry: any = { id: doc.id, title: doc.title, series: [], uid: doc.uid, accession: doc.accession, date: doc.date, time: doc.time, description: doc.description, patientId: doc.sourcePatientId };
-  for (const s of doc.series) {
-    const index = await reader.seriesIndex(r.uid, r.version, s.uid);
-    const metadata = await reader.seriesMetadata(r.uid, r.version, s.uid);
-    entry.patientName ??= (Object.values(metadata.instances)[0] as any)?.["00100010"]?.Value?.[0]?.Alphabetic;
-    entry.series.push({
-      uid: s.uid, number: s.number, modality: s.modality, description: index.description, bodyPart: index.bodyPart,
-      instances: index.instances.map(i => ({
-        uid: i.uid, number: i.number, sopClass: i.sopClass, size: i.offers.find(o => !o.private)?.storedBytes,
-        representations: i.offers.map(o => ({ syntax: o.syntax, stored: o.stored, ...(o.private ? { private: true } : {}), key: o.key, size: o.storedBytes })),
-        bulk: i.bulk,
-      })),
-    });
-  }
-  manifest.studies.push(entry);
-}
-await Bun.write(join(root, "data/manifest.json"), JSON.stringify(manifest, null, 1));
 
 const total = run.results.reduce((n, r) => n + r.instances, 0);
 console.log(`studies ${run.results.length}, instances ${total}, content writes ${run.contentWrites}, document writes ${run.documentWrites}`);

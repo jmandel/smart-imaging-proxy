@@ -40,7 +40,7 @@ async function init() {
 }
 function showBackend(b) {
   const x = b.backends.find(n => n.name === $("#backend").value);
-  $("#backend-status").textContent = x ? `${x.capabilities.selection}${x.capabilities.hasManifest ? ", manifest" : ""}` : "";
+  $("#backend-status").textContent = x ? `${x.capabilities.selection}${x.capabilities.hasManifest ? ", indexed" : ""}` : "";
   $("#backend-status").title = x ? x.capabilities.notes.join(" ") : "";
 }
 function renderNav() {

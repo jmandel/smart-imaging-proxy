@@ -36,6 +36,7 @@ export function adminStatus(stack: Stack) {
     settings: stores.active.getSettings(),
     clock: { offsetSeconds: clockOffset(), now: now() },
     backend: { current: stack.backend, names: BACKEND_NAMES },
+    catalog: { source: stack.catalogSource, ...stack.catalog.stats() },
     signing: { kid: stack.imaging.signingKid },
     proxy: { cachedDecisions: stack.proxy.cachedDecisions },
     outage: stack.imaging.outage,

@@ -5,7 +5,7 @@ import { accountUrl, buildAuthorization, CLINICAL_FHIR, submitConsent, submitDel
 import { clientAssertion, type BackendClient } from "../auth-server";
 import { CONFIG } from "../config";
 import { advance, resetClock } from "../clock";
-import { SITES, type Rule } from "../imaging-server";
+import type { Rule } from "../imaging-server";
 import type { Stack } from "../stack";
 
 export interface Input { id: string; label: string; type: "select" | "multi" | "text"; options?: { value: string; label: string }[]; default?: any; clickDefault?: any; help?: string; }
@@ -41,9 +41,18 @@ export class Ctx {
   checks: Check[] = [];
   private decisionStart = 0;
   constructor(public stack: Stack, public clients: Record<string, BackendClient>) {}
-  get manifest() { return this.stack.manifest; }
   get backend() { return this.stack.backend; }
-  study(id: string) { return this.manifest.studies.find((s: any) => s.id === id); }
+  /** Every study, from the catalog in use. For a flow's own displays and expectations. */
+  studies() { return this.stack.catalog.allStudies(); }
+  /** One study, with its full series list. */
+  study(id: string): any {
+    const catalog = this.stack.catalog;
+    const row = this.studies().find(s => s.id === id);
+    return row && { ...row, series: catalog.hierarchies([row.pk]).get(row.pk)?.series ?? [] };
+  }
+  /** Every site in the catalog in use. */
+  sites() { return [...new Set(this.studies().flatMap(s => s.site ? [s.site] : []))]; }
+  siteOf(id: string) { return this.studies().find(s => s.id === id)?.site; }
   /** Set once a person in a window picks an account other than the one a step expects. */
   accountNote: string | undefined;
   check(label: string, ok: boolean, detail?: string) {
@@ -140,11 +149,11 @@ export class Ctx {
   async search(token: string, query = "patient=josh-example&_include=ImagingStudy:endpoint", actor = "App") {
     const r = await this.json(actor, "Search ImagingStudy", `${CONFIG.imagingUrl}/fhir/ImagingStudy?${query}`, { headers: { Authorization: `Bearer ${token}`, Accept: "application/fhir+json" } });
     const last = this.exchanges[this.exchanges.length - 1]!;
-    last.body = summarizeBundle(r.body);
+    last.body = summarizeBundle(r.body, id => this.siteOf(id));
     const studies: Record<string, { uid: string; base: string; resource: any; claims: any }> = {};
     if (r.status === 200) {
       const byUrl = new Map(r.body.entry.filter((e: any) => e.resource.resourceType === "Endpoint").map((e: any) => [e.fullUrl, e.resource]));
-      for (const e of r.body.entry) if (e.resource.resourceType === "ImagingStudy") {
+      for (const e of r.body.entry) if (e.resource.resourceType === "ImagingStudy" && e.resource.endpoint) {
         const ep: any = byUrl.get(e.resource.endpoint[0].reference);
         const uid = e.resource.identifier[0].value.replace("urn:oid:", "");
         const ctx = ep.address.split("/wado/")[1];
@@ -152,6 +161,14 @@ export class Ctx {
       }
     }
     return { status: r.status, studies };
+  }
+  /** One page of a search, by its URL, shown as it came back. For following `next` links. */
+  async searchPage(title: string, token: string, url: string, actor = "App") {
+    const r = await this.json(actor, title, url, { headers: { Authorization: `Bearer ${token}`, Accept: "application/fhir+json" } });
+    const last = this.exchanges[this.exchanges.length - 1]!;
+    last.url = last.url.replace(/_cursor=[^&]+/, "_cursor=…");
+    if (r.status === 200) last.body = { ...(summarizeBundle(r.body, id => this.siteOf(id)) as any), next: r.body.link.some((l: any) => l.relation === "next") };
+    return { status: r.status, body: r.body, next: r.status === 200 ? r.body.link.find((l: any) => l.relation === "next")?.url as string | undefined : undefined };
   }
   plainBase() { return `${CONFIG.proxyUrl}/wado/-`; }
 
@@ -205,16 +222,16 @@ function redactBody(b: any) {
   }
   return b;
 }
-export function summarizeBundle(b: any) {
+export function summarizeBundle(b: any, siteOf: (id: string) => string | undefined) {
   if (b?.resourceType !== "Bundle") return b;
   return {
     resourceType: "Bundle", total: b.total,
     studies: b.entry.filter((e: any) => e.resource.resourceType === "ImagingStudy").map((e: any) => ({
-      id: e.resource.id, site: SITES[e.resource.id], modality: e.resource.modality.map((m: any) => m.code).join(","), numberOfSeries: e.resource.numberOfSeries, numberOfInstances: e.resource.numberOfInstances,
-      endpointAddress: shortUrl((b.entry.find((x: any) => x.fullUrl === e.resource.endpoint[0].reference)?.resource.address ?? "") + "/").replace(/\/$/, ""),
+      id: e.resource.id, site: siteOf(e.resource.id), modality: (e.resource.modality ?? []).map((m: any) => m.code).join(","), numberOfSeries: e.resource.numberOfSeries, numberOfInstances: e.resource.numberOfInstances,
+      endpointAddress: shortUrl((b.entry.find((x: any) => x.fullUrl === e.resource.endpoint?.[0].reference)?.resource.address ?? "") + "/").replace(/\/$/, ""),
     })),
   };
 }
-export const siteOptions = () => [...new Set(Object.values(SITES))].map(s => ({ value: s, label: s }));
-export const studyOptions = (c: Ctx) => c.manifest.studies.map((s: any) => ({ value: s.id, label: `${s.title.slice(0, 44)} (${SITES[s.id]})` }));
+export const siteOptions = (c: Ctx) => c.sites().map(s => ({ value: s, label: s }));
+export const studyOptions = (c: Ctx) => c.studies().map(s => ({ value: s.id, label: `${(s.title ?? s.description ?? s.id).slice(0, 44)} (${s.site ?? "no site"})` }));
 export const resetDemo = (stack: Stack) => { stack.resetAll(); resetClock(); };

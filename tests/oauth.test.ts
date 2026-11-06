@@ -232,7 +232,7 @@ describe("Account picker", () => {
     stack.resetAll();
     const t = await scriptedLaunch("robin");
     expect((await fetch(`${conf.associated_endpoints[0].url}/ImagingStudy?patient=josh-example`, { headers: { Authorization: `Bearer ${t.access_token}` } })).status).toBe(403);
-    const uid = stack.manifest.studies[0].uid;
+    const uid = stack.catalog.allStudies()[0]!.uid;
     expect((await fetch(`${CONFIG.proxyUrl}/wado/-/studies/${uid}`, { headers: { Authorization: `Bearer ${t.access_token}`, Accept: "multipart/related; type=application/dicom; transfer-syntax=*" } })).status).toBe(404);
   });
   test("Robin's consent and account pages say there's no imaging, and offer no sites", async () => {

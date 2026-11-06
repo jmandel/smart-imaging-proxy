@@ -79,7 +79,7 @@ for (const backend of BACKENDS) {
       stack.imaging.setPolicy({ rules: [{ id: "none", when: { client: "portal-app" }, allow: { studies: [] } }] });
       expect(await get(url, t.access_token)).toEqual({ status: 404, parts: 0, authz: "asked" });
       stack.imaging.setPolicy({ rules: [] });
-      const other = stack.manifest.studies.find((s: any) => !url.endsWith(s.uid) && url.split("/studies/")[1] !== s.uid).uid;
+      const other = stack.catalog.allStudies().find(s => !url.endsWith(s.uid) && url.split("/studies/")[1] !== s.uid)!.uid;
       const base = url.split("/studies/")[0];
       expect(await get(`${base}/studies/${other}`, t.access_token)).toEqual({ status: 404, parts: 0, authz: "asked" });
     });

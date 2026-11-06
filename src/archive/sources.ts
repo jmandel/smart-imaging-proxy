@@ -1,6 +1,6 @@
 // Object stores over local files and MinIO. Both hold the same keys and the same bytes. Reads are
 // async generators, so nothing is opened until the first pull and reading stops when pulling stops.
-import { mkdir, open, readdir, rename, rm, stat } from "node:fs/promises";
+import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { S3Client } from "bun";
@@ -30,18 +30,12 @@ export function fileStore(dir: string, name = "static-files"): ObjectStore {
   };
   const missing = (e: any, key: string) => e?.code === "ENOENT" ? new ObjectNotFoundError(key) : e;
 
+  // Holds no file handle between chunks, so a reader that stops partway leaves nothing open.
   async function* range(key: string, start: number, length: number): AsyncGenerator<Uint8Array> {
-    const handle = await open(path(key), "r").catch(e => { throw missing(e, key); });
-    try {
-      let at = start, left = length;
-      while (left > 0) {
-        const chunk = new Uint8Array(Math.min(CHUNK, left));
-        const { bytesRead } = await handle.read(chunk, 0, chunk.length, at);
-        if (bytesRead === 0) return;
-        yield chunk.subarray(0, bytesRead);
-        at += bytesRead; left -= bytesRead;
-      }
-    } finally { await handle.close(); }
+    const file = Bun.file(path(key));
+    const size = await stat(path(key)).then(s => s.size, e => { throw missing(e, key); });
+    const end = Math.min(size, start + length);
+    for (let at = start; at < end; at += CHUNK) yield await file.slice(at, Math.min(at + CHUNK, end)).bytes();
   }
 
   // Sorting each directory with its slash gives the same order S3 lists keys in.

@@ -1,4 +1,3 @@
-import { SITES } from "../imaging-server";
 import { CONFIG } from "../config";
 import { siteOptions, studyOptions, type Flow, type Ctx } from "./runtime";
 
@@ -15,15 +14,15 @@ export const policyFlows: Flow[] = [
     steps: [
       {
         id: "consent", title: "Josh launches the app and approves sites", actor: "Patient", doc: `<p>A real SMART standalone launch. The app discovers the endpoints and sends an authorization request with a PKCE challenge. On the Authorization Server's own pages, Josh signs in and approves. It redirects back with a single-use code, which the app exchanges along with its PKCE verifier.</p><p>The site choice is kept as Imaging Server policy, so the token's scope is the same whatever Josh picks.</p>`,
-        inputs: () => [
+        inputs: c => [
           { id: "mode", label: "Who signs in and approves", type: "select", options: [{ value: "window", label: "You, in a real window (Josh Example is preselected)" }, { value: "scripted", label: "Scripted, with the sites below" }], default: "scripted", clickDefault: "window" },
-          { id: "sites", label: "Sites to approve, when scripted", type: "multi", options: siteOptions(), default: ["Lakeside Imaging", "Northside Pathology"] },
+          { id: "sites", label: "Sites to approve, when scripted", type: "multi", options: siteOptions(c), default: ["Lakeside Imaging", "Northside Pathology"] },
         ],
         run: async (c, i) => {
           const t = await c.launch("josh", "portal-app", i.mode === "window" ? { window: true } : { sites: i.sites });
           c.state.token = t.access_token;
           const grant = c.stack.imaging.getPolicy().appGrants.find(g => g.client === "portal-app" && g.user === "josh");
-          c.state.sites = grant?.sites ?? [...new Set(Object.values(SITES))];
+          c.state.sites = grant?.sites ?? c.sites();
           c.check("Scope is unchanged by the choice", t.scope.includes("patient/ImagingStudy.rs") && !/site/i.test(t.scope), t.scope);
           c.check("Token has the patient context from the launch", t.patient === "josh-example", t.patient);
         },
@@ -33,8 +32,8 @@ export const policyFlows: Flow[] = [
         run: async c => {
           const r = await c.search(c.state.token);
           c.state.studies = r.studies;
-          const expected = c.manifest.studies.filter((s: any) => c.state.sites.includes(SITES[s.id])).length;
-          c.check("Only studies from approved sites are returned", Object.keys(r.studies).length === expected && Object.keys(r.studies).every(id => c.state.sites.includes(SITES[id])), `${Object.keys(r.studies).length} of ${c.manifest.studies.length} studies`);
+          const expected = c.studies().filter(s => c.state.sites.includes(s.site)).length;
+          c.check("Only studies from approved sites are returned", Object.keys(r.studies).length === expected && Object.keys(r.studies).every(id => c.state.sites.includes(c.siteOf(id))), `${Object.keys(r.studies).length} of ${c.studies().length} studies`);
         },
       },
       {
@@ -54,7 +53,7 @@ export const policyFlows: Flow[] = [
         run: async (c, i) => {
           const s = c.study(i.study);
           const r = await c.retrieve("App", "Request by Study UID", c.studyUrl(c.plainBase(), s.uid), c.state.token);
-          const ok = c.state.sites.includes(SITES[i.study]);
+          const ok = c.state.sites.includes(c.siteOf(i.study));
           c.check(ok ? "Approved site: released" : "Unapproved site: 404, with no data", r.status === (ok ? 200 : 404), `status ${r.status}, authorization: ${r.authz}`);
         },
       },
@@ -67,9 +66,9 @@ export const policyFlows: Flow[] = [
     steps: [
       {
         id: "delegate", title: "Josh signs in and shares with Sam", actor: "Patient", doc: `<p>Josh signs in to the account page and picks which sites Sam can see. Sam has their own account, separate from Josh's. The Imaging Server keeps the delegation.</p>`,
-        inputs: () => [
+        inputs: c => [
           { id: "mode", label: "Who signs in and shares", type: "select", options: [{ value: "window", label: "You, in a real window (Josh Example is preselected)" }, { value: "scripted", label: "Scripted, with the sites below" }], default: "scripted", clickDefault: "window" },
-          { id: "sites", label: "Sites Sam can see, when scripted", type: "multi", options: siteOptions(), default: ["Lakeside Imaging", "Riverside Hospital"] },
+          { id: "sites", label: "Sites Sam can see, when scripted", type: "multi", options: siteOptions(c), default: ["Lakeside Imaging", "Riverside Hospital"] },
         ],
         run: async (c, i) => {
           await c.delegate("josh", "sam-caregiver", "caregiver", i.sites, { window: i.mode === "window" });
@@ -87,9 +86,9 @@ export const policyFlows: Flow[] = [
       },
       {
         id: "sam-launch", title: "Sam signs in and authorizes an app", actor: "Related person", doc: `<p>Sam runs a real SMART launch with their own account. The patient picker offers Josh, because of the delegation. Sam can give the app part of what they hold, and can't give it more: any site outside the delegation is dropped, even if a form submits it.</p>`,
-        inputs: () => [
+        inputs: c => [
           { id: "mode", label: "Who signs in and approves", type: "select", options: [{ value: "window", label: "You, in a real window (Sam Example is preselected)" }, { value: "scripted", label: "Scripted, with the sites below" }], default: "scripted", clickDefault: "window" },
-          { id: "sites", label: "Sites for the app, when scripted. Tick one Sam doesn't hold to see it dropped.", type: "multi", options: siteOptions(), default: ["Lakeside Imaging", "Northside Pathology"] },
+          { id: "sites", label: "Sites for the app, when scripted. Tick one Sam doesn't hold to see it dropped.", type: "multi", options: siteOptions(c), default: ["Lakeside Imaging", "Northside Pathology"] },
         ],
         run: async (c, i) => {
           const t = await c.launch("sam-caregiver", "portal-app", i.mode === "window" ? { window: true } : { sites: i.sites });
@@ -108,8 +107,8 @@ export const policyFlows: Flow[] = [
           const s = await c.search(c.state.sam, undefined, "App (Sam)");
           c.state.joshStudies = j.studies;
           c.state.samStudies = s.studies;
-          c.check("Josh sees every study", Object.keys(j.studies).length === c.manifest.studies.length);
-          c.check("Sam's app sees only sites in both links", Object.keys(s.studies).every(id => c.state.appSites.includes(SITES[id]!) && c.state.delegated.includes(SITES[id]!)) && Object.keys(s.studies).length < Object.keys(j.studies).length, Object.keys(s.studies).join(", "));
+          c.check("Josh sees every study", Object.keys(j.studies).length === c.studies().length);
+          c.check("Sam's app sees only sites in both links", Object.keys(s.studies).every(id => c.state.appSites.includes(c.siteOf(id)) && c.state.delegated.includes(c.siteOf(id))) && Object.keys(s.studies).length < Object.keys(j.studies).length, Object.keys(s.studies).join(", "));
         },
       },
       {
