@@ -56,7 +56,10 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     if (p === "/oauth/callback") return callback(req);
     // Leaving saved policy would end a Browse sign-in partway through.
     if (p === "/api/admin/store/activate" && req.method === "POST") {
-      const held = browse.holdStore();
+      // Only a request the admin API would accept can cost someone their sign-in.
+      const asked = await req.clone().json().catch(() => undefined) as any;
+      const valid = !refuseWrite(req, url) && !url.search && Object.keys(asked ?? {}).length === 1 && (asked?.store === "saved" || asked?.store === "scratch");
+      const held = valid ? browse.holdStore() : undefined;
       if (held) return json({ error: held }, 409);
     }
     if (p.startsWith("/api/admin/")) return adminApi(stack, req, url, { forgetFlow: () => { session = undefined; } });

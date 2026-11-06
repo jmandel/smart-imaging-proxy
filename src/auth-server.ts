@@ -23,6 +23,8 @@ const userOf = (name: string): DemoUser | undefined => Object.hasOwn(USERS, name
 export const PATIENT_NAMES: Record<string, string> = { "josh-example": "Josh Example", "robin-example": "Robin Example" };
 export const APP_NAMES: Record<string, string> = { "portal-app": "Health Records App", "separate-viewer": "Separate Image Viewer" };
 /** Describes an account by what's in place now: "Patient", the delegations it holds, or neither. */
+export const RELATIONSHIPS = ["caregiver", "spouse", "adult child", "neighbor"];
+
 export function roleOf(u: DemoUser, held: { patient: string; relationship?: string }[]) {
   if (u.patient) return "Patient";
   if (!held.length) return "Related person, nothing shared yet";
@@ -274,7 +276,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     const shareForm = ownSites.length ? `<form method="post" action="/account/delegations${q}">
         <fieldset><legend>Share with a related person</legend>
           <label class="field">Person <select name="delegate">${others.map(([id, u]) => `<option value="${esc(id)}">${esc(u.name)}</option>`).join("")}</select></label>
-          <label class="field">Relationship <select name="relationship"><option>caregiver</option><option>spouse</option><option>adult child</option><option>neighbor</option></select></label>
+          <label class="field">Relationship <select name="relationship">${RELATIONSHIPS.map(r => `<option>${esc(r)}</option>`).join("")}</select></label>
           <p class="legend">Sites they can see</p>${siteBoxes(ownSites)}
           <div class="buttons"><button class="primary">Share</button></div>
         </fieldset>
@@ -310,6 +312,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     const user = USERS[name!]!;
     if (url.pathname === "/account/delegations") {
       const delegate = f.get("delegate") ?? "";
+      if (!check("authorization-server", "relationship is one of the offered choices", RELATIONSHIPS.includes(f.get("relationship") ?? ""), { relationship: f.get("relationship") })) return page("Not allowed", "<h1>Pick a relationship from the list</h1>", 400);
       if (!check("authorization-server", "user can delegate: they're the patient, and the delegate has an account", !!user.patient && !!userOf(delegate) && delegate !== name, { user: name, delegate })) return page("Not allowed", "<h1>Only a patient can delegate their records</h1>", 403);
       await opts.directory.delegate({ patient: user.patient!, grantedBy: name!, fhirUser: user.fhirUser, delegate, relationship: f.get("relationship") || "related person", sites: f.getAll("sites") });
     } else if (url.pathname === "/account/delegations/revoke") await opts.directory.revokeDelegation(name!, f.get("delegate") ?? "");

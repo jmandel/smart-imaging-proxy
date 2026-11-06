@@ -1,5 +1,6 @@
 // The god-mode collector. It takes spans from the services, streams them live over SSE, and keeps
 // them in a TraceStore. The stream doesn't depend on the store, so a storage problem can't stop it.
+import { LISTEN_HOSTS, PORTS } from "./config";
 import { join } from "node:path";
 import type { SpanRecord } from "./trace";
 import { summaryOf, TraceStore, type TraceStoreConfig } from "./trace-store";
@@ -8,8 +9,11 @@ const PAGES: Record<string, string> = { "/live.js": "web/live.js", "/live.css": 
 
 const json = (text: string) => new Response(text, { headers: { "content-type": "application/json;charset=utf-8" } });
 const publicSession = ({ id, startedAt, lastAt, spans }: { id: string; startedAt: number; lastAt: number; spans: number }) => ({ id, startedAt, lastAt, spans });
-/** A cross-site page can't clear traces. */
-const sameOrigin = (req: Request, url: URL) => { const o = req.headers.get("origin"); return !o || o === url.origin; };
+/** Traces change only through this service's own address, so a cross-site or rebinding page can't. */
+const ownHosts = () => [...LISTEN_HOSTS.map(h => `${h}:${PORTS.trace}`), `localhost:${PORTS.trace}`];
+// A browser always sends Host, so only a rebinding page's own name has to be refused.
+const ownHost = (req: Request) => { const h = req.headers.get("host"); return !h || ownHosts().includes(h); };
+const sameOrigin = (req: Request, url: URL) => { const o = req.headers.get("origin"); return ownHost(req) && (!o || o === url.origin); };
 
 /** With no store config, traces are in memory: only src/main.ts reads the TRACE_* settings. */
 export function createCollector(root: string, config: TraceStoreConfig = { mode: "memory" }) {
@@ -34,7 +38,12 @@ export function createCollector(root: string, config: TraceStoreConfig = { mode:
   const fetchHandler = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
     const p = url.pathname;
-    if (p === "/v1/spans" && req.method === "POST") { ingest(await req.json() as SpanRecord[]); return new Response(null, { status: 202 }); }
+    if (p === "/v1/spans" && req.method === "POST") {
+      // Services send spans. A browser always names an origin, and has no reason to send any.
+      if (req.headers.get("origin") || !ownHost(req)) return new Response(null, { status: 403 });
+      ingest(await req.json() as SpanRecord[]);
+      return new Response(null, { status: 202 });
+    }
     if (p === "/" || p === "/live") return page("web/live.html");
     if (PAGES[p]) return page(PAGES[p]!);
     if (p === "/api/stats") return Response.json(store.stats());
