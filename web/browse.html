@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Browse Studies</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header>
+  <div><h1><a class="home-link" href="/browse">Browse studies</a></h1><p>Pick a person or a backend client. Their real sign-in and search run against the Imaging Server.</p></div>
+  <span id="store-badge" class="store-badge" role="status"></span>
+  <a class="admin-link" href="/">Demo home</a>
+  <a class="admin-link" href="/admin">Admin</a>
+  <a class="live-link" id="live-link" href="#" target="smart-imaging-live" rel="noopener">Open live trace ↗</a>
+  <label class="backend">Backend <select id="backend"></select></label>
+</header>
+<main class="browse">
+  <section class="pick" aria-labelledby="h-pick">
+    <h2 id="h-pick">Pick who</h2>
+    <p id="store-note" class="store-note" hidden></p>
+    <div id="pick"><p class="note">Loading the accounts…</p></div>
+  </section>
+  <section class="results" id="results" aria-labelledby="h-results">
+    <h2 id="h-results" tabindex="-1">Studies</h2>
+    <p id="announce" class="sr-only" role="status"></p>
+    <div id="result"><p class="note">Pick someone, and their studies appear here.</p></div>
+  </section>
+</main>
+<script src="/browse.js"></script>
+</body>
+</html>

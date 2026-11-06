@@ -164,14 +164,14 @@ export async function tfetch(service: Service, name: string, url: string, init: 
 }
 
 /** Wraps an HTTP service: continues the caller's trace, and records a server span. */
-export function traced(service: Service, handler: (req: Request, span: SpanHandle) => Promise<Response> | Response, nameOf?: (req: Request, url: URL) => string, contextFor?: () => Partial<Current> | undefined) {
+export function traced(service: Service, handler: (req: Request, span: SpanHandle) => Promise<Response> | Response, nameOf?: (req: Request, url: URL) => string, contextFor?: (req: Request, url: URL) => Partial<Current> | undefined) {
   return async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
     // A browser redirect can't carry trace headers, so the demo passes them as query parameters.
     const tp = (req.headers.get("traceparent") ?? url.searchParams.get("demo_traceparent"))?.match(/^00-([0-9a-f]{32})-([0-9a-f]{16})-/);
     const session = url.searchParams.get("demo_session") || decodeURIComponent(req.headers.get("baggage")?.match(/demo\.session=([^,;]+)/)?.[1] ?? "unattributed");
     // A request that carries no context can belong to whatever its service knows is waiting for it.
-    const known = tp ? undefined : contextFor?.();
+    const known = tp ? undefined : contextFor?.(req, url);
     const parent = tp ? { session, trace: tp[1]!, span: tp[2]! } : { session: known?.session ?? session, trace: known?.trace ?? hex(16), span: known?.span ?? (undefined as unknown as string) };
     const path = url.pathname.replace(/\/wado\/[^/]+/, "/wado/{ctx}");
     const s = startSpan(service, "server", nameOf?.(req, url) ?? `${req.method} ${path}`, { path }, parent);

@@ -8,6 +8,7 @@ import { CONFIG } from "./config";
 import { adminApi, readJson, refuseWrite, BACKEND_NAMES } from "./admin-api";
 import { PolicyValidationError } from "./policy-store";
 import type { BackendClient } from "./auth-server";
+import { createBrowse } from "./browse";
 
 const SERVICES = { proxy: CONFIG.proxyUrl, imaging: CONFIG.imagingUrl, authorization: CONFIG.authUrl, "live trace": CONFIG.traceUrl };
 const json = (b: unknown, status = 200) => Response.json(b, { status });
@@ -18,10 +19,12 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
 
   // The redirect URI the demo app registered. Flows check `state` when they receive it. The redirect
   // is a real protocol message with no trace fields, so its span joins the flow waiting on it.
+  const browse = createBrowse(stack, clients, { flowRunning: () => session?.running });
   const callback = traced("app", async req => {
-    session?.ctx.resolveCallback?.(new URL(req.url));
+    const back = new URL(req.url);
+    if (!browse.receiveCallback(back)) session?.ctx.resolveCallback?.(back);
     return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Back in the app</title></head><body style="font:15px system-ui;padding:2rem"><p>Back in the app. You can close this window.</p><script>window.close()</script></body></html>`, { headers: { "content-type": "text/html" } });
-  }, (_req, url) => `Redirect back to the app: ${url.pathname}`, () => session?.ctx.callbackContext ?? (session ? { session: session.ctx.session } : undefined));
+  }, (_req, url) => `Redirect back to the app: ${url.pathname}`, (_req, url) => browse.callbackContext(url) ?? session?.ctx.callbackContext ?? (session ? { session: session.ctx.session } : undefined));
 
   async function ensureSession(flowId: string, restart: boolean) {
     const flow = flowById(flowId);
@@ -47,7 +50,15 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     if (p === "/styles.css") return file("styles.css");
     if (p === "/admin") return file("admin.html");
     if (p === "/admin.js") return file("admin.js");
+    if (p === "/browse") return file("browse.html");
+    if (p === "/browse.js") return file("browse.js");
+    if (p.startsWith("/api/browse/")) return browse.fetch(req, url);
     if (p === "/oauth/callback") return callback(req);
+    // Leaving saved policy would end a Browse sign-in partway through.
+    if (p === "/api/admin/store/activate" && req.method === "POST") {
+      const held = browse.holdStore();
+      if (held) return json({ error: held }, 409);
+    }
     if (p.startsWith("/api/admin/")) return adminApi(stack, req, url, { forgetFlow: () => { session = undefined; } });
     if (p === "/api/pending-authorization") return json({ url: session?.ctx.pendingAuthUrl ?? null });
     if (p === "/api/session") return json({ session: session?.ctx.session ?? null, flow: session?.flowId ?? null, traceUrl: CONFIG.traceUrl });
@@ -85,6 +96,8 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     }
     const start = p.match(/^\/api\/flows\/([^/]+)\/start$/);
     if (start && req.method === "POST") {
+      const held = browse.holdStore();
+      if (held) return json({ error: held }, 409);
       const s = await ensureSession(start[1]!, true);
       if (!s) return json({ error: "unknown flow" }, 404);
       return json({ steps: stepInfo(s.flow, s.ctx), policy: stack.imaging.getPolicy(), session: s.ctx.session, store: storeStatus() });
@@ -95,6 +108,8 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       if (session && session.flowId !== step[1]) return json({ error: "another flow has started since this page loaded: reload to see it" }, 409);
       if (session?.running) return json({ error: `the step "${session.running}" is still running` }, 409);
       if (session?.completed[step[2]!]) return json({ error: "this step has already run: reload to see its result" }, 409);
+      const held = browse.holdStore();
+      if (held) return json({ error: held }, 409);
       if (session) session.running = step[2]!; // Set before anything can yield, so a second tab sees it.
       const s = await ensureSession(step[1]!, false);
       if (!s) return json({ error: "unknown flow" }, 404);

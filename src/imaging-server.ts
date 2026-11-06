@@ -79,6 +79,35 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
     return { records, delegations: delegations.filter(d => d.grantedBy === user), apps: appGrants.filter(g => g.user === user) };
   }
 
+  /**
+   * What the same `evaluate` that search uses decides for each of a patient's studies, for one client
+   * and, for a launch, one user. Only the demo calls this, to show why a list looks as it does.
+   */
+  function explain(url: URL): Response {
+    const client = url.searchParams.get("client"), user = url.searchParams.get("user"), fhirUser = url.searchParams.get("fhirUser"), patient = url.searchParams.get("patient");
+    if (!client || !patient || (user && !fhirUser)) return Response.json({ error: "client and patient are required, and a user needs a fhirUser" }, { status: 400 });
+    const t = user ? { client_id: client, sub: user, fhirUser, patient } : { client_id: client };
+    const policy = policyRows();
+    const rule = matchRule(t, patient, policy);
+    const studies = [...candidates(opts.catalog(), { patient })].map(study => {
+      const ev = evaluate(t, study, policy);
+      const released = typeof ev.release === "object" ? new Set(ev.release.series) : undefined;
+      return {
+        id: study.id, title: study.title, description: study.description, date: study.date, site: study.site, status: study.status,
+        modalities: [...new Set(study.series.map(s => s.modality))], seriesCount: study.seriesCount, instanceCount: study.instanceCount,
+        release: ev.release, reason: ev.why, chain: ev.chain ?? [], rule: ev.rule?.id,
+        withheldSeries: released ? study.series.filter(s => !released.has(s.uid)).map(s => ({ uid: s.uid, number: s.number, modality: s.modality, instanceCount: s.instanceCount })) : [],
+      };
+    });
+    return Response.json({
+      client, user: user ?? undefined, fhirUser: fhirUser ?? undefined, patient, level: user ? "patient" : "system",
+      searchAllowed: !!user || !!rule, rule,
+      delegation: user ? policy.delegations.find(d => d.delegate === user && d.patient === patient) : undefined,
+      appGrant: user ? policy.appGrants.find(g => g.client === client && g.user === user && g.patient === patient) : undefined,
+      studies,
+    });
+  }
+
   function evaluateRule(t: any, study: CatalogStudy, policy: PolicyRows): Evaluation {
     if (t.patient && t.patient === study.patient) {
       // A study with no site is outside every list of sites.
@@ -333,6 +362,7 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
         if (req.headers.get("authorization") !== `Bearer ${opts.serviceSecret}`) return new Response(null, { status: 401 });
         if (p === "/internal/relationships") return Response.json(opts.store().delegations().map(d => ({ patient: d.patient, delegate: d.delegate, relationship: d.relationship })));
         if (p === "/internal/access") return Response.json(accessFor(url.searchParams.get("user") ?? "", url.searchParams.get("fhirUser") ?? ""));
+        if (p === "/internal/explain") return explain(url);
         if (p === "/internal/delegations" && req.method === "POST") {
           const d: any = await req.json();
           if (!check("policy", "only the patient can delegate their records", d.fhirUser === `Patient/${d.patient}`, { user: d.grantedBy, patient: d.patient })) return new Response(null, { status: 403 });

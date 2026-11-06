@@ -23,6 +23,7 @@ bun run start
 | What | Where |
 |---|---|
 | Flow player | http://127.0.0.1:4600 |
+| Browse studies | http://127.0.0.1:4600/browse |
 | Live trace | http://127.0.0.1:4604 |
 | WADO-RS proxy | http://127.0.0.1:4601 |
 | Imaging Server | http://127.0.0.1:4602 |
@@ -36,6 +37,15 @@ BACKENDS=static-files bun test         # one backend
 ```
 
 Everything is rebuildable. `/tmp` storage doesn't survive a reboot, so rerun the steps above if it's gone.
+
+## Browse studies
+
+`/browse` is the place to start exploring. Pick one of the sign-in accounts or a registered backend client, and the demo server runs a real SMART launch or Backend Services token request, then a real `GET /fhir/ImagingStudy` that follows the Bundle's `next` links. The token stays in the demo server's Browse session, and the page holds only an HttpOnly cookie.
+
+- **Saved policy:** starting a Browse session activates saved policy, unless a flow step is running, which gets a `409`. A later flow moves the demo to flow scratch, so the session's token gets a `401`, and the page offers to sign in again.
+- **Live trace:** each session has its own trace session, named like `browse-josh-1a2b3c`, and the page links to it.
+- **The Imaging Server's view:** `GET /internal/explain` takes `client`, `user`, `fhirUser` and `patient`, and needs the service credential. It runs search's `evaluate` over the patient's catalog rows, and returns each study's release, reason and chain. The panel on the page is demo-only: an app never sees it.
+- **Retrieve:** the demo server retrieves through the proxy from the Bundle's `Endpoint.address`, as a client that accepts zstd or one that doesn't, and counts the response as it streams.
 
 ## The archive
 
@@ -66,8 +76,9 @@ reports/quarantine.json                                       inputs left out of
 | `src/archive/` | The archive format: its contract, reader, object stores, and ingest |
 | `src/backends/` | Static files and MinIO (`archive.ts`), and Orthanc (`orthanc.ts`) |
 | `src/flows/` | The flows, shared by the web page and tests |
+| `src/browse.ts` | The Browse page's sessions and API |
 | `src/trace.ts`, `src/trace-collector.ts` | Spans, correlation, and the live stream |
-| `web/` | The flow player and live trace pages |
+| `web/` | The flow player, Browse, admin, and live trace pages |
 
 ## Limits
 

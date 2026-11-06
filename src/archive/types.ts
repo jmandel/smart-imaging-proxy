@@ -147,6 +147,8 @@ export interface CatalogStore {
   /** FHIR Patient for a source identity, if it's linked. */
   patientFor(source: string, sourcePatientId: string): string | undefined;
   linkPatient(source: string, sourcePatientId: string, patient: string): void;
+  /** Every FHIR Patient some source identity links to. */
+  linkedPatients(): string[];
   /** The sites one patient has studies at. */
   sitesFor(patient: string): string[];
   /** Every study, for the demo's own displays and for tests. Search must not use this. */

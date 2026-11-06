@@ -20,7 +20,15 @@ export const USERS: Record<string, DemoUser> = {
   "alex-neighbor": { name: "Alex Neighbor", fhirUser: "RelatedPerson/alex-neighbor" },
 };
 const userOf = (name: string): DemoUser | undefined => Object.hasOwn(USERS, name) ? USERS[name] : undefined;
-const PATIENT_NAMES: Record<string, string> = { "josh-example": "Josh Example", "robin-example": "Robin Example" };
+export const PATIENT_NAMES: Record<string, string> = { "josh-example": "Josh Example", "robin-example": "Robin Example" };
+export const APP_NAMES: Record<string, string> = { "portal-app": "Health Records App", "separate-viewer": "Separate Image Viewer" };
+/** Describes an account by what's in place now: "Patient", the delegations it holds, or neither. */
+export function roleOf(u: DemoUser, held: { patient: string; relationship?: string }[]) {
+  if (u.patient) return "Patient";
+  if (!held.length) return "Related person, nothing shared yet";
+  const line = held.map(r => `${r.relationship ?? "related person"} for ${PATIENT_NAMES[r.patient] ?? r.patient}`).join(", ");
+  return line[0]!.toUpperCase() + line.slice(1);
+}
 
 export interface AccessSummary {
   records: { patient: string; via: "self" | "delegation"; relationship?: string; sites: string[] }[];
@@ -92,8 +100,8 @@ form.inline{display:inline}
 
 export function createAuthServer(opts: { issuer: string; imagingFhirBase: string; serviceSecret: string; redirectUri: string; directory: Directory; store: () => PolicyStore; storeLabel: () => string }) {
   const PUBLIC_CLIENTS: Record<string, { name: string; redirectUris: string[] }> = {
-    "portal-app": { name: "Health Records App", redirectUris: [opts.redirectUri] },
-    "separate-viewer": { name: "Separate Image Viewer", redirectUris: [opts.redirectUri] },
+    "portal-app": { name: APP_NAMES["portal-app"]!, redirectUris: [opts.redirectUri] },
+    "separate-viewer": { name: APP_NAMES["separate-viewer"]!, redirectUris: [opts.redirectUri] },
   };
   const txns = new Map<string, { client_id: string; redirect_uri: string; state: string; scope: string; code_challenge: string; exp: number; user?: string; login_hint?: string }>();
   const accountSessions = new Map<string, string>();
@@ -138,13 +146,6 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
 
   const demoQuery = (url: URL) => { const q = new URLSearchParams(); for (const k of ["demo_traceparent", "demo_session", "return"]) if (url.searchParams.get(k)) q.set(k, url.searchParams.get(k)!); const s = q.toString(); return s ? `&${s}` : ""; };
   const redirectTo = (location: string) => new Response(null, { status: 303, headers: { Location: location } });
-  /** Describes an account by what's in place now: "Patient", the delegations it holds, or neither. */
-  const roleOf = (u: DemoUser, held: { patient: string; relationship?: string }[]) => {
-    if (u.patient) return "Patient";
-    if (!held.length) return "Related person, nothing shared yet";
-    const line = held.map(r => `${r.relationship ?? "related person"} for ${PATIENT_NAMES[r.patient] ?? r.patient}`).join(", ");
-    return line[0]!.toUpperCase() + line.slice(1);
-  };
   const initials = (name: string) => name.split(/\s+/).map(w => w[0]).join("").slice(0, 2).toUpperCase();
   /** The account picker. It's a plain form, so it works with no script. */
   const signInForm = async (action: string, hint = "", error = "") => {
@@ -257,8 +258,10 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
   const appName = (id: string) => PUBLIC_CLIENTS[id]?.name ?? id;
 
   async function account(url: URL, req: Request): Promise<Response> {
-    const name = accountUser(req);
     const hint = url.searchParams.get("login_hint") ?? "";
+    // A link meant for another account asks for that account, rather than showing the one signed in.
+    const signedIn = accountUser(req);
+    const name = hint && signedIn !== hint ? undefined : signedIn;
     const q = demoQuery(url).replace(/^&/, "?");
     const returnTo = url.searchParams.get("return") === opts.redirectUri ? opts.redirectUri : undefined;
     if (!name) return page("Sign in", `<h1>Sign in to your account</h1>${await signInForm(`/account/signin${q}${hint ? `${q ? "&" : "?"}login_hint=${encodeURIComponent(hint)}` : ""}`, hint)}`);

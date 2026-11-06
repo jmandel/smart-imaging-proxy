@@ -134,6 +134,7 @@ export function createCatalog(path: string = ":memory:"): CatalogStore {
     studyByUid(uid) { return withSeries(db.query(`SELECT ${STUDY_COLUMNS} FROM studies s WHERE s.uid = ?`).all(uid) as any[])[0]; },
     patientFor(source, sourcePatientId) { return (db.query("SELECT patient FROM patient_links WHERE source = ? AND source_patient_id = ?").get(source, sourcePatientId) as any)?.patient; },
     linkPatient(source, sourcePatientId, patient) { db.run("INSERT INTO patient_links (source, source_patient_id, patient) VALUES (?1, ?2, ?3) ON CONFLICT (source, source_patient_id) DO UPDATE SET patient = ?3", [source, sourcePatientId, patient]); },
+    linkedPatients() { return (db.query("SELECT DISTINCT patient FROM patient_links ORDER BY patient").all() as any[]).map(r => r.patient); },
     sitesFor(patient) { return (db.query("SELECT DISTINCT site FROM studies WHERE patient = ? AND site IS NOT NULL ORDER BY site").all(patient) as any[]).map(r => r.site); },
     allStudies() { return withSeries(db.query(`SELECT ${STUDY_COLUMNS} FROM studies s ORDER BY s.pk`).all() as any[]); },
     stats() {

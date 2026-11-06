@@ -52,7 +52,7 @@ function renderNav() {
 }
 function renderIntro(services) {
   document.querySelector(".live-link").href = services["live trace"];
-  $("#main").innerHTML = `<section class="intro"><h2>How this works</h2>
+  $("#main").innerHTML = `<section class="intro"><div class="browse-cta"><p><b>Start here:</b> pick a person or a backend client, and see the studies they can reach, from a real sign-in and search.</p><a class="button" href="/browse">Browse studies</a></div><h2>How this works</h2>
   <p>An app gets a signed URL from the Imaging Server's search. The proxy in front of the image store either answers from that URL, instantly, or asks the Imaging Server. It holds a public key and no policy.</p>
   <div class="grid">
     <div class="card"><h3>Instant</h3>The signature, expiry, study and token hash all check out. No network call.</div>
@@ -71,7 +71,8 @@ function renderIntro(services) {
 }
 
 async function openFlow(id) {
-  showFlow(id, await post(`/api/flows/${id}/start`));
+  try { showFlow(id, await post(`/api/flows/${id}/start`)); }
+  catch (e) { $("#main").innerHTML = `<p class="error" role="alert">${esc(e.message)}</p>`; }
 }
 function restoreFlow(state) {
   showFlow(state.flow, state);

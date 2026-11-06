@@ -163,6 +163,13 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
       const told = await tfetch("demo", "tell the proxy to refetch signing keys", `${CONFIG.proxyUrl}/internal/keys/refresh`, { method: "POST", headers: { Authorization: `Bearer ${serviceSecret}` } }).then(r => r.ok, () => false);
       return { kid, proxyTold: told };
     },
+    /** The Imaging Server's view of why a study is or isn't released, asked with the service credential. */
+    async explain(q: { client: string; user?: string; fhirUser?: string; patient: string }) {
+      const query = new URLSearchParams(Object.entries(q).filter((e): e is [string, string] => !!e[1]));
+      const r = await tfetch("demo", "the demo asks for the Imaging Server's view", `${CONFIG.imagingUrl}/internal/explain?${query}`, { headers: { Authorization: `Bearer ${serviceSecret}` } });
+      if (!r.ok) { await r.body?.cancel(); throw new Error(`the Imaging Server answered ${r.status}`); }
+      return r.json() as Promise<any>;
+    },
     useStore,
     purgeTokens,
     /** Empties the scratch store. The saved store isn't touched, and the active store doesn't change. */

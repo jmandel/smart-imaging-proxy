@@ -35,6 +35,10 @@ export class Ctx {
   session = "unattributed";
   pendingAuthUrl: string | undefined;
   resolveCallback: ((u: URL) => void) | undefined;
+  /** Ends a wait on a browser window, with this as the launch's error. */
+  cancelWindow: ((why: string) => void) | undefined;
+  /** Who signed in during the last launch, which a person in a window chooses for themselves. */
+  signedIn: string | undefined;
   /** The step span waiting on a browser redirect, which can't carry any trace context of its own. */
   callbackContext: ReturnType<typeof currentContext> | undefined;
   exchanges: Exchange[] = [];
@@ -87,18 +91,19 @@ export class Ctx {
    * A real SMART standalone launch: discovery, authorization request with PKCE, consent, redirect,
    * and code exchange. With `window`, a person approves in a real browser window.
    */
-  async launch(user: string, client = "portal-app", opts: { sites?: string[]; window?: boolean } = {}) {
+  async launch(user: string, client = "portal-app", opts: { sites?: string[]; window?: boolean; patient?: string } = {}) {
     const actor = client === "portal-app" ? "App" : client;
     const conf = await this.json(actor, "Discover the authorization endpoints", `${CLINICAL_FHIR}/.well-known/smart-configuration`);
     const a = withSpanSync("app", "Generate PKCE verifier, S256 challenge, and state", () => buildAuthorization(conf.body.authorization_endpoint, client, undefined, this.traceFields(), user));
     const shown = a.url.replace(/&demo_[^&]+/g, "");
     const back = opts.window
       ? await this.inWindow(a.url)
-      : await withSpan("user", "action", `Browser: ${user} signs in and approves`, { user, sites: opts.sites?.join(", ") }, () => submitConsent(a.url, { user, sites: opts.sites }, browserFetch));
+      : await withSpan("user", "action", `Browser: ${user} signs in and approves`, { user, sites: opts.sites?.join(", ") }, () => submitConsent(a.url, { user, sites: opts.sites, patient: opts.patient }, browserFetch));
     const redirected = `It redirected back with ${back.searchParams.get("code") ? "a single-use code" : `error ${back.searchParams.get("error")}`}.`;
     const browser: Exchange = { title: "Browser: authorization request, sign-in, and approval", actor: "User's browser", method: "GET", url: shown, requestHeaders: {}, status: back.searchParams.get("code") ? 302 : "denied", responseHeaders: {}, summary: `${opts.window ? "A person used the Authorization Server's pages in a window" : `Authorization Server's pages: ${user} signed in`}. ${redirected}` };
     this.exchanges.push(browser);
     const signedIn = this.stack.auth.signedInFor(a.state);
+    this.signedIn = signedIn;
     if (opts.window) {
       if (signedIn) browser.summary = `Authorization Server's pages: ${signedIn} signed in${back.searchParams.get("code") ? " and approved" : ""}. ${redirected}`;
       this.checkAccount(signedIn, user);
@@ -114,12 +119,14 @@ export class Ctx {
   private async inWindow(url: string): Promise<URL> {
     this.pendingAuthUrl = url;
     this.callbackContext = currentContext();
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       return await new Promise<URL>((resolve, reject) => {
         this.resolveCallback = resolve;
-        setTimeout(() => reject(new Error("timed out waiting for you in the other window")), 300000);
+        this.cancelWindow = why => reject(new Error(why));
+        timer = setTimeout(() => reject(new Error("timed out waiting for you in the other window")), 300000);
       });
-    } finally { this.pendingAuthUrl = undefined; this.resolveCallback = undefined; this.callbackContext = undefined; }
+    } finally { clearTimeout(timer); this.pendingAuthUrl = undefined; this.resolveCallback = undefined; this.cancelWindow = undefined; this.callbackContext = undefined; }
   }
   private traceFields() { const x = currentContext(); return x ? { traceparent: traceparentOf(x), session: x.session } : undefined; }
 
@@ -211,7 +218,7 @@ export class Ctx {
   studyUrl(base: string, uid: string, rest = "") { return `${base}/studies/${uid}${rest}`; }
 }
 
-const browserFetch = ((url: string, init: any) => tfetch("user", `Browser: ${init?.method === "POST" ? "submit a form" : "open a page"} ${new URL(url).pathname}`, url, init)) as unknown as typeof fetch;
+export const browserFetch = ((url: string, init: any) => tfetch("user", `Browser: ${init?.method === "POST" ? "submit a form" : "open a page"} ${new URL(url).pathname}`, url, init)) as unknown as typeof fetch;
 const withSpanSync = <T>(service: "app", name: string, fn: () => T, describe?: (v: T) => Record<string, unknown>): T => { const s = startSpan(service, "internal", name); const v = fn(); s.end("ok", describe?.(v)); return v; };
 const actorService = (actor: string) => (actor === "Authorization Server" ? "app" : "app") as "app";
 function redactBody(b: any) {
