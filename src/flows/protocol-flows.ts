@@ -1,3 +1,4 @@
+import { tfetch } from "../trace";
 import { EVRLE, JPEG_BASELINE, JPEG_LOSSLESS, J2K_LOSSLESS, PRIVATE_DEMO, isStandard } from "../syntax";
 import { ACCEPT_ANY, studyOptions, type Flow, type Ctx } from "./runtime";
 import { CONFIG } from "../config";
@@ -185,7 +186,7 @@ export const protocolFlows: Flow[] = [
         } },
       { id: "no-accept", title: "No Accept header", actor: "App", doc: `<p>PS3.18 §8.7.5 says a request without an <code>Accept</code> header gets <code>406</code>. Research found both Orthanc and dcm4chee return <code>200</code> instead.</p>`, run: async c => {
         const s = c.state.studies[WRIST];
-        const res = await fetch(c.studyUrl(s.base, s.uid), { headers: { Authorization: `Bearer ${c.state.token}`, Accept: "" } });
+        const res = await tfetch("app", "Retrieve with an empty Accept header", c.studyUrl(s.base, s.uid), { headers: { Authorization: `Bearer ${c.state.token}`, Accept: "" } });
         await res.body?.cancel();
         c.exchanges.push({ title: "Empty Accept", actor: "App", method: "GET", url: "(study URL)", requestHeaders: {}, status: res.status, responseHeaders: {} });
         c.check("406", res.status === 406, `status ${res.status}`);
@@ -251,11 +252,11 @@ export const protocolFlows: Flow[] = [
       } },
       { id: "bulk", title: "Follow a bulk data link", actor: "App", doc: `<p>A bulk route has the same authorization as everything else. Without one, the rewritten links would <code>404</code>.</p>`, run: async c => {
         const start = performance.now();
-        const res = await fetch(c.state.uri, { headers: { Authorization: `Bearer ${c.state.token}`, Accept: "multipart/related; type=application/octet-stream" } });
+        const res = await tfetch("app", "Retrieve the BulkDataURI", c.state.uri, { headers: { Authorization: `Bearer ${c.state.token}`, Accept: "multipart/related; type=application/octet-stream" } });
         const bytes = (await res.arrayBuffer()).byteLength;
         c.exchanges.push({ title: "Follow BulkDataURI", actor: "App", method: "GET", url: c.state.uri.replace(/\/wado\/([^/]{16})[^/]*\//, "/wado/$1…/"), requestHeaders: { Accept: "multipart/related; type=application/octet-stream" }, status: res.status, responseHeaders: Object.fromEntries(res.headers), summary: `${(bytes / 1e6).toFixed(1)} MB of bulk data`, ms: Math.round(performance.now() - start) });
         c.check("Bulk data returned", res.status === 200 && bytes > 1000, `${bytes} bytes`);
-        const denied = await fetch(c.state.uri);
+        const denied = await tfetch("app", "Retrieve the BulkDataURI with no token", c.state.uri);
         await denied.body?.cancel();
         c.check("It needs a token too", denied.status === 401, `status ${denied.status}`);
       } },

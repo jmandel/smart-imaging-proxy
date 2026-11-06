@@ -1,13 +1,14 @@
 // Everything a flow step does goes over HTTP to the real services, and is recorded for display.
 import { boundaryOf, readMultipart } from "../multipart";
-import { startSpan, tfetch, withSpan, check as traceCheck } from "../trace";
+import { currentContext, startSpan, tfetch, traceparentOf, withSpan, check as traceCheck } from "../trace";
+import { accountUrl, buildAuthorization, CLINICAL_FHIR, submitConsent, submitDelegation, submitRevocation, tokenRequestBody } from "./oauth";
 import { clientAssertion, type BackendClient } from "../auth-server";
 import { CONFIG } from "../config";
 import { advance, resetClock } from "../clock";
 import { SITES, type Rule } from "../imaging-server";
 import type { Stack } from "../stack";
 
-export interface Input { id: string; label: string; type: "select" | "multi" | "text"; options?: { value: string; label: string }[]; default?: any; help?: string; }
+export interface Input { id: string; label: string; type: "select" | "multi" | "text"; options?: { value: string; label: string }[]; default?: any; clickDefault?: any; help?: string; }
 export interface Check { label: string; ok: boolean; detail?: string; }
 export interface Exchange {
   title?: string; actor: string; method: string; url: string; requestHeaders: Record<string, string>; requestBody?: string;
@@ -32,6 +33,10 @@ export interface Retrieval { status: number; complete: boolean; parts: { syntax?
 export class Ctx {
   state: Record<string, any> = {};
   session = "unattributed";
+  pendingAuthUrl: string | undefined;
+  resolveCallback: ((u: URL) => void) | undefined;
+  /** The step span waiting on a browser redirect, which can't carry any trace context of its own. */
+  callbackContext: ReturnType<typeof currentContext> | undefined;
   exchanges: Exchange[] = [];
   checks: Check[] = [];
   private decisionStart = 0;
@@ -39,7 +44,19 @@ export class Ctx {
   get manifest() { return this.stack.manifest; }
   get backend() { return this.stack.backend; }
   study(id: string) { return this.manifest.studies.find((s: any) => s.id === id); }
-  check(label: string, ok: boolean, detail?: string) { this.checks.push({ label, ok, detail }); traceCheck("demo", `expected: ${label}`, ok, { detail }); }
+  /** Set once a person in a window picks an account other than the one a step expects. */
+  accountNote: string | undefined;
+  check(label: string, ok: boolean, detail?: string) {
+    // A failure after someone chose another account reads as the result of that choice.
+    if (!ok && this.accountNote && !detail?.includes(this.accountNote)) detail = detail ? `${detail}. ${this.accountNote}` : this.accountNote;
+    this.checks.push({ label, ok, detail });
+    traceCheck("demo", `expected: ${label}`, ok, { detail });
+  }
+  private checkAccount(actual: string | undefined, expected: string) {
+    const same = actual === expected;
+    this.accountNote = same ? undefined : `${actual ?? "No one"} signed in, and this step expected ${expected}`;
+    this.check("Signed in with the account this step expects", same, this.accountNote ?? expected);
+  }
   setRules(rules: Rule[]) { this.stack.imaging.setPolicy({ rules }); }
   advanceClock(seconds: number) { advance(seconds); }
   beginStep() { this.exchanges = []; this.checks = []; this.decisionStart = this.stack.imaging.decisions.length; }
@@ -53,18 +70,67 @@ export class Ctx {
     const text = await res.text();
     let body: unknown = text;
     try { body = text ? JSON.parse(text) : undefined; } catch {}
-    this.exchanges.push({ title, actor, method: init.method ?? "GET", url: shortUrl(url), requestHeaders: redact(init.headers ?? {}), requestBody: typeof init.body === "string" ? init.body.replace(/(client_assertion=)[^&]+/, "$1…").replace(/(refresh_token=)[^&]+/, "$1…") : undefined, status: res.status, responseHeaders: Object.fromEntries(res.headers), body: redactBody(body), ms: Math.round(performance.now() - start) });
+    this.exchanges.push({ title, actor, method: init.method ?? "GET", url: shortUrl(url), requestHeaders: redact(init.headers ?? {}), requestBody: typeof init.body === "string" ? init.body.replace(/(client_assertion=)[^&]+/, "$1…").replace(/(refresh_token=)[^&]+/, "$1…").replace(/(code=)[^&]+/, "$1…").replace(/(code_verifier=)[^&]+/, "$1…") : undefined, status: res.status, responseHeaders: Object.fromEntries(res.headers), body: redactBody(body), ms: Math.round(performance.now() - start) });
     return { status: res.status, body: body as any, headers: res.headers };
   }
 
-  /** Simulated App Launch: the user has signed in and approved. */
-  async launch(user: string, client = "portal-app", patient = "josh-example") {
-    const r = await this.json("Authorization Server", `App Launch completes for ${user}`, `${CONFIG.authUrl}/_demo/consent`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ client_id: client, user, patient, fhirUser: `Patient/${user}`, scope: "launch/patient patient/ImagingStudy.rs online_access" }) });
+  /**
+   * A real SMART standalone launch: discovery, authorization request with PKCE, consent, redirect,
+   * and code exchange. With `window`, a person approves in a real browser window.
+   */
+  async launch(user: string, client = "portal-app", opts: { sites?: string[]; window?: boolean } = {}) {
+    const actor = client === "portal-app" ? "App" : client;
+    const conf = await this.json(actor, "Discover the authorization endpoints", `${CLINICAL_FHIR}/.well-known/smart-configuration`);
+    const a = withSpanSync("app", "Generate PKCE verifier, S256 challenge, and state", () => buildAuthorization(conf.body.authorization_endpoint, client, undefined, this.traceFields(), user));
+    const shown = a.url.replace(/&demo_[^&]+/g, "");
+    const back = opts.window
+      ? await this.inWindow(a.url)
+      : await withSpan("user", "action", `Browser: ${user} signs in and approves`, { user, sites: opts.sites?.join(", ") }, () => submitConsent(a.url, { user, sites: opts.sites }, browserFetch));
+    const redirected = `It redirected back with ${back.searchParams.get("code") ? "a single-use code" : `error ${back.searchParams.get("error")}`}.`;
+    const browser: Exchange = { title: "Browser: authorization request, sign-in, and approval", actor: "User's browser", method: "GET", url: shown, requestHeaders: {}, status: back.searchParams.get("code") ? 302 : "denied", responseHeaders: {}, summary: `${opts.window ? "A person used the Authorization Server's pages in a window" : `Authorization Server's pages: ${user} signed in`}. ${redirected}` };
+    this.exchanges.push(browser);
+    const signedIn = this.stack.auth.signedInFor(a.state);
+    if (opts.window) {
+      if (signedIn) browser.summary = `Authorization Server's pages: ${signedIn} signed in${back.searchParams.get("code") ? " and approved" : ""}. ${redirected}`;
+      this.checkAccount(signedIn, user);
+    }
+    this.check("Redirect's state matches the request", back.searchParams.get("state") === a.state);
+    const code = back.searchParams.get("code");
+    if (!code) return { error: back.searchParams.get("error") } as any;
+    const r = await this.json(actor, "Exchange the code, with the PKCE verifier", conf.body.token_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: tokenRequestBody(a, code) });
     return r.body;
   }
+
+  /** A person acts in a real browser window on the Authorization Server's own pages. */
+  private async inWindow(url: string): Promise<URL> {
+    this.pendingAuthUrl = url;
+    this.callbackContext = currentContext();
+    try {
+      return await new Promise<URL>((resolve, reject) => {
+        this.resolveCallback = resolve;
+        setTimeout(() => reject(new Error("timed out waiting for you in the other window")), 300000);
+      });
+    } finally { this.pendingAuthUrl = undefined; this.resolveCallback = undefined; this.callbackContext = undefined; }
+  }
+  private traceFields() { const x = currentContext(); return x ? { traceparent: traceparentOf(x), session: x.session } : undefined; }
+
+  /** A patient delegates to a related person, on the account page. */
+  async delegate(owner: string, delegate: string, relationship: string, sites: string[], opts: { window?: boolean } = {}) {
+    const url = accountUrl(owner, this.traceFields());
+    if (opts.window) { await this.inWindow(url); this.checkAccount(this.stack.auth.lastAccountSignIn, owner); }
+    else await withSpan("user", "action", `Browser: ${owner} signs in and shares with ${delegate}`, { sites: sites.join(", ") }, () => submitDelegation(url, { user: owner, delegate, relationship, sites }, browserFetch));
+    this.exchanges.push({ title: "Browser: sign in to the account page, and share", actor: "User's browser", method: "POST", url: url.replace(/[?&]demo_[^&]+/g, ""), requestHeaders: {}, status: 303, responseHeaders: {}, summary: `The delegation is kept at the Imaging Server, not in any token.` });
+  }
+  async revokeDelegation(owner: string, delegate: string) {
+    const url = accountUrl(owner, this.traceFields());
+    await withSpan("user", "action", `Browser: ${owner} revokes ${delegate}'s access`, {}, () => submitRevocation(url, { user: owner, delegate }, browserFetch));
+  }
+  /** SMART Backend Services: discovery, a signed assertion, and client_credentials. */
   async backendToken(clientId: string, scope = "system/ImagingStudy.rs") {
     const c = this.clients[clientId]!;
-    const r = await this.json(clientId, "SMART Backend Services token request", this.stack.auth.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "client_credentials", scope, client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: clientAssertion(c, this.stack.auth.tokenUrl) }).toString() });
+    const conf = await this.json(clientId, "Discover the token endpoint", `${CLINICAL_FHIR}/.well-known/smart-configuration`);
+    const assertion = withSpanSync("app", "Sign a client assertion with the client's private key (ES256)", () => clientAssertion(c, conf.body.token_endpoint), (j: string) => { const [h, b] = j.split("."); return { header: JSON.parse(Buffer.from(h!, "base64url").toString()), claims: JSON.parse(Buffer.from(b!, "base64url").toString()) }; });
+    const r = await this.json(clientId, "SMART Backend Services token request", conf.body.token_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "client_credentials", scope, client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: assertion }).toString() });
     return r.body;
   }
   async refresh(refreshToken: string) {
@@ -128,6 +194,8 @@ export class Ctx {
   studyUrl(base: string, uid: string, rest = "") { return `${base}/studies/${uid}${rest}`; }
 }
 
+const browserFetch = ((url: string, init: any) => tfetch("user", `Browser: ${init?.method === "POST" ? "submit a form" : "open a page"} ${new URL(url).pathname}`, url, init)) as unknown as typeof fetch;
+const withSpanSync = <T>(service: "app", name: string, fn: () => T, describe?: (v: T) => Record<string, unknown>): T => { const s = startSpan(service, "internal", name); const v = fn(); s.end("ok", describe?.(v)); return v; };
 const actorService = (actor: string) => (actor === "Authorization Server" ? "app" : "app") as "app";
 function redactBody(b: any) {
   if (b && typeof b === "object" && !Array.isArray(b)) {

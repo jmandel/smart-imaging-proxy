@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Live Trace</title><link rel="stylesheet" href="/live.css"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Live Trace</title><link rel="icon" href="data:,"><link rel="stylesheet" href="/live.css"></head>
 <body>
 <header>
   <div><h1>Live trace</h1><p id="state" role="status">Connecting…</p></div>
@@ -10,6 +10,8 @@
     <label><input type="checkbox" id="checks" checked> In-memory checks</label>
     <label><input type="checkbox" id="parts"> Per-part lines</label>
     <button id="pause">Pause</button>
+    <a id="export" class="action" download hidden>Export session</a>
+    <button id="clear">Clear traces</button>
   </div>
 </header>
 <div id="legend" class="legend"></div>
@@ -19,12 +21,18 @@
     <dt>Trace</dt><dd>One user action: a step. Its ID travels between services in the W3C <code>traceparent</code> header.</dd>
     <dt>Span</dt><dd>One timed piece of work, nested under the work that caused it.</dd>
     <dt>Action</dt><dd>What the user did, with the choices they made.</dd>
-    <dt>Server and client</dt><dd>The two sides of an HTTP call. A client span's child is the receiving service's server span.</dd>
+    <dt>Client and server</dt><dd>The two sides of one HTTP call. <b>→</b> marks the caller's side. The row nested right under it, marked <b>↳</b>, is the same call as the receiving service saw it. Both are shown because each side records its own headers and timing.</dd>
     <dt>Check</dt><dd>An in-memory decision with no network call, such as one fast-path test or one policy evaluation. Green passed. Amber didn't, which isn't always an error: a failed fast-path test just means the proxy asks.</dd>
+    <dt>Preview</dt><dd>A short reading of one span, opened by clicking its row or pressing Enter or Space on it. It shows the fields that matter for that kind of event, such as a token request's grant, or a retrieval's signed context and parts.</dd>
+    <dt>Full exchange</dt><dd>One HTTP call's headers and bodies, in a new tab. <b>↗</b> on a row opens it.</dd>
+    <dt>HTTP log</dt><dd>Every HTTP call in a trace, in a new tab, each with its full exchange. You can filter it by any text.</dd>
   </dl>
-  <p>Tokens are never recorded, only the first characters of their hash. Orthanc and MinIO aren't instrumented internally, so their spans show the calls made to them.</p>
+  <p>Text bodies are kept up to 256 KB and binary bodies to 2 KB, with the true size shown. Clicking a row, or scrolling up, turns off <b>Follow newest</b> so the page holds still. Tick it to return to the newest session.</p>
+  <p id="storage"></p>
+  <p>Tokens, codes, and PKCE verifiers appear only as <code>sha256:</code> prefixes, so you can match them across services without seeing them. Session cookies and client assertion signatures aren't recorded. Orthanc is shown as HTTP calls to it. MinIO and static files are read through a storage client, so they appear as spans without HTTP exchanges.</p>
 </details>
 <main id="traces"></main>
+<script src="/trace-view.js"></script>
 <script src="/live.js"></script>
 </body>
 </html>

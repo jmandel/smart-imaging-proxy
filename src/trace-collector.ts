@@ -1,43 +1,67 @@
-// The god-mode collector. It stores spans by session and streams them live over SSE.
+// The god-mode collector. It takes spans from the services, streams them live over SSE, and keeps
+// them in a TraceStore. The stream doesn't depend on the store, so a storage problem can't stop it.
 import { join } from "node:path";
 import type { SpanRecord } from "./trace";
+import { summaryOf, TraceStore, type TraceStoreConfig } from "./trace-store";
 
-const MAX_PER_SESSION = 20000, MAX_SESSIONS = 100;
+const PAGES: Record<string, string> = { "/live.js": "web/live.js", "/live.css": "web/live.css", "/trace-view.js": "web/trace-view.js", "/span.html": "web/span.html", "/span.js": "web/span.js", "/log.html": "web/log.html", "/log.js": "web/log.js" };
 
-export function createCollector(root: string) {
-  const sessions = new Map<string, { id: string; startedAt: number; lastAt: number; spans: Map<string, SpanRecord> }>();
+const json = (text: string) => new Response(text, { headers: { "content-type": "application/json;charset=utf-8" } });
+const publicSession = ({ id, startedAt, lastAt, spans }: { id: string; startedAt: number; lastAt: number; spans: number }) => ({ id, startedAt, lastAt, spans });
+/** A cross-site page can't clear traces. */
+const sameOrigin = (req: Request, url: URL) => { const o = req.headers.get("origin"); return !o || o === url.origin; };
+
+/** With no store config, traces are in memory: only src/main.ts reads the TRACE_* settings. */
+export function createCollector(root: string, config: TraceStoreConfig = { mode: "memory" }) {
+  const store = new TraceStore(config);
   const clients = new Set<{ session?: string; send: (s: string) => void }>();
-  let seq = 0;
+  let seq = store.maxSeq();
+  const broadcast = (event: string, data: unknown) => { for (const c of clients) c.send(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
+  store.onRemoved = ids => broadcast("removed", ids);
 
   function ingest(records: SpanRecord[]) {
     for (const r of records) {
-      let s = sessions.get(r.session);
-      if (!s) {
-        s = { id: r.session, startedAt: r.start, lastAt: r.start, spans: new Map() };
-        sessions.set(r.session, s);
-        if (sessions.size > MAX_SESSIONS) sessions.delete(sessions.keys().next().value!);
-        for (const c of clients) c.send(`event: session\ndata: ${JSON.stringify({ id: s.id, startedAt: s.startedAt })}\n\n`);
-      }
+      if (!store.knows(r.session)) broadcast("session", { id: r.session, startedAt: r.start, lastAt: r.start, spans: 0 });
       r.seq = ++seq;
-      s.lastAt = Math.max(s.lastAt, r.end ?? r.start);
-      if (s.spans.size < MAX_PER_SESSION || s.spans.has(r.span)) s.spans.set(r.span, r);
-      for (const c of clients) if (!c.session || c.session === r.session) c.send(`event: span\ndata: ${JSON.stringify(r)}\n\n`);
+      const summary = JSON.stringify(summaryOf(r));
+      store.put(r, summary);
+      for (const c of clients) if (!c.session || c.session === r.session) c.send(`event: span\ndata: ${summary}\n\n`);
     }
   }
-  const list = () => [...sessions.values()].map(s => ({ id: s.id, startedAt: s.startedAt, lastAt: s.lastAt, spans: s.spans.size })).sort((a, b) => b.lastAt - a.lastAt);
+  const list = () => store.sessions().map(publicSession);
 
+  const page = (file: string) => new Response(Bun.file(join(root, file)), { headers: { "cache-control": "no-cache" } });
   const fetchHandler = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
     const p = url.pathname;
     if (p === "/v1/spans" && req.method === "POST") { ingest(await req.json() as SpanRecord[]); return new Response(null, { status: 202 }); }
-    if (p === "/" || p === "/live") return new Response(Bun.file(join(root, "web/live.html")));
-    if (p === "/live.js") return new Response(Bun.file(join(root, "web/live.js")));
-    if (p === "/live.css") return new Response(Bun.file(join(root, "web/live.css")));
+    if (p === "/" || p === "/live") return page("web/live.html");
+    if (PAGES[p]) return page(PAGES[p]!);
+    if (p === "/api/stats") return Response.json(store.stats());
+    if (p === "/api/sessions" && req.method === "DELETE") {
+      if (!sameOrigin(req, url)) return new Response("cross-origin requests can't clear traces", { status: 403 });
+      store.clear();
+      broadcast("cleared", {});
+      return new Response(null, { status: 204 });
+    }
     if (p === "/api/sessions") return Response.json(list());
     const m = p.match(/^\/api\/sessions\/([^/]+)\/spans$/);
-    if (m) {
-      const s = sessions.get(decodeURIComponent(m[1]!));
-      return Response.json(s ? [...s.spans.values()].sort((a, b) => a.start - b.start) : []);
+    if (m) return json(store.summariesJson(decodeURIComponent(m[1]!)));
+    const log = p.match(/^\/api\/sessions\/([^/]+)\/http$/);
+    if (log) return Response.json(store.httpLog(decodeURIComponent(log[1]!), url.searchParams.get("trace") ?? undefined));
+    const one = p.match(/^\/api\/sessions\/([^/]+)\/spans\/([^/]+)$/);
+    if (one) {
+      const r = store.span(decodeURIComponent(one[1]!), one[2]!);
+      return r ? Response.json(r) : new Response("not found", { status: 404 });
+    }
+    const exported = p.match(/^\/api\/sessions\/([^/]+)\/export$/);
+    if (exported) {
+      const id = decodeURIComponent(exported[1]!);
+      const info = store.session(id);
+      if (!info) return new Response("not found", { status: 404 });
+      return new Response(JSON.stringify({ session: publicSession(info), exportedAt: new Date().toISOString(), spans: store.fullSession(id) }, null, 1), {
+        headers: { "content-type": "application/json;charset=utf-8", "content-disposition": `attachment; filename="trace-${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json"` },
+      });
     }
     if (p === "/stream") {
       const session = url.searchParams.get("session") ?? undefined;
@@ -57,5 +81,13 @@ export function createCollector(root: string) {
     }
     return new Response("not found", { status: 404 });
   };
-  return { fetch: fetchHandler, sessions, list };
+  /** Whole sessions as maps, read from the store. Tests read spans this way. */
+  const sessions = {
+    get(id: string) {
+      const info = store.session(id);
+      return info && { ...info, spans: new Map(store.fullSession(id).map(r => [r.span, r])) };
+    },
+    has: (id: string) => !!store.session(id),
+  };
+  return { fetch: fetchHandler, sessions, list, store, close: () => store.close() };
 }

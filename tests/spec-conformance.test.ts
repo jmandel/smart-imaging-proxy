@@ -9,6 +9,7 @@ import { clientAssertion } from "../src/auth-server";
 import { CONFIG } from "../src/config";
 import { boundaryOf, readMultipart } from "../src/multipart";
 import { createProxy } from "../src/proxy";
+import { scriptedLaunch } from "../src/flows/oauth";
 import { OrthancBackend } from "../src/backends/orthanc";
 import { generateEd25519, signJws, ath } from "../src/jws";
 import { now } from "../src/clock";
@@ -25,7 +26,7 @@ const WRIST = "xr-wrist-left-2012", SLIDE = "slide-lung-2023";
 const res = (id: string) => bundle.entry.find((e: any) => e.resource.id === id)?.resource;
 const base = (id: string) => bundle.entry.find((e: any) => e.fullUrl === res(id).endpoint[0].reference).resource.address;
 const uid = (id: string) => res(id).identifier[0].value.replace("urn:oid:", "");
-const launch = async (user = "josh", client = "portal-app") => (await (await fetch(`${CONFIG.authUrl}/_demo/consent`, { method: "POST", body: JSON.stringify({ client_id: client, user, patient: "josh-example", scope: "launch/patient patient/ImagingStudy.rs online_access" }) })).json()) as any;
+const launch = (user = "josh", client = "portal-app") => scriptedLaunch(user, client);
 const searchFor = (t: string, q: string) => fetch(`${CONFIG.imagingUrl}/fhir/ImagingStudy?${q}`, { headers: { Authorization: `Bearer ${t}` } });
 
 async function get(url: string, accept: string | undefined, t: string | undefined = token) {

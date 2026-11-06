@@ -23,16 +23,22 @@ export async function startFlow(stack: Stack, clients: Record<string, BackendCli
   return c;
 }
 
+/** An error after someone chose another account says so, since the choice is the likely cause. */
+async function runInSessionNoted<T>(c: Ctx, run: () => Promise<T>): Promise<T> {
+  try { return await run(); }
+  catch (e) { throw c.accountNote ? new Error(`${(e as Error).message}. ${c.accountNote}`) : e; }
+}
+
 export async function runStep(c: Ctx, flow: Flow, stepId: string, inputs: Record<string, any>): Promise<StepResult> {
   const step = flow.steps.find(s => s.id === stepId);
   if (!step) throw new Error(`no step ${stepId}`);
   c.beginStep();
-  const narrative = await runInSession(c.session, () => withSpan("user", "action", `${flow.number}. ${step.title}`, { flow: flow.title, step: step.id, backend: c.backend, actor: step.actor, inputs }, async s => {
+  const narrative = await runInSessionNoted(c, () => runInSession(c.session, () => withSpan("user", "action", `${flow.number}. ${step.title}`, { flow: flow.title, step: step.id, backend: c.backend, actor: step.actor, inputs }, async s => {
     const n = await step.run(c, inputs);
     const failed = c.checks.filter(k => !k.ok).length;
     s.end(failed ? "error" : "ok", { checks_passed: c.checks.length - failed, checks_failed: failed });
     return n;
-  }, { session: c.session, trace: randomBytes(16).toString("hex") }));
+  }, { session: c.session, trace: randomBytes(16).toString("hex") })));
   flushTraces();
   return c.endStep(narrative ?? undefined);
 }

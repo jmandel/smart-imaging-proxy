@@ -61,3 +61,12 @@ ul.checks li { padding:.15rem 0; } ul.checks .ok { color:var(--good); font-weigh
 @media (max-width:780px) { .layout { display:block; } nav { position:static; max-height:none; border-right:0; border-bottom:1px solid var(--line); } main { padding:1rem; } .step .actor { margin-left:0; } }
 
 .live-link { margin-left:auto; font-size:.87rem; color:var(--accent); font-weight:600; }
+
+.chain { margin:.6rem 0; padding:.5rem .8rem; background:var(--panel); border:1px solid var(--line); border-radius:8px; font-size:.88rem; } .chain:empty { display:none; } .chain h3 { margin:0 0 .2rem; font-size:.9rem; } .chain ul { margin:0; padding-left:1.1rem; } .chain-doc { padding-left:1.3rem; } .chain-doc li { margin:.25rem 0; }
+
+.home-link { color:inherit; text-decoration:none; } .home-link:hover { text-decoration:underline; }
+.store-badge { font-size:.8rem; font-weight:600; border-radius:999px; padding:.15rem .65rem; background:var(--code); }
+.store-badge.saved { background:var(--good-soft); color:var(--good); } .store-badge.scratch { background:var(--warn-soft); color:var(--warn); }
+.store-control { display:inline-flex; flex-wrap:wrap; align-items:center; gap:.5rem; }
+#back-to-saved { padding:.15rem .6rem; font-size:.82rem; }
+.admin-link { font-size:.87rem; color:var(--accent); font-weight:600; }

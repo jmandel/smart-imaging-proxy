@@ -1,4 +1,5 @@
 import { SITES } from "../imaging-server";
+import { CONFIG } from "../config";
 import { siteOptions, studyOptions, type Flow, type Ctx } from "./runtime";
 
 const WRIST = "xr-wrist-left-2012", SLIDE = "slide-lung-2023", MRI = "mri-brain-2020", CT = "ct-abdomen-pelvis-2012";
@@ -13,14 +14,18 @@ export const policyFlows: Flow[] = [
     shows: "A restriction the SMART scope language can't express, enforced consistently by search and retrieval.",
     steps: [
       {
-        id: "consent", title: "Josh approves sites", actor: "Patient", doc: `<p>The choice is recorded as Imaging Server policy, not in the token. The token response below has the same scope whatever you pick.</p>`,
-        inputs: () => [{ id: "sites", label: "Sites Josh approves", type: "multi", options: siteOptions(), default: ["Lakeside Imaging", "Northside Pathology"] }],
+        id: "consent", title: "Josh launches the app and approves sites", actor: "Patient", doc: `<p>A real SMART standalone launch. The app discovers the endpoints and sends an authorization request with a PKCE challenge. On the Authorization Server's own pages, Josh signs in and approves. It redirects back with a single-use code, which the app exchanges along with its PKCE verifier.</p><p>The site choice is kept as Imaging Server policy, so the token's scope is the same whatever Josh picks.</p>`,
+        inputs: () => [
+          { id: "mode", label: "Who signs in and approves", type: "select", options: [{ value: "window", label: "You, in a real window (Josh Example is preselected)" }, { value: "scripted", label: "Scripted, with the sites below" }], default: "scripted", clickDefault: "window" },
+          { id: "sites", label: "Sites to approve, when scripted", type: "multi", options: siteOptions(), default: ["Lakeside Imaging", "Northside Pathology"] },
+        ],
         run: async (c, i) => {
-          c.state.sites = i.sites;
-          c.setRules([{ id: "josh-site-choice", description: "Sites Josh picked at consent", when: { client: "portal-app", user: "josh" }, allow: { sites: i.sites } }]);
-          c.state.token = (await c.launch("josh")).access_token;
-          const body: any = c.exchanges[0]!.body;
-          c.check("Scope is unchanged by the choice", body.scope.includes("patient/ImagingStudy.rs") && !/site/i.test(body.scope), body.scope);
+          const t = await c.launch("josh", "portal-app", i.mode === "window" ? { window: true } : { sites: i.sites });
+          c.state.token = t.access_token;
+          const grant = c.stack.imaging.getPolicy().appGrants.find(g => g.client === "portal-app" && g.user === "josh");
+          c.state.sites = grant?.sites ?? [...new Set(Object.values(SITES))];
+          c.check("Scope is unchanged by the choice", t.scope.includes("patient/ImagingStudy.rs") && !/site/i.test(t.scope), t.scope);
+          c.check("Token has the patient context from the launch", t.patient === "josh-example", t.patient);
         },
       },
       {
@@ -56,42 +61,82 @@ export const policyFlows: Flow[] = [
     ],
   },
   {
-    id: "caregiver", number: 2, group: "policy", title: "Caregiver with limited access",
-    summary: "Josh and his caregiver use the same app with the same patient context, but pathology is excluded for the caregiver.",
-    shows: "Why a fast path can't just match client and patient: the decision depended on the user.",
+    id: "caregiver", number: 2, group: "policy", title: "Related person, then app",
+    summary: "Josh signs in and shares some sites with Sam, his caregiver. Sam signs in as Sam and gives an app some of what they hold.",
+    shows: "Each link in patient, related person, app can only narrow access. All of it stays at the Imaging Server, and the proxy never learns any of it.",
     steps: [
       {
-        id: "policy", title: "The health system configures proxy access", actor: "Imaging Server", doc: `<p>Proxy-access rules are known only to the Imaging Server. The token carries the same patient context for both users.</p>`,
-        inputs: () => [{ id: "excluded", label: "Site excluded for the caregiver", type: "select", options: siteOptions(), default: "Northside Pathology" }],
+        id: "delegate", title: "Josh signs in and shares with Sam", actor: "Patient", doc: `<p>Josh signs in to the account page and picks which sites Sam can see. Sam has their own account, separate from Josh's. The Imaging Server keeps the delegation.</p>`,
+        inputs: () => [
+          { id: "mode", label: "Who signs in and shares", type: "select", options: [{ value: "window", label: "You, in a real window (Josh Example is preselected)" }, { value: "scripted", label: "Scripted, with the sites below" }], default: "scripted", clickDefault: "window" },
+          { id: "sites", label: "Sites Sam can see, when scripted", type: "multi", options: siteOptions(), default: ["Lakeside Imaging", "Riverside Hospital"] },
+        ],
         run: async (c, i) => {
-          c.state.excluded = i.excluded;
-          const sites = [...new Set(Object.values(SITES))].filter(s => s !== i.excluded);
-          c.setRules([{ id: "caregiver-proxy", description: `Caregiver access excludes ${i.excluded}`, when: { client: "portal-app", user: "sam-caregiver" }, allow: { sites } }]);
-          c.state.josh = (await c.launch("josh")).access_token;
-          c.state.sam = (await c.launch("sam-caregiver")).access_token;
-          c.check("Both tokens carry the same patient and scope", (c.exchanges[0]!.body as any).patient === (c.exchanges[1]!.body as any).patient && (c.exchanges[0]!.body as any).scope === (c.exchanges[1]!.body as any).scope);
+          await c.delegate("josh", "sam-caregiver", "caregiver", i.sites, { window: i.mode === "window" });
+          const d = c.stack.imaging.getPolicy().delegations.find(x => x.delegate === "sam-caregiver");
+          c.check("The Imaging Server holds the delegation", !!d, d?.sites.join(", "));
+          c.state.delegated = d?.sites ?? [];
         },
       },
       {
-        id: "searches", title: "Each user searches", actor: "App", doc: SEARCH_DOC,
+        id: "unrelated", title: "Someone with no delegation tries", actor: "Alex", doc: `<p>Alex has an account, but Josh hasn't shared anything with them. Signing in isn't enough, so no code is issued.</p>`,
         run: async c => {
+          const t = await c.launch("alex-neighbor");
+          c.check("Alex can sign in, but gets no token", t.error === "access_denied" && !t.access_token, t.error);
+        },
+      },
+      {
+        id: "sam-launch", title: "Sam signs in and authorizes an app", actor: "Related person", doc: `<p>Sam runs a real SMART launch with their own account. The patient picker offers Josh, because of the delegation. Sam can give the app part of what they hold, and can't give it more: any site outside the delegation is dropped, even if a form submits it.</p>`,
+        inputs: () => [
+          { id: "mode", label: "Who signs in and approves", type: "select", options: [{ value: "window", label: "You, in a real window (Sam Example is preselected)" }, { value: "scripted", label: "Scripted, with the sites below" }], default: "scripted", clickDefault: "window" },
+          { id: "sites", label: "Sites for the app, when scripted. Tick one Sam doesn't hold to see it dropped.", type: "multi", options: siteOptions(), default: ["Lakeside Imaging", "Northside Pathology"] },
+        ],
+        run: async (c, i) => {
+          const t = await c.launch("sam-caregiver", "portal-app", i.mode === "window" ? { window: true } : { sites: i.sites });
+          c.state.sam = t.access_token;
+          const g = c.stack.imaging.getPolicy().appGrants.find(x => x.user === "sam-caregiver");
+          c.state.appSites = g?.sites ?? c.state.delegated;
+          c.check("The app holds no more than Sam was given", c.state.appSites.every((s: string) => c.state.delegated.includes(s)), c.state.appSites.join(", "));
+          c.check("The token names Josh as the patient, and no sites", t.patient === "josh-example" && !/site/i.test(t.scope ?? ""), t.scope);
+        },
+      },
+      {
+        id: "searches", title: "Josh's app and Sam's app search", actor: "App", doc: `${SEARCH_DOC}<p>Both tokens have the same patient and scope. The results differ because the chain differs.</p>`,
+        run: async c => {
+          c.state.josh = (await c.launch("josh")).access_token;
           const j = await c.search(c.state.josh, undefined, "App (Josh)");
-          const s = await c.search(c.state.sam, undefined, "App (caregiver)");
+          const s = await c.search(c.state.sam, undefined, "App (Sam)");
           c.state.joshStudies = j.studies;
           c.state.samStudies = s.studies;
           c.check("Josh sees every study", Object.keys(j.studies).length === c.manifest.studies.length);
-          c.check("The caregiver doesn't see the excluded site", Object.keys(s.studies).every(id => SITES[id] !== c.state.excluded) && Object.keys(s.studies).length < Object.keys(j.studies).length);
+          c.check("Sam's app sees only sites in both links", Object.keys(s.studies).every(id => c.state.appSites.includes(SITES[id]!) && c.state.delegated.includes(SITES[id]!)) && Object.keys(s.studies).length < Object.keys(j.studies).length, Object.keys(s.studies).join(", "));
         },
       },
       {
-        id: "shared-url", title: "Josh's URL reaches the caregiver", actor: "App (caregiver)", doc: `<p>Say a URL issued to Josh reaches the caregiver through a shared device or log. The caregiver's token doesn't match <code>ath</code>, so the proxy asks rather than trusting the URL. Matching only client and patient would have released it.</p>`,
+        id: "shared-url", title: "Josh's URL reaches Sam", actor: "App (Sam)", doc: `<p>Say a URL issued to Josh reaches Sam through a shared device or log. Sam's token doesn't match <code>ath</code>, so the proxy asks rather than answering from the URL.</p>`,
         run: async c => {
-          const id = Object.keys(c.state.joshStudies).find(k => SITES[k] === c.state.excluded)!;
+          const id = Object.keys(c.state.joshStudies).find(k => !c.state.samStudies[k])!;
           const s = c.state.joshStudies[id];
-          const r = await c.retrieve("App (caregiver)", "Use Josh's URL with the caregiver's token", c.studyUrl(s.base, s.uid), c.state.sam);
+          const r = await c.retrieve("App (Sam)", "Use Josh's URL with Sam's token", c.studyUrl(s.base, s.uid), c.state.sam);
           c.check("Denied, after asking", r.status === 404 && r.authz === "asked", `status ${r.status}, authorization: ${r.authz}`);
           const own = await c.retrieve("App (Josh)", "Josh uses the same URL", c.studyUrl(s.base, s.uid), c.state.josh);
           c.check("Josh still gets it, instantly", own.status === 200 && own.authz === "instant", `authorization: ${own.authz}`);
+        },
+      },
+      {
+        id: "revoke", title: "Josh revokes Sam", actor: "Patient", doc: `<p>Josh revokes the delegation on the account page. Search changes at once. A URL Sam already holds works until it expires, then the proxy asks and is refused. Removing one link ends everything after it, including Sam's app.</p>`,
+        run: async c => {
+          const before = await c.search(c.state.sam, undefined, "App (Sam)");
+          const id = Object.keys(before.studies)[0]!;
+          const s = before.studies[id];
+          await c.revokeDelegation("josh", "sam-caregiver");
+          const after = await c.search(c.state.sam, undefined, "App (Sam)");
+          c.check("Search reflects it immediately", Object.keys(after.studies).length === 0);
+          const inside = await c.retrieve("App (Sam)", "A URL Sam already holds", c.studyUrl(s.base, s.uid), c.state.sam);
+          c.check("The existing URL still works until it expires", inside.status === 200 && inside.authz === "instant", "This is the revocation window");
+          c.advanceClock(c.stack.imaging.getPolicy().contextLifetimeSeconds + 5);
+          const later = await c.retrieve("App (Sam)", "The same URL, after expiry", c.studyUrl(s.base, s.uid), c.state.sam);
+          c.check("Then the proxy asks, and access has ended", later.status === 404 && later.authz === "asked", `status ${later.status}, authorization: ${later.authz}`);
         },
       },
     ],
@@ -104,7 +149,7 @@ export const policyFlows: Flow[] = [
       {
         id: "discover", title: "The service discovers the imaging endpoint", actor: "hand-referral-service", doc: `<p>Discovery follows the guide: <code>smart-imaging-access</code> and the Backend Services capability in <code>associated_endpoints</code>.</p>`,
         run: async c => {
-          const r = await c.json("hand-referral-service", "Read SMART configuration", `${process.env.DEMO_AUTH ?? "http://127.0.0.1:4603"}/fhir/.well-known/smart-configuration`);
+          const r = await c.json("hand-referral-service", "Read SMART configuration", `${CONFIG.authUrl}/fhir/.well-known/smart-configuration`);
           const caps = r.body.associated_endpoints[0].capabilities;
           c.check("Imaging and Backend Services capabilities are advertised", caps.includes("smart-imaging-access") && caps.includes("http://fhir.org/argonaut/smart-imaging/capabilities/backend-services"));
           c.check("client_credentials is advertised", r.body.grant_types_supported.includes("client_credentials"));

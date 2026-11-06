@@ -1,23 +1,12 @@
 // Imaging Server: ImagingStudy search, policy, signed contexts, and the AuthZEN decision API.
 // All policy lives here. The proxy never sees it.
 import { randomUUID } from "node:crypto";
-import { ath, generateEd25519, publicJwk, signJws, verifyJws } from "./jws";
+import { ath, publicJwk, signJws, verifyJws } from "./jws";
 import { now } from "./clock";
-import { check, traced, withSpan } from "./trace";
+import { check, traced } from "./trace";
+import type { Policy, PolicyStore, Rule } from "./policy-store";
 
-export interface Rule {
-  id: string;
-  description?: string;
-  when: { client?: string; user?: string; patient?: string };
-  allow: { all?: boolean; sites?: string[]; modalities?: string[]; studies?: string[]; since?: string };
-  withholdSeries?: string[];
-  /** "restricted" sends every retrieval through can_i, rather than listing series in the URL. */
-  contextForm?: "auto" | "restricted";
-  withdrawn?: boolean;
-}
-
-export interface Policy { rules: Rule[]; contextLifetimeSeconds: number; maxSeriesInContext: number; }
-export const defaultPolicy = (): Policy => ({ rules: [], contextLifetimeSeconds: 300, maxSeriesInContext: 12 });
+export type { AppGrant, Delegation, Policy, Rule } from "./policy-store";
 
 export const SITES: Record<string, string> = {
   "mri-brain-2020": "Lakeside Imaging",
@@ -28,17 +17,17 @@ export const SITES: Record<string, string> = {
   "slide-lung-2023": "Northside Pathology",
 };
 
-const PATIENT_ID = "josh-example";
+const PATIENT_ID = "josh-example"; // Every study in the sample data belongs to this patient.
 const ACCESSION_SYSTEM = "http://hospital.example.org/accession";
 
 export function hasImagingScope(scope: string, level: "patient" | "system"): boolean {
   return scope.split(" ").some(s => s === `${level}/ImagingStudy.rs` || s === `${level}/ImagingStudy.read` || s === `${level}/*.rs` || s === `${level}/*.read`);
 }
 
-export function createImagingServer(opts: { base: string; clinicalFhirBase: string; proxyBase: () => string; introspect: (token: string) => Promise<any>; serviceSecret: string; manifest: any }) {
-  const key = generateEd25519("imaging-2026-11");
+export function createImagingServer(opts: { base: string; clinicalFhirBase: string; proxyBase: () => string; introspect: (token: string) => Promise<any>; serviceSecret: string; manifest: any; keyStore: PolicyStore; store: () => PolicyStore }) {
+  let key = opts.keyStore.currentSigningKey();
+  // The proxy shares this map, so a rotation reaches it at once.
   const keys = new Map([[key.kid, key.publicKey]]);
-  let policy = defaultPolicy();
   let outage = false;
   const decisions: any[] = [];
   const studies: any[] = opts.manifest.studies;
@@ -46,7 +35,7 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
   const patientOf = (_s: any) => PATIENT_ID;
 
   const matchRule = (t: any, patient: string): Rule | undefined =>
-    policy.rules.find(r =>
+    opts.store().rules().find(r =>
       (r.when.client === undefined || r.when.client === t.client_id) &&
       (r.when.user === undefined || r.when.user === t.sub) &&
       (r.when.patient === undefined || r.when.patient === patient));
@@ -54,10 +43,45 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
   /** The single policy decision used by both search and retrieval. */
   function evaluate(t: any, study: any) {
     const r = evaluateRule(t, study);
-    check("policy", `policy evaluation: ${study.id}`, r.release !== "none", { client: t.client_id, user: t.sub, patient_context: t.patient, study: study.id, site: SITES[study.id], rule: r.rule?.id ?? "(none)", release: typeof r.release === "object" ? `${r.release.series.length} series` : r.release, why: r.why });
+    check("policy", `policy evaluation: ${study.id}`, r.release !== "none", { client: t.client_id, user: t.sub, patient_context: t.patient, study: study.id, site: SITES[study.id], chain: r.chain?.join(" → "), rule: r.rule?.id ?? "(none)", release: typeof r.release === "object" ? `${r.release.series.length} series` : r.release, why: r.why });
     return r;
   }
-  function evaluateRule(t: any, study: any): { release: "none" | "study" | { series: string[] }; rule?: Rule; why: string } {
+  /** Patient to related person to app. Each link can only narrow what the one before it allows. */
+  function accessChain(t: any, patient: string, site: string): { ok: boolean; why?: string; chain: string[] } {
+    const chain: string[] = [];
+    if (t.fhirUser === `Patient/${patient}`) chain.push(`${t.sub} is the patient`);
+    else {
+      const d = opts.store().delegations().find(x => x.delegate === t.sub && x.patient === patient);
+      if (!d) return { ok: false, why: `${t.sub} has no delegation from the patient`, chain };
+      chain.push(`${d.grantedBy} delegated to ${t.sub} (${d.relationship}): ${d.sites.join(", ")}`);
+      if (!d.sites.includes(site)) return { ok: false, why: `the delegation to ${t.sub} doesn't include ${site}`, chain };
+    }
+    const g = opts.store().appGrants().find(x => x.client === t.client_id && x.user === t.sub && x.patient === patient);
+    if (!g) return { ok: false, why: `${t.sub} hasn't authorized ${t.client_id}`, chain };
+    chain.push(`${t.sub} authorized ${t.client_id}: ${g.sites?.join(", ") ?? "everything they can see"}`);
+    if (g.sites && !g.sites.includes(site)) return { ok: false, why: `${t.sub}'s authorization of ${t.client_id} doesn't include ${site}`, chain };
+    return { ok: true, chain };
+  }
+
+  /** What one signed-in user can see and has shared, for the Authorization Server's pages. */
+  function accessFor(user: string, fhirUser: string) {
+    const records: { patient: string; via: "self" | "delegation"; relationship?: string; sites: string[] }[] = [];
+    const self = fhirUser.match(/^Patient\/(.+)$/)?.[1];
+    if (self) records.push({ patient: self, via: "self", sites: [...new Set(studies.filter(s => patientOf(s) === self).map(s => SITES[s.id]!))] });
+    const { delegations, appGrants } = opts.store().getPolicy();
+    for (const d of delegations) if (d.delegate === user) records.push({ patient: d.patient, via: "delegation", relationship: d.relationship, sites: d.sites });
+    return { records, delegations: delegations.filter(d => d.grantedBy === user), apps: appGrants.filter(g => g.user === user) };
+  }
+
+  function evaluateRule(t: any, study: any): { release: "none" | "study" | { series: string[] }; rule?: Rule; why: string; chain?: string[] } {
+    if (t.patient && t.patient === patientOf(study)) {
+      const a = accessChain(t, t.patient, SITES[study.id]!);
+      if (!a.ok) return { release: "none", why: a.why!, chain: a.chain };
+      return { ...evaluateAfterChain(t, study), chain: a.chain };
+    }
+    return evaluateAfterChain(t, study);
+  }
+  function evaluateAfterChain(t: any, study: any): { release: "none" | "study" | { series: string[] }; rule?: Rule; why: string } {
     const patient = patientOf(study);
     const level: "patient" | "system" = t.patient ? "patient" : "system";
     if (level === "patient" && t.patient !== patient) return { release: "none", why: "token's patient context is a different patient" };
@@ -81,6 +105,7 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
   }
 
   function contextFor(accessToken: string, t: any, study: any, ev: ReturnType<typeof evaluate>): string {
+    const policy = opts.store().getSettings();
     const claims: any = { v: 1, iss: "imaging-server", study: study.uid, ath: ath(accessToken), exp: Math.min(now() + policy.contextLifetimeSeconds, t.exp) };
     if (ev.rule?.contextForm === "restricted") claims.restricted = true;
     else if (typeof ev.release === "object") {
@@ -188,7 +213,8 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
     if (!hasImagingScope(t.scope, level)) return respond(false, { denial: "insufficient_scope", max_age_seconds: 30 }, "scope does not cover imaging");
     const signed = body.context?.signed_context;
     if (signed) {
-      const claims = verifyJws(signed, keys);
+      // A retired key ends the instant path, not access: this answer comes from current policy.
+      const claims = verifyJws(signed, keys) ?? verifyJws(signed, opts.keyStore.retiredPublicKeys());
       if (!claims) return respond(false, { denial: "not_released", max_age_seconds: 0 }, "signed context failed verification");
       if (claims.study !== body.resource?.id) return respond(false, { denial: "not_released", max_age_seconds: 0 }, "request is outside the study this URL was issued for");
     }
@@ -196,7 +222,7 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
     if (!study) return respond(false, { denial: "not_released", max_age_seconds: 30 }, "no such study");
     const ev = evaluate(t, study);
     if (ev.release === "none") return respond(false, { denial: "not_released", max_age_seconds: 30 }, ev.why);
-    return respond(true, { release: ev.release, max_age_seconds: Math.min(policy.contextLifetimeSeconds, t.exp - now()) }, ev.why);
+    return respond(true, { release: ev.release, max_age_seconds: Math.min(opts.store().getSettings().contextLifetimeSeconds, t.exp - now()) }, ev.why);
   }
 
   return {
@@ -205,7 +231,49 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
     fetch: traced("imaging-fhir", async (req: Request, server): Promise<Response> => {
       const url = new URL(req.url);
       const p = url.pathname;
-      if (p === "/access/v1/evaluation") server.record.service = "policy";
+      if (p === "/access/v1/evaluation" || p.startsWith("/internal/")) server.record.service = "policy";
+      if (p.startsWith("/internal/")) {
+        if (req.headers.get("authorization") !== `Bearer ${opts.serviceSecret}`) return new Response(null, { status: 401 });
+        const known = new Set(Object.values(SITES));
+        if (p === "/internal/relationships") return Response.json(opts.store().delegations().map(d => ({ patient: d.patient, delegate: d.delegate, relationship: d.relationship })));
+        if (p === "/internal/access") return Response.json(accessFor(url.searchParams.get("user") ?? "", url.searchParams.get("fhirUser") ?? ""));
+        if (p === "/internal/delegations" && req.method === "POST") {
+          const d: any = await req.json();
+          if (!check("policy", "only the patient can delegate their records", d.fhirUser === `Patient/${d.patient}`, { user: d.grantedBy, patient: d.patient })) return new Response(null, { status: 403 });
+          const sites = d.sites.filter((s: string) => known.has(s));
+          opts.store().putDelegation({ patient: d.patient, grantedBy: d.grantedBy, delegate: d.delegate, relationship: d.relationship, sites });
+          check("policy", "record delegation to a related person", true, { from: d.grantedBy, to: d.delegate, relationship: d.relationship, sites: sites.join(", ") });
+          return new Response(null, { status: 204 });
+        }
+        if (p === "/internal/delegations" && req.method === "DELETE") {
+          const by = url.searchParams.get("grantedBy"), to = url.searchParams.get("delegate");
+          opts.store().removeDelegations({ grantedBy: by ?? "", delegate: to ?? "" });
+          check("policy", "revoke delegation", true, { from: by, to });
+          return new Response(null, { status: 204 });
+        }
+        if (p === "/internal/consents" && req.method === "POST") {
+          const c: any = await req.json();
+          const held = accessFor(c.user, c.fhirUser).records.find(r => r.patient === c.patient);
+          if (!check("policy", "user has access to this patient", !!held, { user: c.user, patient: c.patient })) return new Response(null, { status: 403 });
+          const existing = opts.store().appGrants().find(x => x.client === c.client && x.user === c.user && x.patient === c.patient);
+          let sites: string[] | undefined = existing?.sites;
+          if (c.sites) {
+            // A choice can only narrow what the user holds, whatever the form submitted.
+            const narrowed = c.sites.filter((s: string) => held!.sites.includes(s));
+            sites = narrowed.length === new Set(Object.values(SITES)).size ? undefined : narrowed;
+            check("policy", "app's sites stay within what the user holds", narrowed.length === c.sites.length, { requested: c.sites.join(", "), held: held!.sites.join(", "), granted: narrowed.join(", ") });
+          }
+          opts.store().putAppGrant({ client: c.client, user: c.user, patient: c.patient, ...(sites ? { sites } : {}) });
+          return new Response(null, { status: 204 });
+        }
+        if (p === "/internal/consents" && req.method === "DELETE") {
+          const client = url.searchParams.get("client"), user = url.searchParams.get("user");
+          opts.store().removeAppGrants({ client: client ?? "", user: user ?? "" });
+          check("policy", "revoke app authorization", true, { client, user });
+          return new Response(null, { status: 204 });
+        }
+        return new Response("not found", { status: 404 });
+      }
       if (p === "/fhir/ImagingStudy" && req.method === "GET") return search(req, url);
       if (p === "/fhir/metadata") return Response.json({ resourceType: "CapabilityStatement", status: "active", kind: "instance", fhirVersion: "4.0.1", format: ["json"], instantiates: ["http://fhir.org/argonaut/smart-imaging/CapabilityStatement/smart-imaging-server"], rest: [{ mode: "server", resource: [{ type: "ImagingStudy", interaction: [{ code: "search-type" }], searchInclude: ["ImagingStudy:endpoint"], searchParam: [{ name: "patient", type: "reference" }, { name: "identifier", type: "token" }, { name: "based-on", type: "reference" }, { name: "_lastUpdated", type: "date", documentation: "Updated only when this demo's dataset is rebuilt." }] }] }] });
       if (p === "/access/v1/evaluation" && req.method === "POST") return evaluation(req);
@@ -213,11 +281,22 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
       if (p === "/.well-known/jwks.json") return Response.json({ keys: [publicJwk(key)] });
       return new Response("not found", { status: 404 });
     }),
-    setPolicy(pol: Partial<Policy>) { policy = { ...policy, ...pol }; },
-    getPolicy: () => policy,
-    updateRule(id: string, patch: Partial<Rule>) { policy.rules = policy.rules.map(r => r.id === id ? { ...r, ...patch } : r); },
+    /** These act on whichever store is active: saved, or a flow's scratch store. */
+    setPolicy(pol: Partial<Policy>) { opts.store().setPolicy(pol); },
+    getPolicy: () => opts.store().getPolicy(),
+    updateRule(id: string, patch: Partial<Rule>) { opts.store().updateRule(id, patch); },
     setOutage(on: boolean) { outage = on; },
+    get outage() { return outage; },
+    get signingKid() { return key.kid; },
+    /** URLs signed with the old key stop verifying here and at the proxy, right away. */
+    rotateSigningKey() {
+      key = opts.keyStore.rotateSigningKey();
+      keys.clear();
+      keys.set(key.kid, key.publicKey);
+      return key.kid;
+    },
     decisions,
-    reset() { policy = defaultPolicy(); outage = false; decisions.length = 0; },
+    /** Clears the outage switch and the decision log. Policy belongs to the stores. */
+    reset() { outage = false; decisions.length = 0; },
   };
 }

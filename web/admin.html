@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Demo Admin</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+  .admin { max-width:860px; margin:0 auto; padding:1rem 1rem 4rem; }
+  .admin section { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:.85rem 1rem 1rem; margin-bottom:.9rem; min-width:0; }
+  .admin h2 { font-size:1rem; margin:0 0 .45rem; }
+  .admin p { margin:.3rem 0 .6rem; }
+  .admin .note { color:var(--muted); font-size:.85rem; }
+  .admin .warning { background:var(--warn-soft); color:var(--warn); font-weight:600; font-size:.9rem; padding:.5rem .7rem; border-radius:6px; margin:0 0 .9rem; }
+  .admin .actions { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; margin:.6rem 0 0; }
+  .admin button.danger { background:var(--panel); border:1px solid var(--bad); color:var(--bad); border-radius:6px; padding:.4rem .8rem; cursor:pointer; }
+  .admin button.small { padding:.12rem .55rem; font-size:.84rem; }
+  .admin table { border-collapse:collapse; width:100%; font-size:.88rem; table-layout:fixed; }
+  .admin th, .admin td { text-align:left; padding:.28rem .5rem .28rem 0; border-bottom:1px solid var(--line); vertical-align:top; overflow-wrap:anywhere; }
+  .admin th { font-weight:600; color:var(--muted); }
+  .admin thead th { color:var(--ink); }
+  .admin td + td, .admin th + td, .admin th + th { padding-left:.5rem; }
+  .admin td.active-col, .admin th.active-col { background:var(--accent-soft); }
+  .admin .rows { list-style:none; margin:.2rem 0 .6rem; padding:0; font-size:.9rem; }
+  .admin .rows li { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:.25rem .8rem; padding:.35rem 0; border-bottom:1px solid var(--line); }
+  .admin .rows li > span { flex:1 1 14rem; min-width:0; overflow-wrap:anywhere; }
+  .admin .controls li > span { flex-basis:18rem; }
+  .admin .controls button { flex:none; }
+  .admin textarea { width:100%; min-height:220px; font:.8rem/1.45 ui-monospace,monospace; }
+  .admin .fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:.6rem; }
+  .admin .fields label { font-weight:600; font-size:.86rem; display:flex; flex-direction:column; gap:.2rem; justify-content:space-between; }
+  .admin input[type=number], .admin select { background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:.35rem .5rem; font:inherit; color:inherit; width:100%; font-weight:400; }
+  .admin .inline-field { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; }
+  .admin .inline-field input, .admin .inline-field select { width:auto; flex:1 1 7rem; min-width:0; max-width:14rem; }
+  .admin .msg { font-size:.86rem; margin:.5rem 0 0; }
+  .admin .msg.bad { color:var(--bad); font-weight:600; }
+  .admin .msg ul { margin:.2rem 0 0; padding-left:1.1rem; font-weight:400; }
+  .admin .ok { color:var(--good); font-weight:600; } .admin .fail { color:var(--bad); font-weight:600; }
+</style>
+</head>
+<body>
+<header>
+  <div><h1>Demo Admin</h1><p>For anything with no natural home in the flows.</p></div>
+  <span id="store-badge" class="store-badge" role="status"></span>
+  <a class="admin-link" href="/">Demo home</a>
+</header>
+<main class="admin" id="admin">
+  <p class="warning">This is a local demo with no admin authentication. Every service listens on 127.0.0.1 and, when Tailscale is running, on this machine's tailnet address, so anyone on your tailnet can use this page. Writes naming another Host or web origin are refused</p>
+
+  <section aria-labelledby="h-store">
+    <h2 id="h-store">Policy store</h2>
+    <p class="note">The account page, the policy panel, and the sections below act on the active store. Starting a flow activates and resets flow scratch, and running a flow step activates it. Only an explicit control goes back to saved policy: the button below, or the one beside the badge on the demo home.</p>
+    <div id="store-table"></div>
+    <div class="actions">
+      <button class="secondary" data-activate="saved">Use saved policy</button>
+      <button class="secondary" data-activate="scratch">Use flow scratch</button>
+      <button class="secondary" id="reset-scratch">Reset scratch</button>
+      <button class="danger" id="reset-saved">Reset saved policy</button>
+    </div>
+    <p class="msg" id="store-msg" role="status"></p>
+    <p class="note">Kept in the saved store: delegations, app grants, rules, settings, the Imaging Server's signing key, and token records, as SHA-256 hashes. Kept only in memory: sign-ins in progress, authorization codes, account sessions, used assertion IDs, the demo clock, and backend client keys, which are generated at startup.</p>
+  </section>
+
+  <section aria-labelledby="h-chain">
+    <h2 id="h-chain">Delegations and app grants</h2>
+    <div id="chain-list"></div>
+    <p class="msg" id="chain-msg" role="status"></p>
+  </section>
+
+  <section aria-labelledby="h-rules">
+    <h2 id="h-rules">Rules</h2>
+    <p class="note">A JSON array, checked in order. The first rule that matches decides.</p>
+    <textarea id="rules-text" spellcheck="false" aria-labelledby="h-rules"></textarea>
+    <div class="actions"><button class="primary" id="save-rules">Save rules</button></div>
+    <div class="msg" id="rules-msg" role="status"></div>
+  </section>
+
+  <section aria-labelledby="h-settings">
+    <h2 id="h-settings">Settings</h2>
+    <form id="settings-form">
+      <div class="fields">
+        <label>Context lifetime (seconds) <input type="number" name="contextLifetimeSeconds" min="1" step="1"></label>
+        <label>Most series listed in a URL <input type="number" name="maxSeriesInContext" min="0" step="1"></label>
+        <label>Access token lifetime (seconds) <input type="number" name="tokenLifetimeSeconds" min="1" step="1"></label>
+        <label>Refresh token lifetime (seconds) <input type="number" name="refreshTokenLifetimeSeconds" min="1" step="1"></label>
+      </div>
+      <div class="actions"><button class="primary">Save settings</button></div>
+    </form>
+    <div class="msg" id="settings-msg" role="status"></div>
+  </section>
+
+  <section aria-labelledby="h-clock">
+    <h2 id="h-clock">Demo clock</h2>
+    <p id="clock-now"></p>
+    <form id="clock-form" class="inline-field">
+      <label for="clock-seconds">Advance by (seconds)</label>
+      <input type="number" id="clock-seconds" min="1" step="1" value="300">
+      <button class="secondary">Advance</button>
+      <button class="secondary" type="button" id="clock-reset">Reset to real time</button>
+    </form>
+    <div class="msg" id="clock-msg" role="status"></div>
+  </section>
+
+  <section aria-labelledby="h-backend">
+    <h2 id="h-backend">Backend</h2>
+    <div class="inline-field">
+      <label for="backend-select">Image store</label>
+      <select id="backend-select"></select>
+      <button class="secondary" id="self-test">Run self-test</button>
+    </div>
+    <div id="self-test-results"></div>
+    <div class="msg" id="backend-msg" role="status"></div>
+  </section>
+
+  <section aria-labelledby="h-outage">
+    <h2 id="h-outage">Decision service</h2>
+    <p id="outage-state"></p>
+    <p class="note">During an outage, requests that need a decision get a 503. Requests the proxy answers from a signed URL keep working.</p>
+    <div class="actions"><button class="secondary" id="outage-toggle"></button></div>
+    <p class="msg" id="outage-msg" role="status"></p>
+  </section>
+
+  <section aria-labelledby="h-tokens">
+    <h2 id="h-tokens">Revocation</h2>
+    <p id="token-counts"></p>
+    <ul class="rows controls">
+      <li><span>Ends every access and refresh token in the active store, while a signed URL or cached decision already issued keeps working until it expires, which is the revocation window.</span><button class="danger" id="revoke-all">Revoke all tokens</button></li>
+      <li><span>Clears every decision the proxy has cached, so its next request for each goes back to the Imaging Server.</span><button class="danger" id="flush-cache">Flush proxy decision cache</button></li>
+      <li><span>Replaces the Imaging Server's signing key and retires the old one, so every signed URL already issued loses the instant path at once. Each request on one then goes to the Imaging Server, and a currently valid token still gets what policy allows.</span><button class="danger" id="rotate-key">Rotate signing key</button></li>
+    </ul>
+    <p class="msg" id="tokens-msg" role="status"></p>
+  </section>
+</main>
+<script src="/admin.js"></script>
+</body>
+</html>

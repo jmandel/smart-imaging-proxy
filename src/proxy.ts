@@ -32,7 +32,8 @@ export function createProxy(opts: {
 
   async function canI(token: string, ctx: string | undefined, study: string, operation: string): Promise<Outcome> {
     const key = `${sha(token)}|${ctx ? sha(ctx) : "-"}|${study}|${operation}`;
-    const hit = cache.get(key);
+    // A decision cached for a signed URL lasts only while that URL's signature still verifies.
+    const hit = !ctx || verifyJws(ctx, opts.keys) ? cache.get(key) : undefined;
     if (check("dicomweb-proxy", "decision cache lookup", !!(hit && hit.until > now()), { hit: !!hit, fresh: !!hit && hit.until > now(), study })) return { ...hit!.outcome, via: "cached" };
     let res: Response;
     try {
@@ -267,5 +268,7 @@ export function createProxy(opts: {
     }),
     events,
     reset() { cache.clear(); events.length = 0; },
+    flushDecisions() { cache.clear(); },
+    get cachedDecisions() { return cache.size; },
   };
 }

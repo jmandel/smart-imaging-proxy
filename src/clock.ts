@@ -2,4 +2,6 @@
 let offset = 0;
 export const now = () => Math.floor(Date.now() / 1000) + offset;
 export const advance = (seconds: number) => { offset += seconds; };
+export const clockOffset = () => offset;
+export const setClockOffset = (seconds: number) => { offset = seconds; };
 export const resetClock = () => { offset = 0; };
