@@ -153,4 +153,6 @@ export interface ObjectSource {
   /** Whole small objects: documents and indexes. */
   bytes(key: string): Promise<Uint8Array>;
   text(key: string): Promise<string>;
+  /** Keys under a prefix. Only the catalog rebuild and reconciliation list: never a request path. */
+  list(prefix: string): AsyncIterable<string>;
 }
