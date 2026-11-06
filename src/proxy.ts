@@ -192,7 +192,7 @@ export function createProxy(opts: KeyOption & {
    * before anything is opened, and the whole response's length is known. A backend that then
    * delivers anything other than what it planned gets the response aborted.
    */
-  async function planned(parts: PartStream["parts"], items: PlannedPart[], scope: Scope, plan: PlanItem[], ev: ProxyEvent, server: SpanHandle, clientTakesZstd: boolean, started: number, backendName: string): Promise<Response> {
+  async function planned(parts: PartStream["parts"], items: PlannedPart[], scope: Scope, plan: PlanItem[], ev: ProxyEvent, server: SpanHandle, zstd: boolean, started: number, backendName: string): Promise<Response> {
     let body: AsyncIterator<Uint8Array> | undefined;
     const closeBackend = closer(parts, () => body);
     const refuse = (res: Response) => { closeBackend().catch(() => {}); return res; };
@@ -203,12 +203,11 @@ export function createProxy(opts: KeyOption & {
       return refuse(new Response(null, { status: 406 }));
     }
     // Stored zstd can only leave as `Content-Encoding: zstd`, which only some clients take.
-    if (!check("dicomweb-proxy", "plan's encodings can be sent", clientTakesZstd || items.every(i => i.encoding === "none"))) {
+    if (!check("dicomweb-proxy", "plan's encodings can be sent", zstd || items.every(i => i.encoding === "none"))) {
       ev.note = "backend planned zstd parts without being offered passthrough";
       return refuse(new Response(null, { status: 502 }));
     }
 
-    const zstd = clientTakesZstd;
     const boundary = stableBoundary(JSON.stringify([scope.study, scope.series, scope.instance, scope.onlySeries, scope.version, items.map(i => [i.sop, i.syntax])]));
     // Part length is the instance's, even when its body arrives as a frame of some other size.
     const partLength = (i: PlannedPart) => i.encoding === "zstd" ? i.decodedBytes : i.bytes;

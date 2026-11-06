@@ -11,6 +11,7 @@ import { scriptedLaunch } from "../src/flows/oauth";
 import { CONFIG } from "../src/config";
 import { boundaryOf, readMultipart } from "../src/multipart";
 import { resetClock } from "../src/clock";
+import { createProxy } from "../src/proxy";
 
 const root = join(import.meta.dir, "..");
 const BACKENDS: BackendName[] = (process.env.BACKENDS?.split(",") as BackendName[]) ?? ["static-files", "minio", "orthanc"];
@@ -195,6 +196,38 @@ describe("rotation", () => {
     expect(stack.stores.saved.info().counts.retiredSigningKeys).toBeGreaterThan(0);
     expect(stack.stores.scratch.info().counts.signingKeys).toBe(0);
   });
+});
+
+test("a proxy that isn't told keeps a rotated key until its TTL, and no longer", async () => {
+  stack.setBackend("static-files");
+  stack.useStore("saved");
+  const { t, url } = await launchAndSearch();
+  // A second proxy on the real JWKS, which the admin action knows nothing about. It only needs to
+  // show which way it would decide, so its decision service is one that always allows.
+  const pdp = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => Response.json({ decision: true, context: { release: "study", max_age_seconds: 0 } }) });
+  let clock = 1_000_000;
+  const untold = createProxy({ publicBase: () => CONFIG.proxyUrl, jwksUrl: `${CONFIG.imagingUrl}/.well-known/jwks.json`, jwksTtlSeconds: 60, jwksClock: () => clock, decisionUrl: `http://127.0.0.1:${pdp.port}/x`, serviceSecret: "unused", backend: () => stack.backends["static-files"] });
+  const authz = async () => {
+    const r = await untold.fetch(new Request(url, { headers: { Authorization: `Bearer ${t.access_token}`, Accept: ACCEPT } }));
+    await r.arrayBuffer();
+    expect(r.status).toBe(200);
+    return untold.events.at(-1)!.authz;
+  };
+  try {
+    expect(await authz()).toBe("instant");
+    await admin("/signing-key/rotate");
+    // The proxy that was told has moved on, and this one hasn't heard.
+    expect(await get(url, t.access_token)).toMatchObject({ status: 200, authz: "asked" });
+    clock += 59_000;
+    expect(await authz()).toBe("instant");
+    clock += 2000;
+    expect(await authz()).toBe("asked");
+  } finally { pdp.stop(true); }
+});
+
+test("the admin action reports whether the proxy was told", async () => {
+  const r = await demo.fetch(new Request(`${CONFIG.demoUrl}/api/admin/signing-key/rotate`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host } }));
+  expect((await r.json() as any).rotation).toEqual({ proxyTold: true });
 });
 
 test("a rotation survives a restart: the old key stays retired, with its private half erased", async () => {

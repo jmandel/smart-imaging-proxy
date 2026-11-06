@@ -104,6 +104,10 @@ $("#revoke-all").onclick = () => {
 $("#flush-cache").onclick = () => act($("#tokens-msg"), "The proxy's decision cache is empty.", () => call("POST", "/proxy/flush"));
 $("#rotate-key").onclick = () => {
   if (!confirm("Rotate the signing key? This demo's proxy is told at once, so every signed URL already issued loses the instant path now, and its requests go to the Imaging Server. A proxy that isn't told stops trusting the old key within 60 seconds.")) return;
-  act($("#tokens-msg"), "The signing key is rotated.", () => call("POST", "/signing-key/rotate"));
+  act($("#tokens-msg"), "The signing key is rotated, and the proxy has refetched its keys.", async () => {
+    const s = await call("POST", "/signing-key/rotate");
+    if (!s.rotation.proxyTold) throw new Error("the key is rotated, but the proxy couldn't be told, so it stops trusting the old key within 60 seconds");
+    return s;
+  });
 };
 call("GET", "/status").then(render).catch(e => { document.querySelector(".warning").insertAdjacentHTML("afterend", `<p class="msg bad">${esc(e.message)}</p>`); });
