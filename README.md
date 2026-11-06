@@ -77,6 +77,7 @@ reports/quarantine.json                                       inputs left out of
 | `src/backends/` | Static files and MinIO (`archive.ts`), and Orthanc (`orthanc.ts`) |
 | `src/flows/` | The flows, shared by the web page and tests |
 | `src/browse.ts` | The Browse page's sessions and API |
+| `src/admin-api.ts`, `src/rule-presets.ts` | The admin screen's API, and the named rule sets it offers. Every write takes a fixed choice |
 | `src/trace.ts`, `src/trace-collector.ts` | Spans, correlation, and the live stream |
 | `web/` | The flow player, Browse, admin, and live trace pages |
 

@@ -225,6 +225,10 @@ describe("backend clients", () => {
     expect(s.explain.chain).toContain("No rule in saved policy pre-authorizes hand-referral-service");
     expect(s.explain.studies.every((r: any) => !r.released)).toBe(true);
     expect(s.steps.map((x: any) => x.title)).toContain("SMART Backend Services token request");
+    expect(s.ruleHelp.url).toBe("/admin?rule-set=hand-wrist-referral#h-rules");
+    expect(s.ruleHelp.text).toContain('choose "Referral service: hand and wrist X-rays"');
+    expect(s.detail).not.toContain("add a rule");
+    expect(await Bun.file(join(root, "web/browse.js")).text()).not.toContain("JSON.stringify([{");
   }, 60000);
   test("with a rule, what it allows, withheld series included", async () => {
     const ct = stack.catalog.allStudies().find(x => x.id === "ct-abdomen-pelvis-2012")!;

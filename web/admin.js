@@ -17,7 +17,35 @@ async function act(msg, done, fn) {
   catch (e) { say(msg, e.errors?.length ? "Not saved:" : `Not done: ${e.message}`, true, e.errors); return false; }
 }
 
-let lastActive, rulesEdited = false;
+let lastActive, ruleSets, ruleSetPick = new URLSearchParams(location.search).get("rule-set");
+
+const SETTING_NAMES = { contextLifetimeSeconds: "Context lifetime", maxSeriesInContext: "Most series listed in a URL", tokenLifetimeSeconds: "Access token lifetime", refreshTokenLifetimeSeconds: "Refresh token lifetime" };
+/** A value no choice offers, in words. */
+function offChoice(name, v) {
+  if (name === "maxSeriesInContext") return String(v);
+  for (const [unit, seconds] of [["day", 86400], ["hour", 3600], ["minute", 60]]) if (v >= seconds && v % seconds === 0) return `${v / seconds} ${unit}${v === seconds ? "" : "s"}`;
+  return `${v} second${v === 1 ? "" : "s"}`;
+}
+function renderSetting(select, name, value, choices) {
+  const known = choices.some(c => c.value === value);
+  const html = `${known ? "" : `<option value="" disabled>${esc(offChoice(name, value))} (current)</option>`}${choices.map(c => `<option value="${c.value}">${esc(c.label)}</option>`).join("")}`;
+  if (select.dataset.options !== html) { select.innerHTML = html; select.dataset.options = html; }
+  select.value = known ? String(value) : "";
+}
+function renderRuleSets() {
+  const { current, choices } = ruleSets;
+  if (!choices.some(c => c.id === ruleSetPick && c.rules)) ruleSetPick = current;
+  const select = $("#rule-set-select");
+  const pick = choices.find(c => c.id === ruleSetPick && c.rules);
+  const html = `${pick ? "" : '<option value="" disabled>Pick a named rule set</option>'}${choices.map(c => `<option value="${esc(c.id)}"${c.rules ? "" : " disabled"}>${esc(c.label)}${c.rules ? "" : " (not in this catalog)"}</option>`).join("")}`;
+  if (select.dataset.options !== html) { select.innerHTML = html; select.dataset.options = html; }
+  select.value = pick?.id ?? "";
+  $("#apply-rule-set").disabled = !pick || pick.id === current;
+  $("#rule-set-description").textContent = pick?.description ?? (current ? "The rule set in effect names studies this backend's catalog doesn't hold." : "These rules aren't one of the named rule sets. They stay until you apply one.");
+  $("#rule-set-rules-title").hidden = $("#rule-set-rules").hidden = !pick;
+  $("#rule-set-rules-title").textContent = pick?.id === current ? "Rules this set applies, in effect now" : "Rules this set applies, once you apply it";
+  $("#rule-set-rules").textContent = pick ? (pick.rules.length ? JSON.stringify(pick.rules, null, 2) : "No rules.") : "";
+}
 
 function render(s) {
   const { saved, scratch, active, label } = s.store;
@@ -37,10 +65,18 @@ function render(s) {
     <ul class="rows">${d.map(x => `<li><span><b>${esc(x.grantedBy)}</b> to <b>${esc(x.delegate)}</b> (${esc(x.relationship)}), patient ${esc(x.patient)}: ${esc(sites(x.sites))}</span><button class="secondary small" data-del-delegation="${esc(JSON.stringify({ patient: x.patient, delegate: x.delegate }))}">Delete</button></li>`).join("") || '<li><span class="note">No delegations.</span></li>'}</ul>
     <ul class="rows">${g.map(x => `<li><span><b>${esc(x.user)}</b> authorized app <b>${esc(x.client)}</b>, patient ${esc(x.patient)}: ${esc(sites(x.sites))}</span><button class="secondary small" data-del-grant="${esc(JSON.stringify({ client: x.client, user: x.user, patient: x.patient }))}">Delete</button></li>`).join("") || '<li><span class="note">No app grants.</span></li>'}</ul>`;
 
-  if (!rulesEdited || lastActive !== active) { $("#rules-text").value = JSON.stringify(s.policy.rules, null, 2); rulesEdited = false; }
+  if (lastActive !== undefined && lastActive !== active) ruleSetPick = null;
   lastActive = active;
+  ruleSets = s.ruleSets;
+  const inEffect = s.ruleSets.choices.find(c => c.id === s.ruleSets.current);
+  $("#rules-current").innerHTML = `In ${esc(label)}: <b>${esc(inEffect?.label ?? "Custom rules from a flow or older version")}</b>`;
+  $("#custom-rules").hidden = !!inEffect;
+  $("#custom-rules-text").textContent = inEffect ? "" : JSON.stringify(s.policy.rules, null, 2);
+  renderRuleSets();
 
-  for (const [k, v] of Object.entries(s.settings)) { const i = document.querySelector(`[name=${k}]`); if (i && document.activeElement !== i) i.value = v; }
+  document.querySelectorAll("[data-setting]").forEach(select => renderSetting(select, select.dataset.setting, s.settings[select.dataset.setting], s.settingChoices[select.dataset.setting]));
+  const clock = $("#clock-buttons");
+  if (!clock.children.length) clock.innerHTML = s.clockChoices.map(c => `<button class="secondary" data-advance="${c.value}">Advance ${esc(c.label)}</button>`).join("");
   $("#clock-now").textContent = `Demo time ${new Date(s.clock.now * 1000).toISOString()}, offset ${s.clock.offsetSeconds} seconds from real time.`;
 
   const sel = $("#backend-select");
@@ -65,30 +101,26 @@ document.addEventListener("click", e => {
   if (grant) act($("#chain-msg"), "App grant deleted.", () => call("DELETE", `/app-grants?${new URLSearchParams(JSON.parse(grant.dataset.delGrant))}`));
   const use = e.target.closest("[data-activate]");
   if (use) act($("#store-msg"), `Now using ${use.textContent.replace("Use ", "")}.`, () => call("POST", "/store/activate", { store: use.dataset.activate }));
+  const ahead = e.target.closest("[data-advance]");
+  if (ahead) act($("#clock-msg"), `Clock advanced ${ahead.textContent.replace("Advance ", "")}.`, () => call("POST", "/clock", { advanceSeconds: Number(ahead.dataset.advance) }));
 });
 $("#reset-scratch").onclick = () => act($("#store-msg"), "Flow scratch is empty.", () => call("POST", "/store/reset-scratch"));
 $("#reset-saved").onclick = () => {
   if (!confirm("Delete all saved delegations, app grants, rules and settings? This can't be undone.")) return;
   act($("#store-msg"), "Saved policy is reset. Saved tokens and the signing key were kept.", () => call("POST", "/store/reset-saved", { confirm: true }));
 };
-$("#rules-text").oninput = () => { rulesEdited = true; };
-$("#save-rules").onclick = async () => {
-  let rules;
-  try { rules = JSON.parse($("#rules-text").value); }
-  catch (e) { say($("#rules-msg"), `Not saved: this isn't valid JSON. ${e.message}`, true); return; }
-  rulesEdited = false;
-  const saved = await act($("#rules-msg"), "Rules saved.", () => call("PUT", "/rules", { rules }));
-  if (!saved) rulesEdited = true;
+$("#rule-set-select").onchange = e => { ruleSetPick = e.target.value; renderRuleSets(); };
+$("#apply-rule-set").onclick = () => {
+  const pick = ruleSets.choices.find(c => c.id === ruleSetPick);
+  if (pick) act($("#rules-msg"), `Applied: ${pick.label}.`, () => call("POST", "/rule-set", { id: pick.id }));
 };
-$("#settings-form").onsubmit = e => {
-  e.preventDefault();
-  const body = Object.fromEntries([...new FormData(e.target)].map(([k, v]) => [k, v === "" ? null : Number(v)]));
-  act($("#settings-msg"), "Settings saved.", () => call("PUT", "/settings", body));
-};
-$("#clock-form").onsubmit = e => {
-  e.preventDefault();
-  act($("#clock-msg"), "Clock advanced.", () => call("POST", "/clock", { advanceSeconds: Number($("#clock-seconds").value) }));
-};
+document.querySelectorAll("[data-setting]").forEach(select => {
+  select.onchange = async () => {
+    const name = select.dataset.setting;
+    const done = await act($("#settings-msg"), `${SETTING_NAMES[name]}: ${select.selectedOptions[0].textContent}.`, () => call("PUT", "/settings", { [name]: Number(select.value) }));
+    if (!done) call("GET", "/status").then(render).catch(() => {});
+  };
+});
 $("#clock-reset").onclick = () => act($("#clock-msg"), "Clock is back to real time.", () => call("POST", "/clock", { reset: true }));
 $("#backend-select").onchange = e => act($("#backend-msg"), `Now using ${e.target.value}.`, () => call("POST", "/backend", { backend: e.target.value }));
 $("#self-test").onclick = async () => {

@@ -5,7 +5,7 @@ import type { BackendName, Stack } from "./stack";
 import { FLOWS, flowById, runStep, startFlow } from "./flows";
 import type { Ctx } from "./flows/runtime";
 import { CONFIG } from "./config";
-import { adminApi, readJson, refuseWrite, BACKEND_NAMES } from "./admin-api";
+import { adminApi, extraField, readJson, refuseWrite, BACKEND_NAMES } from "./admin-api";
 import { PolicyValidationError } from "./policy-store";
 import type { BackendClient } from "./auth-server";
 import { createBrowse } from "./browse";
@@ -77,6 +77,8 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     if (p === "/api/backend" && req.method === "POST") {
       const b = await readJson(req);
       if (b === undefined || !BACKEND_NAMES.includes(b?.backend)) return json({ error: "unknown backend" }, 400);
+      const extra = extraField(b, ["backend"]);
+      if (extra) return json({ error: extra }, 400);
       stack.setBackend(b.backend as BackendName);
       return json({ backend: stack.backend });
     }
@@ -84,15 +86,16 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     if (p === "/api/policy" && req.method === "PUT") {
       const refused = refuseWrite(req, url);
       if (refused) return refused;
+      if (stack.stores.activeName !== "scratch") return json({ error: "Saved policy is active, and this panel changes only flow scratch. Saved rules change through the named rule sets on the admin screen." }, 409);
       const b = await readJson(req);
       if (b === undefined) return json({ error: "the request body must be valid JSON" }, 400);
       try {
-        stack.imaging.setPolicy(b);
+        stack.stores.scratch.setPolicy(b);
       } catch (e) {
         if (e instanceof PolicyValidationError) return json({ error: e.message, errors: e.errors }, 400);
         throw e;
       }
-      return json(stack.imaging.getPolicy());
+      return json(stack.stores.scratch.getPolicy());
     }
     const start = p.match(/^\/api\/flows\/([^/]+)\/start$/);
     if (start && req.method === "POST") {

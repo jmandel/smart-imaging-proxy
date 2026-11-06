@@ -3,7 +3,7 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "
 const api = async (path, opts) => { const r = await fetch(path, opts); const b = await r.json(); if (!r.ok) throw new Error(b.error ?? r.statusText); return b; };
 const post = (path, body) => api(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) });
 
-let flows = [], services = {}, current = null, stepsDone = {}, flowStatus = {};
+let flows = [], services = {}, current = null, stepsDone = {}, flowStatus = {}, shownStore;
 const BADGE = { instant: "instant: no network call", asked: "asked can_i", cached: "cached decision" };
 
 function showStore(store) {
@@ -13,6 +13,24 @@ function showStore(store) {
   const t = $("#policy-store");
   if (t) t.textContent = store.label;
   $("#back-to-saved").hidden = store.active === "saved";
+  const saved = store.active === "saved";
+  const text = $("#policy-text");
+  if (text) {
+    text.readOnly = saved;
+    $("#apply-policy").disabled = saved;
+    $("#policy-note").textContent = saved
+      ? "Read-only now, because saved policy is active. This panel changes only flow scratch, and saved rules change through the named rule sets on the admin screen. Running a flow step goes back to flow scratch."
+      : "Known only to the Imaging Server. The proxy never receives it. Edit it and apply to change what later steps do. This panel changes only flow scratch.";
+  }
+}
+/** Another tab can change the active store, so a flow page checks when it's looked at again. */
+async function refreshStore() {
+  if (!$("#policy-text")) return;
+  const store = await api("/api/store");
+  const changed = store.active !== shownStore;
+  showStore(store);
+  shownStore = store.active;
+  if (changed) setPolicy(await api("/api/policy"));
 }
 async function backToSaved() {
   const status = await post("/api/admin/store/activate", { store: "saved" });
@@ -97,12 +115,13 @@ function showFlow(id, data) {
   renderNav();
   $("#main").innerHTML = `<h2 class="flow-title">${f.number}. ${esc(f.title)}</h2><p class="summary">${esc(f.summary)}</p><p class="shows">${esc(f.shows)}</p>
     <div class="toolbar"><button class="primary" id="run-rest">Run remaining steps</button><button class="secondary" id="restart">Start over</button></div>
-    <div id="chain" class="chain"></div><details class="policy" id="policy"><summary>Imaging Server policy</summary><div class="inner"><p class="note">Known only to the Imaging Server. The proxy never receives it. Edit it and apply to change what later steps do. This panel acts on: <b id="policy-store"></b>.</p><textarea id="policy-text" spellcheck="false" aria-label="Policy JSON"></textarea><div><button class="secondary" id="apply-policy">Apply policy</button><span class="msg" id="policy-msg" role="status"></span></div></div></details>
+    <div id="chain" class="chain"></div><details class="policy" id="policy"><summary>Imaging Server policy</summary><div class="inner"><p class="note"><span id="policy-note"></span> Active: <b id="policy-store"></b>.</p><textarea id="policy-text" spellcheck="false" aria-label="Policy JSON"></textarea><div><button class="secondary" id="apply-policy">Apply policy</button><span class="msg" id="policy-msg" role="status"></span></div></div></details>
     <div id="steps"></div>`;
   $("#restart").onclick = () => openFlow(id);
   $("#run-rest").onclick = runRemaining;
   $("#apply-policy").onclick = applyPolicy;
   showStore(data.store);
+  shownStore = data.store.active;
   setPolicy(data.policy);
   renderSteps(data.steps);
 }
@@ -121,7 +140,7 @@ async function applyPolicy() {
     const r = await api("/api/policy", { method: "PUT", headers: { "content-type": "application/json" }, body: $("#policy-text").value });
     setPolicy(r);
     msg.textContent = "Applied.";
-  } catch (e) { msg.textContent = `Not applied: ${e.message}`; }
+  } catch (e) { msg.textContent = `Not applied: ${e.message}`; refreshStore().catch(() => {}); }
 }
 function inputHtml(step, i) {
   i = { ...i, default: i.clickDefault ?? i.default };
@@ -187,6 +206,7 @@ async function runStep(id) {
     showResult(id, el, r.result);
     setPolicy(r.policy);
     showStore(r.store);
+    shownStore = r.store.active;
     current.steps = r.steps;
     renderSteps(r.steps);
     if (current.steps.every(s => stepsDone[s.id])) { flowStatus[current.id] = current.steps.every(s => stepsDone[s.id] === "ok"); renderNav(); }
@@ -222,4 +242,5 @@ function renderDecision(d) {
 }
 // A page restored from the browser's cache would show stale state, so it loads again.
 window.addEventListener("pageshow", e => { if (e.persisted) location.reload(); });
+window.addEventListener("focus", () => { refreshStore().catch(() => {}); });
 init();

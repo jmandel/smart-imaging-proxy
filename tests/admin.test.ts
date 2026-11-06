@@ -33,7 +33,8 @@ const GRANT = { client: "portal-app", user: "josh", patient: "josh-example" };
 describe("pages", () => {
   test("the admin screen and its script are served, and the demo header links to it", async () => {
     const html = await (await call("GET", "/admin")).text();
-    expect(html).toContain("no admin authentication");
+    expect(html).toContain("There's no login");
+    expect(html).toContain("Nothing on this page can reach the file system or run a command");
     expect(html).toContain("127.0.0.1");
     expect(html).toContain('href="/styles.css"');
     expect((await call("GET", "/admin.js")).status).toBe(200);
@@ -137,52 +138,124 @@ describe("delegations and app grants", () => {
   });
 });
 
-describe("rules", () => {
-  test("a valid list is saved", async () => {
-    expect((await ok("PUT", "/api/admin/rules", { rules: [RULE] })).policy.rules).toEqual([RULE]);
+describe("rule sets", () => {
+  const applied = (s: any) => s.policy.rules.map((r: any) => r.id);
+  test("the status offers every named set, and names the one in effect", async () => {
+    const s = await ok("GET", "/api/admin/status");
+    expect(s.ruleSets.current).toBe("no-extra-rules");
+    expect(s.ruleSets.choices.map((c: any) => c.id)).toEqual(["no-extra-rules", "hand-wrist-referral", "outside-release", "research-donation", "all-three-services"]);
+    for (const c of s.ruleSets.choices) { expect(c.label).toBeTruthy(); expect(c.description).toBeTruthy(); expect(Array.isArray(c.rules)).toBe(true); }
   });
-  test("an invalid list gets a 400 naming every problem, and changes nothing", async () => {
-    await ok("PUT", "/api/admin/rules", { rules: [RULE] });
-    const b = await refused("PUT", "/api/admin/rules", { rules: [{ id: "a", allow: {} }, { id: "b", when: {} }] }, "rules[0].when");
-    expect(b.errors).toEqual(["rules[0].when must be an object", "rules[1].allow must be an object"]);
-    await refused("PUT", "/api/admin/rules", { rules: "none" }, "rules must be an array");
-    await refused("PUT", "/api/admin/rules", "{not json", "JSON object");
-    await refused("PUT", "/api/admin/rules", [RULE], "JSON object");
-    expect(stack.imaging.getPolicy().rules).toEqual([RULE]);
+  test("each set applies to the active store, and is then the one in effect", async () => {
+    for (const [id, rules] of [["hand-wrist-referral", ["hand-referral"]], ["outside-release", ["outside-release"]], ["research-donation", ["research-consent"]], ["all-three-services", ["hand-referral", "outside-release", "research-consent"]], ["no-extra-rules", []]] as const) {
+      const s = await ok("POST", "/api/admin/rule-set", { id });
+      expect(applied(s)).toEqual(rules as any);
+      expect(s.ruleSets.current).toBe(id);
+      expect(stack.stores.saved.rules().map(r => r.id)).toEqual(rules as any);
+    }
+    await ok("POST", "/api/admin/store/activate", { store: "scratch" });
+    await ok("POST", "/api/admin/rule-set", { id: "research-donation" });
+    expect(stack.stores.scratch.rules().map(r => r.id)).toEqual(["research-consent"]);
+    expect(stack.stores.saved.rules()).toEqual([]);
+  });
+  test("the outside release set finds its series in the catalog, the way flow 4 does", async () => {
+    const { policy } = await ok("POST", "/api/admin/rule-set", { id: "outside-release" });
+    const ct = stack.catalog.allStudies().find(s => s.id === "ct-abdomen-pelvis-2012")!;
+    const series = stack.catalog.hierarchies([ct.pk]).get(ct.pk)!.series;
+    expect(policy.rules[0].withholdSeries.sort()).toEqual(series.filter(x => /Clinical Documents|Dose Report/.test(x.description ?? "")).map(x => x.uid).sort());
+    expect(policy.rules[0].withholdSeries.length).toBe(2);
+  });
+  test("the referral set releases the hand and wrist X-rays and nothing else, to that client alone", async () => {
+    await ok("POST", "/api/admin/rule-set", { id: "hand-wrist-referral" });
+    const e = await stack.explain({ client: "hand-referral-service", patient: "josh-example" });
+    expect(e.studies.filter((x: any) => x.release !== "none").map((x: any) => x.id).sort()).toEqual(["xr-hand-right-2012", "xr-hand-wrist-right-2012", "xr-wrist-left-2012"]);
+    const other = await stack.explain({ client: "research-donation", patient: "josh-example" });
+    expect(other.searchAllowed).toBe(false);
+  });
+  test("a set the catalog can't resolve gets a 409, and changes nothing", async () => {
+    await ok("POST", "/api/admin/rule-set", { id: "research-donation" });
+    const real = stack.catalogs.orthanc.allStudies;
+    stack.catalogs.orthanc.allStudies = () => [];
+    try {
+      await ok("POST", "/api/admin/backend", { backend: "orthanc" });
+      const r = await call("POST", "/api/admin/rule-set", { id: "outside-release" });
+      expect(r.status).toBe(409);
+      const s = await ok("GET", "/api/admin/status");
+      expect(s.ruleSets.choices.find((c: any) => c.id === "outside-release").rules).toBeNull();
+      expect(s.ruleSets.current).toBe("research-donation");
+    } finally { stack.catalogs.orthanc.allStudies = real; }
+    expect(stack.stores.saved.rules().map(r => r.id)).toEqual(["research-consent"]);
+  });
+  test("rules from elsewhere show as no named set, and a named set can replace them", async () => {
+    stack.imaging.setPolicy({ rules: [RULE] });
+    const s = await ok("GET", "/api/admin/status");
+    expect(s.ruleSets.current).toBeNull();
+    expect(s.policy.rules).toEqual([RULE]);
+    expect(applied(await ok("POST", "/api/admin/rule-set", { id: "no-extra-rules" }))).toEqual([]);
+  });
+  test("a matching rule is the named set, whatever order its fields are in", async () => {
+    stack.imaging.setPolicy({ rules: [{ allow: { all: true }, when: { patient: "josh-example", client: "research-donation" }, description: "Josh's research donation consent", id: "research-consent" }] });
+    expect((await ok("GET", "/api/admin/status")).ruleSets.current).toBe("research-donation");
+  });
+  test("flow 4's own rule, with other series withheld, isn't the named set", async () => {
+    const { policy } = await ok("POST", "/api/admin/rule-set", { id: "outside-release" });
+    stack.imaging.setPolicy({ rules: [{ ...policy.rules[0], withholdSeries: policy.rules[0].withholdSeries.slice(0, 1) }] });
+    expect((await ok("GET", "/api/admin/status")).ruleSets.current).toBeNull();
+  });
+  test("the page has no rules editor", async () => {
+    const html = await (await call("GET", "/admin")).text();
+    expect(html).not.toContain("<textarea");
+    expect(html).not.toContain('type="number"');
+    expect(html).not.toContain("<input");
+    expect(html).not.toContain("JSON");
+    expect(await (await call("GET", "/admin.js")).text()).toContain("Custom rules from a flow or older version");
   });
 });
 
 describe("settings", () => {
-  test("valid settings apply, and the token lifetime reaches new tokens", async () => {
-    const s = await ok("PUT", "/api/admin/settings", { contextLifetimeSeconds: 60, maxSeriesInContext: 3, tokenLifetimeSeconds: 900, refreshTokenLifetimeSeconds: 5000 });
-    expect(s.settings).toEqual({ contextLifetimeSeconds: 60, maxSeriesInContext: 3, tokenLifetimeSeconds: 900, refreshTokenLifetimeSeconds: 5000 });
+  test("a named value applies, and the token lifetime reaches new tokens", async () => {
+    const s = await ok("PUT", "/api/admin/settings", { contextLifetimeSeconds: 60, maxSeriesInContext: 100, tokenLifetimeSeconds: 300, refreshTokenLifetimeSeconds: 86400 });
+    expect(s.settings).toEqual({ contextLifetimeSeconds: 60, maxSeriesInContext: 100, tokenLifetimeSeconds: 300, refreshTokenLifetimeSeconds: 86400 });
     expect(stack.imaging.getPolicy().contextLifetimeSeconds).toBe(60);
     const t = await scriptedLaunch("josh");
-    expect(t.expires_in).toBe(900);
+    expect(t.expires_in).toBe(300);
     expect(stack.auth.grantOf(t.access_token)).toBeDefined();
   });
+  test("every named value is accepted, and the status lists them", async () => {
+    const { settingChoices } = await ok("GET", "/api/admin/status");
+    expect(Object.fromEntries(Object.entries(settingChoices).map(([k, v]: any) => [k, v.map((c: any) => c.value)]))).toEqual({ contextLifetimeSeconds: [60, 300, 1800], maxSeriesInContext: [0, 12, 100], tokenLifetimeSeconds: [300, 3600, 86400], refreshTokenLifetimeSeconds: [86400, 604800, 2592000] });
+    for (const [k, v] of Object.entries(settingChoices) as any) for (const c of v) expect((await ok("PUT", "/api/admin/settings", { [k]: c.value })).settings[k]).toBe(c.value);
+  });
   for (const [name, body, message] of [
-    ["zero lifetime", { contextLifetimeSeconds: 0 }, "contextLifetimeSeconds"],
-    ["text", { tokenLifetimeSeconds: "900" }, "tokenLifetimeSeconds"],
-    ["null", { maxSeriesInContext: null }, "maxSeriesInContext"],
-    ["an unknown name", { color: 1 }, 'unknown field "color"'],
+    ["a whole number that isn't a choice", { contextLifetimeSeconds: 61 }, "contextLifetimeSeconds must be one of 60, 300, 1800"],
+    ["text", { tokenLifetimeSeconds: "3600" }, "tokenLifetimeSeconds must be one of"],
+    ["null", { maxSeriesInContext: null }, "maxSeriesInContext must be one of"],
+    ["an unknown name", { color: 1 }, "accepts only"],
   ] as const) {
     test(`${name} gets a 400, and changes nothing`, async () => {
-      await refused("PUT", "/api/admin/settings", { maxSeriesInContext: 3, ...body }, message);
+      await refused("PUT", "/api/admin/settings", { maxSeriesInContext: 100, ...body }, message);
       expect(stack.stores.saved.getSettings().maxSeriesInContext).toBe(12);
     });
   }
+  test("an empty request gets a 400", async () => { await refused("PUT", "/api/admin/settings", {}, "at least one"); });
+  test("flows keep their own values through the store: the admin route alone is restricted", async () => {
+    stack.imaging.setPolicy({ contextLifetimeSeconds: 7, maxSeriesInContext: 3 });
+    const s = await ok("GET", "/api/admin/status");
+    expect(s.settings).toMatchObject({ contextLifetimeSeconds: 7, maxSeriesInContext: 3 });
+    expect((await ok("PUT", "/api/admin/settings", { contextLifetimeSeconds: 300 })).settings).toMatchObject({ contextLifetimeSeconds: 300, maxSeriesInContext: 3 });
+  });
 });
 
 describe("clock", () => {
   test("advances and resets", async () => {
-    const s = await ok("POST", "/api/admin/clock", { advanceSeconds: 600 });
-    expect(s.clock.offsetSeconds).toBe(600);
-    expect(now() - Math.floor(Date.now() / 1000)).toBeGreaterThanOrEqual(599);
+    const s = await ok("POST", "/api/admin/clock", { advanceSeconds: 300 });
+    expect(s.clock.offsetSeconds).toBe(300);
+    expect(now() - Math.floor(Date.now() / 1000)).toBeGreaterThanOrEqual(299);
+    expect(s.clockChoices.map((c: any) => c.value)).toEqual([60, 300, 3600, 86400]);
     expect((await ok("POST", "/api/admin/clock", { reset: true })).clock.offsetSeconds).toBe(0);
   });
   test("rejects anything else", async () => {
-    for (const body of [{}, { advanceSeconds: -5 }, { advanceSeconds: 1.5 }, { advanceSeconds: "60" }, { advanceSeconds: 1e12 }]) await refused("POST", "/api/admin/clock", body, "advanceSeconds");
+    for (const body of [{}, { advanceSeconds: -5 }, { advanceSeconds: 1.5 }, { advanceSeconds: "60" }, { advanceSeconds: 1e12 }, { advanceSeconds: 600 }, { reset: false }, { advanceSeconds: 60, reset: false }]) await refused("POST", "/api/admin/clock", body, "advanceSeconds");
   });
 });
 
@@ -198,6 +271,8 @@ describe("backend", () => {
   test("the flow player's selector rejects bad input", async () => {
     expect((await call("POST", "/api/backend", "{nope")).status).toBe(400);
     expect((await call("POST", "/api/backend", { backend: "floppy" })).status).toBe(400);
+    expect((await call("POST", "/api/backend", { backend: "minio", path: "/etc/passwd" })).status).toBe(400);
+    expect(stack.backend).toBe("static-files");
   });
 });
 
@@ -233,7 +308,25 @@ describe("tokens", () => {
 });
 
 describe("/api/policy", () => {
+  test("a PUT is refused with a 409 while saved policy is active, and changes nothing", async () => {
+    stack.stores.saved.setPolicy({ rules: [RULE] });
+    const r = await call("PUT", "/api/policy", { rules: [] });
+    expect(r.status).toBe(409);
+    expect((await r.json() as any).error).toContain("Saved policy is active");
+    expect((await call("PUT", "/api/policy", "{not json")).status).toBe(409);
+    expect(stack.stores.saved.rules()).toEqual([RULE]);
+    expect(await ok("GET", "/api/policy")).toMatchObject({ rules: [RULE] });
+  });
+  test("a PUT changes flow scratch, and leaves saved policy alone", async () => {
+    stack.stores.saved.setPolicy({ rules: [RULE] });
+    stack.useStore("scratch");
+    const other = { ...RULE, id: "scratch-rule" };
+    expect((await ok("PUT", "/api/policy", { rules: [other] })).rules).toEqual([other]);
+    expect(stack.stores.scratch.rules()).toEqual([other]);
+    expect(stack.stores.saved.rules()).toEqual([RULE]);
+  });
   test("a bad PUT gets a 400, and doesn't corrupt the policy", async () => {
+    stack.useStore("scratch");
     stack.imaging.setPolicy({ rules: [RULE] });
     const cases: [unknown, string][] = [
       ["{not json", "valid JSON"],
@@ -251,6 +344,7 @@ describe("/api/policy", () => {
     expect((await fetch(`${CONFIG.imagingUrl}/fhir/ImagingStudy?patient=josh-example`, { headers: { Authorization: `Bearer ${t.access_token}` } })).status).toBe(200);
   });
   test("what GET returns can be sent back by PUT", async () => {
+    stack.useStore("scratch");
     stack.imaging.setPolicy({ rules: [RULE], delegations: [DELEGATION], appGrants: [GRANT] });
     const p = await ok("GET", "/api/policy");
     expect(await ok("PUT", "/api/policy", p)).toEqual(p);
@@ -282,6 +376,7 @@ describe("writes naming another Host, over real HTTP", () => {
     expect(stack.stores.saved.rules()).toEqual([RULE]);
   });
   test("this server's own address and port are accepted, with or without naming it", async () => {
+    stack.useStore("scratch");
     expect((await send("/api/policy", undefined, { method: "PUT", body: JSON.stringify({ maxSeriesInContext: 7 }) })).status).toBe(200);
     expect((await send("/api/policy", `localhost:${PORTS.demo}`, { method: "PUT", body: JSON.stringify({ maxSeriesInContext: 8 }) })).status).toBe(200);
     expect(stack.imaging.getPolicy().maxSeriesInContext).toBe(8);

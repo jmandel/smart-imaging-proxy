@@ -155,7 +155,7 @@ function renderView() {
       ${v.switchedStore ? `<p class="note">Starting this session switched the demo from flow scratch to saved policy.</p>` : ""}
       ${signIn}
       <p class="links">${trace}${v.accounts.map(a => `<a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.label)} ↗</a>`).join("")}</p>
-      ${v.status === "forbidden" ? `<p class="links"><a href="/admin#h-rules">Rules on the admin screen</a></p><pre>${esc(JSON.stringify([{ id: `${v.start.client}-rule`, when: { client: v.start.client, patient: v.patient }, allow: { all: true } }], null, 2))}</pre>` : ""}
+      ${v.ruleHelp ? `<p>${esc(v.ruleHelp.text)}</p><p class="links"><a href="${esc(v.ruleHelp.url)}">Rules on the admin screen</a></p>` : ""}
     </div>${shares}${studies()}${narrow}${steps()}${serverView()}`;
 }
 

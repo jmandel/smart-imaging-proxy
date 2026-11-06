@@ -4,6 +4,7 @@
 import { randomBytes } from "node:crypto";
 import { APP_NAMES, PATIENT_NAMES, roleOf, USERS, type BackendClient } from "./auth-server";
 import { refuseWrite, readJson } from "./admin-api";
+import { ruleSetFor } from "./rule-presets";
 import { CONFIG } from "./config";
 import { accountUrl, submitDelegation } from "./flows/oauth";
 import { ACCEPT_ANY, browserFetch, Ctx } from "./flows/runtime";
@@ -140,6 +141,14 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
     };
   }
 
+  /** How to pre-authorize a backend client, in the admin screen's own terms. */
+  function ruleHelp(client: string, patient: string) {
+    const set = ruleSetFor(client, patient, stack.catalog);
+    return set
+      ? { url: `/admin?rule-set=${set.id}#h-rules`, text: `To pre-authorize this client, go to Rules on the admin screen with saved policy active, choose "${set.label}", and select Apply rule set. That replaces the rules saved now.` }
+      : { url: "/admin#h-rules", text: "No named rule set pre-authorizes this client for this patient. Rules on the admin screen lists the rule sets there are." };
+  }
+
   function view(s: Session) {
     const who = s.signedIn ?? s.start.user;
     const held = who ? recordsOf(who).find(r => r.patient === (s.patient ?? s.start.patient)) : undefined;
@@ -160,6 +169,7 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
       share: delegates.length ? { from: firstName(SHARED_BY), sites: stack.catalog.sitesFor(USERS[SHARED_BY]!.patient!).map(name => ({ name, ticked: DEFAULT_SHARED_SITES.includes(name) })), offers: delegates.map(d => ({ delegate: d, label: `Have ${firstName(SHARED_BY)} share with ${firstName(d)}` })) } : undefined,
       accounts: who ? [accountLink(s, who), ...(related ? [accountLink(s, SHARED_BY)] : [])] : [],
       retrievals: [...s.retrievals.values()], retrieving: s.retrieving, hasBundle: !!s.bundle,
+      ruleHelp: s.status === "forbidden" && !who ? ruleHelp(s.start.client, s.patient ?? s.start.patient!) : undefined,
     };
   }
 
@@ -182,7 +192,7 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
       s.status = "forbidden";
       s.headline = "The Imaging Server answered 403 Forbidden";
       const why = String(r.body?.issue?.[0]?.diagnostics ?? "access is forbidden");
-      s.detail = `${why[0]!.toUpperCase()}${why.slice(1)}. To pre-authorize this client, add a rule under Rules on the admin screen.`;
+      s.detail = `${why[0]!.toUpperCase()}${why.slice(1)}.`;
       return;
     }
     if (r.status !== 200) {

@@ -25,12 +25,14 @@
   .admin .rows li > span { flex:1 1 14rem; min-width:0; overflow-wrap:anywhere; }
   .admin .controls li > span { flex-basis:18rem; }
   .admin .controls button { flex:none; }
-  .admin textarea { width:100%; min-height:220px; font:.8rem/1.45 ui-monospace,monospace; }
+  .admin h3 { font-size:.88rem; margin:.7rem 0 .15rem; }
+  .admin pre { white-space:pre-wrap; overflow-wrap:anywhere; max-width:100%; max-height:none; }
   .admin .fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:.6rem; }
   .admin .fields label { font-weight:600; font-size:.86rem; display:flex; flex-direction:column; gap:.2rem; justify-content:space-between; }
-  .admin input[type=number], .admin select { background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:.35rem .5rem; font:inherit; color:inherit; width:100%; font-weight:400; }
+  .admin select { background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:.35rem .5rem; font:inherit; color:inherit; width:100%; font-weight:400; }
   .admin .inline-field { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; }
-  .admin .inline-field input, .admin .inline-field select { width:auto; flex:1 1 7rem; min-width:0; max-width:14rem; }
+  .admin .inline-field select { width:auto; flex:1 1 7rem; min-width:0; max-width:14rem; }
+  .admin .inline-field select.wide { flex-basis:20rem; max-width:28rem; }
   .admin .msg { font-size:.86rem; margin:.5rem 0 0; }
   .admin .msg.bad { color:var(--bad); font-weight:600; }
   .admin .msg ul { margin:.2rem 0 0; padding-left:1.1rem; font-weight:400; }
@@ -39,17 +41,17 @@
 </head>
 <body>
 <header>
-  <div><h1>Demo Admin</h1><p>For anything with no natural home in the flows.</p></div>
+  <div><h1>Demo Admin</h1><p>Fixed choices for the demo's policy, settings and services.</p></div>
   <span id="store-badge" class="store-badge" role="status"></span>
   <a class="admin-link" href="/">Demo home</a>
   <a class="admin-link" href="/browse">Browse studies</a>
 </header>
 <main class="admin" id="admin">
-  <p class="warning">This is a local demo with no admin authentication. Every service listens on 127.0.0.1 and, when Tailscale is running, on this machine's tailnet address, so anyone on your tailnet can use this page. Writes naming another Host or web origin are refused</p>
+  <p class="warning">Every control here is a fixed choice. Nothing on this page can reach the file system or run a command: it can't name a file or a path, and its changes go only to the demo's state and to the policy database shown below. There's no login. Every service listens on 127.0.0.1 and, when Tailscale is running, on this machine's tailnet address, so anyone on your tailnet can use this page, and the worst outcome is changed or reset demo data. Writes naming another Host or web origin are refused.</p>
 
   <section aria-labelledby="h-store">
     <h2 id="h-store">Policy store</h2>
-    <p class="note">The account page, the policy panel, and the sections below act on the active store. Starting a flow activates and resets flow scratch, and running a flow step activates it. Only an explicit control goes back to saved policy: the button below, or the one beside the badge on the demo home.</p>
+    <p class="note">The account page and the sections below act on the active store, and the flow page's policy panel changes only flow scratch. Starting a flow activates and resets flow scratch, and running a flow step activates it. Only an explicit control goes back to saved policy: the button below, or the one beside the badge on the demo home.</p>
     <div id="store-table"></div>
     <div class="actions">
       <button class="secondary" data-activate="saved">Use saved policy</button>
@@ -69,35 +71,40 @@
 
   <section aria-labelledby="h-rules">
     <h2 id="h-rules">Rules</h2>
-    <p class="note">A JSON array, checked in order. The first rule that matches decides.</p>
-    <textarea id="rules-text" spellcheck="false" aria-labelledby="h-rules"></textarea>
-    <div class="actions"><button class="primary" id="save-rules">Save rules</button></div>
+    <p id="rules-current"></p>
+    <p class="note">Applying a rule set replaces every rule in the active store. Rules are checked in order, and the first one that matches decides.</p>
+    <div class="inline-field">
+      <label for="rule-set-select">Rule set</label>
+      <select id="rule-set-select" class="wide"></select>
+      <button class="primary" id="apply-rule-set">Apply rule set</button>
+    </div>
+    <p id="rule-set-description"></p>
+    <h3 id="rule-set-rules-title"></h3>
+    <pre id="rule-set-rules" tabindex="0" aria-labelledby="rule-set-rules-title"></pre>
+    <div id="custom-rules" hidden>
+      <h3 id="custom-rules-title">Custom rules in effect, read-only</h3>
+      <pre id="custom-rules-text" tabindex="0" aria-labelledby="custom-rules-title"></pre>
+    </div>
     <div class="msg" id="rules-msg" role="status"></div>
   </section>
 
   <section aria-labelledby="h-settings">
     <h2 id="h-settings">Settings</h2>
-    <form id="settings-form">
-      <div class="fields">
-        <label>Context lifetime (seconds) <input type="number" name="contextLifetimeSeconds" min="1" step="1"></label>
-        <label>Most series listed in a URL <input type="number" name="maxSeriesInContext" min="0" step="1"></label>
-        <label>Access token lifetime (seconds) <input type="number" name="tokenLifetimeSeconds" min="1" step="1"></label>
-        <label>Refresh token lifetime (seconds) <input type="number" name="refreshTokenLifetimeSeconds" min="1" step="1"></label>
-      </div>
-      <div class="actions"><button class="primary">Save settings</button></div>
-    </form>
+    <p class="note">A choice applies to the active store as soon as you pick it. A value from a flow shows as itself until you pick a choice.</p>
+    <div class="fields">
+      <label>Context lifetime <select data-setting="contextLifetimeSeconds"></select></label>
+      <label>Most series listed in a URL <select data-setting="maxSeriesInContext"></select></label>
+      <label>Access token lifetime <select data-setting="tokenLifetimeSeconds"></select></label>
+      <label>Refresh token lifetime <select data-setting="refreshTokenLifetimeSeconds"></select></label>
+    </div>
     <div class="msg" id="settings-msg" role="status"></div>
   </section>
 
   <section aria-labelledby="h-clock">
     <h2 id="h-clock">Demo clock</h2>
     <p id="clock-now"></p>
-    <form id="clock-form" class="inline-field">
-      <label for="clock-seconds">Advance by (seconds)</label>
-      <input type="number" id="clock-seconds" min="1" step="1" value="300">
-      <button class="secondary">Advance</button>
-      <button class="secondary" type="button" id="clock-reset">Reset to real time</button>
-    </form>
+    <div class="actions" id="clock-buttons" role="group" aria-label="Advance the demo clock"></div>
+    <div class="actions"><button class="secondary" id="clock-reset">Reset to real time</button></div>
     <div class="msg" id="clock-msg" role="status"></div>
   </section>
 
