@@ -46,6 +46,9 @@ function render(s) {
   const sel = $("#backend-select");
   sel.innerHTML = s.backend.names.map(n => `<option value="${esc(n)}" ${n === s.backend.current ? "selected" : ""}>${esc(n)}</option>`).join("");
 
+  const c = s.catalog;
+  $("#catalog-stats").innerHTML = `<dl class="stats"><dt>In use</dt><dd>The ${esc(c.source)} catalog, for ${esc(s.backend.current)}</dd><dt>Path</dt><dd><code>${esc(c.path)}</code></dd><dt>Studies</dt><dd>${esc(c.studies)}</dd><dt>Series</dt><dd>${esc(c.series)}</dd><dt>Hierarchy bytes</dt><dd>${esc(c.hierarchyBytes.toLocaleString())} stored, ${esc(c.hierarchyRawBytes.toLocaleString())} uncompressed</dd></dl>`;
+
   $("#outage-state").textContent = s.outage ? "An outage is injected: the decision service is answering with errors." : "The decision service is up.";
   const toggle = $("#outage-toggle");
   toggle.textContent = s.outage ? "Clear outage" : "Inject outage";

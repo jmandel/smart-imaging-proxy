@@ -43,9 +43,10 @@ Everything is rebuildable. `/tmp` storage doesn't survive a reboot, so rerun the
 |---|---|
 | `src/proxy.ts` | The proxy: fast path, `can_i`, DICOMweb conformance |
 | `src/imaging-server.ts` | Search, policy, signed contexts, the decision API |
+| `src/catalog.ts` | The SQLite catalog search reads. It's rebuildable: `scripts/build-catalog.ts` from the archive, `scripts/catalog-from-orthanc.ts` from Orthanc's QIDO-RS API |
 | `src/auth-server.ts` | SMART Backend Services, a demo consent step, introspection |
 | `src/backends/` | Static files and MinIO (`store.ts`), and Orthanc (`orthanc.ts`) |
-| `src/flows/` | The 13 flows, shared by the web page and tests |
+| `src/flows/` | The flows, shared by the web page and tests |
 | `src/trace.ts`, `src/trace-collector.ts` | Spans, correlation, and the live stream |
 | `web/` | The flow player and live trace pages |
 

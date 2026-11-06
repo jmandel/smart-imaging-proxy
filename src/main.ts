@@ -6,9 +6,10 @@ import { createDemoServer } from "./demo-server";
 import { storeConfigFromEnv } from "./policy-store";
 import { traceStoreConfigFromEnv } from "./trace-store";
 import { CONFIG, PORTS, serveOn, TAILNET } from "./config";
+import { DEFAULT_CATALOG_DB } from "./catalog";
 
 const root = join(import.meta.dir, "..");
-const stack = await startStack(root, { store: storeConfigFromEnv(), traces: traceStoreConfigFromEnv() });
+const stack = await startStack(root, { store: storeConfigFromEnv(), traces: traceStoreConfigFromEnv(), catalog: process.env.CATALOG_DB || DEFAULT_CATALOG_DB });
 const demo = createDemoServer(stack, registerClients(stack), root);
 serveOn(PORTS.demo, { idleTimeout: 240, fetch: demo.fetch });
 const info = stack.stores.saved.info();
@@ -16,4 +17,5 @@ console.log(`SMART Imaging proxy demo: ${CONFIG.demoUrl}${TAILNET ? " (tailnet)"
 console.log(`Admin: ${CONFIG.demoUrl}/admin`);
 console.log(`Live trace: ${CONFIG.traceUrl}`);
 console.log(`Traces: ${stack.collector.store.path ?? "in memory"}`);
+console.log(`Catalog: ${stack.catalogs.archive.stats().path}, and ${stack.catalogs.orthanc.stats().path} for Orthanc`);
 console.log(`Saved policy: ${info.mode === "file" ? `${info.path} (durability ${info.durability})` : "in memory"}`);
