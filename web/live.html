@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Live Trace</title><link rel="stylesheet" href="/live.css"></head>
+<body>
+<header>
+  <div><h1>Live trace</h1><p id="state" role="status">Connecting…</p></div>
+  <div class="controls">
+    <label>Session <select id="session"></select></label>
+    <label><input type="checkbox" id="follow" checked> Follow newest</label>
+    <label><input type="checkbox" id="checks" checked> In-memory checks</label>
+    <label><input type="checkbox" id="parts"> Per-part lines</label>
+    <button id="pause">Pause</button>
+  </div>
+</header>
+<div id="legend" class="legend"></div>
+<details class="terms"><summary>What these terms mean</summary>
+  <dl>
+    <dt>Session</dt><dd>One run of a flow. Everything it causes shares a session, carried across services in a <code>baggage</code> header.</dd>
+    <dt>Trace</dt><dd>One user action: a step. Its ID travels between services in the W3C <code>traceparent</code> header.</dd>
+    <dt>Span</dt><dd>One timed piece of work, nested under the work that caused it.</dd>
+    <dt>Action</dt><dd>What the user did, with the choices they made.</dd>
+    <dt>Server and client</dt><dd>The two sides of an HTTP call. A client span's child is the receiving service's server span.</dd>
+    <dt>Check</dt><dd>An in-memory decision with no network call, such as one fast-path test or one policy evaluation. Green passed. Amber didn't, which isn't always an error: a failed fast-path test just means the proxy asks.</dd>
+  </dl>
+  <p>Tokens are never recorded, only the first characters of their hash. Orthanc and MinIO aren't instrumented internally, so their spans show the calls made to them.</p>
+</details>
+<main id="traces"></main>
+<script src="/live.js"></script>
+</body>
+</html>

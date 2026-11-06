@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMART Imaging Proxy Demo</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header>
+  <div><h1>SMART Imaging Proxy Demo</h1><p>Arbitrary study-level policy, a proxy that holds none of it, and clients that don't have to know.</p></div>
+  <a class="live-link" href="http://127.0.0.1:4604/" target="smart-imaging-live" rel="noopener">Open live trace ↗</a>
+  <label class="backend">Backend <select id="backend"></select><span id="backend-status"></span></label>
+</header>
+<div class="layout">
+  <nav id="flow-list" aria-label="Flows"></nav>
+  <main id="main"><section class="intro" id="intro"></section></main>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

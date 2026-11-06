@@ -1,0 +1,10 @@
+{
+  "_note": "Josh Example is the de-identified name of the real patient whose studies are published in github.com/jmandel/my-health-data/imaging. The birth date keeps only the year, as in the DICOM headers. The whole-slide study is rewritten to this patient.",
+  "id": "josh-example",
+  "family": "Example",
+  "given": ["Josh"],
+  "dicomName": "Example^Josh",
+  "birthDate": "1982-01-01",
+  "gender": "male",
+  "mrn": "JEXAMPLE01"
+}

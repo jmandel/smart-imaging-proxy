@@ -1,0 +1,12 @@
+{
+  "name": "smart-imaging-proxy-demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "fetch-data": "bun scripts/fetch-data.ts",
+    "ingest": "bun scripts/ingest.ts",
+    "load": "bun scripts/load-backends.ts",
+    "start": "bun src/main.ts",
+    "test": "bun test"
+  }
+}
