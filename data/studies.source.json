@@ -230,6 +230,7 @@
   "studies": [
     {
       "id": "mri-brain-2020",
+      "site": "Lakeside Imaging",
       "archives": [
         "mri-brain-2020/0003-4-SHOT-PG-DWI.tgz",
         "mri-brain-2020/0004-4-SHOT-PG-DWI.tgz",
@@ -287,6 +288,7 @@
     },
     {
       "id": "ct-abdomen-pelvis-2012",
+      "site": "Riverside Hospital",
       "archives": [
         "ct-abdomen-pelvis-2012/0001-SCOUT.tgz",
         "ct-abdomen-pelvis-2012/0003-ABD-PEL.tgz",
@@ -337,6 +339,7 @@
     },
     {
       "id": "xr-wrist-left-2012",
+      "site": "Riverside Hospital",
       "archives": [
         "xr-wrist-left-2012/0001-Wrist-PA.tgz",
         "xr-wrist-left-2012/0002-Wrist-OBLI.tgz",
@@ -376,6 +379,7 @@
     },
     {
       "id": "xr-hand-wrist-right-2012",
+      "site": "Riverside Hospital",
       "archives": [
         "xr-hand-wrist-right-2012/0001-Hand-PA.tgz",
         "xr-hand-wrist-right-2012/0002-Hand-OBLI.tgz",
@@ -416,6 +420,7 @@
     },
     {
       "id": "xr-hand-right-2012",
+      "site": "Riverside Hospital",
       "archives": [
         "xr-hand-right-2012/0001-PA.tgz",
         "xr-hand-right-2012/0002-PA-OBL.tgz",
@@ -456,6 +461,7 @@
     },
     {
       "id": "slide-lung-2023",
+      "site": "Northside Pathology",
       "_source": "docs/wsi-sample.md: the full-resolution VOLUME level (6dc953bc, 1.05 GB) and the LABEL (5633c6eb, shows the CPTAC subject ID) are not used.",
       "files": [
         "8d7a5787-7c81-4c38-929f-d0f57ea1db4a.dcm",

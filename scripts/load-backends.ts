@@ -1,11 +1,11 @@
-// Loads the ingested dataset into MinIO and Orthanc. Run after `docker compose up -d`.
-import { join } from "node:path";
+// Copies the archive into MinIO, and fills in any study Orthanc doesn't have. Run after
+// `docker compose up -d` and `bun run ingest`. Safe to repeat: only differences are written.
 import { S3Client } from "bun";
+import { fileStore, s3Store } from "../src/archive/sources";
+import { ArchiveReader } from "../src/archive/reader";
+import { chooseOffer } from "../src/backends/archive";
 import { CONFIG } from "../src/config";
-
-const root = join(import.meta.dir, "..");
-const manifest = await Bun.file(join(root, "data/manifest.json")).json();
-const dir = join(root, "data/studies");
+import { zstdDecompressSync } from "../src/archive/zstd";
 
 const wait = async (url: string, init?: RequestInit) => {
   for (let i = 0; i < 60; i++) {
@@ -15,28 +15,52 @@ const wait = async (url: string, init?: RequestInit) => {
   throw new Error(`timed out waiting for ${url}`);
 };
 
-// MinIO: create the bucket with a signed request, then upload.
-const s3 = new S3Client({ endpoint: CONFIG.minio.endpoint, accessKeyId: CONFIG.minio.accessKey, secretAccessKey: CONFIG.minio.secretKey, bucket: CONFIG.minio.bucket });
-await wait(`${CONFIG.minio.endpoint}/minio/health/live`);
-await Bun.spawn(["curl", "-s", "--aws-sigv4", "aws:amz:us-east-1:s3", "--user", `${CONFIG.minio.accessKey}:${CONFIG.minio.secretKey}`, "-X", "PUT", `${CONFIG.minio.endpoint}/${CONFIG.minio.bucket}`], { stdout: "ignore", stderr: "ignore" }).exited;
+const local = fileStore(CONFIG.archive.dir);
+const keys: string[] = [];
+for await (const k of local.list("")) keys.push(k);
+if (!keys.some(k => k.endsWith("/current.json"))) throw new Error(`no published studies in ${CONFIG.archive.dir}: run the ingest first`);
 
+// MinIO: create the bucket with a signed request, then upload.
+const { endpoint, accessKey, secretKey } = CONFIG.minio;
+const { bucket } = CONFIG.archive;
+await wait(`${endpoint}/minio/health/live`);
+await Bun.spawn(["curl", "-s", "--aws-sigv4", "aws:amz:us-east-1:s3", "--user", `${accessKey}:${secretKey}`, "-X", "PUT", `${endpoint}/${bucket}`], { stdout: "ignore", stderr: "ignore" }).exited;
+const remote = s3Store(new S3Client({ endpoint, accessKeyId: accessKey, secretAccessKey: secretKey, bucket }));
+
+// The same publish order as ingest: content, then documents, then each `current.json`.
+const rank = (k: string) => k.endsWith("/current.json") ? 2 : k.startsWith("content/") ? 0 : 1;
+keys.sort((a, b) => rank(a) - rank(b));
+const same = (a: Uint8Array, b: Uint8Array) => Buffer.compare(a, b) === 0;
+let uploaded = 0, skipped = 0;
+for (const key of keys) {
+  const held = await remote.size(key);
+  // Content is named by its hash, so a matching size means it's there. Anything else is small enough to compare.
+  const unchanged = held !== undefined && (key.startsWith("content/") ? held === await local.size(key) : same(await local.bytes(key), await remote.bytes(key)));
+  if (unchanged) { skipped++; continue; }
+  await remote.write(key, Bun.file(`${CONFIG.archive.dir}/${key}`));
+  uploaded++;
+}
+console.log(`MinIO bucket ${bucket}: ${uploaded} objects uploaded, ${skipped} already there`);
+
+// Orthanc gets a study only if it doesn't have it, each instance once, in a standard syntax.
 const auth = "Basic " + btoa(`${CONFIG.orthanc.user}:${CONFIG.orthanc.password}`);
 await wait(`${CONFIG.orthanc.base}/system`, { headers: { Authorization: auth } });
-
-let uploaded = 0, sent = 0;
-for (const study of manifest.studies) {
-  for (const series of study.series) {
-    await s3.write(`${study.uid}/${series.uid}/.keep`, "");
-    for (const inst of series.instances) {
-      await s3.write(`${study.uid}/${series.uid}/${inst.uid}.json`, Bun.file(join(dir, study.uid, series.uid, `${inst.uid}.json`)));
-      for (const rep of inst.representations) { await s3.write(rep.key, Bun.file(join(dir, rep.key))); uploaded++; }
-      // Orthanc gets each instance once, in a standard syntax.
-      const rep = inst.representations.find((r: any) => !r.private && r.key.endsWith(`${inst.uid}.dcm`));
-      const r = await fetch(`${CONFIG.orthanc.base}/instances`, { method: "POST", headers: { Authorization: auth, "Content-Type": "application/dicom" }, body: Bun.file(join(dir, rep.key)) });
+const reader = new ArchiveReader(local, { currentTtlMs: 0 });
+let sent = 0, present = 0;
+for (const key of keys.filter(k => k.endsWith("/current.json"))) {
+  const uid = key.split("/")[1]!;
+  const lookup = await fetch(`${CONFIG.orthanc.base}/tools/lookup`, { method: "POST", headers: { Authorization: auth }, body: uid });
+  if (!lookup.ok) throw new Error(`Orthanc lookup failed: ${lookup.status}`);
+  if ((await lookup.json() as any[]).some(m => m.Type === "Study")) { present++; continue; }
+  const version = await reader.currentVersion(uid);
+  for (const s of (await reader.study(uid, version)).series) {
+    for (const inst of (await reader.seriesIndex(uid, version, s.uid)).instances) {
+      const offer = chooseOffer(inst.offers, [{ syntax: "*", q: 1 }])!;
+      const stored = await local.bytes(offer.key);
+      const r = await fetch(`${CONFIG.orthanc.base}/instances`, { method: "POST", headers: { Authorization: auth, "Content-Type": "application/dicom" }, body: offer.encoding === "zstd" ? zstdDecompressSync(stored) : stored });
       if (!r.ok) throw new Error(`Orthanc rejected ${inst.uid}: ${r.status}`);
       sent++;
     }
   }
-  console.log(`${study.id} loaded`);
 }
-console.log(`MinIO objects: ${uploaded}, Orthanc instances: ${sent}`);
+console.log(`Orthanc: ${present} studies already present, ${sent} instances sent`);

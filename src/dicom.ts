@@ -5,6 +5,7 @@ const LONG_VRS = new Set(["OB", "OD", "OF", "OL", "OV", "OW", "SQ", "UC", "UN", 
 const STRING_VRS = new Set(["AE", "AS", "CS", "DA", "DT", "LO", "LT", "SH", "ST", "TM", "UC", "UI", "UR", "UT"]);
 const BULK_VRS = new Set(["OB", "OD", "OF", "OL", "OV", "OW", "UN"]);
 const BULK_THRESHOLD = 1024;
+const ALL_VRS = new Set([...LONG_VRS, ...STRING_VRS, ...BULK_VRS, "AT", "DS", "FD", "FL", "IS", "PN", "SH", "SL", "SS", "UL", "US"]);
 
 export type DicomJson = Record<string, { vr: string; Value?: unknown[]; BulkDataURI?: string; InlineBinary?: string }>;
 
@@ -96,6 +97,8 @@ function parseDataset(r: Reader, end: number, top: boolean): Parsed {
     let len: number;
     if (LONG_VRS.has(vr)) { r.pos += 2; len = r.u32(); } else len = r.u16();
     const key = tagKey(g, e);
+    if (!ALL_VRS.has(vr)) throw new Error(`element ${key} has no valid VR`);
+    if (len !== 0xffffffff && r.pos + len > r.b.length) throw new Error(`element ${key} runs past the end of the file`);
     if (vr === "SQ") {
       const stop = len === 0xffffffff ? end : r.pos + len;
       const items = parseItems(r, stop);
