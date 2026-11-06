@@ -39,7 +39,7 @@ export interface Backend {
   openInstances(scope: Scope, plan: PlanItem[], options?: OpenOptions): Promise<PartStream>;
   /** DICOM JSON items. Bulk references are returned as `bulk:<ref>`, never as raw URLs. */
   getMetadata(scope: Scope): Promise<any[]>;
-  openBulk(study: string, series: string, instance: string, ref: string): Promise<{ contentType: string; body: AsyncIterable<Uint8Array> }>;
+  openBulk(study: string, series: string, instance: string, ref: string, /** The study version a signed context names. Absent means current. */ version?: number): Promise<{ contentType: string; body: AsyncIterable<Uint8Array> }>;
   /** Raw upstream behavior, shown side by side in the demo. Absent on store-backed backends. */
   rawProbe?(path: string, accept: string): Promise<{ status: number; contentType: string | null; partSyntaxLabel: string | null; bodyPreview: string }>;
 }

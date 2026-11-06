@@ -2,7 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import { parseAccept } from "../src/accept";
 import { readMultipart, partHeader, partFooter, closing } from "../src/multipart";
-import { chooseRepresentation } from "../src/backends/store";
+import { chooseOffer } from "../src/backends/archive";
 import { ath, generateEd25519, signJws, verifyJws } from "../src/jws";
 import { EVRLE, JPEG_BASELINE, JPEG_LOSSLESS, PRIVATE_DEMO, isLossy, isStandard } from "../src/syntax";
 
@@ -28,19 +28,19 @@ describe("Representation choice", () => {
   const stored = (syntax: string, extra: any = {}) => ({ syntax, stored: true, key: syntax, ...extra });
   const alt = (syntax: string) => ({ syntax, stored: false, key: syntax });
   test("* returns what is stored", () => {
-    expect(chooseRepresentation({ representations: [stored(JPEG_BASELINE)] }, [{ syntax: "*", q: 1 }]).syntax).toBe(JPEG_BASELINE);
+    expect(chooseOffer([stored(JPEG_BASELINE)] as any, [{ syntax: "*", q: 1 }])!.syntax).toBe(JPEG_BASELINE);
   });
   test("* substitutes a standard syntax for a private one", () => {
-    expect(chooseRepresentation({ representations: [stored(PRIVATE_DEMO, { private: true }), alt(EVRLE)] }, [{ syntax: "*", q: 1 }]).syntax).toBe(EVRLE);
+    expect(chooseOffer([stored(PRIVATE_DEMO, { private: true }), alt(EVRLE)] as any, [{ syntax: "*", q: 1 }])!.syntax).toBe(EVRLE);
   });
   test("a listed private syntax is returned", () => {
-    expect(chooseRepresentation({ representations: [stored(PRIVATE_DEMO), alt(EVRLE)] }, [{ syntax: PRIVATE_DEMO, q: 1 }]).syntax).toBe(PRIVATE_DEMO);
+    expect(chooseOffer([stored(PRIVATE_DEMO), alt(EVRLE)] as any, [{ syntax: PRIVATE_DEMO, q: 1 }])!.syntax).toBe(PRIVATE_DEMO);
   });
   test("lossy data doesn't satisfy a .1.2.1-only request", () => {
-    expect(chooseRepresentation({ representations: [stored(JPEG_BASELINE)] }, [{ syntax: EVRLE, q: 1 }])).toBeUndefined();
+    expect(chooseOffer([stored(JPEG_BASELINE)] as any, [{ syntax: EVRLE, q: 1 }])).toBeUndefined();
   });
   test("weights are followed", () => {
-    expect(chooseRepresentation({ representations: [stored(EVRLE), alt(JPEG_LOSSLESS)] }, [{ syntax: JPEG_LOSSLESS, q: 1 }, { syntax: EVRLE, q: 0.5 }]).syntax).toBe(JPEG_LOSSLESS);
+    expect(chooseOffer([stored(EVRLE), alt(JPEG_LOSSLESS)] as any, [{ syntax: JPEG_LOSSLESS, q: 1 }, { syntax: EVRLE, q: 0.5 }])!.syntax).toBe(JPEG_LOSSLESS);
   });
   test("syntax classification", () => {
     expect(isStandard(PRIVATE_DEMO)).toBe(false);

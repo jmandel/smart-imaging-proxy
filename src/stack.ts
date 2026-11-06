@@ -6,7 +6,9 @@ import { S3Client } from "bun";
 import { createAuthServer } from "./auth-server";
 import { createImagingServer } from "./imaging-server";
 import { createProxy } from "./proxy";
-import { fileSource, s3Source, StoreBackend, withTruncation } from "./backends/store";
+import { ArchiveBackend } from "./backends/archive";
+import { fileStore, s3Store } from "./archive/sources";
+import { withTruncation } from "./backends/truncation";
 import { OrthancBackend } from "./backends/orthanc";
 import type { Backend } from "./backends/types";
 import { CONFIG, PORTS, serveOn } from "./config";
@@ -48,8 +50,8 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
   let truncateAfter: number | undefined;
   const wrap = (b: Backend) => withTruncation(b, () => truncateAfter);
   const backends: Record<BackendName, Backend> = {
-    "static-files": wrap(new StoreBackend(manifest, fileSource(join(root, "data/studies")))),
-    minio: wrap(new StoreBackend(manifest, s3Source(new S3Client({ endpoint: CONFIG.minio.endpoint, accessKeyId: CONFIG.minio.accessKey, secretAccessKey: CONFIG.minio.secretKey, bucket: CONFIG.minio.bucket })))),
+    "static-files": wrap(new ArchiveBackend(fileStore(CONFIG.archive.dir))),
+    minio: wrap(new ArchiveBackend(s3Store(new S3Client({ endpoint: CONFIG.minio.endpoint, accessKeyId: CONFIG.minio.accessKey, secretAccessKey: CONFIG.minio.secretKey, bucket: CONFIG.archive.bucket })))),
     orthanc: wrap(new OrthancBackend(CONFIG.orthanc)),
   };
   let current: BackendName = "static-files";
