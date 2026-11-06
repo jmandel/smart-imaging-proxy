@@ -1,51 +1,58 @@
 # SMART Imaging Proxy Demo
 
-A local demo of a WADO-RS proxy that enforces arbitrary study-level policy without holding any of it. It implements the `spec-clarity-organization` branch of the [SMART Imaging Access guide](https://github.com/argonautproject/smart-imaging). The sample data comes from [jmandel/shlink-dicom](https://github.com/jmandel/shlink-dicom).
+A working prototype of a SMART Imaging deployment: an Authorization Server, an Imaging Server holding policy and a study catalog, and a WADO-RS proxy that enforces study-level policy without holding any of it. It runs on six studies. It implements the `spec-clarity-organization` branch of the [SMART Imaging Access guide](https://github.com/argonautproject/smart-imaging). It isn't production code.
+
+## Get running
+
+You need Bun (developed on 1.4.3), Docker with Compose, DCMTK (`dcmconv`, `dcmcjpeg`, `dcmodify`), `curl`, and `tar`. There's no `bun install`, since the project has no packages. Allow roughly 3 GB of disk, an estimate from one machine's copy.
+
+```sh
+bun run fetch-data      # downloads the sample data, verifying checksums
+bun run ingest          # builds the archive
+docker compose up -d    # MinIO and Orthanc
+bun run load            # copies the archive to MinIO, and adds any study Orthanc lacks
+bun run start           # builds any empty catalog, then prints the URLs
+```
+
+Each step is safe to repeat. Everything except the downloads lives under `/tmp/smart-imaging-demo` by default, so after a reboot, run the steps again.
+
+Then open http://127.0.0.1:4600/browse and try these:
+
+1. **Josh, the patient:** shows all six studies. Retrieve one through the proxy, and follow its link to the live trace.
+2. **Sam, a related person:** gets nothing until Josh shares. The page offers to do that, and then Sam sees only the shared sites.
+3. **A backend client:** gets a `403` until you apply a rule set at `/admin`.
+
+## What's at each URL
+
+Every service listens on `127.0.0.1`. If Tailscale is running, each one also listens on the tailnet IP and uses that IP in the URLs it issues, such as redirects and `Endpoint.address`.
+
+| Port | Service | Paths |
+|---|---|---|
+| 4600 | Demo | `/` flow player, `/browse` Browse, `/admin` admin screen |
+| 4601 | WADO-RS proxy | `/wado/{signed-context}/studies/...`, opaque to clients |
+| 4602 | Imaging Server | `/fhir/ImagingStudy`, `/fhir/metadata`, `/access/v1/evaluation`, `/.well-known/jwks.json`, `/.well-known/authzen-configuration` |
+| 4603 | Authorization Server | `/fhir/.well-known/smart-configuration`, `/authorize`, `/token`, `/introspect`, `/revoke`, `/account`, `/fhir/Patient/{id}` |
+| 4604 | Live trace | `/` viewer, `/span.html` full exchange, `/log.html` HTTP log, `/api/sessions/{id}/export` |
+| 4610 | MinIO | Loopback only |
+| 4611 | Orthanc | Loopback only |
+
+- **Flow player:** 14 flows, each a series of steps showing real requests and responses, on any backend. Flows run against a scratch policy store that's emptied when a flow starts.
+- **Browse:** pick an account or a backend client. The demo server runs a real launch or token request, then a real paged search, holding the token itself. Starting a session switches to saved policy. A panel shows the Imaging Server's reason for each study, which a real app would never see.
+- **Admin:** policy store, delegations and app grants, rule sets, settings, demo clock, backend, decision outage, token revocation, decision flush, and key rotation.
+- **Account page:** at `/account`, a patient shares sites with a related person, and a user revokes people and apps.
+- **Live trace:** spans from every service, with inline previews. They're kept in SQLite and survive a restart.
 
 ## How it works
 
-- **Instant path:** the Imaging Server signs its search decision into `Endpoint.address`. The proxy checks the signature with a public key, along with expiry, study, and a hash of the token. There's no network call for the decision. The proxy reads the public keys from the Imaging Server's JWKS, and refetches them every 60 seconds or when it sees an unknown key.
-- **Otherwise, it asks:** a refreshed token, a separate client, or an expired context leads to an [AuthZEN](https://openid.net/specs/authorization-api-1_0.html) evaluation at the Imaging Server, cached briefly.
-- **Clients don't change:** the URL is opaque, and any currently valid token covering the study works.
-
-## Running it
-
-Requires Bun, Docker, and DCMTK.
-
-```sh
-bun run fetch-data          # downloads the sample data, verifying checksums
-bun run ingest              # builds the archive. Safe to re-run
-docker compose up -d        # MinIO and Orthanc, stored under /tmp by default
-bun run load                # copies the archive to MinIO, and adds any study Orthanc lacks
-bun run start
-```
-
-| What | Where |
-|---|---|
-| Flow player | http://127.0.0.1:4600 |
-| Browse studies | http://127.0.0.1:4600/browse |
-| Live trace | http://127.0.0.1:4604 |
-| WADO-RS proxy | http://127.0.0.1:4601 |
-| Imaging Server | http://127.0.0.1:4602 |
-| Authorization Server | http://127.0.0.1:4603 |
-
-Keep `bun run start` stopped while running tests, since both use the same ports.
-
-```sh
-bun test                               # every flow on every backend
-BACKENDS=static-files bun test         # one backend
-```
-
-Everything is rebuildable. `/tmp` storage doesn't survive a reboot, so rerun the steps above if it's gone.
-
-## Browse studies
-
-`/browse` is the place to start exploring. Pick one of the sign-in accounts or a registered backend client, and the demo server runs a real SMART launch or Backend Services token request, then a real `GET /fhir/ImagingStudy` that follows the Bundle's `next` links. The token stays in the demo server's Browse session, and the page holds only an HttpOnly cookie.
-
-- **Saved policy:** starting a Browse session activates saved policy, unless a flow step is running, which gets a `409`. A later flow moves the demo to flow scratch, so the session's token gets a `401`, and the page offers to sign in again.
-- **Live trace:** each session has its own trace session, named like `browse-josh-1a2b3c`, and the page links to it.
-- **The Imaging Server's view:** `GET /internal/explain` takes `client`, `user`, `fhirUser` and `patient`, and needs the service credential. It runs search's `evaluate` over the patient's catalog rows, and returns each study's release, reason and chain. The panel on the page is demo-only: an app never sees it.
-- **Retrieve:** the demo server retrieves through the proxy from the Bundle's `Endpoint.address`, as a client that accepts zstd or one that doesn't, and counts the response as it streams.
+- **Instant path:** search signs its decision into `Endpoint.address`. The proxy checks the signature, expiry, study, series, and a hash of the token, with no network call.
+- **Otherwise, it asks:** a refreshed token, a separate client, an expired context, or a `restricted` one leads to an [AuthZEN](https://openid.net/specs/authorization-api-1_0.html) evaluation at the Imaging Server, cached briefly. If that fails, no data is released.
+- **Signing keys:** the proxy reads public keys from the Imaging Server's JWKS, holding them for 60 seconds. A retired key ends the instant path for its URLs, and current policy still decides through the evaluation. Ending access at once takes three controls together on `/admin`: revoke tokens, flush decisions, and rotate the key.
+- **App Launch:** discovery, authorization code with PKCE S256, required `state`, exact `redirect_uri`, single-use codes, and a consent page where the user picks a patient and sites.
+- **Backend Services:** ES256 client assertions, with each check traced separately: registered key, algorithm, `iss` and `sub`, `aud`, expiry, `jti`, signature, and scope.
+- **Delegation:** patient to related person to app, where each link can only narrow what the last one allows. The Imaging Server holds all of it.
+- **Search:** reads only the catalog, never a bucket. `_count` defaults to 20, with a maximum of 100. Each page's `next` link holds a signed cursor that grants nothing, because policy runs again on every page.
+- **Retrieval:** the proxy reads from the backend only as the client takes bytes. On the file and MinIO backends, it settles every `404`, `406`, and byte count from the indexes before opening an instance, and sends an exact `Content-Length`. A client sending `Accept-Encoding: zstd` gets stored zstd objects without decoding.
+- **Failures:** a response that can't finish aborts with no closing boundary, so a partial study can't look complete.
 
 ## The archive
 
@@ -60,27 +67,150 @@ content/{sha256}.dcm[.zst]                                    PS3.10 bytes, name
 reports/quarantine.json                                       inputs left out of the last ingest, and why
 ```
 
-- **Ingest** writes content, then documents, then `current.json`, which is what publishes a version. Re-running unchanged input writes nothing. Changed input writes the next version, and earlier versions stay.
-- **zstd wrapper:** an object gets one only when that saves at least 5%. So incompressible instances, lossy or not, stay byte-for-byte.
-- **Quarantine:** an input that can't be parsed is left out and reported, and other inputs carry on. A study that already has a live version keeps it until its inputs are clean.
-- **Serving:** `src/backends/archive.ts` settles every 404, 406 and byte count from the indexes, before opening any content.
+**Ingest takes** the PS3.10 `.dcm` files listed through `data/studies.source.json`. It isn't a watched folder or a network receiver.
 
-## Layout
+| Input | What ingest does |
+|---|---|
+| Explicit VR Little Endian or an encapsulated syntax | Keeps it as it is |
+| Implicit VR, big endian, or deflated | Converts it to Explicit VR Little Endian |
+| Lossy | Keeps it as it is, with a warning if (0028,2110) isn't `01` |
+| Not PS3.10, or an element it can't read | Quarantines it |
+| A missing or invalid Study, Series, or SOP Instance UID, or no SOP Class | Quarantines it |
+| A private transfer syntax | Quarantines it. The left wrist study's private syntax is a synthetic fixture |
+| Another study's instance, or a repeated SOP Instance | Quarantines it |
+
+- **Publishing:** content goes first, then documents, then `current.json`, which is what makes a version live. Unchanged input writes nothing. Changed input writes the next version, and earlier ones stay.
+- **Quarantine:** other inputs carry on. A study with a live version keeps it until its inputs are clean. A new study publishes its valid instances.
+- **Compression:** an object gets a zstd wrapper only when that saves at least 5%, so incompressible instances stay byte-for-byte.
+- **Not checked:** pixel data isn't decoded. Patient ID isn't compared across a study's instances, and study-level fields come from its last file.
+
+**The catalog** is a rebuildable SQLite file, built at startup when it's empty. A study whose Patient ID has no link is skipped and reported. Ingest doesn't update the catalog, and a running server keeps the one it opened, so after changing the archive:
+
+```sh
+bun run build-catalog          # from the archive
+bun run catalog-from-orthanc   # from Orthanc's QIDO-RS, plus data/orthanc-catalog.json
+```
+
+Then restart `bun run start`.
+
+## Files
 
 | Path | Purpose |
 |---|---|
-| `src/proxy.ts` | The proxy: fast path, `can_i`, DICOMweb conformance |
-| `src/imaging-server.ts` | Search, policy, signed contexts, the decision API |
-| `src/catalog.ts` | The SQLite catalog search reads. It's rebuildable: `scripts/build-catalog.ts` from the archive, `scripts/catalog-from-orthanc.ts` from Orthanc's QIDO-RS API |
-| `src/auth-server.ts` | SMART Backend Services, a demo consent step, introspection |
-| `src/archive/` | The archive format: its contract, reader, object stores, and ingest |
-| `src/backends/` | Static files and MinIO (`archive.ts`), and Orthanc (`orthanc.ts`) |
-| `src/flows/` | The flows, shared by the web page and tests |
+| `src/main.ts`, `src/roles.ts`, `src/stack.ts` | Startup, all at once or by `--role` |
+| `src/config.ts` | Ports, addresses, and backend credentials |
+| `src/auth-server.ts` | SMART launch and Backend Services, sign-in, consent, account page, introspection |
+| `src/imaging-server.ts` | Search, policy evaluation, signed contexts, the decision API, JWKS |
+| `src/policy-store.ts` | SQLite policy, signing key, and hashed tokens, with saved and scratch stores |
+| `src/proxy.ts`, `src/jwks.ts`, `src/serve-streaming.ts` | The proxy, its key source, and the server that keeps its `Content-Length` |
+| `src/accept.ts`, `src/multipart.ts`, `src/zstd-frames.ts`, `src/dicom.ts` | `Accept` plans, multipart framing, raw zstd frames, and PS3.10 parsing |
+| `src/catalog.ts`, `src/catalog-archive.ts`, `src/catalog-orthanc.ts` | The catalog and its two builders |
+| `src/archive/` | The archive format, reader, object stores, and ingest |
+| `src/backends/` | Files and MinIO (`archive.ts`), Orthanc (`orthanc.ts`), and fault injection |
+| `src/flows/` | The flows, shared by the web page and tests, and the launch client |
 | `src/browse.ts` | The Browse page's sessions and API |
-| `src/admin-api.ts`, `src/rule-presets.ts` | The admin screen's API, and the named rule sets it offers. Every write takes a fixed choice |
-| `src/trace.ts`, `src/trace-collector.ts` | Spans, correlation, and the live stream |
-| `web/` | The flow player, Browse, admin, and live trace pages |
+| `src/admin-api.ts`, `src/rule-presets.ts` | The admin API, and its named rule sets |
+| `src/trace.ts`, `src/trace-collector.ts`, `src/trace-store.ts` | Spans and redaction, the live stream, and SQLite storage |
+| `scripts/` | Fetch, ingest, load, and catalog builds |
+| `data/` | Source list with checksums, patient links, and Orthanc's per-study settings |
+| `web/` | All the pages |
+| `tests/` | The test suite |
 
-## Limits
+## Configuration
 
-This is a local demo with generated keys. It isn't production code. App Launch uses a demo consent step instead of a browser redirect, and `/rendered` and frames aren't implemented.
+Everything has a working default.
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `DEMO_TAILNET` | Detected | `0` stays on loopback |
+| `DEMO_PORT_OFFSET` | `0` | Added to ports 4600-4604, to run a second copy |
+| `DEMO_STORAGE` | `/tmp/smart-imaging-demo` | Compose volumes for MinIO and Orthanc only |
+| `ARCHIVE_DIR` | `/tmp/smart-imaging-demo/archive` | The local archive |
+| `INGEST_WORK` | The OS temp directory | Ingest's working files |
+| `CATALOG_DB` | `/tmp/smart-imaging-demo/catalog.sqlite` | The archive catalog. Orthanc's sits beside it, named `-orthanc` |
+| `POLICY_STORE` | `file` | `file` or `memory` |
+| `POLICY_DB` | `/tmp/smart-imaging-demo/policy.sqlite` | Saved policy, the signing key, and token hashes |
+| `POLICY_DURABILITY` | `normal` | `off`, `normal`, or `full` |
+| `TRACE_STORE` | `file` | `file` or `memory` |
+| `TRACE_DB` | `/tmp/smart-imaging-demo/traces.sqlite` | Traces. A path that can't be opened falls back to memory |
+| `TRACE_MAX_BYTES` | 512 MiB | Oldest sessions go first past this size, or past 100 sessions |
+
+**Port offsets:** avoid these, which break the demo:
+
+- **6 to 11** put a service on MinIO's or Orthanc's port.
+- **1396 to 1400** put a service on port 6000, which Chromium blocks. Check any large offset against the [Fetch standard's blocked ports](https://fetch.spec.whatwg.org/#port-blocking).
+
+A second copy shares MinIO, Orthanc, and the default SQLite files, so give it its own `POLICY_DB`, `CATALOG_DB`, and `TRACE_DB`.
+
+**Splitting the services,** with each command in its own terminal and the same `SERVICE_SECRET` in both:
+
+```sh
+bun src/main.ts --role imaging,auth,trace
+PROXY_BACKEND=minio bun src/main.ts --role proxy
+```
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `--role` | `all` | `all`, `demo` (the same as `all`), or a comma-separated list of `proxy`, `imaging`, `auth`, `trace` |
+| `SERVICE_SECRET` | None | Required for `proxy`, `imaging`, and `auth`, and the same in each. With `all`, it's generated |
+| `PROXY_BACKEND` | `static-files` | `static-files`, `minio`, or `orthanc`. Set `orthanc` on `imaging` too, to use Orthanc's catalog |
+| `JWKS_TTL_SECONDS` | `60` | How long a split proxy trusts its copy of the keys |
+
+Split services have no flow player, Browse, or admin screen, and no Backend Services clients are registered.
+
+## Real and simulated
+
+| Real | Simulated |
+|---|---|
+| OAuth messages, PKCE, codes, refresh, revocation, introspection | **Authentication:** an account picklist with no passwords |
+| Signed client assertions and token issuance | **Accounts and apps:** a fixed list in the code. Backend client keys are generated at each start |
+| Ed25519 signed contexts, JWKS, and key rotation | **Patient matching:** an exact match on Patient ID, seeded from `data/patient.json` |
+| Delegation and consent, enforced in search and retrieval | **Site names:** assigned in the data files, not read from DICOM |
+| FHIR search and the AuthZEN API, over HTTP between services | **Clinical FHIR server:** a stub serving discovery and two `Patient` resources |
+| WADO-RS streaming, with files, MinIO's S3 API, and Orthanc's DICOMweb | **Time:** a demo clock can jump ahead, to show expiry |
+| zstd at rest and passthrough | **Faults:** the outage switch, and truncation injected at the backend boundary |
+| SQLite stores and traces, which survive a restart | **Private transfer syntax:** a synthetic label on one instance |
+
+The images are real. Five studies are a real patient's, de-identified as "Josh Example" and published in [jmandel/my-health-data](https://github.com/jmandel/my-health-data), and the sixth is a CC BY 4.0 slide from the NCI Imaging Data Commons, rewritten to the same patient. Tokens are stored only as hashes, and traces hold only hash prefixes of them.
+
+## Known limits
+
+**Open access:** nothing here has a login. Anyone who can reach these ports can sign in as any account, use `/admin`, and read every trace, including its response bodies. Over a tailnet, that's anyone on it. Traffic is plain HTTP. `/admin` writes take named choices or identify an existing row, and nothing there reaches the filesystem. The flow player's policy panel accepts any valid policy JSON, for the scratch store only.
+
+**Not tried:** other devices on the tailnet, real S3 (only MinIO), any cloud deployment, and real patient matching.
+
+**Scale:** a tiny prototype on six studies, with no load tests or scale proof. The design aims to have no obvious scaling blockers, and that's reasoning, not measurement.
+
+**Decided against:**
+
+- **Postgres:** every store is SQLite.
+- **Conformance suites:** none will be run.
+- **Lambda:** not suitable for study retrieval.
+- **Presigned redirects:** not worth it.
+- **HTJ2K at rest:** not built. zstd comes first, and an instance's offers leave room for it.
+
+**DICOMweb:**
+
+- `/rendered`, `/thumbnail`, and frames return `501`, and nothing is transcoded at serving time.
+- One instance with no accepted representation makes the whole request `406`.
+- With zstd passthrough, content digests are checked at ingest only, and serving checks length.
+- `/metadata` is built whole in memory.
+
+**Orthanc:** responses use chunked framing with no total `Content-Length`, and there's no zstd passthrough or study versioning. `bun run load` skips a study Orthanc already has, so a corrected study doesn't reach it.
+
+**Ingest and storage:** ingest holds each file in memory, and nothing ever removes old versions or unreferenced content.
+
+**Tradeoffs and restarts:**
+
+- A token revoked after search keeps working on the instant path until its context expires, 5 minutes by default.
+- A restart loses sign-ins in progress, Browse and account sessions, and the proxy's cached decisions.
+- A restart also changes the paging key, so older `next` links get a `400`.
+
+## Tests
+
+```sh
+bun test                         # every flow on every backend, and the rest
+BACKENDS=static-files bun test   # flows, Browse, rotation, and conformance on one backend
+```
+
+The tests use the same ports as the demo, so stop `bun run start` first, or give the test run its own `DEMO_PORT_OFFSET`. They need the setup steps above, including Docker, even with `BACKENDS` set. Spec checks read the guide's text from a local clone, set with `SPEC_REPO` and `SPEC_REF`.
