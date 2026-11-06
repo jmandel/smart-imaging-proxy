@@ -94,7 +94,7 @@ export class ArchiveBackend implements Backend {
         const offer = chooseOffer(inst.offers, plan);
         if (!offer) throw new BackendError("NotAcceptable", "an instance has no representation in an accepted transfer syntax");
         const passthrough = !!options.passthroughZstd && offer.encoding === "zstd";
-        const part: PlannedPart = { sop: inst.uid, syntax: offer.syntax, encoding: passthrough ? "zstd" : "none", bytes: passthrough ? offer.objectBytes : offer.storedBytes };
+        const part: PlannedPart = { sop: inst.uid, syntax: offer.syntax, encoding: passthrough ? "zstd" : "none", decodedBytes: offer.storedBytes, bytes: passthrough ? offer.objectBytes : offer.storedBytes };
         return { offer, part, passthrough };
       });
       const open = (c: (typeof chosen)[number], state: BodyState) => c.passthrough ? this.storedBody(c.offer, state) : this.decodedBody(c.offer, state);

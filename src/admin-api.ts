@@ -79,8 +79,8 @@ export async function adminApi(stack: Stack, req: Request, url: URL, hooks: { fo
     return status();
   }
   if (p === "/signing-key/rotate" && m === "POST") {
-    stack.imaging.rotateSigningKey();
-    return status();
+    const { proxyTold } = await stack.rotateSigningKey();
+    return json({ ...adminStatus(stack), rotation: { proxyTold } });
   }
 
   if (m !== "POST" && m !== "PUT") return new Response("not found", { status: 404 });

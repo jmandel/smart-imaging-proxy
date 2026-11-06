@@ -21,6 +21,14 @@ export function signJws(k: KeyPair, claims: object): string {
   return `${head}.${body}.${b64url(sign(null, Buffer.from(`${head}.${body}`), k.privateKey))}`;
 }
 
+/** The `kid` a context names, before anything has verified it. */
+export function kidOf(token: string): string | undefined {
+  try {
+    const kid = JSON.parse(Buffer.from(token.split(".")[0]!, "base64url").toString()).kid;
+    return typeof kid === "string" ? kid : undefined;
+  } catch { return undefined; }
+}
+
 /** Returns the claims, or undefined. The algorithm is pinned, whatever the header says. */
 export function verifyJws(token: string, keys: Map<string, KeyObject>): any | undefined {
   const parts = token.split(".");

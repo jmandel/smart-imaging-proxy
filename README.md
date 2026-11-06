@@ -4,7 +4,7 @@ A local demo of a WADO-RS proxy that enforces arbitrary study-level policy witho
 
 ## How it works
 
-- **Instant path:** the Imaging Server signs its search decision into `Endpoint.address`. The proxy checks the signature with a public key, along with expiry, study, and a hash of the token. There's no network call.
+- **Instant path:** the Imaging Server signs its search decision into `Endpoint.address`. The proxy checks the signature with a public key, along with expiry, study, and a hash of the token. There's no network call for the decision. The proxy reads the public keys from the Imaging Server's JWKS, and refetches them every 60 seconds or when it sees an unknown key.
 - **Otherwise, it asks:** a refreshed token, a separate client, or an expired context leads to an [AuthZEN](https://openid.net/specs/authorization-api-1_0.html) evaluation at the Imaging Server, cached briefly.
 - **Clients don't change:** the URL is opaque, and any currently valid token covering the study works.
 

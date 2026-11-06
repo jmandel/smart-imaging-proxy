@@ -66,27 +66,32 @@ export class OrthancBackend implements Backend {
         if (!boundary) return "truncated";
         const events = readMultipart(asIterable(r.body!), boundary);
         let done: "complete" | "truncated" | undefined;
-        // One part at a time: the consumer drains each body before asking for the next.
-        let pending = await events.next();
-        while (!pending.done && pending.value.type !== "complete" && pending.value.type !== "truncated") {
-          if (pending.value.type !== "start") { pending = await events.next(); continue; }
-          const syntax = pending.value.headers["content-type"]?.match(/transfer-syntax=([0-9.]+)/)?.[1];
-          let trailing: any;
-          const body = (async function* () {
-            while (true) {
-              const n = await events.next();
-              if (n.done || n.value.type !== "data") { trailing = n; return; }
-              yield n.value.bytes;
-            }
-          })();
-          yield { syntax, body };
-          for await (const _ of body) { /* drain anything the consumer left */ }
-          if (trailing?.done || trailing?.value?.type === "truncated") { done = "truncated"; break; }
-          pending = await events.next();
+        try {
+          // One part at a time: the consumer drains each body before asking for the next.
+          let pending = await events.next();
+          while (!pending.done && pending.value.type !== "complete" && pending.value.type !== "truncated") {
+            if (pending.value.type !== "start") { pending = await events.next(); continue; }
+            const syntax = pending.value.headers["content-type"]?.match(/transfer-syntax=([0-9.]+)/)?.[1];
+            let trailing: any;
+            const body = (async function* () {
+              while (true) {
+                const n = await events.next();
+                if (n.done || n.value.type !== "data") { trailing = n; return; }
+                yield n.value.bytes;
+              }
+            })();
+            yield { syntax, body };
+            for await (const _ of body) { /* drain anything the consumer left */ }
+            if (trailing?.done || trailing?.value?.type === "truncated") { done = "truncated"; break; }
+            pending = await events.next();
+          }
+          if (!done && !pending.done && pending.value.type === "truncated") done = "truncated";
+          if (!done && pending.done) done = "truncated";
+          if (done === "truncated") return "truncated";
+        } finally {
+          // Reached early when the consumer stops, and this is what cancels the upstream read.
+          await events.return(undefined);
         }
-        if (!done && !pending.done && pending.value.type === "truncated") done = "truncated";
-        if (!done && pending.done) done = "truncated";
-        if (done === "truncated") return "truncated";
       }
       return "complete";
     }

@@ -9,7 +9,7 @@ export interface Scope { study: string; series?: string; instance?: string; only
 export interface OpenOptions { /** The client accepts `Content-Encoding: zstd`, so stored zstd objects can pass through. */ passthroughZstd?: boolean; }
 
 /** A complete plan: known before anything is opened, so `Content-Length` is known up front. */
-export interface PlannedPart { sop: string; syntax: string; encoding: "none" | "zstd"; /** Exact bytes this part's body yields. */ bytes: number; }
+export interface PlannedPart { sop: string; syntax: string; encoding: "none" | "zstd"; /** Exact bytes this part's body yields. */ bytes: number; /** Exact bytes of the instance once any `encoding` is removed, which lets a passed-through part state its `Content-Length`. */ decodedBytes?: number; }
 
 export type BackendErrorKind = "NotFound" | "NotAcceptable" | "Unavailable" | "CannotDecode" | "Unknown";
 export class BackendError extends Error {
