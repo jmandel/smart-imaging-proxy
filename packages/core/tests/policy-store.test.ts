@@ -12,7 +12,7 @@ const tempPath = () => { const d = mkdtempSync(join(tmpdir(), "policy-store-test
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
 const SERVICE: OrgPolicy = { id: "r1", type: "service-access", description: "a policy", service: "service:c1", patients: "patient:josh-example", allow: { sites: ["Lakeside Imaging"], since: "2020-01-01" }, withholdSeries: ["1.2.3"], contextForm: "restricted" };
-const SERVICE2: OrgPolicy = { id: "r2", type: "service-access", service: "service:c2", patients: "any", allow: { all: true }, withdrawn: true };
+const SERVICE2: OrgPolicy = { id: "r2", type: "service-access", service: "service:c2", patients: "any", allow: { modalities: ["CT"] } };
 const GUARDIANS: OrgPolicy = { id: "teen-guardians", type: "guardian-access", when: { age: { min: 13, max: 17 } }, allow: "all", except: ["confidential-adolescent"] };
 const SHARING: OrgPolicy = { id: "sharing", type: "sharing", allowedFrom: ["patient", "guardian"] };
 const GUARDIAN: Relationship = { subject: "user:sam", relation: "guardian_of", object: "patient:riley", recordedBy: "registration" };
@@ -90,37 +90,9 @@ describe("durability", () => {
     const s = new PolicyStore({ mode: "file", path });
     s.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION + 1}`);
     s.close();
-    expect(() => new PolicyStore({ mode: "file", path })).toThrow("schema version");
+    expect(() => new PolicyStore({ mode: "file", path })).toThrow(/newer format \(schema \d+\).*Reset saved policy/);
   });
 
-  test("a version 1 database is upgraded in place: tokens and keys kept, rules for a client become service-access policies", () => {
-    const path = tempPath();
-    mkdirSync(join(path, ".."), { recursive: true });
-    const old = new Database(path, { create: true });
-    old.exec(`
-      CREATE TABLE delegations (patient TEXT NOT NULL, delegate TEXT NOT NULL, granted_by TEXT NOT NULL, relationship TEXT NOT NULL, sites TEXT NOT NULL, PRIMARY KEY (patient, delegate));
-      CREATE TABLE app_grants (client TEXT NOT NULL, user TEXT NOT NULL, patient TEXT NOT NULL, sites TEXT, PRIMARY KEY (client, user, patient));
-      CREATE TABLE rules (id TEXT PRIMARY KEY, position INTEGER NOT NULL, body TEXT NOT NULL);
-      CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      CREATE TABLE signing_keys (kid TEXT PRIMARY KEY, private_key TEXT NOT NULL, public_key TEXT NOT NULL);
-      CREATE TABLE tokens (hash TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK (kind IN ('access', 'refresh')), record TEXT NOT NULL, exp INTEGER, revoked INTEGER NOT NULL DEFAULT 0);
-      PRAGMA user_version = 1;`);
-    const k = generateEd25519("imaging-2026-11");
-    old.run("INSERT INTO signing_keys VALUES (?, ?, ?)", [k.kid, k.privateKey.export({ format: "pem", type: "pkcs8" }) as string, k.publicKey.export({ format: "pem", type: "spki" }) as string]);
-    old.run("INSERT INTO rules VALUES ('r', 0, ?)", [JSON.stringify({ id: "r1", description: "a policy", when: { client: "c1", patient: "josh-example" }, allow: { sites: ["Lakeside Imaging"], since: "2020-01-01" }, withholdSeries: ["1.2.3"], contextForm: "restricted" })]);
-    old.run("INSERT INTO delegations VALUES ('josh-example', 'sam', 'josh', 'caregiver', ?)", [JSON.stringify(["Lakeside Imaging"])]);
-    old.run("INSERT INTO tokens VALUES (?, 'refresh', ?, NULL, 0)", [createHash("sha256").update("old-refresh").digest("base64url"), JSON.stringify({ client_id: "c", scope: "s" })]);
-    old.close();
-
-    const s = new PolicyStore({ mode: "file", path, onFile: ON_FILE });
-    expect(s.info().schemaVersion).toBe(SCHEMA_VERSION);
-    expect(s.currentSigningKey().kid).toBe("imaging-2026-11");
-    expect(s.policies()).toEqual([SERVICE, GUARDIANS, SHARING]);
-    expect(s.shares()).toEqual([SHARE]);
-    expect(s.relationships()).toEqual([GUARDIAN]);
-    expect(s.getToken("old-refresh", "refresh")!.exp).toBeGreaterThan(Date.now() / 1000 + 29 * 86400);
-    s.close();
-  });
 });
 
 describe("writes", () => {
@@ -180,9 +152,9 @@ describe("writes", () => {
     const s = store();
     s.putPolicy(SERVICE);
     expect(() => s.putPolicy({ ...SERVICE, allow: "everything" as any })).toThrow(PolicyValidationError);
-    s.putPolicy({ ...SERVICE, withdrawn: true } as OrgPolicy);
+    s.putPolicy({ ...SERVICE, allow: { sites: ["Site B"] } });
     expect(s.policies().map(p => p.id)).toEqual(["teen-guardians", "sharing", "r1"]);
-    expect((s.policies()[2] as any).withdrawn).toBe(true);
+    expect((s.policies()[2] as any).allow).toEqual({ sites: ["Site B"] });
     expect(s.removePolicy("no-such-policy")).toBeUndefined();
     s.close();
   });

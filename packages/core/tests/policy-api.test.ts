@@ -177,8 +177,9 @@ describe("sharing", () => {
     const x = await explain("teen", "sitter");
     const hidden = x.studies.find((s: any) => s.id === "study-5.1");
     expect(hidden.release).toBe("none");
-    expect(hidden.why).toContain("Parent can't see this study, so their share can't include it");
-    expect(hidden.because.map((b: any) => b.level)).toEqual(["fact", "policy", "fact", "policy", "choice"]);
+    expect(hidden.why).toBe("Parent's share doesn't reach this study");
+    // To the recipient, only the share: not the label that keeps it from the sharer.
+    expect(hidden.because.map((b: any) => b.level)).toEqual(["choice"]);
     expect(x.studies.find((s: any) => s.id === "study-6.1").because.map((b: any) => b.level)).toEqual(["fact", "policy", "policy", "choice", "choice"]);
   });
   test("a share ends when the sharer stops being a guardian", async () => {
@@ -223,7 +224,8 @@ describe("service-access", () => {
     const x = await policy.explain({ client: "referral", patient: "pat" });
     expect(x.searchAllowed).toBe(true);
     for (const s of x.studies) expect(s.because).toEqual([{ level: "policy", ref: "policy:referral", text: "service:referral may see patient:pat's studies at Site B" }]);
-    await policy.putPolicy({ ...REFERRAL, withdrawn: true } as OrgPolicy);
+    // Revoking is removing the grant.
+    await policy.removePolicy(REFERRAL.id);
     expect(await search("referral", "pat")).toBe(403);
   });
 });

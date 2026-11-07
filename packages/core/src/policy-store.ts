@@ -2,13 +2,14 @@
 // Server's token records. One SQLite database holds all of it, which keeps the configuration in one
 // place you can inspect and reset. A write about one patient raises that patient's revision, and an
 // organization policy write raises the policy revision. Reads for decisions take one patient's rows,
-// by index, and organization policy from memory.
+// by index, and organization policy from memory. Revisions count writes to the store only: a patient's
+// age and a study's labels decide access too, so a cache of decisions can't be keyed by revision alone.
 import { Database } from "bun:sqlite";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { createPrivateKey, createPublicKey, randomBytes, type KeyObject } from "node:crypto";
 import { generateEd25519, sha, type KeyPair } from "./jws";
-import { validateApproval, validateDocument, validateOrgPolicy, validateRelationship, validateShare, type AppApproval, type OrgPolicy, type PolicyDocument, type Relationship, type Revision, type Share, type Snapshot } from "./policy-model";
+import { GUARDIAN_OF, validateApproval, validateDocument, validateOrgPolicy, validateRelationship, validateShare, type AppApproval, type OrgPolicy, type PolicyDocument, type Relationship, type Revision, type Share, type Snapshot } from "./policy-model";
 
 export interface Settings { contextLifetimeSeconds: number; maxSeriesInContext: number; tokenLifetimeSeconds: number; refreshTokenLifetimeSeconds: number; }
 const REFRESH_DEFAULT = 30 * 86400;
@@ -19,7 +20,7 @@ export type TokenKind = "access" | "refresh";
 /** `family` is shared by every token descended from one refresh token. It isn't derived from any token. */
 export interface TokenRecord { client_id: string; scope: string; patient?: string; sub?: string; fhirUser?: string; family?: string; exp?: number; revoked: boolean; }
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 export type Durability = "off" | "normal" | "full";
 const SYNCHRONOUS: Record<Durability, number> = { off: 0, normal: 1, full: 2 };
 export const DURABILITIES = Object.keys(SYNCHRONOUS) as Durability[];
@@ -43,7 +44,7 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS relationships (subject TEXT NOT NULL, relation TEXT NOT NULL, object TEXT NOT NULL, recorded_by TEXT, PRIMARY KEY (subject, relation, object));
   CREATE INDEX IF NOT EXISTS relationships_by_object ON relationships (object);
   CREATE TABLE IF NOT EXISTS policies (id TEXT PRIMARY KEY, position INTEGER NOT NULL, body TEXT NOT NULL);
-  CREATE TABLE IF NOT EXISTS shares (patient TEXT NOT NULL, with_user TEXT NOT NULL, from_user TEXT NOT NULL, sites TEXT NOT NULL, label TEXT NOT NULL, PRIMARY KEY (patient, with_user));
+  CREATE TABLE IF NOT EXISTS shares (patient TEXT NOT NULL, with_user TEXT NOT NULL, from_user TEXT NOT NULL, sites TEXT NOT NULL, label TEXT NOT NULL, PRIMARY KEY (patient, from_user, with_user));
   CREATE INDEX IF NOT EXISTS shares_by_with ON shares (with_user);
   CREATE INDEX IF NOT EXISTS shares_by_from ON shares (from_user);
   CREATE TABLE IF NOT EXISTS approvals (app TEXT NOT NULL, by_user TEXT NOT NULL, patient TEXT NOT NULL, sites TEXT, PRIMARY KEY (app, by_user, patient));
@@ -89,14 +90,12 @@ export class PolicyStore {
     if (config.mode === "file") this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec(`PRAGMA synchronous = ${SYNCHRONOUS[this.durability]}`);
     const found = this.schemaVersion();
-    if (found > SCHEMA_VERSION) { this.db.close(); throw new Error(`${this.path} has schema version ${found}, and this code knows only up to ${SCHEMA_VERSION}`); }
-    if (found < SCHEMA_VERSION) this.tx(() => {
-      if (found === 0) this.db.exec(SCHEMA);
-      if (found === 1) {
-        this.db.exec("ALTER TABLE signing_keys ADD COLUMN retired INTEGER NOT NULL DEFAULT 0");
-        this.db.run("UPDATE tokens SET exp = ? WHERE kind = 'refresh' AND exp IS NULL", [Math.floor(Date.now() / 1000) + REFRESH_DEFAULT]);
-      }
-      if (found >= 1) this.upgradeToLevels(found);
+    if (found !== 0 && found !== SCHEMA_VERSION) {
+      this.db.close();
+      throw new Error(`The policy store at ${this.path} is in ${found < SCHEMA_VERSION ? "an older" : "a newer"} format (schema ${found}), and this version reads only schema ${SCHEMA_VERSION}. Reset saved policy: delete ${this.path}, or point POLICY_DB at a new file.`);
+    }
+    if (found === 0) this.tx(() => {
+      this.db.exec(SCHEMA);
       this.seedOnFile();
       this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     });
@@ -104,31 +103,6 @@ export class PolicyStore {
 
   private tx<T>(fn: () => T): T { return this.db.transaction(fn)(); }
   private schemaVersion(): number { return (this.db.query("PRAGMA user_version").get() as any).user_version; }
-
-  /**
-   * From the single-level model: delegations become shares, app grants approvals, and each rule for a
-   * client alone a service-access policy. Guardians and their exclusions come back as facts and policy
-   * from what's on file.
-   */
-  private upgradeToLevels(found: number) {
-    const has = (t: string) => !!this.db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(t);
-    const delegations = has("delegations") ? this.db.query("SELECT * FROM delegations").all() as any[] : [];
-    const grants = has("app_grants") ? this.db.query("SELECT * FROM app_grants").all() as any[] : [];
-    const rules = has("rules") ? (this.db.query("SELECT body FROM rules ORDER BY position").all() as any[]).map(r => JSON.parse(r.body)) : [];
-    for (const t of ["delegations", "app_grants", "rules", "guardians"]) this.db.exec(`DROP TABLE IF EXISTS ${t}`);
-    this.db.exec(SCHEMA);
-    for (const d of delegations) this.db.run("INSERT OR IGNORE INTO shares (patient, with_user, from_user, sites, label) VALUES (?, ?, ?, ?, ?)", [`patient:${d.patient}`, `user:${d.delegate}`, `user:${d.granted_by}`, d.sites, d.relationship]);
-    for (const g of grants) this.db.run("INSERT OR IGNORE INTO approvals (app, by_user, patient, sites) VALUES (?, ?, ?, ?)", [`app:${g.client}`, `user:${g.user}`, `patient:${g.patient}`, g.sites]);
-    rules.forEach((r, i) => {
-      if (!r.when?.client || r.when.user) return;
-      const { when, id, description, ...rest } = r;
-      const p = { id, type: "service-access", ...(description ? { description } : {}), service: `service:${when.client}`, patients: when.patient ? `patient:${when.patient}` : "any", ...rest };
-      const errors: string[] = [];
-      validateOrgPolicy(p, "policy", errors);
-      if (!errors.length) this.db.run("INSERT OR IGNORE INTO policies (id, position, body) VALUES (?, ?, ?)", [id, 1000 + i, JSON.stringify(p)]);
-    });
-    void found;
-  }
 
   private meta(key: string): number { return Number((this.db.query("SELECT value FROM meta WHERE key = ?").get(key) as any)?.value ?? 0); }
   /** The policy revision, which organization policy and settings writes raise. */
@@ -167,9 +141,18 @@ export class PolicyStore {
   relationships(): Relationship[] { return this.relationshipRows(); }
   private putRelationshipRow(r: Relationship) { this.db.run("INSERT OR REPLACE INTO relationships (subject, relation, object, recorded_by) VALUES (?, ?, ?, ?)", [r.subject, r.relation, r.object, r.recordedBy ?? null]); }
   putRelationship(r: Relationship): Revision { checked([r], "relationship", validateRelationship); return this.patientWrite(PolicyStore.patientOfRelationship(r), () => this.putRelationshipRow(r))!; }
-  /** Removes a relationship, and returns the revisions, or undefined if there was none. */
+  /**
+   * Removes a relationship, and returns the revisions, or undefined if there was none. Removing a guardian
+   * relationship removes, in the same write, that guardian's shares and app approvals for the patient,
+   * and what removing those shares removes.
+   */
   removeRelationship(r: Pick<Relationship, "subject" | "relation" | "object">): Revision | undefined {
-    return this.patientWrite(PolicyStore.patientOfRelationship(r), () => this.db.run("DELETE FROM relationships WHERE subject = ? AND relation = ? AND object = ?", [r.subject, r.relation, r.object]).changes > 0);
+    return this.patientWrite(PolicyStore.patientOfRelationship(r), () => {
+      if (this.db.run("DELETE FROM relationships WHERE subject = ? AND relation = ? AND object = ?", [r.subject, r.relation, r.object]).changes === 0) return false;
+      if (r.relation !== GUARDIAN_OF) return;
+      for (const s of this.shareRows("patient = ?1 AND from_user = ?2", r.object, r.subject)) this.deleteShareRow(s);
+      this.db.run("DELETE FROM approvals WHERE patient = ? AND by_user = ?", [r.object, r.subject]);
+    });
   }
 
   // Level 2
@@ -190,10 +173,10 @@ export class PolicyStore {
     const position = at?.position ?? (((this.db.query("SELECT max(position) AS n FROM policies").get() as any)?.n ?? -1) + 1);
     this.db.run("INSERT OR REPLACE INTO policies (id, position, body) VALUES (?, ?, ?)", [p.id, position, JSON.stringify(p)]);
   }
-  /** Adds a policy, or replaces the one with its id in place. Policies of a type apply in order. */
+  /** Adds a policy, or replaces the one with its id. Order is only for listing: access is the union of every policy. */
   putPolicy(p: OrgPolicy): Revision { checked([p], "policy", validateOrgPolicy); return this.policyWrite(() => this.putPolicyRow(p)); }
   removePolicy(id: string): Revision | undefined { return this.db.query("SELECT 1 FROM policies WHERE id = ?").get(id) ? this.policyWrite(() => this.db.run("DELETE FROM policies WHERE id = ?", [id])) : undefined; }
-  /** Replaces every policy of one type with these, in this order. */
+  /** Replaces every policy of one type with these. */
   replacePolicies(type: OrgPolicy["type"], ps: OrgPolicy[]): Revision {
     const errors = validateDocument({ policies: ps });
     for (const [i, p] of ps.entries()) if (p.type !== type) errors.push(`policies[${i}].type must be ${type}`);
@@ -214,17 +197,21 @@ export class PolicyStore {
   }
   shares(): Share[] { return this.shareRows(); }
   private putShareRow(s: Share) {
-    this.db.run("DELETE FROM shares WHERE patient = ? AND with_user = ?", [s.patient, s.with]);
-    this.db.run("INSERT INTO shares (patient, with_user, from_user, sites, label) VALUES (?, ?, ?, ?, ?)", [s.patient, s.with, s.from, JSON.stringify(s.sites), s.label]);
+    this.db.run("INSERT OR REPLACE INTO shares (patient, with_user, from_user, sites, label) VALUES (?, ?, ?, ?, ?)", [s.patient, s.with, s.from, JSON.stringify(s.sites), s.label]);
   }
-  /** Puts a share as given. The policy API checks it against organization policy first. */
+  /** Deletes a share, and the app approvals its recipient made on that patient, so sharing again brings no app back. */
+  private deleteShareRow(s: Pick<Share, "patient" | "from" | "with">) {
+    this.db.run("DELETE FROM shares WHERE patient = ? AND from_user = ? AND with_user = ?", [s.patient, s.from, s.with]);
+    this.db.run("DELETE FROM approvals WHERE patient = ? AND by_user = ?", [s.patient, s.with]);
+  }
+  /** Puts a share as given, one per patient, sharer and recipient. The policy API checks it against organization policy first. */
   putShare(s: Share): Revision { checked([s], "share", validateShare); return this.patientWrite(s.patient, () => this.putShareRow(s))!; }
-  /** Removes shares matching every field given, and returns the revisions, or undefined if there were none. */
+  /** Removes shares matching every field given, with their recipients' app approvals on those patients, and returns the revisions, or undefined if there were none. */
   removeShares(m: { with: string; from?: string; patient?: string }): Revision | undefined {
     const hit = this.shareRows("with_user = ?1 AND (?2 IS NULL OR from_user = ?2) AND (?3 IS NULL OR patient = ?3)", m.with, m.from ?? null as any, m.patient ?? null as any);
     if (!hit.length) return undefined;
     return this.tx(() => {
-      for (const s of hit) { this.db.run("DELETE FROM shares WHERE patient = ? AND with_user = ?", [s.patient, s.with]); this.bumpPatient(s.patient); }
+      for (const s of hit) { this.deleteShareRow(s); this.bumpPatient(s.patient); }
       return this.revision(hit.length === 1 ? hit[0]!.patient : undefined);
     });
   }

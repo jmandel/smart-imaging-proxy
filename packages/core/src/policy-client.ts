@@ -58,7 +58,7 @@ export function createPolicyClient(opts: PolicyClientOptions) {
 
     policies: async (type?: OrgPolicy["type"]) => (await read<{ policies: OrgPolicy[] }>(await call("policies", "GET", "/policies", { type }))).policies,
     putPolicy: async (p: OrgPolicy) => revision(await call("put-policy", "PUT", `/policies/${encodeURIComponent(p.id)}`, {}, p)),
-    /** Replaces every policy of one type, in this order. */
+    /** Replaces every policy of one type. */
     replacePolicies: async (type: OrgPolicy["type"], ps: OrgPolicy[]) => revision(await call("replace-policies", "PUT", "/policies", { type }, ps)),
     removePolicy: async (id: string) => removal(await call("remove-policy", "DELETE", `/policies/${encodeURIComponent(id)}`)),
 

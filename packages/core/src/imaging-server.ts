@@ -104,6 +104,8 @@ export interface ImagingServerOptions {
   patientAttributes?: (patient: string) => PatientAttributes | undefined;
   /** A reference's display name, such as `user:sam` to Sam, for the reasons decisions give. */
   name?: Namer;
+  /** The organization's time zone, an IANA name such as America/Chicago, which ages are counted in. UTC unless given. */
+  timeZone?: string;
   /** The credential the proxy presents to the decision API. */
   serviceSecret: string;
   /** The credential the policy API's callers present: the Authorization Server and the deployment's administration, never the proxy. */
@@ -141,14 +143,14 @@ export function createImagingServer(opts: ImagingServerOptions) {
 
   type Evaluation = Decision;
   const name = opts.name ?? defaultName;
-  const model = createModel({ patientOf: opts.patientOf, attributesOf: p => opts.patientAttributes?.(p), now, name });
+  const model = createModel({ patientOf: opts.patientOf, attributesOf: p => opts.patientAttributes?.(p), now, name, timeZone: opts.timeZone });
   /** Organization policy and one patient's rows, read once for a whole search or decision. Never another patient's. */
   const snapshotOf = (patient: string, s: PolicyStore = opts.store()): Snapshot => s.patientSnapshot(ref("patient", patient));
 
   /** The single policy decision used by search, retrieval, and explain. It works on catalog rows. */
   function evaluate(t: any, study: CatalogStudy, snap: Snapshot = snapshotOf(study.patient)): Evaluation {
     const r = model.evaluate(snap, t, study);
-    check("policy", `policy evaluation: ${study.id}`, r.release !== "none", { client: t.client_id, user: t.sub, patient_context: t.patient, study: study.id, site: study.site, because: r.because.map(b => `${b.level}: ${b.text}`).join(" → "), policy: r.policy?.id ?? "(none)", release: typeof r.release === "object" ? `${r.release.series.length} series` : r.release, why: r.why });
+    check("policy", `policy evaluation: ${study.id}`, r.release !== "none", { client: t.client_id, user: t.sub, patient_context: t.patient, study: study.id, site: study.site, because: r.because.map(b => `${b.level}: ${b.text}`).join(" → "), policy: r.policies.map(p => p.id).join(", ") || "(none)", release: typeof r.release === "object" ? `${r.release.series.length} series` : r.release, why: r.why });
     return r;
   }
 
@@ -170,7 +172,7 @@ export function createImagingServer(opts: ImagingServerOptions) {
     if (self) records.push({ patient: self, via: "self", sites: opts.catalog().sitesFor(self) });
     for (const r of mine.relationships) {
       const patient = idOf(r.object, "patient");
-      if (r.subject === me && r.relation === "guardian_of" && patient && patient !== self && !records.some(x => x.patient === patient) && model.guardianPolicy(of(patient), r.object).policy) records.push({ patient, via: "guardian", relationship: "guardian", sites: visibleSites(of(patient), user, patient) });
+      if (r.subject === me && r.relation === "guardian_of" && patient && patient !== self && !records.some(x => x.patient === patient) && model.guardianPolicies(of(patient), r.object).policies.length) records.push({ patient, via: "guardian", relationship: "guardian", sites: visibleSites(of(patient), user, patient) });
     }
     for (const sh of mine.shares) {
       const patient = idOf(sh.patient, "patient")!;
@@ -192,29 +194,29 @@ export function createImagingServer(opts: ImagingServerOptions) {
     if (!client || !patient || (user && !fhirUser)) return { error: "client and patient are required, and a user needs a fhirUser" };
     const t = user ? { client_id: client, sub: user, fhirUser, patient } : { client_id: client };
     const snap = snapshotOf(patient, store);
-    // The policy that pre-authorizes this service, which a withdrawn one doesn't.
-    const service = user ? undefined : model.preAuthorized(snap, client, patient);
+    // Every policy that lets this service search for this patient.
+    const services = user ? [] : model.preAuthorized(snap, client, patient);
     const studies = studiesOf(patient).map(study => {
       const ev = evaluate(t, study, snap);
       const released = typeof ev.release === "object" ? new Set(ev.release.series) : undefined;
       return {
         id: study.id, title: study.title, description: study.description, date: study.date, site: study.site, status: study.status,
         modalities: [...new Set(study.series.map(s => s.modality))], seriesCount: study.seriesCount, instanceCount: study.instanceCount,
-        release: ev.release, why: ev.why, because: ev.because, policy: ev.policy?.id,
+        release: ev.release, why: ev.why, because: ev.because, policies: ev.policies.map(p => p.id),
         withheldSeries: released ? study.series.filter(s => !released.has(s.uid)).map(s => ({ uid: s.uid, number: s.number, modality: s.modality, instanceCount: s.instanceCount })) : [],
       };
     });
     return {
       client, user: user ?? undefined, fhirUser: fhirUser ?? undefined, patient, level: user ? "patient" : "system", revision: snap.revision,
-      searchAllowed: !!user || !!service,
-      policy: service, studies,
+      searchAllowed: !!user || services.length > 0,
+      policies: services, studies,
     };
   }
 
   function contextFor(accessToken: string, t: any, study: CatalogStudy, ev: Evaluation): string {
     const policy = opts.store().getSettings();
     const claims: any = { v: 1, iss: "imaging-server", study: study.uid, ver: study.version, ath: ath(accessToken), exp: Math.min(now() + policy.contextLifetimeSeconds, t.exp) };
-    if (ev.policy?.contextForm === "restricted") claims.restricted = true;
+    if (ev.policies.some(p => p.contextForm === "restricted")) claims.restricted = true;
     else if (typeof ev.release === "object") {
       if (ev.release.series.length > policy.maxSeriesInContext) claims.restricted = true;
       else claims.series = ev.release.series;
@@ -332,7 +334,7 @@ export function createImagingServer(opts: ImagingServerOptions) {
     const patient = parsed.id;
     if (level === "patient" && patient !== t.patient) return Response.json(outcome("forbidden", "patient does not match the token's patient context"), { status: 403 });
     const policy = snapshotOf(patient);
-    if (level === "system" && !model.preAuthorized(policy, t.client_id, patient)) return Response.json(outcome("forbidden", "this patient is outside the client's authorized access"), { status: 403 });
+    if (level === "system" && !model.preAuthorized(policy, t.client_id, patient).length) return Response.json(outcome("forbidden", "this patient is outside the client's authorized access"), { status: 403 });
 
     const countParam = url.searchParams.get("_count");
     if (countParam !== null && !/^\d+$/.test(countParam)) return Response.json(outcome("invalid", "_count must be a whole number"), { status: 400 });
@@ -462,7 +464,7 @@ export function createImagingServer(opts: ImagingServerOptions) {
       visibleSites: (store, user, patient, fhirUser) => visibleSites(snapshotOf(patient, store), user, patient, fhirUser),
       sitesFor: patient => opts.catalog().sitesFor(patient),
       sharingFor: (store, from, patient) => model.sharingFor(snapshotOf(idOf(patient, "patient")!, store), from, patient),
-      guardianPolicy: (store, patient) => model.guardianPolicy(snapshotOf(idOf(patient, "patient")!, store), patient),
+      guardianPolicies: (store, patient) => model.guardianPolicies(snapshotOf(idOf(patient, "patient")!, store), patient),
       isGuardian: (store, user, patient) => !!model.guardianOf(snapshotOf(patient, store), ref("user", user), ref("patient", patient)),
     },
   });

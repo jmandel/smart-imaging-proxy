@@ -4,9 +4,9 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { publicationFor, type Attrs, type CatalogStore, type Clock, type CoreService, type Observer, type ServerSpan, type SpanKind, type SpanStatus, type StudyDocument, type StudyHierarchy } from "../src";
 
-export function manualClock(start = Math.floor(Date.now() / 1000)): Clock & { advance(seconds: number): void; reset(): void } {
+export function manualClock(start = Math.floor(Date.now() / 1000)): Clock & { advance(seconds: number): void; set(seconds: number): void; reset(): void } {
   let t = start;
-  return { now: () => t, advance(seconds) { t += seconds; }, reset() { t = start; } };
+  return { now: () => t, advance(seconds) { t += seconds; }, set(seconds) { t = seconds; }, reset() { t = start; } };
 }
 
 export interface Recorded { id: string; parent?: string; service: CoreService; kind: SpanKind; name: string; attrs: Attrs; status?: SpanStatus; start: number; end?: number; }

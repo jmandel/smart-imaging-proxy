@@ -115,6 +115,7 @@ reports/quarantine.json                                       inputs left out of
 | `patientOf(user)` | The patient a user account is, if any |
 | `patientAttributes(patient)` | What policy reads of a patient's record: `{ birthDate }`, for ages |
 | `name(ref)` | A reference's display name, for the text of reasons. The default is its id |
+| `timeZone` | The organization's time zone, an IANA name, which ages are counted in. UTC unless given. An unknown one throws |
 | `serviceSecret` | The credential the proxy presents to the decision API |
 | `policySecret` | The credential policy API callers present. Give it to the Authorization Server and administration tools, never the proxy |
 | `catalog()` | The catalog to search, asked per request |
@@ -138,17 +139,27 @@ It serves:
 Policy has three levels, and references are written `kind:id`, such as `user:sam`, `patient:riley`, `app:portal-app` or `service:referral-service`.
 
 1. **Facts.** Relationships, `{ subject, relation, object, recordedBy? }`, such as `user:sam guardian_of patient:riley`. Labels on studies, such as `confidential-adolescent`, which are catalog data, set from each study's data when it's published. Patient attributes, a birth date, from `patientAttributes`. No fact grants anything alone.
-2. **Organization policy.** A fixed list of types, each with an `id` and parameters:
-   - `guardian-access`: `when: { age: { min?, max? } }`, whole years with both ends included, `allow: "all"`, and `except`, labels a guardian doesn't see.
-   - `sharing`: `allowedFrom`, `patient`, `guardian` or both: who may share a patient's records. A share never exceeds the sharer's own access.
-   - `service-access`: a backend service's access, `service`, `patients` (`any` or one patient), and `allow` (`all`, `sites`, `modalities`, `studies`, `since`), with `withholdSeries`, `contextForm` and `withdrawn`.
-3. **People's choices**, within level 2. Shares, `{ from, with, patient, sites, label }`, where the label is how the person is related, such as caregiver. App approvals, `{ by, app, patient, sites? }`, where no `sites` means everything `by` can see.
+2. **Organization policy.** A fixed list of types, each with an `id` and parameters. Each one grants: none denies.
+   - `guardian-access`: `when: { age: { min?, max? } }`, whole years with both ends included and at least one end given, `allow: "all"`, and `except`, labels whose studies it doesn't reach.
+   - `sharing`: `allowedFrom`, `patient`, `guardian` or both: who may share a patient's records.
+   - `service-access`: a backend service's access, `service`, `patients` (`any` or one patient), and `allow` (`all`, `sites`, `modalities`, `studies`, `since`), with `withholdSeries`, series it doesn't reach, and `contextForm`.
+3. **People's choices**, within level 2. Shares, `{ from, with, patient, sites, label }`, one for each patient, sharer and recipient, where the label is how the person is related, such as caregiver. App approvals, `{ by, app, patient, sites? }`, where no `sites` means everything `by` can see.
 
-A user's access to a patient is the baseline, level 2 applied to level 1: the patient's own records, or a guardian's, as the `guardian-access` policy for the patient's age allows, less the labels it excepts. Age is computed at each check, from the birth date and the clock. A share extends another person's access to what the sharer can see now, at the sites shared, and only while a `sharing` policy allows the sharer's role. An app approval narrows a user's access for one app. Neither can exceed the grantor's own access. A backend service sees what its `service-access` policy allows, with no choices.
+Access is the union of every grant that applies. Policies and choices only grant: adding a policy, relationship or choice never takes access away, and their order doesn't matter. Policies may overlap, and their result is the union. Restriction lives only inside a grant's own reach:
 
-Each decision is a release, a `why`, and `because`: the reasons from each level, `{ level, ref, text }`, with `level` one of `fact`, `policy` or `choice`. The text comes from one template per type and level.
+- A user's routes to a patient's study are being the patient; being a guardian, once for each `guardian-access` policy whose band holds the patient's age, reaching every study but those with a label it excepts; and each share with them, reaching what the sharer sees now as the patient or a guardian, in a role a `sharing` policy lets them share in, at the sites shared. A share's reach is computed from the sharer's own grants, never from shares they received.
+- An app approval narrows: the app gets the user's access, at the approval's sites.
+- A backend service gets the union of every `service-access` policy for it and the patient, with no choices. A series one policy withholds and another reaches is released.
 
-Revisions are counted per patient and for policy. A write about one patient's relationships, shares or approvals raises that patient's revision. A write to organization policy or settings, or a reset, raises the policy revision, and the revision of every patient it touches. The decision API returns both in its context, as `policy_revision` and `patient_revision`, and explain returns them as `revision`.
+Revoking is deleting the grant. Removing a guardian relationship removes, in the same write, that guardian's shares and app approvals for the patient. Removing a share removes the app approvals its recipient made on that patient, so sharing again never brings an app's access back.
+
+Labels are facts a grant's reach checks. A study's labels are trimmed and lowercased before matching. A label name is lowercase letters and digits in hyphenated words, and policies' `except` lists take only those. A study label that isn't one, or that no `guardian-access` policy names, keeps the study from every `guardian-access` grant: this fails closed at check time, and ingest doesn't refuse the study. A patient's own access, shares from the patient, and services aren't affected.
+
+A birth date is `YYYY-MM-DD` and a real calendar date. A missing, invalid or future one gives no `guardian-access` grant. Age is whole years on today's date in the organization's time zone, the Imaging Server's `timeZone` option, an IANA name, UTC unless given, computed at each check from the clock.
+
+Each decision is a release, a `why`, and `because`: the reasons from every grant that contributed, `{ level, ref, text }`, with `level` one of `fact`, `policy` or `choice`, and for a service, `policies`, the ones that contributed. The text comes from one template per type and level. A share's recipient isn't told why the sharer can't see a study: it may be a label.
+
+Revisions are counted per patient and for policy. A write about one patient's relationships, shares or approvals raises that patient's revision. A write to organization policy or settings, or a reset, raises the policy revision, and the revision of every patient it touches. The decision API returns both in its context, as `policy_revision` and `patient_revision`, and explain returns them as `revision`. They count writes to the store only. Ages change with the clock, and labels with the catalog, so a cache of decisions must not be keyed by revision alone.
 
 Search and decisions read one patient's rows, through indexes by patient, and a user's account reads theirs, by subject. Organization policy is held in memory, by store, and reloaded when it's written.
 
@@ -158,7 +169,7 @@ Search and decisions read one patient's rows, through indexes by patient, and a 
 
 ## The policy store
 
-`new PolicyStore({ mode, path, durability, onFile })` holds policy (relationships, organization policies, shares, app approvals, revisions, settings), the signing keys, and the Authorization Server's token records, all in one SQLite file, or in memory. `durability` is `off`, `normal` or `full`, SQLite's `synchronous`. A file store is WAL and mode `0600`. `onFile` is `{ relationships, policies }`, what's on file: a new database starts with them, and a reset puts them back. The schema is versioned, at `SCHEMA_VERSION`. A store from an older version is upgraded when it opens: delegations become shares, app grants approvals, and each rule for a client alone a service-access policy, while guardians come from what's on file. Every write is validated, and all or none: `PolicyValidationError` lists each problem.
+`new PolicyStore({ mode, path, durability, onFile })` holds policy (relationships, organization policies, shares, app approvals, revisions, settings), the signing keys, and the Authorization Server's token records, all in one SQLite file, or in memory. `durability` is `off`, `normal` or `full`, SQLite's `synchronous`. A file store is WAL and mode `0600`. `onFile` is `{ relationships, policies }`, what's on file: a new database starts with them, and a reset puts them back. The schema is versioned, at `SCHEMA_VERSION`. A store in any other format isn't read or changed: opening it throws, saying to reset saved policy by deleting the file or using a new one. Every write is validated, and all or none: `PolicyValidationError` lists each problem.
 
 `patientSnapshot(patient)` reads what one decision needs, organization policy and that patient's rows, and `personSnapshot(user)` what a user's account needs. `snapshot()` reads every level, for administration.
 
@@ -172,19 +183,19 @@ Version 2, at `/policy/v2` on the Imaging Server. JSON in and out. Every call ca
 | `PUT /document` | Any of those parts | Replaces the parts given |
 | `GET /relationships` | | `{ relationships, revision }` |
 | `PUT /relationships` | `{ subject, relation, object, recordedBy? }` | Adds one |
-| `DELETE /relationships` | `subject`, `relation`, `object` | Removes one |
+| `DELETE /relationships` | `subject`, `relation`, `object` | Removes one. For `guardian_of`, also that guardian's shares and app approvals for the patient |
 | `GET /policies` | `type`, optionally | `{ policies, revision }` |
-| `PUT /policies?type={type}` | A list of policies of that type | Replaces every policy of that type, in order |
+| `PUT /policies?type={type}` | A list of policies of that type | Replaces every policy of that type |
 | `PUT /policies/{id}` | A policy with that id | Adds or replaces one. Its type can't change |
 | `DELETE /policies/{id}` | | Removes one |
 | `GET /shares` | | `{ shares, revision }` |
-| `POST /shares` | `{ from, with, patient, sites, label }` | `{ revision, share }`, with sites narrowed to those the sharer can see. `403` with `{ error, policy }` when no `sharing` policy lets the sharer's role share, or no `guardian-access` policy covers the patient for a guardian |
-| `DELETE /shares` | `with`, with `from`, `patient` or both | Removes those |
+| `POST /shares` | `{ from, with, patient, sites, label }`, with `sites` a list of strings | `{ revision, share }`, replacing that sharer's earlier share with that person, with sites narrowed to those the sharer can see. `403` with `{ error, policy }` when no `sharing` policy lets the sharer's role share, or no `guardian-access` policy covers the patient for a guardian |
+| `DELETE /shares` | `with`, with `from`, `patient` or both | Removes those, and the recipient's app approvals on those patients |
 | `GET /app-approvals` | | `{ approvals, revision }` |
-| `POST /app-approvals` | `{ by, app, patient, sites?, fhirUser? }` | `{ revision, approval }`, with sites narrowed to what `by` can see, and all of the patient's sites as no limit. With no `sites`, an earlier choice stays. `403` with `{ error, policy }` when `by` holds no record of the patient |
+| `POST /app-approvals` | `{ by, app, patient, sites?, fhirUser? }`, with `sites` a list of strings | `{ revision, approval }`, with sites narrowed to what `by` can see, and all of the patient's sites as no limit. With no `sites`, an earlier choice stays. `403` with `{ error, policy }` when `by` holds no record of the patient |
 | `DELETE /app-approvals` | `by`, `app`, and optionally `patient` | Removes those |
 | `GET /access` | `user`, `fhirUser` | `{ records, shares, approvals }`: the records the user holds and how (`self`, `guardian` or `share`), with the sites they can choose among, and the choices they've made |
-| `GET /explain` | `client`, `patient`, and for a launch `user` and `fhirUser` | `{ revision, searchAllowed, policy, studies }`, each study with its `release`, `why` and `because`, as search decides it. `policy` is the service-access policy that pre-authorizes a backend service |
+| `GET /explain` | `client`, `patient`, and for a launch `user` and `fhirUser` | `{ revision, searchAllowed, policies, studies }`, each study with its `release`, `why`, `because` and `policies`, as search decides it. For a backend service, `policies` are the service-access policies that let it search, and each study's, those that released it |
 | `GET /settings` | | `{ contextLifetimeSeconds, maxSeriesInContext, tokenLifetimeSeconds, refreshTokenLifetimeSeconds, revision }` |
 | `PATCH /settings` | Any of those | Changes those |
 | `POST /reset` | `{ tokens?: boolean }` | Clears shares, approvals and settings, and puts relationships and policies back as they are on file. `tokens: true` clears token records too. The signing key stays |

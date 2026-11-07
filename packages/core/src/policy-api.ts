@@ -32,7 +32,7 @@ export interface PolicyModelView {
   visibleSites(store: PolicyStore, user: string, patient: string, fhirUser?: string): string[];
   sitesFor(patient: string): string[];
   sharingFor(store: PolicyStore, from: string, patient: string): { role?: "patient" | "guardian"; policy?: SharingPolicy };
-  guardianPolicy(store: PolicyStore, patient: string): { age?: number; policy?: GuardianAccessPolicy };
+  guardianPolicies(store: PolicyStore, patient: string): { age?: number; policies: GuardianAccessPolicy[] };
   isGuardian(store: PolicyStore, user: string, patient: string): boolean;
 }
 
@@ -42,6 +42,7 @@ const none = (status: number) => new Response(null, { status });
 const isObject = (v: unknown): v is Record<string, any> => typeof v === "object" && v !== null && !Array.isArray(v);
 const bearerOf = (req: Request) => req.headers.get("authorization")?.match(/^bearer +(.+)$/i)?.[1];
 const refused = (r: Refusal) => json(r, 403);
+const isSites = (v: unknown): v is string[] => Array.isArray(v) && v.every(x => typeof x === "string");
 
 export function createPolicyApi(deps: { policySecret: string; store: () => PolicyStore; check: Observer["check"]; model: PolicyModelView; name: Namer }) {
   const { check, model, name } = deps;
@@ -58,10 +59,10 @@ export function createPolicyApi(deps: { policySecret: string; store: () => Polic
   }
   /** Why a guardian has no access to this patient's records, if they have none. */
   function guardianRefusal(store: PolicyStore, patient: string): Refusal | undefined {
-    const { age, policy } = model.guardianPolicy(store, ref("patient", patient));
-    if (policy) return undefined;
+    const { age, policies } = model.guardianPolicies(store, ref("patient", patient));
+    if (policies.length) return undefined;
     const g = store.policies().filter((p): p is GuardianAccessPolicy => p.type === "guardian-access");
-    return { error: age === undefined ? `${name(ref("patient", patient))}'s age isn't on file, so no guardian-access policy applies` : `no guardian-access policy covers patients aged ${age}${g.length ? `: they cover ${g.map(p => `${p.id}, ${bandText(p.when.age)}`).join("; ")}` : ""}`, policy: g[0]?.id ?? "guardian-access" };
+    return { error: age === undefined ? `${name(ref("patient", patient))}'s birth date isn't on file as a valid past date, so no guardian-access policy applies` : `no guardian-access policy covers patients aged ${age}${g.length ? `: they cover ${g.map(p => `${p.id}, ${bandText(p.when.age)}`).join("; ")}` : ""}`, policy: g[0]?.id ?? "guardian-access" };
   }
 
   return async function policyApi(req: Request, url: URL): Promise<Response> {
@@ -106,7 +107,7 @@ export function createPolicyApi(deps: { policySecret: string; store: () => Polic
       if (p === "/shares" && m === "GET") return json({ revision: store.revision(), shares: store.shares() });
       if (p === "/shares" && m === "POST") {
         const s = await body(req) as ShareRequest;
-        if (!isObject(s) || !["from", "with", "patient", "label"].every(k => typeof s[k as keyof ShareRequest] === "string" && s[k as keyof ShareRequest]) || !Array.isArray(s.sites)) return bad("from, with, patient, sites and label are required");
+        if (!isObject(s) || !["from", "with", "patient", "label"].every(k => typeof s[k as keyof ShareRequest] === "string" && s[k as keyof ShareRequest]) || !isSites(s.sites)) return bad("from, with, patient, sites and label are required, and sites is a list of strings");
         const from = idOf(s.from, "user"), patient = idOf(s.patient, "patient");
         if (!from || !patient) return bad("from is user:id, and patient is patient:id");
         const why = shareRefusal(store, from, patient);
@@ -128,7 +129,7 @@ export function createPolicyApi(deps: { policySecret: string; store: () => Polic
       if (p === "/app-approvals" && m === "GET") return json({ revision: store.revision(), approvals: store.approvals() });
       if (p === "/app-approvals" && m === "POST") {
         const a = await body(req) as ApprovalRequest;
-        if (!isObject(a) || !["by", "app", "patient"].every(k => typeof a[k as keyof ApprovalRequest] === "string") || (a.sites !== undefined && !Array.isArray(a.sites))) return bad("by, app and patient are required, and sites is a list");
+        if (!isObject(a) || !["by", "app", "patient"].every(k => typeof a[k as keyof ApprovalRequest] === "string") || (a.sites !== undefined && !isSites(a.sites))) return bad("by, app and patient are required, and sites is a list of strings");
         const user = idOf(a.by, "user"), patient = idOf(a.patient, "patient");
         if (!user || !patient || !idOf(a.app, "app")) return bad("by is user:id, app is app:id, and patient is patient:id");
         const held = model.access(store, user, a.fhirUser ?? "").records.find(r => r.patient === patient);
