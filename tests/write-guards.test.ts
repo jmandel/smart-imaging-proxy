@@ -74,6 +74,12 @@ describe("the Authorization Server's forms", () => {
   const FOREIGN: Record<string, string>[] = [{ host: "evil.example", origin: "http://evil.example" }, { host: "evil.example" }, { host: `127.0.0.1:${PORTS.demo}` }, { host: own.host, origin: "http://evil.example" }, { host: own.host, origin: "null" }];
   const signedIn = async () => (await form("/account/signin", {}, "username=josh")).headers.get("set-cookie")!.split(";")[0]!;
   const delegation = "delegate=sam-caregiver&relationship=spouse&sites_shown=1&sites=Lakeside+Imaging";
+  test("every account_session cookie is tried, so a stale one sent first doesn't sign the person out", async () => {
+    const cookie = await signedIn();
+    const page = (c: string) => fetch(`${CONFIG.authUrl}/account`, { headers: { cookie: c } }).then(r => r.text());
+    expect(await page(`account_session=stale-from-a-dropped-scope; ${cookie}`)).toContain("Sign out");
+    expect(await page(`x${cookie}`)).not.toContain("Sign out");
+  });
   const newTxn = async () => {
     const page = await (await fetch(buildAuthorization(`${CONFIG.authUrl}/authorize`, "portal-app").url)).text();
     return page.match(/txn=([^&"]+)/)![1]!;

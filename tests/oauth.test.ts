@@ -569,6 +569,10 @@ describe("Refresh tokens", () => {
       const introspected: any = await (await s.server.fetch(new Request(`${CONFIG.authUrl}/introspect`, { method: "POST", headers: { Authorization: "Bearer s" }, body: new URLSearchParams({ token: live.access_token }) }))).json();
       expect(introspected.active).toBe(true);
       expect(introspected.family).toBeUndefined();
+      // The scheme is case-insensitive, and only the service credential introspects.
+      const ask = (auth: string) => s.server.fetch(new Request(`${CONFIG.authUrl}/introspect`, { method: "POST", headers: { Authorization: auth }, body: new URLSearchParams({ token: live.access_token }) }));
+      expect(((await (await ask("bearer s")).json()) as any).active).toBe(true);
+      expect((await ask("Bearer wrong")).status).toBe(401);
       s.store.close();
 
       const db = new Database(path);

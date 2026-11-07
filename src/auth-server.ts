@@ -2,7 +2,7 @@
 // and users manage apps, SMART App Launch (authorization code with PKCE), Backend Services
 // (signed client assertions), refresh, revocation, introspection, and SMART discovery.
 import { createECDH, createHash, createPrivateKey, createPublicKey, generateKeyPairSync, hkdfSync, randomBytes, sign, verify, type KeyObject } from "node:crypto";
-import { ath, b64url, type Clock, type PolicyStore } from "@smart-imaging-proxy/core";
+import { ath, b64url, sameSecret, type Clock, type PolicyStore } from "@smart-imaging-proxy/core";
 import { demoClock } from "./clock";
 import { refuseWrite } from "./admin-api";
 import { PORTS } from "./config";
@@ -336,7 +336,10 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     return new Response(null, { status: 302, headers: { Location: back.toString() } });
   }
 
-  const accountUser = (req: Request) => accountSessions.get(req.headers.get("cookie")?.match(/account_session=([^;]+)/)?.[1] ?? "");
+  // Every account_session cookie the browser sends: a scope's and the root's can both reach a scope's
+  // path, and a stale one from a dropped scope can come first. This world uses the one it knows.
+  const sessionIds = (req: Request) => [...(req.headers.get("cookie") ?? "").matchAll(/(?:^|;\s*)account_session=([^;]*)/g)].map(m => m[1]!);
+  const accountUser = (req: Request) => sessionIds(req).map(id => accountSessions.get(id)).find(Boolean);
   const appName = (id: string) => PUBLIC_CLIENTS[id]?.name ?? id;
 
   async function account(url: URL, req: Request): Promise<Response> {
@@ -389,7 +392,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
       return new Response(null, { status: 303, headers: { Location: `${P}/account${q}`, "Set-Cookie": `account_session=${id}; HttpOnly; SameSite=Lax; Path=${P || "/"}` } });
     }
     if (url.pathname === "/account/signout") {
-      accountSessions.delete(req.headers.get("cookie")?.match(/account_session=([^;]+)/)?.[1] ?? "");
+      for (const id of sessionIds(req)) accountSessions.delete(id);
       return new Response(null, { status: 303, headers: { Location: `${P}/account${url.search}`, "Set-Cookie": `account_session=; Max-Age=0; Path=${P || "/"}` } });
     }
     const name = accountUser(req);
@@ -476,7 +479,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     if (url.pathname === "/account" && req.method === "GET") return account(url, req);
     if (url.pathname.startsWith("/account/") && req.method === "POST") return accountPost(url, req);
     if (url.pathname === "/introspect" && req.method === "POST") {
-      if (req.headers.get("authorization") !== `Bearer ${opts.serviceSecret}`) return new Response(null, { status: 401 });
+      if (!sameSecret(req.headers.get("authorization")?.match(/^bearer +(.+)$/i)?.[1], opts.serviceSecret)) return new Response(null, { status: 401 });
       const f = new URLSearchParams(await req.text());
       const t = opts.store().getToken(f.get("token") ?? "", "access");
       check("authorization-server", "introspect token", !!t && !t.revoked && t.exp! > now(), { token_hash: ath(f.get("token") ?? "").slice(0, 10), client: t?.client_id, revoked: t?.revoked, expired: !!t && t.exp! <= now() });
