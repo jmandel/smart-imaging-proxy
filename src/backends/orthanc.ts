@@ -180,7 +180,8 @@ export class OrthancBackend implements Backend {
         throw new Error("upstream ended before the bulk element was complete");
       } finally { await events.return(undefined); }
     })();
-    return { ...(encapsulated ? {} : firstEnded ? { bytes: held } : knownLength(start.value.headers["content-length"])), body };
+    // A part too large to look past could be followed by more, so only a part seen to the end gives the element's length.
+    return { ...(firstEnded && !encapsulated ? { bytes: held } : {}), body };
   }
   async rawProbe(path: string, accept: string) {
     const r = await this.get(path, accept);

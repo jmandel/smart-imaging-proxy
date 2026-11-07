@@ -178,7 +178,9 @@ describe("the guardian", () => {
   test("pages don't name a confidential study's site, from a grant or a row that grants nothing", async () => {
     stack.useStore("scratch");
     stack.imaging.setPolicy({ delegations: [], appGrants: [{ client: "portal-app", user: "alex-neighbor", patient: "riley-example", sites: ["Northside Pathology"] }] });
-    expect((await accountPage("alex-neighbor")).html).not.toContain("Northside Pathology");
+    const scratchPage = (await accountPage("alex-neighbor")).html;
+    expect(scratchPage).not.toContain("Northside Pathology");
+    expect(scratchPage).toContain("no sites");
     stack.useStore("saved");
     const saved = stack.stores.saved;
     saved.setPolicy({ delegations: [{ patient: "riley-example", grantedBy: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"], asGuardian: true }], appGrants: [{ client: "portal-app", user: "alex-neighbor", patient: "riley-example", sites: ["Northside Pathology"] }] });
@@ -198,6 +200,9 @@ describe("the guardian", () => {
       return { n, sha: h.digest("hex") };
     };
     const instance = hierarchy.instances.find(i => i.uid.endsWith(".28.0"))!.uid;
+    const large = await stack.backends.orthanc.openBulk(row.uid, hierarchy.uid, instance, "7FE00010");
+    expect(large.bytes).toBeUndefined();
+    await large.body[Symbol.asyncIterator]().return?.(undefined);
     const orthanc = await hash("orthanc", instance);
     expect(orthanc.n).toBeGreaterThan(1000000);
     expect(orthanc).toEqual(await hash("static-files", instance));

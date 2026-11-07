@@ -198,7 +198,7 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
       client, user: user ?? undefined, fhirUser: fhirUser ?? undefined, patient, level: user ? "patient" : "system",
       searchAllowed: !!user || !!preAuthorizing(rule), rule: user ? rule : preAuthorizing(rule),
       guardian: user ? policy.guardians.find(g => g.guardian === user && g.patient === patient) : undefined,
-      delegation: user ? [policy.delegations.find(d => d.delegate === user && d.patient === patient)].flatMap(d => d && mayGrant(policy, d) ? [{ ...d, sites: withinGuardian(policy, user, patient, d.sites) }] : [])[0] : undefined,
+      delegation: user ? [policy.delegations.find(d => d.delegate === user && d.patient === patient)].flatMap(d => d && mayGrant(policy, d) ? [{ ...d, sites: withinGuardian(policy, d.grantedBy, patient, d.sites) }] : [])[0] : undefined,
       appGrant: user ? [policy.appGrants.find(g => g.client === client && g.user === user && g.patient === patient)].flatMap(g => g ? [g.sites ? { ...g, sites: withinGuardian(policy, user, patient, g.sites) } : g] : [])[0] : undefined,
       studies,
     });
