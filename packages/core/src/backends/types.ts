@@ -37,7 +37,7 @@ export interface Backend {
   /** Which series are in a study, so a released subset can be stitched. */
   listSeries(study: string): Promise<string[]>;
   openInstances(scope: Scope, plan: PlanItem[], options?: OpenOptions): Promise<PartStream>;
-  /** DICOM JSON items. Bulk references are returned as `bulk:<ref>`, never as raw URLs. */
+  /** DICOM JSON items. Bulk references are returned as `bulk:<path>`, by `bulkPath`, or as the upstream URLs the proxy rewrites. */
   getMetadata(scope: Scope): Promise<any[]>;
   /** The element's own bytes, unframed. How they're framed for the client is the proxy's choice. `bytes` is their exact count, when known. */
   openBulk(study: string, series: string, instance: string, ref: string, /** The study version a signed context names. Absent means current. */ version?: number): Promise<{ bytes?: number; body: AsyncIterable<Uint8Array> }>;

@@ -4,7 +4,8 @@
 const LONG_VRS = new Set(["OB", "OD", "OF", "OL", "OV", "OW", "SQ", "UC", "UN", "UR", "UT", "SV", "UV"]);
 const STRING_VRS = new Set(["AE", "AS", "CS", "DA", "DT", "LO", "LT", "SH", "ST", "TM", "UC", "UI", "UR", "UT"]);
 const BULK_VRS = new Set(["OB", "OD", "OF", "OL", "OV", "OW", "UN"]);
-const BULK_THRESHOLD = 1024;
+/** A binary value longer than this many bytes is bulk data, at any depth. Top-level Pixel Data always is. */
+export const BULK_THRESHOLD = 1024;
 const ALL_VRS = new Set([...LONG_VRS, ...STRING_VRS, ...BULK_VRS, "AT", "DS", "FD", "FL", "IS", "PN", "SH", "SL", "SS", "UL", "US"]);
 
 export type DicomJson = Record<string, { vr: string; Value?: unknown[]; BulkDataURI?: string; InlineBinary?: string }>;
@@ -16,9 +17,18 @@ export interface ParsedFile {
   pixelOffset?: number;
   pixelLength?: number;
   datasetOffset: number;
-  /** Top-level bulk elements, by tag, so bulk routes can read them with a range. */
+  /** Bulk elements at any depth, by `bulkPath`, so bulk routes can read them with a range. */
   bulk: Record<string, { offset: number; length: number }>;
 }
+
+/**
+ * Where an element sits: its tag at the top level, and inside a sequence, the sequence's path, the
+ * item number counted from 1, and the tag, such as `00480105/1/00282000`. Metadata names bulk data
+ * by this path, as `bulk:{path}`.
+ */
+export const bulkPath = (parent: string, tag: string) => parent ? `${parent}/${tag}` : tag;
+/** A path as `bulkPath` writes it, in either case. */
+export const BULK_PATH = /^[0-9A-Fa-f]{8}(\/[1-9][0-9]*\/[0-9A-Fa-f]{8})*$/;
 
 const dec = new TextDecoder("latin1");
 const tagKey = (g: number, e: number) => g.toString(16).padStart(4, "0").toUpperCase() + e.toString(16).padStart(4, "0").toUpperCase();
@@ -63,14 +73,14 @@ function valueOf(vr: string, bytes: Uint8Array, le = new DataView(bytes.buffer, 
   return undefined;
 }
 
-function parseItems(r: Reader, end: number): DicomJson[] {
+function parseItems(r: Reader, end: number, path: string, bulk: Bulk): DicomJson[] {
   const items: DicomJson[] = [];
   while (r.pos < end) {
     const g = r.u16(), e = r.u16(), len = r.u32();
     if (g === 0xfffe && e === 0xe0dd) break;
     if (g !== 0xfffe || e !== 0xe000) throw new Error("expected sequence item");
     const stop = len === 0xffffffff ? end : r.pos + len;
-    items.push(parseDataset(r, stop, false).dataset);
+    items.push(parseDataset(r, stop, `${path}/${items.length + 1}`, bulk).dataset);
   }
   return items;
 }
@@ -83,12 +93,13 @@ function skipFragments(r: Reader): void {
   }
 }
 
-interface Parsed { dataset: DicomJson; pixelOffset?: number; pixelLength?: number; bulk: Record<string, { offset: number; length: number }>; }
+type Bulk = ParsedFile["bulk"];
+interface Parsed { dataset: DicomJson; pixelOffset?: number; pixelLength?: number; }
 
-// Nested bulk values are inlined, so every BulkDataURI is a top-level element.
-function parseDataset(r: Reader, end: number, top: boolean): Parsed {
+/** One dataset: the file's, where `path` is empty, or a sequence item's. Bulk elements at every depth go into `bulk`. */
+function parseDataset(r: Reader, end: number, path: string, bulk: Bulk): Parsed {
+  const top = !path;
   const dataset: DicomJson = {};
-  const bulk: Parsed["bulk"] = {};
   let pixelOffset: number | undefined, pixelLength: number | undefined;
   while (r.pos + 4 <= end) {
     const g = r.u16(), e = r.u16();
@@ -96,31 +107,32 @@ function parseDataset(r: Reader, end: number, top: boolean): Parsed {
     const vr = r.str(2);
     let len: number;
     if (LONG_VRS.has(vr)) { r.pos += 2; len = r.u32(); } else len = r.u16();
-    const key = tagKey(g, e);
+    const key = tagKey(g, e), at = bulkPath(path, key);
     if (!ALL_VRS.has(vr)) throw new Error(`element ${key} has no valid VR`);
     if (len !== 0xffffffff && r.pos + len > r.b.length) throw new Error(`element ${key} runs past the end of the file`);
     if (vr === "SQ") {
       const stop = len === 0xffffffff ? end : r.pos + len;
-      const items = parseItems(r, stop);
+      const items = parseItems(r, stop, at, bulk);
       if (len !== 0xffffffff) r.pos = stop;
       dataset[key] = items.length ? { vr, Value: items } : { vr };
       continue;
     }
+    const pixels = top && key === "7FE00010";
     if (len === 0xffffffff) {
-      // Encapsulated pixel data
+      // Encapsulated pixel data, at the top level or in an item such as an icon's
       const start = r.pos;
       skipFragments(r);
-      if (key === "7FE00010") { pixelOffset = start; pixelLength = r.pos - start; }
-      bulk[key] = { offset: start, length: r.pos - start };
-      dataset[key] = { vr, BulkDataURI: `bulk:${key}` };
+      if (pixels) { pixelOffset = start; pixelLength = r.pos - start; }
+      bulk[at] = { offset: start, length: r.pos - start };
+      dataset[key] = { vr, BulkDataURI: `bulk:${at}` };
       continue;
     }
     const bytes = r.b.subarray(r.pos, r.pos + len);
     r.pos += len;
-    if (key === "7FE00010") { pixelOffset = r.pos - len; pixelLength = len; }
+    if (pixels) { pixelOffset = r.pos - len; pixelLength = len; }
     if (g === 0x0002 || (g % 2 === 1 && e < 0x100)) continue;
     if (BULK_VRS.has(vr)) {
-      if (len > BULK_THRESHOLD && top) { bulk[key] = { offset: r.pos - len, length: len }; dataset[key] = { vr, BulkDataURI: `bulk:${key}` }; }
+      if (len > BULK_THRESHOLD || (pixels && len)) { bulk[at] = { offset: r.pos - len, length: len }; dataset[key] = { vr, BulkDataURI: `bulk:${at}` }; }
       else if (len) dataset[key] = { vr, InlineBinary: Buffer.from(bytes).toString("base64") };
       else dataset[key] = { vr };
       continue;
@@ -128,7 +140,7 @@ function parseDataset(r: Reader, end: number, top: boolean): Parsed {
     const value = valueOf(vr, bytes);
     dataset[key] = value ? { vr, Value: value } : { vr };
   }
-  return { dataset, pixelOffset, pixelLength, bulk };
+  return { dataset, pixelOffset, pixelLength };
 }
 
 /** Reads only File Meta, from the start of a Part 10 file or part. */
@@ -162,8 +174,9 @@ export function parsePart10(b: Uint8Array): ParsedFile {
     throw new Error(`transfer syntax ${meta.transferSyntax} is not readable here; normalize it first`);
   }
   const r = new Reader(b, meta.datasetOffset);
-  const parsed = parseDataset(r, b.length, true);
-  return { transferSyntax: meta.transferSyntax, sopClass: meta.sopClass, dataset: parsed.dataset, pixelOffset: parsed.pixelOffset, pixelLength: parsed.pixelLength, datasetOffset: meta.datasetOffset, bulk: parsed.bulk };
+  const bulk: Bulk = {};
+  const parsed = parseDataset(r, b.length, "", bulk);
+  return { transferSyntax: meta.transferSyntax, sopClass: meta.sopClass, dataset: parsed.dataset, pixelOffset: parsed.pixelOffset, pixelLength: parsed.pixelLength, datasetOffset: meta.datasetOffset, bulk };
 }
 
 export const str = (d: DicomJson, k: string): string | undefined => {

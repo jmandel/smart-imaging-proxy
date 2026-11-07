@@ -4,7 +4,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { archiveKeys, type CatalogStore, createCatalog, createImagingServer, DICOM_UID_SYSTEM, fileStore, identifiersOf, orthancCatalogPath, PolicyStore, publicationFor as publicationIn, rebuildFromArchive, seedPatientLinks, type StudyDocument, type StudyHierarchy } from "../src";
+import { ARCHIVE_FORMAT, archiveKeys, type CatalogStore, createCatalog, createImagingServer, DICOM_UID_SYSTEM, fileStore, identifiersOf, orthancCatalogPath, PolicyStore, publicationFor as publicationIn, rebuildFromArchive, seedPatientLinks, type StudyDocument, type StudyHierarchy } from "../src";
 import { documentOf, hierarchyOf, put } from "./support";
 
 /** These tests' catalogs name an accession system, as a deployment would. */
@@ -210,10 +210,10 @@ describe("rebuilding from the archive", () => {
     await writeObject(dir, archiveKeys.study(d.uid, d.version), zst(d));
     for (const s of h.series) {
       await writeObject(dir, archiveKeys.seriesIndex(d.uid, d.version, s.uid), zst({
-        format: 1, study: d.uid, version: d.version, uid: s.uid, number: s.number, modality: s.modality, description: s.description, bodyPart: s.bodyPart,
+        format: ARCHIVE_FORMAT, study: d.uid, version: d.version, uid: s.uid, number: s.number, modality: s.modality, description: s.description, bodyPart: s.bodyPart,
         instances: s.instances.map(i => ({ ...i, offers: [{ syntax: "1.2.840.10008.1.2.1", stored: true, key: archiveKeys.content("abc", "zstd"), encoding: "zstd", objectBytes: 1, storedBytes: 2, sha256: "abc" }] })),
       }));
-      await writeObject(dir, archiveKeys.seriesMetadata(d.uid, d.version, s.uid), zst({ format: 1, instances: {} }));
+      await writeObject(dir, archiveKeys.seriesMetadata(d.uid, d.version, s.uid), zst({ format: ARCHIVE_FORMAT, instances: {} }));
     }
   }
   const dumpTables = (path: string) => {

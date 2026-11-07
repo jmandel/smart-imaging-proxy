@@ -8,7 +8,7 @@
 //   studies/{study}/v{version}/series/{series}/metadata.json.zst  SeriesMetadata
 //   content/{sha256}.dcm[.zst]                                 PS3.10 bytes, by the hash of those bytes
 
-export const ARCHIVE_FORMAT = 1;
+export const ARCHIVE_FORMAT = 2;
 
 export const archiveKeys = {
   current: (study: string) => `studies/${study}/current.json`,
@@ -41,7 +41,7 @@ export interface InstanceRecord {
   uid: string;
   number: number;
   sopClass: string;
-  /** Top-level bulk elements, by tag, as offsets into the decoded stored PS3.10 file. */
+  /** Bulk elements at any depth, by path (`bulkPath`: a tag, or tag, item number from 1, tag, ...), as offsets into the decoded stored PS3.10 file. */
   bulk?: Record<string, { offset: number; length: number }>;
   /** The transfer syntax as received, when ingest normalized it to something else. */
   sourceSyntax?: string;

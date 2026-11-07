@@ -1,6 +1,6 @@
 // Builds a catalog from an existing archive's DICOMweb API, using QIDO-RS and nothing else. This is
 // what fronting a PACS looks like: no bucket and no copy of the images, only a query of what's there.
-import type { CatalogStore, StudyDocument, StudyHierarchy } from "./archive/types";
+import { ARCHIVE_FORMAT, type CatalogStore, type StudyDocument, type StudyHierarchy } from "./archive/types";
 import { patientSourceOf, publicationFor } from "./catalog";
 
 /**
@@ -58,7 +58,7 @@ export async function catalogFromOrthanc(catalog: CatalogStore, orthanc: { base:
     hierarchy.series.sort(byNumberThenUid);
     // Orthanc doesn't version a study, so this catalog's version stays 1.
     const document: StudyDocument = {
-      format: 1, uid, id: operator.id ?? uid, version: 1,
+      format: ARCHIVE_FORMAT, uid, id: operator.id ?? uid, version: 1,
       ...(operator.title !== undefined ? { title: operator.title } : {}), ...(operator.site !== undefined ? { site: operator.site } : {}), ...(operator.labels?.length ? { labels: operator.labels } : {}),
       ...(text(st, TAG.studyDescription) !== undefined ? { description: text(st, TAG.studyDescription) } : {}),
       ...(accession ? { accession } : {}), ...(text(st, TAG.studyDate) ? { date: text(st, TAG.studyDate) } : {}), ...(text(st, TAG.studyTime) ? { time: text(st, TAG.studyTime) } : {}),

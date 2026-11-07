@@ -1,6 +1,7 @@
 // An upstream DICOMweb backend, tested against Orthanc. Everything the research found
 // wrong at this boundary is corrected here or in the proxy.
 import type { PlanItem } from "../accept";
+import { BULK_PATH } from "../dicom";
 import { boundaryOf, readMultipart } from "../multipart";
 import { noopObserver, type Observer } from "../observer";
 import { BackendError, type Backend, type Capabilities, type InstancePart, type PartStream, type Scope } from "./types";
@@ -128,7 +129,7 @@ export class OrthancBackend implements Backend {
   }
   async openBulk(study: string, series: string, instance: string, ref: string) {
     // Orthanc answers for any tag, and with a 500 for what it can't read. As with the stores, only what the metadata lists as bulk data is.
-    const meta = /^[0-9a-f]{8}(\/\d+\/[0-9a-f]{8})*$/i.test(ref) ? await this.get(`/studies/${study}/series/${series}/instances/${instance}/metadata`, "application/dicom+json") : undefined;
+    const meta = BULK_PATH.test(ref) ? await this.get(`/studies/${study}/series/${series}/instances/${instance}/metadata`, "application/dicom+json") : undefined;
     if (!meta?.ok || !(await meta.text()).toLowerCase().includes(`/bulk/${ref.toLowerCase()}"`)) throw mapError(404);
     const r = await this.get(`/studies/${study}/series/${series}/instances/${instance}/bulk/${ref.toLowerCase()}`, "*/*");
     if (!r.ok) throw mapError(r.status);

@@ -19,7 +19,7 @@ const CTX = /^[A-Za-z0-9_\-.]+$|^-$/;
 const validUid = (u: string) => UID.test(u) && u.length <= 64;
 /** RFC 7235: the scheme is case-insensitive. */
 const bearerOf = (req: Request) => req.headers.get("authorization")?.match(/^bearer +([A-Za-z0-9._~+/=-]+)$/i)?.[1];
-const ROUTE = /^\/wado\/([^/]+)\/studies\/([^/]+)(?:\/series\/([^/]+))?(?:\/instances\/([^/]+))?(?:\/(metadata|bulk\/[0-9a-fA-F/]+|frames\/.+|rendered|thumbnail))?\/?$/;
+const ROUTE = /^\/wado\/([^/]+)\/studies\/([^/]+)(?:\/series\/([^/]+))?(?:\/instances\/([^/]+))?(?:\/(metadata|bulk\/[0-9a-fA-F]{8}(?:\/[1-9][0-9]*\/[0-9a-fA-F]{8})*|frames\/.+|rendered|thumbnail))?\/?$/;
 const enc = new TextEncoder();
 /** A form a response can take. `payload` is the `type` parameter of a multipart form. The first is the default. */
 interface MediaForm { type: string; payload?: string; }

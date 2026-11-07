@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import { S3Client } from "bun";
-import { ARCHIVE_FORMAT, ArchiveBackend, archiveKeys, ArchiveReader, type Backend, BackendError, ByteLru, chooseOffer, closing, decodeJson, EVRLE, fileStore, ingestStudies, isStandard, JPEG_BASELINE, JPEG_LOSSLESS, newBoundary, ObjectNotFoundError, type ObjectSource, type ObjectStore, type Offer, parsePart10, partFooter, partHeader, type PartStream, PRIVATE_TEST_SYNTAX, QUARANTINE_REPORT_KEY, readFileMeta, readMultipart, runTool, s3Store, type SeriesIndex, type StudyDocument, type StudyInput, withPrivateSyntax, withTruncation, wrapperPaysOff, zstdCompress, zstdDecode, zstdDecompressSync } from "../src";
+import { ARCHIVE_FORMAT, ArchiveBackend, archiveKeys, ArchiveReader, type Backend, BackendError, ByteLru, chooseOffer, closing, decodeJson, encodeJson, EVRLE, fileStore, ingestStudies, isStandard, JPEG_BASELINE, JPEG_LOSSLESS, newBoundary, ObjectNotFoundError, type ObjectSource, type ObjectStore, type Offer, parsePart10, partFooter, partHeader, type PartStream, PRIVATE_TEST_SYNTAX, QUARANTINE_REPORT_KEY, readFileMeta, readMultipart, runTool, s3Store, type SeriesIndex, type StudyDocument, type StudyInput, withPrivateSyntax, withTruncation, wrapperPaysOff, zstdCompress, zstdDecode, zstdDecompressSync } from "../src";
 
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 const ANY = [{ syntax: "*", q: 1 }];
@@ -18,7 +18,7 @@ async function collect(src: AsyncIterable<Uint8Array>) { const out: Uint8Array[]
 
 function explicit(group: number, element: number, vr: string, value: Uint8Array): Uint8Array {
   const pad = value.length % 2 ? concat([value, new Uint8Array([vr === "UI" ? 0 : 32])]) : value;
-  const long = ["OB", "OW", "UN"].includes(vr);
+  const long = ["OB", "OW", "UN", "SQ"].includes(vr);
   const head = new Uint8Array(long ? 12 : 8);
   const dv = new DataView(head.buffer);
   dv.setUint16(0, group, true); dv.setUint16(2, element, true);
@@ -28,6 +28,17 @@ function explicit(group: number, element: number, vr: string, value: Uint8Array)
 }
 const text = (g: number, e: number, vr: string, s: string) => explicit(g, e, vr, enc.encode(s));
 const us = (g: number, e: number, v: number) => { const b = new Uint8Array(2); new DataView(b.buffer).setUint16(0, v, true); return explicit(g, e, "US", b); };
+const marker = (e: number, length: number) => { const b = new Uint8Array(8); const dv = new DataView(b.buffer); dv.setUint16(0, 0xfffe, true); dv.setUint16(2, e, true); dv.setUint32(4, length, true); return b; };
+const UNDEFINED = 0xffffffff;
+/** A sequence item, of defined length or ended by a delimiter. */
+const item = (elements: Uint8Array[], undefinedLength = false) => { const body = concat(elements); return undefinedLength ? concat([marker(0xe000, UNDEFINED), body, marker(0xe00d, 0)]) : concat([marker(0xe000, body.length), body]); };
+/** A sequence of items, of defined length or ended by a delimiter. */
+const sq = (g: number, e: number, items: Uint8Array[], undefinedLength = false) => {
+  if (!undefinedLength) return explicit(g, e, "SQ", concat(items));
+  const head = explicit(g, e, "SQ", new Uint8Array(0));
+  new DataView(head.buffer).setUint32(8, UNDEFINED, true);
+  return concat([head, ...items, marker(0xe0dd, 0)]);
+};
 
 interface Fixture {
   study: string; series: string; sop: string; number?: number; seriesNumber?: number; modality?: string; patientId?: string; syntax?: string;
@@ -37,6 +48,8 @@ interface Fixture {
   fragment?: Uint8Array;
   /** An element that sits before pixel data, for bulk reads. */
   document?: Uint8Array;
+  /** Elements written just before pixel data, such as sequences. */
+  extra?: Uint8Array[];
   omitSop?: boolean;
 }
 
@@ -56,6 +69,7 @@ function part10(f: Fixture): Uint8Array {
   elements.push(us(0x28, 2, 1), text(0x28, 4, "CS", "MONOCHROME2"), us(0x28, 0x10, side), us(0x28, 0x11, side), us(0x28, 0x100, 16), us(0x28, 0x101, 16), us(0x28, 0x102, 15), us(0x28, 0x103, 0));
   if (f.fragment) elements.push(text(0x28, 0x2110, "CS", "01"));
   if (f.document) elements.push(explicit(0x42, 0x11, "OB", f.document));
+  if (f.extra) elements.push(...f.extra);
   if (f.pixels) elements.push(explicit(0x7fe0, 0x10, "OW", f.pixels));
   if (f.fragment) {
     const item = (len: number) => { const b = new Uint8Array(8); const dv = new DataView(b.buffer); dv.setUint16(0, 0xfffe, true); dv.setUint16(2, 0xe000, true); dv.setUint32(4, len, true); return b; };
@@ -187,6 +201,100 @@ describe("Format", () => {
     expect(items[0]["00100020"].Value[0]).toBe("PID-1");
   });
 
+  describe("bulk data at any depth", () => {
+    const s = "1.2.3.950", series = `${s}.1`;
+    const ICC = noise(3000), SMALL = noise(100), LUT = noise(4096), DOC = noise(1500), ICON = noise(2000);
+    /** An encapsulated value as it sits in the file: an empty offset table, one fragment, and the delimiter. */
+    const ICON_VALUE = concat([marker(0xe000, 0), marker(0xe000, ICON.length), ICON, marker(0xe0dd, 0)]);
+    const encapsulated = (g: number, e: number) => { const head = explicit(g, e, "OB", new Uint8Array(0)); new DataView(head.buffer).setUint32(8, UNDEFINED, true); return concat([head, ICON_VALUE]); };
+    const nested = () => [
+      sq(0x28, 0x3010, [item([explicit(0x28, 0x3006, "OW", LUT)], true)], true),
+      sq(0x48, 0x105, [item([explicit(0x28, 0x2000, "OB", SMALL)]), item([explicit(0x28, 0x2000, "OB", ICC), sq(0x40, 0x555, [item([explicit(0x42, 0x11, "OB", DOC)])])])]),
+      sq(0x88, 0x200, [item([us(0x28, 0x10, 8), encapsulated(0x7fe0, 0x10)], true)]),
+    ];
+    const pixelsOf = [smooth(64, 5), noise(64 * 64 * 2)];
+    const values = (n: number): Record<string, Uint8Array> => ({
+      "00283010/1/00283006": LUT, "00480105/2/00282000": ICC, "00480105/2/00400555/1/00420011": DOC, "00880200/1/7FE00010": ICON_VALUE, "7FE00010": pixelsOf[n]!,
+    });
+    let store: ObjectStore, originals: Uint8Array[];
+    const sops = [`${s}.1.1`, `${s}.1.2`];
+    beforeAll(async () => {
+      store = await fresh();
+      const files = await Promise.all(sops.map((sop, n) => put(`nested${n}`, { study: s, series, sop, number: n + 1, extra: nested(), pixels: pixelsOf[n] })));
+      originals = await Promise.all(files.map(f => Bun.file(f).bytes()));
+      await ingestStudies(store, [study(files)]);
+    });
+
+    test("ingest records each one over the threshold by its path, with items numbered from 1", async () => {
+      const index = await new ArchiveReader(store).seriesIndex(s, 1, series);
+      expect(index.instances.map(i => i.offers[0]!.encoding)).toEqual(["zstd", "none"]);
+      index.instances.forEach((inst, n) => {
+        expect(Object.keys(inst.bulk!).sort()).toEqual(Object.keys(values(n)).sort());
+        for (const [path, value] of Object.entries(values(n))) {
+          const el = inst.bulk![path]!;
+          expect([path, sha(originals[n]!.subarray(el.offset, el.offset + el.length))]).toEqual([path, sha(value)]);
+        }
+      });
+    });
+
+    test("metadata links to them where they sit, and keeps smaller values inline", async () => {
+      const [item] = await new ArchiveBackend(store).getMetadata({ study: s, series, instance: sops[0] });
+      expect(item["00283010"].Value[0]["00283006"]).toEqual({ vr: "OW", BulkDataURI: "bulk:00283010/1/00283006" });
+      expect(item["00480105"].Value[0]["00282000"]).toEqual({ vr: "OB", InlineBinary: Buffer.from(SMALL).toString("base64") });
+      expect(item["00480105"].Value[1]["00282000"]).toEqual({ vr: "OB", BulkDataURI: "bulk:00480105/2/00282000" });
+      expect(item["00480105"].Value[1]["00400555"].Value[0]["00420011"]).toEqual({ vr: "OB", BulkDataURI: "bulk:00480105/2/00400555/1/00420011" });
+      expect(item["00880200"].Value[0]["7FE00010"]).toEqual({ vr: "OB", BulkDataURI: "bulk:00880200/1/7FE00010" });
+      expect(item["00880200"].Value[0]["00280010"]).toEqual({ vr: "US", Value: [8] });
+      const inline = (d: any): number[] => Object.values<any>(d).flatMap(el => [...(el.InlineBinary ? [Buffer.from(el.InlineBinary, "base64").length] : []), ...(el.vr === "SQ" ? (el.Value ?? []).flatMap(inline) : [])]);
+      expect(inline(item)).toEqual([SMALL.length]);
+    });
+
+    test("the backend serves exactly each value, from a zstd object and by range from an unencoded one", async () => {
+      for (const [n, sop] of sops.entries()) {
+        for (const [path, value] of Object.entries(values(n))) {
+          const { source, c } = counting(store);
+          const element = await new ArchiveBackend(source).openBulk(s, series, sop, path.toLowerCase());
+          expect([path, element.bytes]).toEqual([path, value.length]);
+          expect([path, sha(await collect(element.body))]).toEqual([path, sha(value)]);
+          expect(n === 0 ? [c.reads.length, c.ranges.length] : [c.reads.length, c.ranges.length, c.pulled]).toEqual(n === 0 ? [1, 0] : [0, 1, value.length]);
+        }
+      }
+    });
+
+    test("an inline value, a missing item, or a sequence itself has no bulk data", async () => {
+      const backend = new ArchiveBackend(store);
+      for (const path of ["00480105/1/00282000", "00480105/3/00282000", "00480105", "00480105/2"]) expect([path, await kindOf(() => backend.openBulk(s, series, sops[0]!, path))]).toEqual([path, "NotFound"]);
+    });
+  });
+
+  test("top-level pixel data is bulk data however small, and other small values stay inline", () => {
+    const parsed = parsePart10(part10({ study: "1.2.3.960", series: "1.2.3.960.1", sop: "1.2.3.960.1.1", pixels: smooth(4), document: noise(16) }));
+    expect(parsed.bulk["7FE00010"]!.length).toBe(32);
+    expect(parsed.dataset["7FE00010"]).toEqual({ vr: "OW", BulkDataURI: "bulk:7FE00010" });
+    expect(parsed.dataset["00420011"]!.InlineBinary).toBeDefined();
+    expect(parsed.bulk["00420011"]).toBeUndefined();
+  });
+
+  test("an archive in an earlier format is rewritten in place when its content is the same, and versioned when it isn't", async () => {
+    const store = await fresh();
+    await ingestStudies(store, [study(mainInputs())]);
+    const documents = async () => { const out: string[] = []; for await (const k of store.list("studies/")) if (!k.endsWith("current.json")) out.push(k); return out; };
+    const downgrade = async () => { for (const k of await documents()) await store.write(k, encodeJson({ ...await decodeJson<any>(await store.bytes(k)), format: ARCHIVE_FORMAT - 1 })); };
+    await downgrade();
+    expect(await kindOf(() => new ArchiveBackend(store).listSeries(STUDY))).toBe("Unknown");
+    const again = await ingestStudies(store, [study(mainInputs())]);
+    expect(again.results[0]).toMatchObject({ status: "published", version: 1 });
+    expect(again.contentWrites).toBe(0);
+    expect(JSON.parse(await store.text(archiveKeys.current(STUDY)))).toEqual({ version: 1 });
+    for (const k of await documents()) expect([k, (await decodeJson<any>(await store.bytes(k))).format]).toEqual([k, ARCHIVE_FORMAT]);
+    expect((await new ArchiveBackend(store).openInstances({ study: STUDY, version: 1 }, ANY)).plan).toHaveLength(4);
+    expect((await ingestStudies(store, [study(mainInputs())])).results[0]).toMatchObject({ status: "unchanged", version: 1 });
+
+    await downgrade();
+    const changed = await ingestStudies(store, [study(mainInputs().slice(0, 3))]);
+    expect(changed.results[0]).toMatchObject({ status: "published", version: 2 });
+    expect((await new ArchiveBackend(store).openInstances({ study: STUDY }, ANY)).plan).toHaveLength(3);
+  });
 
   test("Implicit VR and deflated inputs are stored as Explicit VR, recording what they were", async () => {
     const store = await fresh();

@@ -2,7 +2,7 @@
 // what it's told, and small catalog fixtures.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
-import { publicationFor, type Attrs, type CatalogStore, type Clock, type CoreService, type Observer, type ServerSpan, type SpanKind, type SpanStatus, type StudyDocument, type StudyHierarchy } from "../src";
+import { ARCHIVE_FORMAT, publicationFor, type Attrs, type CatalogStore, type Clock, type CoreService, type Observer, type ServerSpan, type SpanKind, type SpanStatus, type StudyDocument, type StudyHierarchy } from "../src";
 
 export function manualClock(start = Math.floor(Date.now() / 1000)): Clock & { advance(seconds: number): void; set(seconds: number): void; reset(): void } {
   let t = start;
@@ -54,6 +54,6 @@ export const hierarchyOf = (uid: string, modality = "CT", instances = 2): StudyH
   series: [{ uid: `${uid}.1`, number: 1, modality, description: "first", instances: Array.from({ length: instances }, (_, i) => ({ uid: `${uid}.1.${i}`, number: i + 1, sopClass: "1.2.840.10008.5.1.4.1.1.2" })) }],
 });
 export function documentOf(uid: string, o: Partial<StudyDocument> = {}, modality = "CT"): StudyDocument {
-  return { format: 1, uid, id: `study-${uid}`, version: 1, date: "20200101", accession: `ACC${uid}`, sourcePatientId: "MRN1", site: "Site A", series: [{ uid: `${uid}.1`, number: 1, modality, instanceCount: 2 }], ...o };
+  return { format: ARCHIVE_FORMAT, uid, id: `study-${uid}`, version: 1, date: "20200101", accession: `ACC${uid}`, sourcePatientId: "MRN1", site: "Site A", series: [{ uid: `${uid}.1`, number: 1, modality, instanceCount: 2 }], ...o };
 }
 export const put = (c: CatalogStore, uid: string, o: Partial<StudyDocument> = {}, patient = "p1", modality = "CT") => c.publish(publicationFor(documentOf(uid, o, modality), patient, hierarchyOf(uid, modality), c.accessionSystem));

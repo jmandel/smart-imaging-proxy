@@ -705,6 +705,38 @@ describe("bulk data", () => {
     for (const accept of ["image/png", "application/dicom", "application/octet-stream;q=0"]) expect((await proxyOver(b).fetch(request({ Accept: accept }, context(), PATH))).status).toBe(406);
     expect(opened).toBe(false);
   });
+  test("metadata links nested bulk data through the proxy, and the route hands the backend that path", async () => {
+    const b = new FakeBackend([], { plan: true });
+    b.getMetadata = async () => [{
+      __path: { series: "9", instance: "8" },
+      "7FE00010": { vr: "OB", BulkDataURI: "bulk:7FE00010" },
+      "00480105": { vr: "SQ", Value: [{ "00282000": { vr: "OB", InlineBinary: "AAE=" } }, { "00282000": { vr: "OB", BulkDataURI: "bulk:00480105/2/00282000" }, "00400555": { vr: "SQ", Value: [{ "00420011": { vr: "OB", BulkDataURI: "http://upstream:4611/dicom-web/studies/1.2.3/series/9/instances/8/bulk/00480105/2/00400555/1/00420011" } }] } }] },
+    }];
+    let asked: string | undefined;
+    b.openBulk = async (_s, _se, _i, ref) => { asked = ref; return { bytes: 2, body: (async function* () { yield new Uint8Array([1, 2]); })() }; };
+    const proxy = proxyOver(b);
+    const ctx = context();
+    const [item] = await (await proxy.fetch(request({ Accept: "application/dicom+json" }, ctx, "/metadata"))).json() as any[];
+    const base = `http://proxy/wado/${ctx}/studies/${STUDY}/series/9/instances/8/bulk`;
+    expect(item["7FE00010"].BulkDataURI).toBe(`${base}/7FE00010`);
+    expect(item["00480105"].Value[0]["00282000"]).toEqual({ vr: "OB", InlineBinary: "AAE=" });
+    expect(item["00480105"].Value[1]["00282000"].BulkDataURI).toBe(`${base}/00480105/2/00282000`);
+    expect(item["00480105"].Value[1]["00400555"].Value[0]["00420011"].BulkDataURI).toBe(`${base}/00480105/2/00400555/1/00420011`);
+    expect(proxy.events.at(-1)!.rewritten).toBe(3);
+    const r = await proxy.fetch(new Request(`${base}/00480105/2/00282000`, { headers: { Authorization: `Bearer ${TOKEN}`, Accept: "application/octet-stream" } }));
+    expect([r.status, r.headers.get("content-length"), [...new Uint8Array(await r.arrayBuffer())]]).toEqual([200, "2", [1, 2]]);
+    expect(asked).toBe("00480105/2/00282000");
+  });
+  test("a bulk path that isn't a tag, or tags joined by item numbers from 1, is 404, and never reaches the backend", async () => {
+    const b = new FakeBackend([], { plan: true });
+    let opened = false;
+    b.openBulk = async () => { opened = true; throw new Error("must not open"); };
+    for (const path of ["7fe0", "7FE000100", "00480105/1", "00480105//00282000", "00480105/0/00282000", "00480105/x/00282000", "00480105/1/0028200"]) {
+      const r = await proxyOver(b).fetch(request({ Accept: "*/*" }, context(), `/series/9/instances/8/bulk/${path}`));
+      expect([path, r.status]).toEqual([path, 404]);
+    }
+    expect(opened).toBe(false);
+  });
   test("a client that hangs up closes the element", async () => {
     let closed = false;
     const r = await ask(bulkProxy(5, () => { closed = true; }), "application/octet-stream");

@@ -11,10 +11,10 @@ import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { parsePart10, readFileMeta, str, num, type DicomJson } from "../dicom";
 import { EVRLE, JPEG_LOSSLESS, PRIVATE_TEST_SYNTAX, isLossy, isStandard } from "../syntax";
-import { ArchiveReader } from "./reader";
+import { ArchiveFormatError, ArchiveReader } from "./reader";
 import { ObjectNotFoundError, type ObjectStore } from "./sources";
 import { ARCHIVE_FORMAT, archiveKeys, type InstanceRecord, type Offer, type SeriesIndex, type SeriesMetadata, type StudyDocument } from "./types";
-import { encodeJson, wrapperPaysOff, zstdCompress, zstdDecompressSync } from "./zstd";
+import { decodeJson, encodeJson, wrapperPaysOff, zstdCompress, zstdDecompressSync } from "./zstd";
 
 export const QUARANTINE_REPORT_KEY = "reports/quarantine.json";
 
@@ -38,7 +38,7 @@ export interface QuarantineItem { study: string; input: string; stage: string; r
 export interface IngestWarning { study: string; sop: string; reason: string; }
 
 /**
- * - `published`: this version is now live.
+ * - `published`: this version is now live, or its documents were rewritten from an earlier format.
  * - `unchanged`: documents match the live version, so nothing was written.
  * - `held`: inputs were quarantined and a version is already live. It stays live, so a bad file
  *   can't silently remove images from a study.
@@ -151,14 +151,27 @@ async function prepare(input: string, n: number, study: StudyInput, work: string
   } catch (e) { await rm(converted, { force: true }); await rm(scratch, { force: true }); throw fail(e); }
 }
 
-async function liveDocuments(reader: ArchiveReader, uid: string) {
+/** The live version's documents, in this format or an earlier one. */
+async function liveDocuments(store: ObjectStore, uid: string) {
   try {
-    const version = await reader.currentVersion(uid);
-    const study = await reader.study(uid, version);
-    const series = await Promise.all(study.series.map(async s => ({ index: await reader.seriesIndex(uid, version, s.uid), metadata: await reader.seriesMetadata(uid, version, s.uid) })));
+    const version = await new ArchiveReader(store, { currentTtlMs: 0, cacheBytes: 0 }).currentVersion(uid);
+    const read = async <T extends { format: number }>(key: string) => {
+      const doc = await decodeJson<T>(await store.bytes(key));
+      if (!(doc.format <= ARCHIVE_FORMAT)) throw new ArchiveFormatError(`${key} has format ${doc.format}, and this code writes ${ARCHIVE_FORMAT}`);
+      return doc;
+    };
+    const study = await read<StudyDocument>(archiveKeys.study(uid, version));
+    const series = await Promise.all(study.series.map(async s => ({ index: await read<SeriesIndex>(archiveKeys.seriesIndex(uid, version, s.uid)), metadata: await read<SeriesMetadata>(archiveKeys.seriesMetadata(uid, version, s.uid)) })));
     return { version, study, series };
   } catch (e) { if (e instanceof ObjectNotFoundError) return undefined; throw e; }
 }
+
+type Documents = { study: StudyDocument; series: { index: SeriesIndex; metadata: SeriesMetadata }[] };
+/** What a version holds, apart from how this format describes it: the study, its series, and each instance's offers. */
+const contentOf = (d: Documents) => JSON.stringify({
+  study: { ...d.study, format: undefined },
+  series: d.series.map(s => ({ ...s.index, format: undefined, instances: s.index.instances.map(({ bulk: _, ...i }) => i) })),
+});
 
 async function ingestStudy(store: ObjectStore, input: StudyInput, work: string, run: IngestRun): Promise<StudyResult> {
   const quarantine = (name: string, stage: string, reason: string) => { run.quarantine.push({ study: input.id, input: name, stage, reason }); quarantined++; };
@@ -234,23 +247,32 @@ async function ingestStudy(store: ObjectStore, input: StudyInput, work: string, 
     })),
   });
 
-  const live = await liveDocuments(new ArchiveReader(store, { currentTtlMs: 0, cacheBytes: 0 }), uid);
+  const write = async (version: number, docs: Documents) => {
+    for (const s of docs.series) {
+      await store.write(archiveKeys.seriesIndex(uid!, version, s.index.uid), encodeJson(s.index));
+      await store.write(archiveKeys.seriesMetadata(uid!, version, s.index.uid), encodeJson(s.metadata));
+      run.documentWrites += 2;
+    }
+    await store.write(archiveKeys.study(uid!, version), encodeJson(docs.study));
+    run.documentWrites++;
+  };
+
+  const live = await liveDocuments(store, uid);
   if (live) {
     if (quarantined) return { id: input.id, uid, status: "held", version: live.version, instances, quarantined };
-    const { study, series: docs } = documents(live.version);
-    if (JSON.stringify({ study, series: docs }) === JSON.stringify({ study: live.study, series: live.series })) return { id: input.id, uid, status: "unchanged", version: live.version, instances, quarantined };
+    const docs = documents(live.version);
+    if (JSON.stringify(docs) === JSON.stringify({ study: live.study, series: live.series })) return { id: input.id, uid, status: "unchanged", version: live.version, instances, quarantined };
+    // Documents in an earlier format can't be read, and are rewritten in this one at their own version
+    // when what that version holds is the same, so a signed context naming it stays good.
+    if (live.study.format < ARCHIVE_FORMAT && contentOf(docs) === contentOf(live)) {
+      await write(live.version, docs);
+      return { id: input.id, uid, status: "published", version: live.version, instances, quarantined };
+    }
   }
 
   // A failed earlier attempt may have left unpublished objects at this version. Nothing refers to them, so they can be replaced.
   const version = (live?.version ?? 0) + 1;
-  const docs = documents(version);
-  for (const s of docs.series) {
-    await store.write(archiveKeys.seriesIndex(uid, version, s.index.uid), encodeJson(s.index));
-    await store.write(archiveKeys.seriesMetadata(uid, version, s.index.uid), encodeJson(s.metadata));
-    run.documentWrites += 2;
-  }
-  await store.write(archiveKeys.study(uid, version), encodeJson(docs.study));
-  run.documentWrites++;
+  await write(version, documents(version));
   await store.write(archiveKeys.current(uid), JSON.stringify({ version }));
   run.documentWrites++;
   return { id: input.id, uid, status: "published", version, instances, quarantined };
