@@ -29,7 +29,7 @@
   </dl>
   <p>Text bodies are kept up to 256 KB and binary bodies to 2 KB, with the true size shown. Clicking a row, or scrolling up, turns off <b>Follow newest</b> so the page holds still. Tick it to return to the newest session.</p>
   <p id="storage"></p>
-  <p>Tokens, codes, and PKCE verifiers appear only as <code>sha256:</code> prefixes, so you can match them across services without seeing them. Session cookies and client assertion signatures aren't recorded. Orthanc is shown as HTTP calls to it. MinIO and static files are read through a storage client, so they appear as spans without HTTP exchanges.</p>
+  <p>Tokens, codes, and PKCE verifiers appear only as <code>sha256:</code> prefixes, so you can match them across services without seeing them. Session cookies and client assertion signatures aren't recorded. Orthanc is shown as HTTP calls to it. The S3 bucket and static files are read through a storage client, so they appear as spans without HTTP exchanges.</p>
 </details>
 <main id="traces"></main>
 <script src="trace-view.js"></script>

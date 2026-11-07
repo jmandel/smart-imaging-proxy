@@ -177,7 +177,7 @@ describe("over HTTP", () => {
     expect((await status(new URL(CONFIG.demoUrl).host)).status).toBe(200);
   });
   test("/api/backend takes a backend name, and nothing else", async () => {
-    for (const body of [{ backend: canary }, { backend: "'; DROP TABLE rules; --" }, { backend: "minio", path: bait }, "[]"]) expect((await send("POST", "/api/backend", body)).status).toBe(400);
+    for (const body of [{ backend: canary }, { backend: "'; DROP TABLE rules; --" }, { backend: "s3", path: bait }, "[]"]) expect((await send("POST", "/api/backend", body)).status).toBe(400);
     expect(stack.backend).toBe("static-files");
     stillIntact();
   });

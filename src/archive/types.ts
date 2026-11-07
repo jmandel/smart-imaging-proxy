@@ -165,7 +165,7 @@ export interface CatalogStore {
   close(): void;
 }
 
-/** A store of immutable objects. Local files and MinIO both provide this. */
+/** A store of immutable objects. Local files and the S3 bucket both provide this. */
 export interface ObjectSource {
   name: string;
   read(key: string): AsyncIterable<Uint8Array>;

@@ -18,7 +18,7 @@ import { CONFIG } from "../src/config";
 import { syntheticInstance, syntheticStudies, writeSynthetic } from "../scripts/generate-synthetic";
 
 const root = join(import.meta.dir, "..");
-const BACKENDS: BackendName[] = (process.env.BACKENDS?.split(",") as BackendName[]) ?? ["static-files", "minio", "orthanc"];
+const BACKENDS: BackendName[] = (process.env.BACKENDS?.split(",") as BackendName[]) ?? ["static-files", "s3", "orthanc"];
 const JOSH = ["ct-abdomen-pelvis-2012", "mri-brain-2020", "slide-lung-2023", "xr-hand-right-2012", "xr-hand-wrist-right-2012", "xr-wrist-left-2012"];
 const SAM = ["syn-sam-chest-xr-2021", "syn-sam-ct-sinus-2024"];
 const CONFIDENTIAL = "syn-riley-skin-slide-2023";

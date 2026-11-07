@@ -1,16 +1,15 @@
 // From a fresh clone to a running deployment in one command. Checks what it needs, runs each setup
-// step, starts MinIO and Orthanc, and starts the demo in the background. Every step is safe to
+// step, starts the S3 store and Orthanc as plain processes, and starts the demo in the background. Every step is safe to
 // repeat, and a demo this script started is restarted, so it serves the current code.
 import { closeSync, mkdirSync, openSync } from "node:fs";
 import { CONFIG, STORAGE } from "../src/config";
-import { LOG_FILE, PID_FILE, compose, demoPortAnswers, stopDemo } from "./demo-process";
+import { LOG_FILE, PID_FILE, demoPortAnswers, stopDemo } from "./demo-process";
 
 const root = `${import.meta.dir}/..`;
 const fail = (message: string): never => { console.error(`\n${message}`); process.exit(1); };
 
-const missing = ["docker", "dcmconv", "dcmcjpeg", "dcmodify", "curl", "tar"].filter(t => !Bun.which(t));
+const missing = ["dcmconv", "dcmcjpeg", "dcmodify", "curl", "tar", "unzip"].filter(t => !Bun.which(t));
 if (missing.length) fail(`Install these first: ${missing.join(", ")}. DCMTK provides the dcm* tools.`);
-if (Bun.spawnSync(["docker", "compose", "version"], { stdout: "ignore", stderr: "ignore" }).exitCode !== 0) fail("Docker Compose isn't available: `docker compose version` failed.");
 
 async function step(title: string, cmd: string[]) {
   console.log(`\n== ${title}`);
@@ -25,9 +24,9 @@ if (await demoPortAnswers()) fail(`Something else is using port ${new URL(CONFIG
 await step("Install the browser test driver", ["bun", "install", "--frozen-lockfile"]);
 await step("Download the sample data, verifying checksums", ["bun", "scripts/fetch-data.ts"]);
 await step("Generate the synthetic studies, and build the archive", ["bun", "scripts/ingest.ts"]);
-console.log("\n== Start MinIO and Orthanc");
-await compose(["up", "-d"]).catch(e => fail(e.message));
-await step("Copy the archive to MinIO, and add any study Orthanc lacks", ["bun", "scripts/load-backends.ts"]);
+await step("Download the S3 store and Orthanc, checking each against its pinned SHA-256", ["bun", "scripts/backends.ts", "fetch"]);
+await step("Start the S3 store and Orthanc", ["bun", "scripts/backends.ts", "start"]);
+await step("Copy the archive to the S3 bucket, and add any study Orthanc lacks", ["bun", "scripts/load-backends.ts"]);
 
 console.log("\n== Start the demo");
 const log = openSync(LOG_FILE, "w");

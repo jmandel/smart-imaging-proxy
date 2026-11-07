@@ -1,10 +1,11 @@
-// Copies the archive into MinIO, and fills in any study Orthanc doesn't have. Run after
+// Copies the archive into the S3 bucket, and fills in any study Orthanc doesn't have. Run after
 // `docker compose up -d` and `bun run ingest`. Safe to repeat: only differences are written.
 import { S3Client } from "bun";
 import { fileStore, s3Store } from "../src/archive/sources";
 import { ArchiveReader } from "../src/archive/reader";
 import { chooseOffer } from "../src/backends/archive";
-import { CONFIG } from "../src/config";
+import { CONFIG, STORAGE } from "../src/config";
+import { existsSync } from "node:fs";
 import { zstdDecompressSync } from "../src/archive/zstd";
 
 const wait = async (url: string, init?: RequestInit) => {
@@ -20,11 +21,13 @@ const keys: string[] = [];
 for await (const k of local.list("")) keys.push(k);
 if (!keys.some(k => k.endsWith("/current.json"))) throw new Error(`no published studies in ${CONFIG.archive.dir}: run the ingest first`);
 
-// MinIO: create the bucket with a signed request, then upload.
-const { endpoint, accessKey, secretKey } = CONFIG.minio;
+// The S3 store: create the bucket with a signed request, then upload.
+const { endpoint, accessKey, secretKey } = CONFIG.s3;
 const { bucket } = CONFIG.archive;
-await wait(`${endpoint}/minio/health/live`);
-await Bun.spawn(["curl", "-s", "--aws-sigv4", "aws:amz:us-east-1:s3", "--user", `${accessKey}:${secretKey}`, "-X", "PUT", `${endpoint}/${bucket}`], { stdout: "ignore", stderr: "ignore" }).exited;
+const signed = (method: string, url: string) => Bun.spawnSync(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--aws-sigv4", "aws:amz:us-east-1:s3", "--user", `${accessKey}:${secretKey}`, "-X", method, url]).stdout.toString();
+// A store can answer its health check before it serves requests, so wait for a signed one.
+for (let i = 0; signed("GET", `${endpoint}/`) !== "200"; i++) { if (i > 120) throw new Error(`${endpoint} never answered a signed request`); await Bun.sleep(500); }
+signed("PUT", `${endpoint}/${bucket}`);
 const remote = s3Store(new S3Client({ endpoint, accessKeyId: accessKey, secretAccessKey: secretKey, bucket }));
 
 // The same publish order as ingest: content, then documents, then each `current.json`.
@@ -40,10 +43,12 @@ for (const key of keys) {
   await remote.write(key, Bun.file(`${CONFIG.archive.dir}/${key}`));
   uploaded++;
 }
-console.log(`MinIO bucket ${bucket}: ${uploaded} objects uploaded, ${skipped} already there`);
+console.log(`S3 bucket ${bucket}: ${uploaded} objects uploaded, ${skipped} already there`);
 
-// Orthanc gets a study only if it doesn't have it, each instance once, in a standard syntax.
+// Orthanc gets a study only if it doesn't have it, each instance once, in a standard syntax. Where
+// it isn't installed (scripts/backends.ts), there's nothing to load.
 const auth = "Basic " + btoa(`${CONFIG.orthanc.user}:${CONFIG.orthanc.password}`);
+if (!existsSync(`${STORAGE}/bin/Orthanc`)) { console.log("Orthanc: not installed here, skipped"); process.exit(0); }
 await wait(`${CONFIG.orthanc.base}/system`, { headers: { Authorization: auth } });
 const reader = new ArchiveReader(local, { currentTtlMs: 0 });
 let sent = 0, present = 0;

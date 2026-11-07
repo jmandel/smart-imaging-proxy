@@ -12,7 +12,7 @@
 //
 //   SERVICE_SECRET    Required, except for `trace` alone. The credential the proxy, the Imaging Server
 //                     and the Authorization Server use with one another. All must hold the same one.
-//   PROXY_BACKEND     For `proxy`: static-files (default), minio, or orthanc. For `imaging`: orthanc
+//   PROXY_BACKEND     For `proxy`: static-files (default), s3, or orthanc. For `imaging`: orthanc
 //                     means Orthanc's catalog, and anything else the archive's.
 //   JWKS_TTL_SECONDS  For `proxy`: how long it trusts its copy of the public keys. Default 60.
 //   POLICY_STORE, POLICY_DB, POLICY_DURABILITY  For `imaging` and `auth`.

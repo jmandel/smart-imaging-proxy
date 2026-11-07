@@ -11,7 +11,7 @@ import { CONFIG } from "../src/config";
 import { flushTraces } from "../src/trace";
 
 const root = join(import.meta.dir, "..");
-const BACKENDS: BackendName[] = (process.env.BACKENDS?.split(",") as BackendName[]) ?? ["static-files", "minio", "orthanc"];
+const BACKENDS: BackendName[] = (process.env.BACKENDS?.split(",") as BackendName[]) ?? ["static-files", "s3", "orthanc"];
 const ALL = ["ct-abdomen-pelvis-2012", "mri-brain-2020", "slide-lung-2023", "xr-hand-right-2012", "xr-hand-wrist-right-2012", "xr-wrist-left-2012"];
 const LAKESIDE_RIVERSIDE = ALL.filter(s => s !== "slide-lung-2023");
 const SMALL = "xr-wrist-left-2012";

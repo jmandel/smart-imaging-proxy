@@ -8,7 +8,7 @@ import { CALLBACK, submitConsent, submitRevocation } from "../src/flows/oauth";
 import { createDemoServer } from "../src/demo-server";
 import { CONFIG, PORTS } from "../src/config";
 
-const BACKENDS: BackendName[] = (process.env.BACKENDS?.split(",") as BackendName[]) ?? ["static-files", "minio", "orthanc"];
+const BACKENDS: BackendName[] = (process.env.BACKENDS?.split(",") as BackendName[]) ?? ["static-files", "s3", "orthanc"];
 let stack: Stack; let clients: any;
 beforeAll(async () => { stack = await startStack(join(import.meta.dir, "..")); clients = registerClients(stack); });
 afterAll(() => stack.stop());

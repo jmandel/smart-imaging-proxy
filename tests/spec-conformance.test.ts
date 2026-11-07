@@ -164,7 +164,7 @@ describe("Discovery and search", () => {
   });
 });
 
-for (const backend of (process.env.BACKENDS?.split(",") ?? ["static-files", "minio", "orthanc"]) as BackendName[]) {
+for (const backend of (process.env.BACKENDS?.split(",") ?? ["static-files", "s3", "orthanc"]) as BackendName[]) {
   describe(`Griffin's points and retrieval rules: ${backend}`, () => {
     beforeAll(() => stack.setBackend(backend));
     const sw = () => stack.setBackend(backend);

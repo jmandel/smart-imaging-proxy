@@ -1,5 +1,5 @@
 // The archive format, ingest, and the backend over it. Small studies are built here, so these
-// tests say exactly what each file holds. The last block checks the real archive and MinIO.
+// tests say exactly what each file holds. The last block checks the real archive and the S3 bucket.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -883,8 +883,8 @@ describe("ByteLru", () => {
   });
 });
 
-describe("Local files and MinIO", () => {
-  const { endpoint, accessKey, secretKey } = CONFIG.minio;
+describe("Local files and the S3 bucket", () => {
+  const { endpoint, accessKey, secretKey } = CONFIG.s3;
   const client = (bucket: string) => new S3Client({ endpoint, accessKeyId: accessKey, secretAccessKey: secretKey, bucket });
   const bucketCall = (method: string, bucket: string) => Bun.spawn(["curl", "-s", "--aws-sigv4", "aws:amz:us-east-1:s3", "--user", `${accessKey}:${secretKey}`, "-X", method, `${endpoint}/${bucket}`], { stdout: "ignore", stderr: "ignore" }).exited;
   const listAll = async (s: ObjectSource, prefix = "") => { const out: string[] = []; for await (const k of s.list(prefix)) out.push(k); return out; };
@@ -917,7 +917,7 @@ describe("Local files and MinIO", () => {
       for (const p of ["studies/", `studies/${STUDY}/`, `studies/${STUDY}/v1/ser`, "content/", "nothing/"]) expect(await listAll(remote, p)).toEqual(await listAll(local, p));
     });
 
-    test("re-ingesting into MinIO writes nothing", async () => {
+    test("re-ingesting into the S3 bucket writes nothing", async () => {
       const { store, writes } = recording(remote);
       const run = await ingestStudies(store, [study(mainInputs()), variantStudy()]);
       expect(run.results.map(r => r.status)).toEqual(["unchanged", "unchanged"]);
@@ -946,7 +946,7 @@ describe("Local files and MinIO", () => {
       expect(p2).toBe(p1!);
     });
 
-    test("a range and an early stop work against MinIO", async () => {
+    test("a range and an early stop work against the S3 bucket", async () => {
       const key = (await new ArchiveReader(remote).seriesIndex(STUDY, 1, S3)).instances[0]!.offers[0]!.key;
       expect(sha(await collect(remote.readRange(key, 132, 100)))).toBe(sha((await local.bytes(key)).subarray(132, 232)));
       for await (const _ of remote.read(key)) break;
@@ -1024,7 +1024,7 @@ describe("Local files and MinIO", () => {
       }
     });
 
-    test("a paused read from MinIO doesn't buffer the object", async () => {
+    test("a paused read from the S3 bucket doesn't buffer the object", async () => {
       const m = await manifest();
       const slide = m.studies.find((s: any) => s.id === "slide-lung-2023");
       const b = new ArchiveBackend(bucketStore());

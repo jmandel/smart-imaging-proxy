@@ -26,7 +26,7 @@ import { rebuildFromArchive } from "./catalog-archive";
 import { catalogFromOrthanc } from "./catalog-orthanc";
 import { serveStreaming } from "./serve-streaming";
 
-export type BackendName = "static-files" | "minio" | "orthanc";
+export type BackendName = "static-files" | "s3" | "orthanc";
 
 /** The archive's catalog and Orthanc's. Each is derived, so an empty one is built from its source. */
 export async function openCatalogs(root: string, path = ":memory:") {
@@ -48,7 +48,7 @@ export async function openCatalogs(root: string, path = ":memory:") {
 
 export function buildBackend(name: BackendName): Backend {
   if (name === "static-files") return new ArchiveBackend(fileStore(CONFIG.archive.dir));
-  if (name === "minio") return new ArchiveBackend(s3Store(new S3Client({ endpoint: CONFIG.minio.endpoint, accessKeyId: CONFIG.minio.accessKey, secretAccessKey: CONFIG.minio.secretKey, bucket: CONFIG.archive.bucket })));
+  if (name === "s3") return new ArchiveBackend(s3Store(new S3Client({ endpoint: CONFIG.s3.endpoint, accessKeyId: CONFIG.s3.accessKey, secretAccessKey: CONFIG.s3.secretKey, bucket: CONFIG.archive.bucket })));
   return new OrthancBackend(CONFIG.orthanc);
 }
 
@@ -99,7 +99,7 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
   const wrap = (b: Backend) => withTruncation(b, () => truncateAfter);
   const backends: Record<BackendName, Backend> = {
     "static-files": wrap(buildBackend("static-files")),
-    minio: wrap(buildBackend("minio")),
+    s3: wrap(buildBackend("s3")),
     orthanc: wrap(buildBackend("orthanc")),
   };
   let current: BackendName = "static-files";

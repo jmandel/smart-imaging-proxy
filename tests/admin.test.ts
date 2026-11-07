@@ -261,17 +261,17 @@ describe("clock", () => {
 
 describe("backend", () => {
   test("selects a known backend, and reports self-tests", async () => {
-    expect((await ok("POST", "/api/admin/backend", { backend: "minio" })).backend.current).toBe("minio");
+    expect((await ok("POST", "/api/admin/backend", { backend: "s3" })).backend.current).toBe("s3");
     await refused("POST", "/api/admin/backend", { backend: "floppy" }, "backend must be");
     stack.setBackend("static-files");
     const r = await ok("GET", "/api/admin/backends");
-    expect(r.backends.map((b: any) => b.name)).toEqual(["static-files", "minio", "orthanc"]);
+    expect(r.backends.map((b: any) => b.name)).toEqual(["static-files", "s3", "orthanc"]);
     expect(r.backends[0].ok).toBe(true);
   });
   test("the flow player's selector rejects bad input", async () => {
     expect((await call("POST", "/api/backend", "{nope")).status).toBe(400);
     expect((await call("POST", "/api/backend", { backend: "floppy" })).status).toBe(400);
-    expect((await call("POST", "/api/backend", { backend: "minio", path: "/etc/passwd" })).status).toBe(400);
+    expect((await call("POST", "/api/backend", { backend: "s3", path: "/etc/passwd" })).status).toBe(400);
     expect(stack.backend).toBe("static-files");
   });
 });

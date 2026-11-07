@@ -1,4 +1,4 @@
-// Object stores over local files and MinIO. Both hold the same keys and the same bytes. Reads are
+// Object stores over local files and an S3 bucket. Both hold the same keys and the same bytes. Reads are
 // async generators, so nothing is opened until the first pull and reading stops when pulling stops.
 import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
@@ -70,7 +70,7 @@ export function fileStore(dir: string, name = "static-files"): ObjectStore {
   };
 }
 
-export function s3Store(client: S3Client, name = "minio"): ObjectStore {
+export function s3Store(client: S3Client, name = "s3"): ObjectStore {
   const missing = (e: any, key: string) => e?.code === "NoSuchKey" ? new ObjectNotFoundError(key) : e;
   async function* stream(file: ReturnType<S3Client["file"]>, key: string): AsyncGenerator<Uint8Array> {
     try {

@@ -4,12 +4,12 @@ A working prototype of a SMART Imaging deployment: an Authorization Server, an I
 
 ## Get running
 
-You need Bun (developed on 1.4.3), Docker with Compose, DCMTK (`dcmconv`, `dcmcjpeg`, `dcmodify`), `curl`, and `tar`. Allow roughly 3 GB of disk, an estimate from one machine's copy.
+You need Bun (developed on 1.4.3), DCMTK (`dcmconv`, `dcmcjpeg`, `dcmodify`), `curl`, `tar`, and `unzip`. No containers: the S3 store ([RustFS](https://github.com/rustfs/rustfs)) and [Orthanc](https://www.orthanc-server.com/) run as plain processes, from release binaries the setup downloads and checks against pinned SHA-256 hashes. Orthanc's builds are for Linux on x86-64; elsewhere its backend reports itself unavailable. Allow roughly 3 GB of disk, an estimate from one machine's copy.
 
 ```sh
 git clone https://github.com/jmandel/smart-imaging-proxy && cd smart-imaging-proxy
 bun run up      # sets everything up, starts it in the background, and prints the URLs
-bun run down    # stops the demo, MinIO, and Orthanc, keeping their data
+bun run down    # stops the demo, the S3 store, and Orthanc, keeping their data
 ```
 
 `bun run up` checks for the tools above, then runs each step below. The first run downloads about 750 MB of sample data. Later runs skip finished work, and restart a running demo so it serves the current code. Its log is `/tmp/smart-imaging-demo/demo.log`.
@@ -20,8 +20,9 @@ The same steps, one at a time:
 bun install             # the browser test driver
 bun run fetch-data      # downloads the sample data, verifying checksums
 bun run ingest          # generates the synthetic studies, and builds the archive
-docker compose up -d    # MinIO and Orthanc
-bun run load            # copies the archive to MinIO, and adds any study Orthanc lacks
+bun scripts/backends.ts fetch   # downloads RustFS and Orthanc, checking their hashes
+bun scripts/backends.ts start   # runs both in the background, on loopback
+bun run load            # copies the archive to the S3 bucket, and adds any study Orthanc lacks
 bun run start           # builds any empty catalog, then prints the URLs, in the foreground
 ```
 
@@ -47,7 +48,7 @@ Everything is at one origin, port 4605: the demo's pages, the live trace at `/tr
 | 4603 | Authorization Server | `/fhir/.well-known/smart-configuration`, `/authorize`, `/token`, `/introspect`, `/revoke`, `/account`, `/fhir/Patient/{id}` (with a token for that patient) |
 | 4604 | Live trace | `/` viewer, `/span.html` full exchange, `/log.html` HTTP log, `/api/sessions/{id}/export` |
 | 4605 | One origin | `/imaging/...` Imaging Server, `/wado/...` proxy, `/trace/...` live trace, `/fhir/...`, `/authorize`, `/token`, `/introspect`, `/revoke`, and `/account` Authorization Server, and everything else the demo |
-| 4610 | MinIO | Loopback only |
+| 4610 | S3 store (RustFS) | Loopback only |
 | 4611 | Orthanc | Loopback only |
 
 - **Flow player:** 15 flows, each a series of steps showing real requests and responses, on any backend. Flows run against a scratch policy store that goes back to the guardians on file when a flow starts.
@@ -66,7 +67,7 @@ For example, [SHLink DICOM Share](https://shlink-dicom.exe.xyz/share) signs in a
 DEMO_APP_CLIENTS=shlink-dicom-share=https://shlink-dicom.exe.xyz/share/smart-callback/
 ```
 
-That page accepts a portal on `https`, or on `http` only at `localhost` or `127.0.0.1`. To try it against this machine, run a second copy that stays on loopback. After `bun run up`, it shares the archive, MinIO, and Orthanc, with its own SQLite files:
+That page accepts a portal on `https`, or on `http` only at `localhost` or `127.0.0.1`. To try it against this machine, run a second copy that stays on loopback. After `bun run up`, it shares the archive, the S3 store, and Orthanc, with its own SQLite files:
 
 ```sh
 S=/tmp/smart-imaging-share; mkdir -p $S
@@ -80,7 +81,7 @@ In a browser on the same machine, open the share page, choose **Connect to a pat
 
 The one origin is what a host in front of the machine forwards to: give it the public origin with `DEMO_PUBLIC_URL`, and it listens on every interface, with the other services on loopback. Its URLs, discovery documents, and Host checks then use that origin, and nothing else about DNS is assumed.
 
-- **Any Linux machine with systemd and Docker:** `DEMO_PUBLIC_URL=https://imaging.example.org deploy/install.sh` from a checkout. It installs DCMTK and a pinned Bun if they're missing, builds the data under `/var/lib/smart-imaging-proxy`, starts MinIO and Orthanc, and runs the app as the `smart-imaging-proxy` service. Its settings go to `/etc/smart-imaging-proxy.env`. Repeating it updates the machine.
+- **Any Linux machine with systemd:** `DEMO_PUBLIC_URL=https://imaging.example.org deploy/install.sh` from a checkout. It installs DCMTK and a pinned Bun if they're missing, builds the data under `/var/lib/smart-imaging-proxy`, and runs the app, the S3 store, and Orthanc as the `smart-imaging-proxy`, `smart-imaging-proxy-s3`, and `smart-imaging-proxy-orthanc` services. Its settings go to `/etc/smart-imaging-proxy.env`. Repeating it updates the machine.
 - **An exe.dev VM:** `scripts/deploy-exe.sh <vm-name>` creates the VM if it doesn't exist, copies this checkout's committed code, runs the installer with the VM's HTTPS URL from exe.dev's own listing, and points the VM's web proxy at port 4605. The proxy stays private, behind exe.dev's login, until you run `ssh exe.dev share set-public <vm-name>`. `DEMO_APP_CLIENTS` set when you run it goes to the VM.
 
 The demo's pages, live trace, and admin screen have no login of their own. Anyone who can reach the origin can read traces and change saved policy, so choose who can reach it at the host.
@@ -96,7 +97,7 @@ The demo's pages, live trace, and admin screen have no login of their own. Anyon
 - **Guardians:** a standing relationship in the policy store, seeded from `data/patient.json`, that covers a patient's record, apart from any study marked confidential from that guardian, with no one sharing first. Riley's skin biopsy is confidential from Sam: search omits it, retrieval refuses it, and Sam's shares and apps can't include it. The Imaging Server evaluates it like any other link. A policy reset clears what people chose and puts guardians back, and what a guardian shared ends if they stop being the guardian.
 - **One patient to a token:** whoever holds several records picks one at each launch, which makes its own token and its own app grant. Searching for another patient gets `403`, and retrieving another patient's study gets `404`.
 - **Search:** reads only the catalog, never a bucket. `_count` defaults to 20, with a maximum of 100. Each page's `next` link holds a signed cursor that grants nothing, because policy runs again on every page.
-- **Retrieval:** the proxy reads from the backend only as the client takes bytes. On the file and MinIO backends, it settles every `404`, `406`, and byte count from the indexes before opening an instance, and sends an exact `Content-Length`. A client sending `Accept-Encoding: zstd` gets stored zstd objects without decoding.
+- **Retrieval:** the proxy reads from the backend only as the client takes bytes. On the file and S3 backends, it settles every `404`, `406`, and byte count from the indexes before opening an instance, and sends an exact `Content-Length`. A client sending `Accept-Encoding: zstd` gets stored zstd objects without decoding.
 - **Failures:** a response that can't finish aborts with no closing boundary, so a partial study can't look complete.
 
 ## Ending access
@@ -119,7 +120,7 @@ The window is `min(now + context lifetime, token exp)`, set when the context or 
 
 ## The archive
 
-Local files (`/tmp/smart-imaging-demo/archive`) and the MinIO bucket `smart-imaging-archive` hold the same objects:
+Local files (`/tmp/smart-imaging-demo/archive`) and the S3 bucket `smart-imaging-archive` hold the same objects:
 
 ```
 studies/{study}/current.json                                  { "version": 3 }
@@ -170,7 +171,7 @@ Then restart `bun run start`.
 | `src/accept.ts`, `src/multipart.ts`, `src/zstd-frames.ts`, `src/dicom.ts` | `Accept` plans, multipart framing, raw zstd frames, and PS3.10 parsing |
 | `src/catalog.ts`, `src/catalog-archive.ts`, `src/catalog-orthanc.ts` | The catalog and its two builders |
 | `src/archive/` | The archive format, reader, object stores, and ingest |
-| `src/backends/` | Files and MinIO (`archive.ts`), Orthanc (`orthanc.ts`), and fault injection |
+| `src/backends/` | Files and the S3 bucket (`archive.ts`), Orthanc (`orthanc.ts`), and fault injection |
 | `src/flows/` | The flows, shared by the web page and tests, and the launch client |
 | `src/browse.ts` | The Browse page's sessions and API |
 | `src/admin-api.ts`, `src/rule-presets.ts` | The admin API, and its named rule sets |
@@ -191,8 +192,8 @@ Everything has a working default.
 | `DEMO_ONE_ORIGIN` | On | `0` gives people and apps each service's own port, rather than the one origin on 4605 |
 | `DEMO_PUBLIC_URL` | None | The origin people and apps use, when a host in front of the machine gives it one. See [Deploying](#deploying) |
 | `DEMO_APP_CLIENTS` | None | Public clients beyond the demo's own, as `client_id=redirect_uri` pairs. See [Connecting a browser app](#connecting-a-browser-app) |
-| `DEMO_STORAGE` | `/tmp/smart-imaging-demo` | The default home of everything below, the Compose volumes, and `bun run up`'s log |
-| `MINIO_PORT`, `ORTHANC_PORT` | `4610`, `4611` | Where Compose publishes MinIO and Orthanc, and where the demo reaches them |
+| `DEMO_STORAGE` | `/tmp/smart-imaging-demo` | The default home of everything below, the S3 store's and Orthanc's data and binaries, and `bun run up`'s log |
+| `S3_PORT`, `ORTHANC_PORT` | `4610`, `4611` | Where the S3 store and Orthanc listen, on loopback, and where the demo reaches them |
 | `ARCHIVE_DIR` | `/tmp/smart-imaging-demo/archive` | The local archive |
 | `SOURCES_DIR` | `data/sources` | Where `bun run fetch-data` keeps the downloads, and ingest reads them |
 | `INGEST_WORK` | The OS temp directory | Ingest's working files |
@@ -206,23 +207,23 @@ Everything has a working default.
 
 **Port offsets:** avoid these, which break the demo:
 
-- **6 to 11** put a service on MinIO's or Orthanc's port.
+- **6 to 11** put a service on the S3 store's or Orthanc's port.
 - **1396 to 1400** put a service on port 6000, which Chromium blocks. Check any large offset against the [Fetch standard's blocked ports](https://fetch.spec.whatwg.org/#port-blocking).
 
-A second copy shares MinIO, Orthanc, and the default SQLite files, so give it its own `POLICY_DB`, `CATALOG_DB`, and `TRACE_DB`. For its own backends too, run `docker compose -p {name} up -d` with its own `DEMO_STORAGE`, `MINIO_PORT`, and `ORTHANC_PORT`, and its own `ARCHIVE_DIR`.
+A second copy shares the S3 store, Orthanc, and the default SQLite files, so give it its own `POLICY_DB`, `CATALOG_DB`, and `TRACE_DB`. For its own backends too, give it its own `DEMO_STORAGE`, `S3_PORT`, and `ORTHANC_PORT`, and run `bun scripts/backends.ts start` with them.
 
 **Splitting the services,** with each command in its own terminal and the same `SERVICE_SECRET` in both. `gateway` is the one origin on 4605, and needs no credential:
 
 ```sh
 bun src/main.ts --role imaging,auth,trace,gateway
-PROXY_BACKEND=minio bun src/main.ts --role proxy
+PROXY_BACKEND=s3 bun src/main.ts --role proxy
 ```
 
 | Setting | Default | Purpose |
 |---|---|---|
 | `--role` | `all` | `all`, `demo` (the same as `all`), or a comma-separated list of `proxy`, `imaging`, `auth`, `trace`, `gateway` |
 | `SERVICE_SECRET` | None | Required for `proxy`, `imaging`, and `auth`, and the same in each. With `all`, it's generated |
-| `PROXY_BACKEND` | `static-files` | `static-files`, `minio`, or `orthanc`. Set `orthanc` on `imaging` too, to use Orthanc's catalog |
+| `PROXY_BACKEND` | `static-files` | `static-files`, `s3`, or `orthanc`. Set `orthanc` on `imaging` too, to use Orthanc's catalog |
 | `JWKS_TTL_SECONDS` | `60` | How long a split proxy trusts its copy of the keys |
 
 Split services have no flow player, Browse, or admin screen. `auth` registers the demo's Backend Services clients with keys derived from `SERVICE_SECRET` (`derivedBackendClient` in `src/auth-server.ts`), so anyone holding that secret can act as them.
@@ -236,7 +237,7 @@ Split services have no flow player, Browse, or admin screen. `auth` registers th
 | Ed25519 signed contexts, JWKS, and key rotation | **Patient matching:** an exact match on Patient ID, seeded from `data/patient.json` |
 | Delegation and consent, enforced in search and retrieval | **Site names:** assigned in the data files, not read from DICOM |
 | FHIR search and the AuthZEN API, over HTTP between services | **Clinical FHIR server:** a stub serving discovery and four `Patient` resources |
-| WADO-RS streaming, with files, MinIO's S3 API, and Orthanc's DICOMweb | **Time:** a demo clock can jump ahead, to show expiry |
+| WADO-RS streaming, with files, RustFS's S3 API, and Orthanc's DICOMweb | **Time:** a demo clock can jump ahead, to show expiry |
 | zstd at rest and passthrough | **Faults:** the outage switch, and truncation injected at the backend boundary |
 | SQLite stores and traces, which survive a restart | **Private transfer syntax:** a synthetic label on one instance |
 
@@ -255,7 +256,7 @@ Sam Example's and Riley Example's are invented people, and they're the only ones
 
 **Open access:** nothing here has a login. Anyone who can reach these ports can sign in as any account, use `/admin`, and read every trace, including its response bodies. Over a tailnet, that's anyone on it. Traffic is plain HTTP. `/admin` writes take named choices or identify an existing row, and nothing there reaches the filesystem. The flow player's policy panel accepts any valid policy JSON, for the scratch store only.
 
-**Not tried:** other devices on the tailnet, real S3 (only MinIO), any cloud deployment, and real patient matching.
+**Not tried:** other devices on the tailnet, AWS S3 (only RustFS), any cloud deployment, and real patient matching.
 
 **Scale:** a tiny prototype on ten studies, with no load tests or scale proof. The design aims to have no obvious scaling blockers, and that's reasoning, not measurement.
 
@@ -293,7 +294,7 @@ BACKENDS=static-files bun test   # flows, Browse, rotation, and conformance on o
 `bun run test:ui` drives the pages in real Chromium: focus, overflow, contrast, popups, and what the pages draw from real responses. It runs its own stack in memory, and takes the browser from `CHROMIUM`, or `/usr/bin/chromium`.
 
 
-The tests use the same ports as the demo, so stop the demo first, with `bun run down` or by ending `bun run start`, or give the test run its own `DEMO_PORT_OFFSET`. The suite also creates and deletes a temporary bucket in the MinIO it points at. They need the setup steps above, including Docker, even with `BACKENDS` set. Spec checks read the guide's text from the `focused-access-updates` branch on GitHub, or from a local clone named by `SPEC_REPO`, at `SPEC_REF`.
+The tests use the same ports as the demo, so stop the demo first, with `bun run down` or by ending `bun run start`, or give the test run its own `DEMO_PORT_OFFSET`. The suite also creates and deletes a temporary bucket in the S3 store it points at. They need the setup steps above, with the S3 store and Orthanc running, even with `BACKENDS` set. Spec checks read the guide's text from the `focused-access-updates` branch on GitHub, or from a local clone named by `SPEC_REPO`, at `SPEC_REF`.
 
 ## License
 

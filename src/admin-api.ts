@@ -8,7 +8,7 @@ import { matchRuleSet, RULE_SETS, ruleSetById } from "./rule-presets";
 import { advance, clockOffset, now, resetClock } from "./clock";
 import { ownHosts, PORTS } from "./config";
 
-export const BACKEND_NAMES: BackendName[] = ["static-files", "minio", "orthanc"];
+export const BACKEND_NAMES: BackendName[] = ["static-files", "s3", "orthanc"];
 
 export interface Choice { value: number; label: string; }
 const MINUTE = 60, HOUR = 3600, DAY = 86400;

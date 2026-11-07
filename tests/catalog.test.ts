@@ -731,7 +731,7 @@ describe("the real stack", () => {
   test("selecting a backend selects its catalog", () => {
     stack.setBackend("static-files");
     expect(stack.catalog).toBe(stack.catalogs.archive);
-    stack.setBackend("minio");
+    stack.setBackend("s3");
     expect(stack.catalog).toBe(stack.catalogs.archive);
     stack.setBackend("orthanc");
     expect(stack.catalog).toBe(stack.catalogs.orthanc);

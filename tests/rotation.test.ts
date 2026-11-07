@@ -14,7 +14,7 @@ import { resetClock } from "../src/clock";
 import { createProxy } from "../src/proxy";
 
 const root = join(import.meta.dir, "..");
-const BACKENDS: BackendName[] = (process.env.BACKENDS?.split(",") as BackendName[]) ?? ["static-files", "minio", "orthanc"];
+const BACKENDS: BackendName[] = (process.env.BACKENDS?.split(",") as BackendName[]) ?? ["static-files", "s3", "orthanc"];
 const ACCEPT = "multipart/related; type=application/dicom; transfer-syntax=*";
 const WRIST = "xr-wrist-left-2012";
 let stack: Stack; let demo: ReturnType<typeof createDemoServer>;

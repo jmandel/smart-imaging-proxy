@@ -1,5 +1,5 @@
-// DEMO_PORT_OFFSET lets a second copy of the stack run beside the first. MinIO and Orthanc are shared,
-// unless MINIO_PORT and ORTHANC_PORT point it at its own.
+// DEMO_PORT_OFFSET lets a second copy of the stack run beside the first. The S3 store and Orthanc are
+// shared, unless S3_PORT and ORTHANC_PORT point it at its own.
 const offset = Number(process.env.DEMO_PORT_OFFSET ?? 0);
 /** Where everything the demo writes lives by default: archive, SQLite files, backend volumes, and `bun run up`'s log. */
 export const STORAGE = process.env.DEMO_STORAGE || "/tmp/smart-imaging-demo";
@@ -32,7 +32,7 @@ if (PUBLIC && !ONE_ORIGIN) throw new Error("DEMO_PUBLIC_URL names the one origin
 const origin = PUBLIC?.origin ?? `${host}:${PORTS.gateway}`;
 /** The addresses the one origin listens on. */
 export const GATEWAY_HOSTS = PUBLIC ? ["0.0.0.0"] : undefined;
-/** The address every service listens on. MinIO and Orthanc stay on loopback: only the proxy reaches them. */
+/** The address every service listens on. The S3 store and Orthanc stay on loopback: only the proxy reaches them. */
 export const LISTEN_HOSTS = ["127.0.0.1", ...(TAILNET ? [TAILNET.ip] : [])];
 /** What a client sees of a failed request. The details go to the server's log. */
 const hostsAt = (port: number, tailnet = TAILNET) => [`127.0.0.1:${port}`, `localhost:${port}`, ...(tailnet ? [`${tailnet.name}:${port}`, `${tailnet.ip}:${port}`] : [])];
@@ -61,7 +61,7 @@ export const CONFIG = {
   traceUrl: ONE_ORIGIN ? `${origin}/trace` : `${host}:${PORTS.trace}`,
   /** Where services send spans: the trace service itself, since spans are service-to-service traffic. */
   traceSink: `http://127.0.0.1:${PORTS.trace}`,
-  minio: { endpoint: `http://127.0.0.1:${process.env.MINIO_PORT ?? 4610}`, accessKey: "demo-minio", secretKey: "demo-minio-secret" },
+  s3: { endpoint: `http://127.0.0.1:${process.env.S3_PORT ?? 4610}`, accessKey: "demo-s3", secretKey: "demo-s3-secret" },
   archive: { dir: process.env.ARCHIVE_DIR ?? `${STORAGE}/archive`, bucket: "smart-imaging-archive" },
   orthanc: { base: `http://127.0.0.1:${process.env.ORTHANC_PORT ?? 4611}`, user: "demo-proxy", password: "demo-orthanc-secret" },
 };

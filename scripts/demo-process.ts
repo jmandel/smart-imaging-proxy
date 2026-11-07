@@ -32,8 +32,3 @@ export async function stopDemo(): Promise<boolean> {
   for (let i = 0; i < 40 && await demoPortAnswers(); i++) await Bun.sleep(250);
   return true;
 }
-
-export async function compose(args: string[]): Promise<void> {
-  const p = Bun.spawn(["docker", "compose", ...args], { cwd: `${import.meta.dir}/..`, stdout: "inherit", stderr: "inherit" });
-  if ((await p.exited) !== 0) throw new Error(`docker compose ${args.join(" ")} failed`);
-}

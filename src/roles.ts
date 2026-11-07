@@ -18,7 +18,7 @@ import { gatewayFetch } from "./gateway";
 /** `gateway` is the one origin apps are given, which sits in front of the others like a load balancer. */
 export type Role = "proxy" | "imaging" | "auth" | "trace" | "gateway";
 export const ROLES: Role[] = ["proxy", "imaging", "auth", "trace", "gateway"];
-const BACKENDS: BackendName[] = ["static-files", "minio", "orthanc"];
+const BACKENDS: BackendName[] = ["static-files", "s3", "orthanc"];
 
 export async function startRoles(root: string, roles: Role[], env: Record<string, string | undefined> = process.env) {
   const has = (r: Role) => roles.includes(r);
