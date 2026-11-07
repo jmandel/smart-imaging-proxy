@@ -7,7 +7,7 @@ import { registerClients } from "../src/flows";
 import { createDemoServer } from "../src/demo-server";
 import { submitConsent } from "../src/flows/oauth";
 import { resetClock } from "../src/clock";
-import { CONFIG } from "../src/config";
+import { CONFIG, ONE_ORIGIN, PORTS } from "../src/config";
 import { flushTraces } from "../src/trace";
 
 const root = join(import.meta.dir, "..");
@@ -199,9 +199,10 @@ describe("paging", () => {
 });
 
 describe("explain", () => {
-  test("is service-authenticated", async () => {
-    const r = await realFetch(`${CONFIG.imagingUrl}/policy/v1/explain?client=portal-app&patient=josh-example`);
-    expect(r.status).toBe(401);
+  test("is service-authenticated, and only on the Imaging Server's own port", async () => {
+    const q = "/policy/v1/explain?client=portal-app&patient=josh-example";
+    expect((await realFetch(`http://127.0.0.1:${PORTS.imaging}${q}`)).status).toBe(401);
+    if (ONE_ORIGIN) expect((await realFetch(`${CONFIG.imagingUrl}${q}`)).status).toBe(404);
   });
   test("matches search for every person and client, for every study", async () => {
     stack.stores.active.setPolicy({

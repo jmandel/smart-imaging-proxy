@@ -23,6 +23,9 @@ export async function startRoles(root: string, roles: Role[], env: Record<string
   // Each service in the deployment has to hold the same one, so it can't be made up here.
   const serviceSecret = env.SERVICE_SECRET ?? (needsCredential ? undefined : randomBytes(24).toString("base64url"));
   if (!serviceSecret) throw new Error(`--role ${roles.join(",")} needs SERVICE_SECRET, the credential the services share`);
+  // The policy API's credential, which the Imaging Server and the Authorization Server share, and the proxy never gets.
+  const policySecret = env.POLICY_SECRET;
+  if ((has("imaging") || has("auth")) && !policySecret) throw new Error(`--role ${roles.join(",")} needs POLICY_SECRET, the policy API's credential, which only the Imaging Server and the Authorization Server hold`);
   setTraceSink(CONFIG.traceSink);
 
   const stops: (() => void)[] = [];
@@ -34,7 +37,7 @@ export async function startRoles(root: string, roles: Role[], env: Record<string
   if (has("imaging") || has("auth")) {
     const stores = createStores(storeConfigFromEnv(env));
     if (has("auth")) {
-      const auth = buildAuthServer(stores, serviceSecret);
+      const auth = buildAuthServer(stores, serviceSecret, policySecret!);
       for (const id of DEMO_BACKEND_CLIENTS) auth.registerBackendClient(id, DEMO_BACKEND_SCOPES, derivedBackendClient(id, serviceSecret).privateKey);
       // The one origin runs with the Authorization Server, whose base is its root.
       const servers = serveOn(PORTS.auth, { fetch: withCors(auth.fetch), idleTimeout: 120 });
@@ -43,7 +46,7 @@ export async function startRoles(root: string, roles: Role[], env: Record<string
     if (has("imaging")) {
       const catalogs = await openCatalogs(root, env.CATALOG_DB || DEFAULT_CATALOG_DB);
       const catalog = env.PROXY_BACKEND === "orthanc" ? catalogs.orthanc : catalogs.archive;
-      const imaging = buildImagingServer(stores, serviceSecret, () => catalog);
+      const imaging = buildImagingServer(stores, serviceSecret, policySecret!, () => catalog);
       const servers = serveOn(PORTS.imaging, { fetch: withCors(imaging.fetch), idleTimeout: 120 });
       stops.push(() => { servers.forEach(s => s.stop(true)); catalogs.archive.close(); catalogs.orthanc.close(); });
     }

@@ -65,7 +65,7 @@ export async function catalogFromOrthanc(catalog: CatalogStore, orthanc: { base:
       sourcePatientId, ...(sourcePatientIssuer !== undefined ? { sourcePatientIssuer } : {}),
       series: hierarchy.series.map(s => ({ uid: s.uid, number: s.number, modality: s.modality, instanceCount: s.instances.length })),
     };
-    catalog.publish(publicationFor(document, patient, hierarchy));
+    catalog.publish(publicationFor(document, patient, hierarchy, catalog.accessionSystem));
     report.published.push(uid);
   }
   return report;

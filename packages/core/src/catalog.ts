@@ -7,7 +7,6 @@ import { dirname } from "node:path";
 import type { CatalogPosition, CatalogSearch, CatalogStore, CatalogStudy, StudyDocument, StudyHierarchy, StudyPublication, TokenFilter } from "./archive/types";
 
 export const CATALOG_SCHEMA_VERSION = 1;
-export const ACCESSION_SYSTEM = "http://hospital.example.org/accession";
 export const DICOM_UID_SYSTEM = "urn:dicom:uid";
 /** Where a Patient ID with no stated issuer comes from, in `patient_links`. */
 export const UNQUALIFIED_PATIENT_IDS = "dicom-patient-id";
@@ -51,24 +50,27 @@ export function defaultLastUpdated(date?: string): string {
 export const patientSourceOf = (issuer?: string) => issuer || UNQUALIFIED_PATIENT_IDS;
 
 /** The searchable identifiers of a study: DICOM UID and accession, and the accession as its order. */
-export function identifiersOf(d: { uid: string; accession?: string }): StudyPublication["identifiers"] {
+export function identifiersOf(d: { uid: string; accession?: string }, accessionSystem?: string): StudyPublication["identifiers"] {
+  const system = accessionSystem ? { system: accessionSystem } : {};
   return [
     { kind: "identifier", system: DICOM_UID_SYSTEM, value: `urn:oid:${d.uid}` },
     ...(d.accession ? [
-      { kind: "identifier" as const, system: ACCESSION_SYSTEM, value: d.accession },
-      { kind: "based-on" as const, system: ACCESSION_SYSTEM, value: d.accession },
+      { kind: "identifier" as const, ...system, value: d.accession },
+      { kind: "based-on" as const, ...system, value: d.accession },
     ] : []),
   ];
 }
 
-export function publicationFor(document: StudyDocument, patient: string, hierarchy: StudyHierarchy): StudyPublication {
-  return { document, patient, hierarchy, status: document.status ?? "available", lastUpdated: document.lastUpdated ?? defaultLastUpdated(document.date), identifiers: identifiersOf(document) };
+/** `accessionSystem` is the system of the accession numbers, as the catalog that will hold the study names it. */
+export function publicationFor(document: StudyDocument, patient: string, hierarchy: StudyHierarchy, accessionSystem?: string): StudyPublication {
+  return { document, patient, hierarchy, status: document.status ?? "available", lastUpdated: document.lastUpdated ?? defaultLastUpdated(document.date), identifiers: identifiersOf(document, accessionSystem) };
 }
 
 const LAST_UPDATED_SECONDS = "unixepoch(s.last_updated, 'subsec')";
 const STUDY_COLUMNS = "s.pk, s.uid, s.id, s.patient, s.status, s.date, s.time, s.description, s.title, s.accession, s.site, s.last_updated, s.version, s.series_count, s.instance_count, s.hierarchy_bytes";
 
-export function createCatalog(path: string = ":memory:"): CatalogStore {
+/** `accessionSystem` is the identifier system of the studies' accession numbers. Without it, they have none. */
+export function createCatalog(path: string = ":memory:", opts: { accessionSystem?: string } = {}): CatalogStore {
   const inMemory = path === ":memory:";
   if (!inMemory) mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path, { create: true });
@@ -111,6 +113,7 @@ export function createCatalog(path: string = ":memory:"): CatalogStore {
   });
 
   return {
+    accessionSystem: opts.accessionSystem,
     publish(p) { publish(p); },
     candidates(q: CatalogSearch, after?: CatalogPosition, batch = DEFAULT_BATCH) {
       const where = ["s.patient = ?"], args: (string | number)[] = [q.patient];

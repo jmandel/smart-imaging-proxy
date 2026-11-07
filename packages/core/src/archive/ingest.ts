@@ -10,7 +10,7 @@ import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { parsePart10, readFileMeta, str, num, type DicomJson } from "../dicom";
-import { EVRLE, JPEG_LOSSLESS, PRIVATE_DEMO, isLossy, isStandard } from "../syntax";
+import { EVRLE, JPEG_LOSSLESS, PRIVATE_TEST_SYNTAX, isLossy, isStandard } from "../syntax";
 import { ArchiveReader } from "./reader";
 import { ObjectNotFoundError, type ObjectStore } from "./sources";
 import { ARCHIVE_FORMAT, archiveKeys, type InstanceRecord, type Offer, type SeriesIndex, type SeriesMetadata, type StudyDocument } from "./types";
@@ -85,7 +85,7 @@ async function storedBytes(store: ObjectStore, offer: Offer): Promise<Uint8Array
 }
 
 /** The same file with a different Transfer Syntax UID in File Meta. The dataset isn't touched. */
-export function withPrivateSyntax(b: Uint8Array, syntax = PRIVATE_DEMO): Uint8Array {
+export function withPrivateSyntax(b: Uint8Array, syntax = PRIVATE_TEST_SYNTAX): Uint8Array {
   const m = readFileMeta(b);
   if (!m) throw new Error("no File Meta");
   const uid = new TextEncoder().encode(syntax.length % 2 ? syntax + "\0" : syntax);
@@ -214,7 +214,7 @@ async function ingestStudy(store: ObjectStore, input: StudyInput, work: string, 
   if (input.privateSyntaxFixture) {
     const inst = ordered[0]!.instances[0]!, standard = inst.offers[0]!;
     const privateBytes = withPrivateSyntax(await storedBytes(store, standard));
-    inst.offers.unshift(await putContent(store, run, privateBytes, { syntax: PRIVATE_DEMO, stored: true, private: true }));
+    inst.offers.unshift(await putContent(store, run, privateBytes, { syntax: PRIVATE_TEST_SYNTAX, stored: true, private: true }));
     standard.stored = false;
     // Bulk offsets refer to the stored form, which is now this one.
     inst.bulk = parsePart10(privateBytes).bulk;

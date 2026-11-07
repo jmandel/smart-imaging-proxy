@@ -22,6 +22,8 @@ function start(role: string, secret: string | undefined, extra: Record<string, s
   // Only what a process needs, plus PATH and HOME, so it can't be leaning on anything else from here.
   const env: Record<string, string> = { PATH: process.env.PATH!, HOME: process.env.HOME!, DEMO_PORT_OFFSET: process.env.DEMO_PORT_OFFSET ?? "0", DEMO_ONE_ORIGIN: ONE_ORIGIN ? "1" : "0", DEMO_TAILNET: "0", POLICY_STORE: "memory", TRACE_STORE: "memory", ARCHIVE_DIR: CONFIG.archive.dir, CATALOG_DB: catalogDb, ...extra };
   if (secret) env.SERVICE_SECRET = secret;
+  // The policy API's credential goes only to the services that hold it.
+  if (secret && role !== "proxy") env.POLICY_SECRET = `${secret}-policy`;
   const p = Bun.spawn(["bun", join(root, "src/main.ts"), "--role", role], { cwd: root, env, stdout: "pipe", stderr: "pipe" });
   running.add(p);
   return p;
@@ -76,7 +78,7 @@ for (const others of [["imaging,auth,trace"], ["imaging", "auth", "trace"]]) {
       expect((await retrieve(plain, "not-a-real-token")).status).toBe(401);
 
       // The refresh endpoint knows the credential from the environment.
-      const refresh = (auth?: string) => fetch(`${CONFIG.proxyUrl}/internal/keys/refresh`, { method: "POST", headers: auth ? { Authorization: auth } : {} }).then(r => r.status);
+      const refresh = (auth?: string) => fetch(`http://127.0.0.1:${PORTS.proxy}/internal/keys/refresh`, { method: "POST", headers: auth ? { Authorization: auth } : {} }).then(r => r.status);
       expect(await refresh()).toBe(401);
       expect(await refresh(`Bearer ${secret}`)).toBe(204);
 

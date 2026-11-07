@@ -9,7 +9,7 @@ import {
   rebuildFromArchive, s3Store, seedPatientLinks, withTruncation, type Backend, type CatalogStore, type PolicyOperation, type StoreConfig,
 } from "@smart-imaging-proxy/core";
 import { createAuthServer, USERS } from "./auth-server";
-import { CONFIG, GATEWAY_HOSTS, ONE_ORIGIN, PORTS, serveOn, serveStreamingOn } from "./config";
+import { ACCESSION_SYSTEM, CONFIG, GATEWAY_HOSTS, ONE_ORIGIN, PORTS, serveOn, serveStreamingOn } from "./config";
 import { gatewayFetch } from "./gateway";
 import { withCors } from "./cors";
 import { setTraceSink, tfetch, traceObserver, type Service } from "./trace";
@@ -22,7 +22,7 @@ export type BackendName = "static-files" | "s3" | "orthanc";
 
 /** The archive's catalog and Orthanc's. Each is derived, so an empty one is built from its source. */
 export async function openCatalogs(root: string, path = ":memory:") {
-  const catalogs = { archive: createCatalog(path), orthanc: createCatalog(orthancCatalogPath(path)) };
+  const catalogs = { archive: createCatalog(path, { accessionSystem: ACCESSION_SYSTEM }), orthanc: createCatalog(orthancCatalogPath(path), { accessionSystem: ACCESSION_SYSTEM }) };
   const patients = await Bun.file(join(root, "data/patient.json")).json();
   seedPatientLinks(catalogs.archive, patients);
   seedPatientLinks(catalogs.orthanc, patients);
@@ -63,13 +63,16 @@ const POLICY_CALLS: Record<PolicyOperation, string> = {
   reset: "reset policy at the Imaging Server",
   info: "read the policy store's state at the Imaging Server",
 };
-/** The Imaging Server's policy API, called with the service credential, and traced as `service`. */
-export const policyClient = (serviceSecret: string, service: Service = "demo") =>
-  createPolicyClient({ base: CONFIG.imagingUrl, serviceSecret, fetch: (op, url, init) => tfetch(service, POLICY_CALLS[op], url, init) });
+/**
+ * The Imaging Server's policy API, called with the policy credential on its own loopback port: the
+ * one origin doesn't forward the API. Traced as `service`.
+ */
+export const policyClient = (policySecret: string, service: Service = "demo") =>
+  createPolicyClient({ base: `http://127.0.0.1:${PORTS.imaging}`, policySecret, fetch: (op, url, init) => tfetch(service, POLICY_CALLS[op], url, init) });
 
 /** The Authorization Server. Its directory of who may see what is the Imaging Server, over HTTP. */
-export function buildAuthServer(stores: Stores, serviceSecret: string) {
-  const policy = policyClient(serviceSecret, "authorization-server");
+export function buildAuthServer(stores: Stores, serviceSecret: string, policySecret: string) {
+  const policy = policyClient(policySecret, "authorization-server");
   return createAuthServer({
     issuer: CONFIG.authUrl, imagingFhirBase: `${CONFIG.imagingUrl}/fhir`, serviceSecret, redirectUri: `${CONFIG.demoUrl}/oauth/callback`,
     store: () => stores.active, storeLabel: () => stores.activeLabel,
@@ -85,12 +88,12 @@ export function buildAuthServer(stores: Stores, serviceSecret: string) {
 }
 
 /** The Imaging Server. It checks tokens at the Authorization Server, over HTTP. */
-export function buildImagingServer(stores: Stores, serviceSecret: string, catalog: () => CatalogStore) {
+export function buildImagingServer(stores: Stores, serviceSecret: string, policySecret: string, catalog: () => CatalogStore) {
   const introspect = async (token: string) => {
     const r = await tfetch("imaging-fhir", "introspect the token", `${CONFIG.authUrl}/introspect`, { method: "POST", headers: { Authorization: `Bearer ${serviceSecret}`, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token }) });
     return r.ok ? r.json() : { active: false };
   };
-  return createImagingServer({ base: `${CONFIG.imagingUrl}/fhir`, clinicalFhirBase: `${CONFIG.authUrl}/fhir`, proxyBase: () => CONFIG.proxyUrl, introspect, patientOf: user => USERS[user]?.patient, serviceSecret, catalog, keyStore: stores.saved, store: () => stores.active, namedStore: name => stores.named(name), observer: traceObserver, clock: demoClock });
+  return createImagingServer({ base: `${CONFIG.imagingUrl}/fhir`, clinicalFhirBase: `${CONFIG.authUrl}/fhir`, proxyBase: () => CONFIG.proxyUrl, introspect, patientOf: user => USERS[user]?.patient, serviceSecret, policySecret, catalog, keyStore: stores.saved, store: () => stores.active, namedStore: name => stores.named(name), observer: traceObserver, clock: demoClock });
 }
 
 /** All a proxy gets from the other services: where its keys and its decisions are, and the demo's tracing and clock. */
@@ -104,12 +107,14 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
   const stores = createStores(opts.store ?? { mode: "memory" });
   const catalogs = await openCatalogs(root, opts.catalog);
   const serviceSecret = randomBytes(24).toString("base64url");
+  // Only the Authorization Server and the demo hold this one. The proxy never does.
+  const policySecret = randomBytes(24).toString("base64url");
   const collector = createCollector(root, opts.traces);
   setTraceSink(CONFIG.traceSink);
 
-  const auth = buildAuthServer(stores, serviceSecret);
-  const policy = policyClient(serviceSecret);
-  const imaging = buildImagingServer(stores, serviceSecret, () => catalogFor(current));
+  const auth = buildAuthServer(stores, serviceSecret, policySecret);
+  const policy = policyClient(policySecret);
+  const imaging = buildImagingServer(stores, serviceSecret, policySecret, () => catalogFor(current));
 
   let truncateAfter: number | undefined;
   const wrap = (b: Backend) => withTruncation(b, () => truncateAfter);
@@ -182,7 +187,7 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
     /** Replaces the signing key, then tells the proxy over HTTP, so it stops trusting the old one now. A proxy that isn't told learns within its TTL. */
     async rotateSigningKey() {
       const kid = imaging.rotateSigningKey();
-      const told = await tfetch("demo", "tell the proxy to refetch signing keys", `${CONFIG.proxyUrl}/internal/keys/refresh`, { method: "POST", headers: { Authorization: `Bearer ${serviceSecret}` } }).then(r => r.ok, () => false);
+      const told = await tfetch("demo", "tell the proxy to refetch signing keys", `http://127.0.0.1:${PORTS.proxy}/internal/keys/refresh`, { method: "POST", headers: { Authorization: `Bearer ${serviceSecret}` } }).then(r => r.ok, () => false);
       return { kid, proxyTold: told };
     },
     /** The Imaging Server's view of why a study is or isn't released, asked with the service credential. */

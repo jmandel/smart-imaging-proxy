@@ -5,6 +5,7 @@ import { createCatalog, createImagingServer, createPolicyClient, PolicyApiError,
 import { put, recordingObserver } from "./support";
 
 const SECRET = "s3cret";
+const POLICY_SECRET = "p0licy";
 const GUARDIAN: Guardian = { patient: "kid", guardian: "parent", relationship: "guardian", excludedStudies: ["study-3.1"] };
 const catalog = createCatalog();
 put(catalog, "1.1", { site: "Site A" }, "pat");
@@ -16,23 +17,30 @@ const other = new PolicyStore({ mode: "memory", guardians: [] });
 const recorder = recordingObserver();
 const imaging = createImagingServer({
   base: "http://imaging.test/fhir", clinicalFhirBase: "http://clinical.test/fhir", proxyBase: () => "http://proxy.test", introspect: async () => ({ active: false }),
-  patientOf: u => ({ pat: "pat", kid: "kid" } as Record<string, string>)[u], serviceSecret: SECRET, catalog: () => catalog, keyStore: main, store: () => main,
+  patientOf: u => ({ pat: "pat", kid: "kid" } as Record<string, string>)[u], serviceSecret: SECRET, policySecret: POLICY_SECRET, catalog: () => catalog, keyStore: main, store: () => main,
   namedStore: name => name === "other" ? other : undefined, observer: recorder.observer,
 });
 const http = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: imaging.fetch });
 const base = `http://127.0.0.1:${http.port}`;
-const policy = createPolicyClient({ base, serviceSecret: SECRET });
-const raw = (path: string, init: RequestInit = {}, secret = SECRET) => fetch(`${base}/policy/v1${path}`, { ...init, headers: { Authorization: `Bearer ${secret}`, "content-type": "application/json", ...init.headers } });
+const policy = createPolicyClient({ base, policySecret: POLICY_SECRET });
+const raw = (path: string, init: RequestInit = {}, secret = POLICY_SECRET) => fetch(`${base}/policy/v1${path}`, { ...init, headers: { Authorization: `Bearer ${secret}`, "content-type": "application/json", ...init.headers } });
 afterAll(() => { http.stop(true); main.close(); other.close(); catalog.close(); });
 beforeEach(() => { main.resetAll(); other.resetAll(); });
 
 describe("the policy API", () => {
-  test("needs the service credential on every call", async () => {
+  test("needs the policy credential on every call, and refuses the proxy's service credential", async () => {
     for (const [path, method] of [["/policy", "GET"], ["/rules", "PUT"], ["/delegations", "POST"], ["/reset", "POST"], ["/nothing", "GET"]]) {
       expect((await raw(path!, { method }, "wrong")).status).toBe(401);
+      expect((await raw(path!, { method }, SECRET)).status).toBe(401);
       expect((await fetch(`${base}/policy/v1${path}`, { method })).status).toBe(401);
     }
     expect(recorder.spans.filter(s => s.kind === "server" && s.name.startsWith("GET /policy/v1")).every(s => s.service === "policy")).toBe(true);
+  });
+  test("an empty filter from the client means no filter", async () => {
+    const sent: string[] = [];
+    const client = createPolicyClient({ base, policySecret: POLICY_SECRET, fetch: (_op, url, init) => { sent.push(url); return fetch(url, init); } });
+    await client.removeDelegations({ grantedBy: "pat", delegate: "kid", patient: "" }).catch(() => {});
+    expect(new URL(sent[0]!).searchParams.has("patient")).toBe(false);
   });
   test("acts on the store in use, or the one `store` names", async () => {
     await policy.withStore("other").setRules([{ id: "r", when: { client: "c" }, allow: { all: true } }]);

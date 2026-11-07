@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { S3Client } from "bun";
-import { ARCHIVE_FORMAT, ArchiveBackend, ArchiveReader, EVRLE, fileStore, JPEG_BASELINE, JPEG_LOSSLESS, type ObjectSource, type PartStream, PRIVATE_DEMO, s3Store, zstdDecompressSync } from "@smart-imaging-proxy/core";
+import { ARCHIVE_FORMAT, ArchiveBackend, ArchiveReader, EVRLE, fileStore, JPEG_BASELINE, JPEG_LOSSLESS, type ObjectSource, type PartStream, PRIVATE_TEST_SYNTAX, s3Store, zstdDecompressSync } from "@smart-imaging-proxy/core";
 import { CONFIG } from "../src/config";
 
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
@@ -82,7 +82,7 @@ describe("Local files and the S3 bucket", () => {
       });
       const first = wrist.series[0];
       const offers = (await a.reader.seriesIndex(wrist.uid, await a.reader.currentVersion(wrist.uid), first.uid)).instances[0]!.offers;
-      expect(offers.map(o => [o.syntax, o.stored, !!o.private])).toEqual([[PRIVATE_DEMO, true, true], [EVRLE, false, false], [JPEG_LOSSLESS, false, false]]);
+      expect(offers.map(o => [o.syntax, o.stored, !!o.private])).toEqual([[PRIVATE_TEST_SYNTAX, true, true], [EVRLE, false, false], [JPEG_LOSSLESS, false, false]]);
     }, 60000);
 
     test("the slide keeps its lossy instances, and the 5% rule was applied to each", async () => {

@@ -3,7 +3,7 @@ export const JPEG_LOSSLESS = "1.2.840.10008.1.2.4.70";
 export const JPEG_BASELINE = "1.2.840.10008.1.2.4.50";
 export const J2K_LOSSLESS = "1.2.840.10008.1.2.4.90";
 export const JPEGLS_LOSSLESS = "1.2.840.10008.1.2.4.80";
-export const PRIVATE_DEMO = "1.3.6.1.4.1.99999.1.2.3";
+export const PRIVATE_TEST_SYNTAX = "1.3.6.1.4.1.99999.1.2.3";
 
 const STANDARD_PREFIX = "1.2.840.10008.1.2";
 /** PS3.18 keeps these off the web: Implicit VR, Big Endian, and Deflated. */

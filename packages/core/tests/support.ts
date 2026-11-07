@@ -56,4 +56,4 @@ export const hierarchyOf = (uid: string, modality = "CT", instances = 2): StudyH
 export function documentOf(uid: string, o: Partial<StudyDocument> = {}, modality = "CT"): StudyDocument {
   return { format: 1, uid, id: `study-${uid}`, version: 1, date: "20200101", accession: `ACC${uid}`, sourcePatientId: "MRN1", site: "Site A", series: [{ uid: `${uid}.1`, number: 1, modality, instanceCount: 2 }], ...o };
 }
-export const put = (c: CatalogStore, uid: string, o: Partial<StudyDocument> = {}, patient = "p1", modality = "CT") => c.publish(publicationFor(documentOf(uid, o, modality), patient, hierarchyOf(uid, modality)));
+export const put = (c: CatalogStore, uid: string, o: Partial<StudyDocument> = {}, patient = "p1", modality = "CT") => c.publish(publicationFor(documentOf(uid, o, modality), patient, hierarchyOf(uid, modality), c.accessionSystem));

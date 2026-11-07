@@ -96,7 +96,7 @@ The demo's pages, live trace, and admin screen have no login of their own. Anyon
 - **App Launch:** discovery, authorization code with PKCE S256, required `state`, exact `redirect_uri`, single-use codes, and a consent page where the user picks a patient and sites.
 - **Backend Services:** ES256 client assertions, with each check traced separately: registered key, algorithm, `iss` and `sub`, `aud`, expiry, `jti`, signature, and scope.
 - **Delegation:** patient or guardian to related person to app, where each link can only narrow what the last one allows. What a patient shares with someone stops there: they can give an app part of it, and can't pass it on, since the Imaging Server honors a share only from the patient or a guardian. The Imaging Server holds all of it.
-- **Policy API:** the account page, consent, Browse, the flows, and the admin screen change policy only through the Imaging Server's policy API, at `/policy/v1`, with the service credential. Its calls are in [packages/core/README.md](packages/core/README.md#the-policy-api).
+- **Policy API:** the account page, consent, Browse, the flows, and the admin screen change policy only through the Imaging Server's policy API, at `/policy/v1`, with its own credential, which the proxy doesn't hold. The one origin doesn't forward it: callers use the Imaging Server's loopback port. Its calls are in [packages/core/README.md](packages/core/README.md#the-policy-api).
 - **Guardians:** a standing relationship in the policy store, seeded from `data/patient.json`, that covers a patient's record, apart from any study marked confidential from that guardian, with no one sharing first. Riley's skin biopsy is confidential from Sam: search omits it, retrieval refuses it, and Sam's shares and apps can't include it. The Imaging Server evaluates it like any other link. A policy reset clears what people chose and puts guardians back, and what a guardian shared ends if they stop being the guardian.
 - **One patient to a token:** whoever holds several records picks one at each launch, which makes its own token and its own app grant. Searching for another patient gets `403`, and retrieving another patient's study gets `404`.
 - **Search:** reads only the catalog, never a bucket. `_count` defaults to 20, with a maximum of 100. Each page's `next` link holds a signed cursor that grants nothing, because policy runs again on every page.
@@ -212,7 +212,7 @@ Everything has a working default.
 
 A second copy shares the S3 store, Orthanc, and the default SQLite files, so give it its own `POLICY_DB`, `CATALOG_DB`, and `TRACE_DB`. For its own backends too, give it its own `DEMO_STORAGE`, `S3_PORT`, and `ORTHANC_PORT`, and run `bun scripts/backends.ts start` with them.
 
-**Splitting the services,** with each command in its own terminal and the same `SERVICE_SECRET` in both. `gateway` is the one origin on 4605, and needs no credential:
+**Splitting the services,** with each command in its own terminal the same `SERVICE_SECRET` in each, and `POLICY_SECRET` for `imaging` and `auth`. `gateway` is the one origin on 4605, and needs no credential:
 
 ```sh
 bun src/main.ts --role imaging,auth,trace,gateway
@@ -223,6 +223,7 @@ PROXY_BACKEND=s3 bun src/main.ts --role proxy
 |---|---|---|
 | `--role` | `all` | `all`, `demo` (the same as `all`), or a comma-separated list of `proxy`, `imaging`, `auth`, `trace`, `gateway` |
 | `SERVICE_SECRET` | None | Required for `proxy`, `imaging`, and `auth`, and the same in each. With `all`, it's generated |
+| `POLICY_SECRET` | None | The policy API's credential. Required for `imaging` and `auth`, the same in both, and never given to `proxy`. With `all`, it's generated |
 | `PROXY_BACKEND` | `static-files` | `static-files`, `s3`, or `orthanc`. Set `orthanc` on `imaging` too, to use Orthanc's catalog |
 | `JWKS_TTL_SECONDS` | `60` | How long a split proxy trusts its copy of the keys |
 

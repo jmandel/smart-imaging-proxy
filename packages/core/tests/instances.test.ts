@@ -16,13 +16,13 @@ function deployment(name: string, clock: ReturnType<typeof manualClock>) {
   const introspect = async (token: string) => { const t = store.getToken(token, "access"); return t && !t.revoked ? { active: true, ...t } : { active: false }; };
   const imaging = createImagingServer({
     base: `${base}/imaging/fhir`, clinicalFhirBase: `${base}/fhir`, proxyBase: () => `${base}/proxy`, introspect, patientOf: u => u === "pat" ? "p1" : undefined,
-    serviceSecret: SECRET, catalog: () => catalog, keyStore: store, store: () => store, observer: recorder.observer, clock,
+    serviceSecret: SECRET, policySecret: `${SECRET}-policy`, catalog: () => catalog, keyStore: store, store: () => store, observer: recorder.observer, clock,
   });
   const http = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: imaging.fetch });
   const local = `http://127.0.0.1:${http.port}`;
   const backend: Backend = { capabilities: () => ({ name: "none", selection: "one-per-request", hasManifest: false, enforcesHierarchy: true, notes: [] }), listSeries: async () => [], openInstances: async () => { throw new BackendError("NotFound"); }, getMetadata: async () => [], openBulk: async () => { throw new BackendError("NotFound"); } } as unknown as Backend;
   const proxy = createProxy({ publicBase: () => `${base}/proxy`, keys: imaging.publicKeys, decisionUrl: `${local}/access/v1/evaluation`, serviceSecret: SECRET, backend: () => backend, observer: recorder.observer, clock });
-  const policy = createPolicyClient({ base: local, serviceSecret: SECRET });
+  const policy = createPolicyClient({ base: local, policySecret: `${SECRET}-policy` });
   return { name, base, store, imaging, proxy, policy, recorder, stop: () => http.stop(true) };
 }
 

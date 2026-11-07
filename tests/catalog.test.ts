@@ -5,7 +5,7 @@ import { catalogFromOrthanc, type CatalogStore, createCatalog, patientSourceOf, 
 import { startStack, type Stack } from "../src/stack";
 import { FLOWS, registerClients } from "../src/flows";
 import { scriptedLaunch } from "../src/flows/oauth";
-import { CONFIG } from "../src/config";
+import { ACCESSION_SYSTEM, CONFIG } from "../src/config";
 
 const root = join(import.meta.dir, "..");
 
@@ -108,7 +108,7 @@ describe("the real stack", () => {
           return new Response(await r.arrayBuffer(), { status: r.status, headers: { "content-type": r.headers.get("content-type") ?? "application/json" } });
         },
       });
-      const c = createCatalog();
+      const c = createCatalog(":memory:", { accessionSystem: ACCESSION_SYSTEM });
       seedPatientLinks(c, await Bun.file(join(root, "data/patient.json")).json());
       const report = await catalogFromOrthanc(c, { ...CONFIG.orthanc, base: `http://127.0.0.1:${upstream.port}` }, await Bun.file(join(root, "data/orthanc-catalog.json")).json());
       upstream.stop(true);
@@ -119,14 +119,14 @@ describe("the real stack", () => {
       c.close();
     });
     test("an unlinked patient is reported and skipped, and a study with no operator entry uses its UID", async () => {
-      const unlinked = createCatalog();
+      const unlinked = createCatalog(":memory:", { accessionSystem: ACCESSION_SYSTEM });
       const r = await catalogFromOrthanc(unlinked, CONFIG.orthanc, { studies: {} });
       expect(r.published).toEqual([]);
       expect(r.unlinked.length).toBe(10);
       expect(new Set(r.unlinked.map(u => u.sourcePatientId))).toEqual(new Set(["JEXAMPLE01", "SEXAMPLE01", "RYEXAMPLE01"]));
       expect(unlinked.stats().studies).toBe(0);
       unlinked.close();
-      const c = createCatalog();
+      const c = createCatalog(":memory:", { accessionSystem: ACCESSION_SYSTEM });
       seedPatientLinks(c, await Bun.file(join(root, "data/patient.json")).json());
       await catalogFromOrthanc(c, CONFIG.orthanc, { studies: {} });
       for (const s of c.allStudies()) { expect(s.id).toBe(s.uid); expect(s.site).toBeUndefined(); }

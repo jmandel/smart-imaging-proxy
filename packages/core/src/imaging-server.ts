@@ -1,13 +1,13 @@
 // Imaging Server: ImagingStudy search, policy, signed contexts, the AuthZEN decision API, and the
 // policy API. All policy lives here. The proxy never sees it.
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { ath, publicJwk, signJws, verifyJws } from "./jws";
+import { ath, publicJwk, signJws, verifyJws, sameSecret } from "./jws";
 import { systemClock, type Clock } from "./clock";
 import { noopObserver, type Observer } from "./observer";
 import { createPolicyApi, POLICY_API_PATH, type Access, type ExplainQuery } from "./policy-api";
 import type { Guardian, Policy, PolicyStore, Rule } from "./policy-store";
 import type { CatalogPosition, CatalogSearch, CatalogStore, CatalogStudy, InstantRange, StudyHierarchy, TokenFilter, TokenTerm } from "./archive/types";
-import { ACCESSION_SYSTEM, DICOM_UID_SYSTEM } from "./catalog";
+import { DICOM_UID_SYSTEM } from "./catalog";
 
 const DEFAULT_COUNT = 20, MAX_COUNT = 100;
 /** Raw hierarchy per page, by the sizes the catalog stores. A page always has at least one study. */
@@ -99,8 +99,10 @@ export interface ImagingServerOptions {
   introspect: (token: string) => Promise<any>;
   /** The patient a user account is, if any. */
   patientOf: (user: string) => string | undefined;
-  /** The credential the proxy and the policy API's callers present. */
+  /** The credential the proxy presents to the decision API. */
   serviceSecret: string;
+  /** The credential the policy API's callers present: the Authorization Server and the deployment's administration, never the proxy. */
+  policySecret: string;
   catalog: () => CatalogStore;
   /** Holds the signing key. */
   keyStore: PolicyStore;
@@ -286,7 +288,8 @@ export function createImagingServer(opts: ImagingServerOptions) {
   function imagingStudy(study: CatalogStudy, hierarchy: StudyHierarchy | undefined, ev: Evaluation, endpointRef: string | undefined) {
     const date = study.date;
     const started = date ? `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}` : undefined;
-    const accession = study.accession ? { type: ACSN, system: ACCESSION_SYSTEM, value: study.accession } : undefined;
+    const accessionSystem = opts.catalog().accessionSystem;
+    const accession = study.accession ? { type: ACSN, ...(accessionSystem ? { system: accessionSystem } : {}), value: study.accession } : undefined;
     const common = {
       resourceType: "ImagingStudy", id: study.id, meta: { lastUpdated: study.lastUpdated },
       identifier: [{ system: DICOM_UID_SYSTEM, value: `urn:oid:${study.uid}` }, ...(accession ? [accession] : [])],
@@ -472,7 +475,7 @@ export function createImagingServer(opts: ImagingServerOptions) {
   async function evaluation(req: Request): Promise<Response> {
     const requestId = req.headers.get("x-request-id");
     const echo: Record<string, string> = requestId ? { "X-Request-ID": requestId } : {};
-    if (!check("policy", "caller is the authenticated proxy", bearerOf(req) === opts.serviceSecret)) return Response.json({ error: "authentication required" }, { status: 401, headers: { "WWW-Authenticate": "Bearer", ...echo } });
+    if (!check("policy", "caller is the authenticated proxy", sameSecret(bearerOf(req), opts.serviceSecret))) return Response.json({ error: "authentication required" }, { status: 401, headers: { "WWW-Authenticate": "Bearer", ...echo } });
     if (outage) check("policy", "decision service is available", false, { injected: "outage" });
     if (outage) return Response.json({ error: "decision service unavailable" }, { status: 500, headers: echo });
     const body: any = await req.json().catch(() => undefined);
@@ -506,7 +509,7 @@ export function createImagingServer(opts: ImagingServerOptions) {
   }
 
   const policyApi = createPolicyApi({
-    serviceSecret: opts.serviceSecret, store: opts.store, namedStore: opts.namedStore, check,
+    policySecret: opts.policySecret, store: opts.store, namedStore: opts.namedStore, check,
     model: { access: accessFor, explain, guardianSites, sitesFor: patient => opts.catalog().sitesFor(patient) },
   });
 
@@ -520,7 +523,7 @@ export function createImagingServer(opts: ImagingServerOptions) {
       if (p === "/access/v1/evaluation" || policyPath) server.creditTo("policy");
       if (policyPath) return policyApi(req, url);
       if (p === "/fhir/ImagingStudy" && req.method === "GET") return search(req, url);
-      if (p === "/fhir/metadata") return Response.json({ resourceType: "CapabilityStatement", status: "active", date: CAPABILITY_DATE, kind: "instance", implementation: { description: "SMART Imaging proxy demo: Imaging FHIR Server", url: opts.base }, fhirVersion: "4.0.1", format: ["json"], instantiates: ["http://fhir.org/argonaut/smart-imaging/CapabilityStatement/smart-imaging-server"], rest: [{ mode: "server", resource: [{ type: "ImagingStudy", interaction: [{ code: "search-type" }], searchInclude: ["ImagingStudy:endpoint"], searchParam: [{ name: "patient", type: "reference" }, { name: "identifier", type: "token", documentation: "value, system|value, |value or system|. A comma means any of the values, and a repeated parameter means all of them." }, { name: "based-on", type: "reference", documentation: "Searched by order identifier, as based-on:identifier, which takes the same forms as identifier." }, { name: "_lastUpdated", type: "date", documentation: "The value each study's published version states, or otherwise midnight UTC on its study date. Only publishing a study with a different value changes it: in-place DICOM edits, deletions, reassignments and policy changes don't. Takes the prefixes eq, ne, gt, lt, ge, le, sa and eb, or none, and a repeated parameter means all of them. A value with no offset is in UTC, and a partial one covers its whole range." }, { name: "_count", type: "number", documentation: `Studies per page: ${DEFAULT_COUNT} by default, and larger values than ${MAX_COUNT} are treated as ${MAX_COUNT}. A page can hold fewer, to stay within its size limit. 0 returns only the total.` }, { name: "_cursor", type: "string", documentation: "Opaque, and supplied by a Bundle's next link. Use it with the same filters. It grants nothing, and policy applies again on every page." }] }] }] });
+      if (p === "/fhir/metadata") return Response.json({ resourceType: "CapabilityStatement", status: "active", date: CAPABILITY_DATE, kind: "instance", implementation: { description: "SMART Imaging Access: Imaging FHIR Server", url: opts.base }, fhirVersion: "4.0.1", format: ["json"], instantiates: ["http://fhir.org/argonaut/smart-imaging/CapabilityStatement/smart-imaging-server"], rest: [{ mode: "server", resource: [{ type: "ImagingStudy", interaction: [{ code: "search-type" }], searchInclude: ["ImagingStudy:endpoint"], searchParam: [{ name: "patient", type: "reference" }, { name: "identifier", type: "token", documentation: "value, system|value, |value or system|. A comma means any of the values, and a repeated parameter means all of them." }, { name: "based-on", type: "reference", documentation: "Searched by order identifier, as based-on:identifier, which takes the same forms as identifier." }, { name: "_lastUpdated", type: "date", documentation: "The value each study's published version states, or otherwise midnight UTC on its study date. Only publishing a study with a different value changes it: in-place DICOM edits, deletions, reassignments and policy changes don't. Takes the prefixes eq, ne, gt, lt, ge, le, sa and eb, or none, and a repeated parameter means all of them. A value with no offset is in UTC, and a partial one covers its whole range." }, { name: "_count", type: "number", documentation: `Studies per page: ${DEFAULT_COUNT} by default, and larger values than ${MAX_COUNT} are treated as ${MAX_COUNT}. A page can hold fewer, to stay within its size limit. 0 returns only the total.` }, { name: "_cursor", type: "string", documentation: "Opaque, and supplied by a Bundle's next link. Use it with the same filters. It grants nothing, and policy applies again on every page." }] }] }] });
       if (p === "/access/v1/evaluation" && req.method === "POST") return evaluation(req);
       if (p === "/.well-known/authzen-configuration") return Response.json({ policy_decision_point: serviceBase, access_evaluation_endpoint: `${serviceBase}/access/v1/evaluation` });
       if (p === "/.well-known/jwks.json") return Response.json({ keys: [publicJwk(key)] });

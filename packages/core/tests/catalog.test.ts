@@ -4,8 +4,13 @@ import { Database } from "bun:sqlite";
 import { mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { ACCESSION_SYSTEM, archiveKeys, type CatalogStore, createCatalog, createImagingServer, DICOM_UID_SYSTEM, fileStore, identifiersOf, orthancCatalogPath, PolicyStore, publicationFor, rebuildFromArchive, seedPatientLinks, type StudyDocument, type StudyHierarchy } from "../src";
+import { archiveKeys, type CatalogStore, createCatalog, createImagingServer, DICOM_UID_SYSTEM, fileStore, identifiersOf, orthancCatalogPath, PolicyStore, publicationFor as publicationIn, rebuildFromArchive, seedPatientLinks, type StudyDocument, type StudyHierarchy } from "../src";
 import { documentOf, hierarchyOf, put } from "./support";
+
+/** These tests' catalogs name an accession system, as a deployment would. */
+const ACCESSION_SYSTEM = "urn:example:accession";
+const ACC = { accessionSystem: ACCESSION_SYSTEM };
+const publicationFor = (d: StudyDocument, patient: string, h: StudyHierarchy) => publicationIn(d, patient, h, ACCESSION_SYSTEM);
 
 const root = join(import.meta.dir, "..");
 const temp = mkdtempSync(join(tmpdir(), "catalog-test-"));
@@ -16,7 +21,7 @@ const uidsOf = (rows: { uid: string }[]) => rows.map(r => r.uid);
 describe("schema and files", () => {
   test("the tables and indexes are there, the file is private, and a search query uses the index", () => {
     const path = join(temp, "schema.sqlite");
-    const c = createCatalog(path);
+    const c = createCatalog(path, ACC);
     put(c, "1");
     expect(statSync(path).mode & 0o777).toBe(0o600);
     const db = new Database(path, { readonly: true });
@@ -31,18 +36,18 @@ describe("schema and files", () => {
   });
   test("a catalog from a newer schema is refused, with the way out in the message", () => {
     const path = join(temp, "newer.sqlite");
-    createCatalog(path).close();
+    createCatalog(path, ACC).close();
     const db = new Database(path);
     db.exec("PRAGMA user_version = 99");
     db.close();
-    expect(() => createCatalog(path)).toThrow("rebuildable");
+    expect(() => createCatalog(path, ACC)).toThrow("rebuildable");
   });
   test("the Orthanc catalog is its own file beside the archive catalog", () => {
     expect(orthancCatalogPath("/a/catalog.sqlite")).toBe("/a/catalog-orthanc.sqlite");
     expect(orthancCatalogPath(":memory:")).toBe(":memory:");
   });
   test("stats report what's held", () => {
-    const c = createCatalog();
+    const c = createCatalog(":memory:", ACC);
     expect(c.stats()).toEqual({ studies: 0, series: 0, hierarchyBytes: 0, hierarchyRawBytes: 0, path: ":memory:" });
     put(c, "1");
     const s = c.stats();
@@ -55,7 +60,7 @@ describe("schema and files", () => {
 
 describe("publish", () => {
   test("publishing again replaces the study and keeps its pk", () => {
-    const c = createCatalog();
+    const c = createCatalog(":memory:", ACC);
     put(c, "1", { accession: "OLD" });
     put(c, "2");
     const before = c.studyByUid("1")!;
@@ -72,7 +77,7 @@ describe("publish", () => {
     c.close();
   });
   test("a publish that fails partway changes nothing", () => {
-    const c = createCatalog();
+    const c = createCatalog(":memory:", ACC);
     put(c, "1", { description: "first" });
     const before = c.studyByUid("1")!;
     const bad = publicationFor(documentOf("1", { version: 2, description: "second" }), "p1", hierarchyOf("1"));
@@ -91,7 +96,7 @@ describe("publish", () => {
 });
 
 describe("candidates", () => {
-  const c = createCatalog();
+  const c = createCatalog(":memory:", ACC);
   // Published out of order. Two share a date, and two have none.
   put(c, "old", { date: "20100101" });
   put(c, "nodate1", { date: undefined });
@@ -173,7 +178,7 @@ describe("candidates", () => {
 describe("hierarchies", () => {
   test("stored compressed, apart from the query rows, and they round-trip", () => {
     const path = join(temp, "hier.sqlite");
-    const c = createCatalog(path);
+    const c = createCatalog(path, ACC);
     const big = hierarchyOf("1", "CT", 2000);
     c.publish(publicationFor(documentOf("1"), "p1", big));
     put(c, "2");
@@ -232,14 +237,14 @@ describe("rebuilding from the archive", () => {
     await writeStudy(dir, documentOf("1.5", { sourcePatientId: undefined }), hierarchyOf("1.5"));
 
     const rebuiltPath = join(temp, "rebuilt.sqlite"), directPath = join(temp, "direct.sqlite");
-    const rebuilt = createCatalog(rebuiltPath);
+    const rebuilt = createCatalog(rebuiltPath, ACC);
     const people = { id: "p1", mrn: "MRN1", otherPatients: [{ id: "p2", mrn: "MRN2" }] };
     seedPatientLinks(rebuilt, people);
     const report = await rebuildFromArchive(fileStore(dir), rebuilt);
     expect(report.published).toEqual(["1.1", "1.2", "1.3"]);
     expect(report.unlinked).toEqual([{ study: "1.4", sourcePatientId: "UNKNOWN", sourcePatientIssuer: undefined }, { study: "1.5", sourcePatientId: undefined, sourcePatientIssuer: undefined }]);
 
-    const direct = createCatalog(directPath);
+    const direct = createCatalog(directPath, ACC);
     seedPatientLinks(direct, people);
     direct.publish(publicationFor(docs[0]!, "p1", hs[0]!));
     direct.publish(publicationFor(docs[1]!, "p1", hs[1]!));
@@ -254,7 +259,7 @@ describe("rebuilding from the archive", () => {
 
     // A second rebuild into a fresh catalog gives the same rows again.
     const againPath = join(temp, "again.sqlite");
-    const again = createCatalog(againPath);
+    const again = createCatalog(againPath, ACC);
     seedPatientLinks(again, people);
     await rebuildFromArchive(fileStore(dir), again);
     expect(dumpTables(againPath)).toEqual(dumpTables(rebuiltPath));
@@ -268,7 +273,7 @@ describe("paged search", () => {
   function server(catalog: CatalogStore, extra: { pageBytes?: number } = {}) {
     const store = new PolicyStore({ mode: "memory" });
     store.putAppGrant({ client: "app", user: "pat", patient: "p1" });
-    const imaging = createImagingServer({ patientOf: () => undefined, base: "http://fhir", clinicalFhirBase: "http://clinical", proxyBase: () => "http://proxy", introspect: async () => TOKEN, serviceSecret: "s", catalog: () => catalog, keyStore: store, store: () => store, ...extra });
+    const imaging = createImagingServer({ patientOf: () => undefined, base: "http://fhir", clinicalFhirBase: "http://clinical", proxyBase: () => "http://proxy", introspect: async () => TOKEN, serviceSecret: "s", policySecret: "ps", catalog: () => catalog, keyStore: store, store: () => store, ...extra });
     const get = async (q: string) => {
       const r = await imaging.fetch(new Request(q.startsWith("http") ? q : `http://fhir/fhir/ImagingStudy?${q}`, { headers: { Authorization: "Bearer t" } }));
       return { status: r.status, body: await r.json() as any };
@@ -291,7 +296,7 @@ describe("paged search", () => {
     return pages;
   };
   const six = () => {
-    const c = createCatalog();
+    const c = createCatalog(":memory:", ACC);
     for (let i = 1; i <= 6; i++) put(c, `9.${i}`, { date: `201${i}0101`, site: i <= 3 ? "Site A" : "Site B" });
     return c;
   };
@@ -317,14 +322,14 @@ describe("paged search", () => {
     }
   });
   test("_count: default 20, larger values clamp to 100, 0 is only the total, and nonsense is a 400", async () => {
-    const c = createCatalog();
+    const c = createCatalog(":memory:", ACC);
     for (let i = 0; i < 25; i++) put(c, `8.${i}`, { date: "20200101" });
     const { get } = server(c);
     expect(studiesOf((await get("patient=p1")).body).length).toBe(20);
     const clamped = await get("patient=p1&_count=5000");
     expect(studiesOf(clamped.body).length).toBe(25);
     expect(clamped.status).toBe(200);
-    const big = createCatalog();
+    const big = createCatalog(":memory:", ACC);
     for (let i = 0; i < 101; i++) put(big, `7.${i}`, { date: "20200101" });
     const bigGet = server(big).get;
     const page = await bigGet("patient=p1&_count=5000");
@@ -369,7 +374,7 @@ describe("paged search", () => {
     expect(studiesOf((await get(`patient=p1&_count=3&_cursor=${encodeURIComponent(cursor)}`)).body).length).toBe(3);
   });
   test("a filtered search pages through its own results, and keeps its filters in next", async () => {
-    const c = createCatalog();
+    const c = createCatalog(":memory:", ACC);
     for (let i = 1; i <= 3; i++) put(c, `6.${i}`, { date: `201${i}0101`, accession: "SAME" });
     put(c, "6.9", { date: "20190101", accession: "OTHER" });
     const pages = await walk(server(c).get, "patient=p1&identifier=SAME&_count=2");
@@ -377,7 +382,7 @@ describe("paged search", () => {
     expect(pages.flatMap(p => studiesOf(p).map((s: any) => s.id))).toEqual(["6.3", "6.2", "6.1"].map(u => `study-${u}`));
   });
   test("studies with no date page last, and stably", async () => {
-    const c = createCatalog();
+    const c = createCatalog(":memory:", ACC);
     for (const [uid, date] of [["5.1", undefined], ["5.2", "20200101"], ["5.3", undefined], ["5.4", undefined]] as const) put(c, uid, { date });
     const pages = await walk(server(c).get, "patient=p1&_count=1");
     expect(pages.flatMap(p => studiesOf(p).map((s: any) => s.id))).toEqual(["5.2", "5.4", "5.3", "5.1"].map(u => `study-${u}`));
@@ -428,7 +433,7 @@ describe("paged search", () => {
     expect(asked.every(pk => siteB.has(pk))).toBe(true);
   });
   test("the byte budget ends a page early, and a page always has at least one study", async () => {
-    const c = createCatalog();
+    const c = createCatalog(":memory:", ACC);
     for (let i = 1; i <= 4; i++) put(c, `4.${i}`, { date: `201${i}0101` });
     const size = c.allStudies()[0]!.hierarchyBytes;
     const one = await walk(server(c, { pageBytes: 1 }).get, "patient=p1");
@@ -438,7 +443,7 @@ describe("paged search", () => {
     expect(two.map(p => studiesOf(p).length)).toEqual([2, 2]);
   });
   test("a registered or cancelled study has no endpoint and no series list, and can't be asked about", async () => {
-    const c = createCatalog();
+    const c = createCatalog(":memory:", ACC);
     c.publish(publicationFor(documentOf("3.1", { status: "registered", series: [] }), "p1", { series: [] }));
     c.publish(publicationFor(documentOf("3.2", { date: "20100101", status: "cancelled", series: [] }), "p1", { series: [] }));
     const calls: number[][] = [];
@@ -457,7 +462,7 @@ describe("paged search", () => {
     expect(((await res.json()) as any).decision).toBe(false);
   });
   test("every study has a modality, from what's released of it, even with nothing to retrieve", async () => {
-    const c = createCatalog();
+    const c = createCatalog(":memory:", ACC);
     const series = [{ uid: "3.3.1", number: 1, modality: "CT", instanceCount: 1 }, { uid: "3.3.2", number: 2, modality: "SR", instanceCount: 1 }];
     c.publish(publicationFor(documentOf("3.3", { status: "registered", series }), "p1", { series: [] }));
     c.publish(publicationFor(documentOf("3.4", { date: "20100101", status: "cancelled", series }), "p1", { series: [] }));
@@ -473,7 +478,7 @@ describe("paged search", () => {
   });
   describe("token search", () => {
     const fixture = () => {
-      const c = createCatalog();
+      const c = createCatalog(":memory:", ACC);
       put(c, "7.1", { date: "20210101", accession: "A1" });
       put(c, "7.2", { date: "20200101", accession: "A2" });
       put(c, "7.3", { date: "20190101", accession: "A,B" });
@@ -542,7 +547,7 @@ describe("paged search", () => {
   });
   describe("_lastUpdated", () => {
     const fixture = () => {
-      const c = createCatalog();
+      const c = createCatalog(":memory:", ACC);
       for (const [uid, date, lastUpdated] of [["a", "20240101", "2019-12-31T23:59:59Z"], ["b", "20230101", "2020-01-01T00:00:00Z"], ["c", "20220101", "2020-06-15T12:00:00.250Z"], ["d", "20210101", "2020-12-31T23:59:59.999Z"], ["e", "20200101", "2021-01-01T02:00:00+02:00"], ["f", "20190101", "2021-06-01T00:00:00Z"]] as const) put(c, uid, { date, lastUpdated });
       return server(c);
     };
@@ -596,7 +601,7 @@ describe("paged search", () => {
     });
   });
   test("patient is an id, a relative reference, or a reference on the clinical FHIR base", async () => {
-    const c = createCatalog();
+    const c = createCatalog(":memory:", ACC);
     put(c, "8.1");
     const { get } = server(c);
     for (const ok of ["p1", "Patient/p1", "http://clinical/Patient/p1"]) expect((await get(`patient=${encodeURIComponent(ok)}`)).body.total).toBe(1);
@@ -614,15 +619,15 @@ describe("paged search", () => {
     expect((await get("patient=")).status).toBe(400);
   });
   test("the Bearer scheme is case-insensitive", async () => {
-    const c = createCatalog();
+    const c = createCatalog(":memory:", ACC);
     put(c, "8.2");
     const { imaging } = server(c);
     for (const scheme of ["Bearer", "bearer", "BEARER", "bEaReR"]) expect((await imaging.fetch(new Request("http://fhir/fhir/ImagingStudy?patient=p1", { headers: { Authorization: `${scheme} t` } }))).status).toBe(200);
     for (const header of ["Basic t", "bearer", "bearer ", "Bearert"]) expect((await imaging.fetch(new Request("http://fhir/fhir/ImagingStudy?patient=p1", { headers: { Authorization: header } }))).status).toBe(401);
-    for (const scheme of ["Bearer", "bearer"]) expect((await imaging.fetch(new Request("http://fhir/policy/v1/relationships", { headers: { Authorization: `${scheme} s` } }))).status).toBe(200);
+    for (const scheme of ["Bearer", "bearer"]) expect((await imaging.fetch(new Request("http://fhir/policy/v1/relationships", { headers: { Authorization: `${scheme} ps` } }))).status).toBe(200);
   });
   test("a decision and a context carry the version", async () => {
-    const c = createCatalog();
+    const c = createCatalog(":memory:", ACC);
     c.publish(publicationFor(documentOf("2.1", { version: 7 }), "p1", hierarchyOf("2.1")));
     const { get, imaging } = server(c);
     const b = (await get("patient=p1")).body;
@@ -640,7 +645,7 @@ describe("paged search", () => {
     expect(source).not.toMatch(/from "\.\/backends/);
   });
   test("a study with no site is outside any list of sites, and inside no limit", async () => {
-    const c = createCatalog();
+    const c = createCatalog(":memory:", ACC);
     put(c, "1.1", { site: undefined });
     const { get, store } = server(c);
     expect((await get("patient=p1")).body.total).toBe(1);

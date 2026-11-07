@@ -13,9 +13,10 @@ Everything comes in through factory and constructor options. Nothing is held at 
 ```ts
 import { ArchiveBackend, createCatalog, createImagingServer, createPolicyClient, createProxy, fileStore, PolicyStore, rebuildFromArchive, serveStreaming } from "@smart-imaging-proxy/core";
 
-const secret = process.env.SERVICE_SECRET!;            // shared by the proxy, the Imaging Server, and policy API callers
+const secret = process.env.SERVICE_SECRET!;            // the proxy and the Imaging Server's decision API
+const policySecret = process.env.POLICY_SECRET!;       // the policy API only: never given to the proxy
 const store = new PolicyStore({ mode: "file", path: "/var/lib/imaging/policy.sqlite", guardians: [] });
-const catalog = createCatalog("/var/lib/imaging/catalog.sqlite");
+const catalog = createCatalog("/var/lib/imaging/catalog.sqlite", { accessionSystem: "urn:oid:1.2.3.4.5" });
 await rebuildFromArchive(fileStore("/var/lib/imaging/archive"), catalog);
 
 const imaging = createImagingServer({
@@ -24,7 +25,7 @@ const imaging = createImagingServer({
   proxyBase: () => "https://imaging.example.org",
   introspect: token => introspectAtYourAuthorizationServer(token),
   patientOf: user => patientIdOfAccount(user),
-  serviceSecret: secret, catalog: () => catalog, keyStore: store, store: () => store,
+  serviceSecret: secret, policySecret, catalog: () => catalog, keyStore: store, store: () => store,
 });
 const backend = new ArchiveBackend(fileStore("/var/lib/imaging/archive"));
 const proxy = createProxy({
@@ -38,11 +39,11 @@ const proxy = createProxy({
 Bun.serve({ port: 8002, hostname: "127.0.0.1", fetch: imaging.fetch });
 await serveStreaming(8001, proxy.fetch, { hosts: ["127.0.0.1"] });
 
-const policy = createPolicyClient({ base: "http://127.0.0.1:8002", serviceSecret: secret });
+const policy = createPolicyClient({ base: "http://127.0.0.1:8002", policySecret });
 await policy.setRules([{ id: "referral", when: { client: "referral-service", patient: "p1" }, allow: { modalities: ["CR"] } }]);
 ```
 
-Each service answers at its own root: the Imaging Server at `/fhir/...`, `/access/v1/evaluation`, `/policy/v1/...` and `/.well-known/...`, whatever `base` it issues URLs under. A host in front of it maps its public paths to those.
+Each service answers at its own root: the Imaging Server at `/fhir/...`, `/access/v1/evaluation`, `/policy/v1/...` and `/.well-known/...`, whatever `base` it issues URLs under. A host in front of it maps its public paths to those. Keep `/policy/v1` and the proxy's `/internal/...` on internal addresses: don't expose them.
 
 The proxy is served with `serveStreaming`, not `Bun.serve`, which replaces a stream's `Content-Length` with chunked framing. `serveStreaming(port, handler, { hosts, stallSeconds, foreignHost })` listens on `hosts` (loopback by default), cancels a body the client stops reading for `stallSeconds` (240), and answers `403` to a request whose `Host` `foreignHost(host, port)` says isn't its own.
 
@@ -111,7 +112,8 @@ reports/quarantine.json                                       inputs left out of
 | `proxyBase()` | The proxy's public base, for `Endpoint.address` |
 | `introspect(token)` | Token introspection at the Authorization Server |
 | `patientOf(user)` | The patient a user account is, if any |
-| `serviceSecret` | The credential the proxy and policy API callers present |
+| `serviceSecret` | The credential the proxy presents to the decision API |
+| `policySecret` | The credential policy API callers present. Give it to the Authorization Server and administration tools, never the proxy |
 | `catalog()` | The catalog to search, asked per request |
 | `keyStore` | The `PolicyStore` holding the signing key |
 | `store()` | The `PolicyStore` search and decisions use |
@@ -141,7 +143,7 @@ Policy is evaluated against the store's rows: the patient or a guardian on file,
 
 ## The policy API
 
-Version 1, at `/policy/v1` on the Imaging Server. JSON in and out. Every call carries `Authorization: Bearer {serviceSecret}`, or gets `401`. Every call takes `?store={name}` to act on a store `namedStore` knows, or `404`, and otherwise acts on `store()`. A body that isn't JSON, or a policy that doesn't validate, gets `400` with `error` and, for a policy, `errors`, naming each field.
+Version 1, at `/policy/v1` on the Imaging Server. JSON in and out. Every call carries `Authorization: Bearer {policySecret}`, or gets `401`, and the service credential doesn't work here. It belongs on an internal address only. Every call takes `?store={name}` to act on a store `namedStore` knows, or `404`, and otherwise acts on `store()`. A body that isn't JSON, or a policy that doesn't validate, gets `400` with `error` and, for a policy, `errors`, naming each field.
 
 | Call | Body or query | Answer |
 |---|---|---|
@@ -162,7 +164,7 @@ Version 1, at `/policy/v1` on the Imaging Server. JSON in and out. Every call ca
 | `POST /reset` | `{ tokens?: boolean }` | `204`. Clears delegations, app grants, rules and settings, and puts the guardians on file back. `tokens: true` clears token records too. The signing key stays |
 | `GET /store` | | The store's mode, path, durability, journal mode, schema version, and row counts |
 
-`createPolicyClient({ base, serviceSecret, store?, fetch? })` calls it, with a method for each call: `relationships`, `access`, `explain`, `delegate`, `removeDelegations`, `grantApp`, `removeAppGrants`, `getPolicy`, `setPolicy`, `setGuardians`, `setRules`, `updateRule`, `getSettings`, `setSettings`, `reset`, and `info`, and `withStore(name)` for a client on another store. `delegate` and `grantApp` answer `false` for a `403`, and the removals and `updateRule` `false` for a `404`. Anything else that fails throws `PolicyApiError`, with its `status`, message and `errors`. `fetch(operation, url, init)` makes each request, so a caller can name and trace it.
+`createPolicyClient({ base, policySecret, store?, fetch? })` calls it, with a method for each call: `relationships`, `access`, `explain`, `delegate`, `removeDelegations`, `grantApp`, `removeAppGrants`, `getPolicy`, `setPolicy`, `setGuardians`, `setRules`, `updateRule`, `getSettings`, `setSettings`, `reset`, and `info`, and `withStore(name)` for a client on another store. `delegate` and `grantApp` answer `false` for a `403`, and the removals and `updateRule` `false` for a `404`. Anything else that fails throws `PolicyApiError`, with its `status`, message and `errors`. `fetch(operation, url, init)` makes each request, so a caller can name and trace it.
 
 ## Tests
 

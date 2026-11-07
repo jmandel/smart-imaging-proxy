@@ -15,7 +15,8 @@ export type PolicyOperation =
 export interface PolicyClientOptions {
   /** The Imaging Server's service base: the API is at `${base}/policy/v1`. */
   base: string;
-  serviceSecret: string;
+  /** The policy API's credential, which the Imaging Server's `policySecret` names. */
+  policySecret: string;
   /** The store to act on, by the name the server knows it by. Without it, the one in use. */
   store?: string;
   /** Makes each request. The platform's fetch by default. */
@@ -25,9 +26,10 @@ export interface PolicyClientOptions {
 export function createPolicyClient(opts: PolicyClientOptions) {
   const send = opts.fetch ?? ((_op, url, init) => fetch(url, init));
   async function call(op: PolicyOperation, method: string, path: string, query: Record<string, string | undefined> = {}, body?: unknown): Promise<Response> {
-    const q = new URLSearchParams(Object.entries({ ...query, store: opts.store }).filter((e): e is [string, string] => e[1] !== undefined));
+    // An empty value means no filter, as an absent one does.
+    const q = new URLSearchParams(Object.entries({ ...query, store: opts.store }).filter((e): e is [string, string] => e[1] !== undefined && e[1] !== ""));
     const url = `${opts.base}${POLICY_API_PATH}${path}${q.size ? `?${q}` : ""}`;
-    const headers: Record<string, string> = { Authorization: `Bearer ${opts.serviceSecret}`, ...(body !== undefined ? { "content-type": "application/json" } : {}) };
+    const headers: Record<string, string> = { Authorization: `Bearer ${opts.policySecret}`, ...(body !== undefined ? { "content-type": "application/json" } : {}) };
     return send(op, url, { method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
   }
   async function fail(r: Response): Promise<never> {

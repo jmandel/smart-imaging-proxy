@@ -59,6 +59,8 @@ export const serveOn = (port: number, options: Omit<Parameters<typeof Bun.serve>
   } as any));
 /** The streaming server, for a response whose exact Content-Length has to reach the client, on this machine's addresses with their Host check. */
 export const serveStreamingOn = (port: number, handler: (req: Request) => Promise<Response> | Response, hosts = LISTEN_HOSTS) => serveStreaming(port, handler, { hosts, foreignHost });
+/** The identifier system of the sample studies' accession numbers: the sample data's stand-in hospital. */
+export const ACCESSION_SYSTEM = "http://hospital.example.org/accession";
 export const CONFIG = {
   demoUrl: ONE_ORIGIN ? origin : `${host}:${PORTS.demo}`,
   proxyUrl: ONE_ORIGIN ? origin : `${host}:${PORTS.proxy}`,

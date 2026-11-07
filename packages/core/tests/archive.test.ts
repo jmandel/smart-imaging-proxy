@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import { S3Client } from "bun";
-import { ARCHIVE_FORMAT, ArchiveBackend, archiveKeys, ArchiveReader, type Backend, BackendError, ByteLru, chooseOffer, closing, decodeJson, EVRLE, fileStore, ingestStudies, isStandard, JPEG_BASELINE, JPEG_LOSSLESS, newBoundary, ObjectNotFoundError, type ObjectSource, type ObjectStore, type Offer, parsePart10, partFooter, partHeader, type PartStream, PRIVATE_DEMO, QUARANTINE_REPORT_KEY, readFileMeta, readMultipart, runTool, s3Store, type SeriesIndex, type StudyDocument, type StudyInput, withPrivateSyntax, withTruncation, wrapperPaysOff, zstdCompress, zstdDecode, zstdDecompressSync } from "../src";
+import { ARCHIVE_FORMAT, ArchiveBackend, archiveKeys, ArchiveReader, type Backend, BackendError, ByteLru, chooseOffer, closing, decodeJson, EVRLE, fileStore, ingestStudies, isStandard, JPEG_BASELINE, JPEG_LOSSLESS, newBoundary, ObjectNotFoundError, type ObjectSource, type ObjectStore, type Offer, parsePart10, partFooter, partHeader, type PartStream, PRIVATE_TEST_SYNTAX, QUARANTINE_REPORT_KEY, readFileMeta, readMultipart, runTool, s3Store, type SeriesIndex, type StudyDocument, type StudyInput, withPrivateSyntax, withTruncation, wrapperPaysOff, zstdCompress, zstdDecode, zstdDecompressSync } from "../src";
 
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 const ANY = [{ syntax: "*", q: 1 }];
@@ -307,7 +307,7 @@ describe("Quarantine", () => {
     await Bun.write(join(dir, "scrambled.dcm"), concat([good.subarray(0, 400), noise(600), good.subarray(1000)]));
     await Bun.write(join(dir, "nosop.dcm"), part10({ study: "1.2.3.400", series: "1.2.3.400.1", sop: "1.2.3.400.1.8", omitSop: true, pixels: smooth(8) }));
     await Bun.write(join(dir, "other.dcm"), part10({ study: "9.9.9", series: "9.9.9.1", sop: "9.9.9.1.1", pixels: smooth(8) }));
-    await Bun.write(join(dir, "private.dcm"), part10({ study: "1.2.3.400", series: "1.2.3.400.1", sop: "1.2.3.400.1.7", syntax: PRIVATE_DEMO, pixels: smooth(8) }));
+    await Bun.write(join(dir, "private.dcm"), part10({ study: "1.2.3.400", series: "1.2.3.400.1", sop: "1.2.3.400.1.7", syntax: PRIVATE_TEST_SYNTAX, pixels: smooth(8) }));
     await Bun.write(join(dir, "ok.dcm"), part10({ study: "1.2.3.400", series: "1.2.3.400.1", sop: "1.2.3.400.1.1", pixels: smooth(32, 1) }));
     const missing = join(dir, "also-missing.dcm");
     const badNames = ["garbage", "cut", "scrambled", "nosop", "does-not-exist"].map(n => join(dir, `${n}.dcm`));
@@ -414,13 +414,13 @@ describe("Offers", () => {
     }
     return undefined;
   }
-  const plans = [[{ syntax: "*", q: 1 }], [{ syntax: EVRLE, q: 1 }], [{ syntax: JPEG_LOSSLESS, q: 1 }], [{ syntax: PRIVATE_DEMO, q: 1 }], [{ syntax: JPEG_BASELINE, q: 1 }], [{ syntax: JPEG_BASELINE, q: 1 }, { syntax: EVRLE, q: 0.5 }], [{ syntax: JPEG_LOSSLESS, q: 1 }, { syntax: EVRLE, q: 0.5 }], [{ syntax: PRIVATE_DEMO, q: 1 }, { syntax: "*", q: 0.5 }], [{ syntax: "*", q: 1 }, { syntax: PRIVATE_DEMO, q: 0.5 }], [{ syntax: "1.2.3.4", q: 1 }]];
+  const plans = [[{ syntax: "*", q: 1 }], [{ syntax: EVRLE, q: 1 }], [{ syntax: JPEG_LOSSLESS, q: 1 }], [{ syntax: PRIVATE_TEST_SYNTAX, q: 1 }], [{ syntax: JPEG_BASELINE, q: 1 }], [{ syntax: JPEG_BASELINE, q: 1 }, { syntax: EVRLE, q: 0.5 }], [{ syntax: JPEG_LOSSLESS, q: 1 }, { syntax: EVRLE, q: 0.5 }], [{ syntax: PRIVATE_TEST_SYNTAX, q: 1 }, { syntax: "*", q: 0.5 }], [{ syntax: "*", q: 1 }, { syntax: PRIVATE_TEST_SYNTAX, q: 0.5 }], [{ syntax: "1.2.3.4", q: 1 }]];
 
   test("the private and variant fixtures have the expected offers", async () => {
     const store = await fresh();
     await ingestStudies(store, [variantStudy()]);
     const [first, second] = (await new ArchiveReader(store).seriesIndex(VSTUDY, 1, VSERIES)).instances;
-    expect(first!.offers.map(o => [o.syntax, o.stored, !!o.private])).toEqual([[PRIVATE_DEMO, true, true], [EVRLE, false, false], [JPEG_LOSSLESS, false, false]]);
+    expect(first!.offers.map(o => [o.syntax, o.stored, !!o.private])).toEqual([[PRIVATE_TEST_SYNTAX, true, true], [EVRLE, false, false], [JPEG_LOSSLESS, false, false]]);
     expect(second!.offers.map(o => [o.syntax, o.stored, !!o.private])).toEqual([[EVRLE, true, false], [JPEG_LOSSLESS, false, false]]);
   });
 
@@ -434,7 +434,7 @@ describe("Offers", () => {
     }
     // The shape that matters: * never returns the private syntax, and naming it does.
     expect(chooseOffer(lists[0]!, ANY)!.syntax).toBe(EVRLE);
-    expect(chooseOffer(lists[0]!, [{ syntax: PRIVATE_DEMO, q: 1 }])!.syntax).toBe(PRIVATE_DEMO);
+    expect(chooseOffer(lists[0]!, [{ syntax: PRIVATE_TEST_SYNTAX, q: 1 }])!.syntax).toBe(PRIVATE_TEST_SYNTAX);
     expect(chooseOffer(lists[2]!, [{ syntax: EVRLE, q: 1 }])).toBeUndefined();
   });
 
@@ -443,7 +443,7 @@ describe("Offers", () => {
     await ingestStudies(store, [variantStudy()]);
     const backend = new ArchiveBackend(store);
     const scope = { study: VSTUDY, series: VSERIES, instance: "1.2.3.200.1.1" };
-    for (const syntax of [PRIVATE_DEMO, EVRLE, JPEG_LOSSLESS]) {
+    for (const syntax of [PRIVATE_TEST_SYNTAX, EVRLE, JPEG_LOSSLESS]) {
       const { parts, end } = await drain(await backend.openInstances(scope, [{ syntax, q: 1 }]));
       expect(end).toBe("complete");
       expect(parts[0]!.syntax).toBe(syntax);
@@ -920,7 +920,7 @@ describe("Local files and the S3 bucket", () => {
 
     test("the backend returns byte-identical results, in every mode", async () => {
       const a = new ArchiveBackend(local), b = new ArchiveBackend(remote);
-      for (const [scope, plan, options] of [[{ study: STUDY }, ANY, {}], [{ study: STUDY }, ANY, { passthroughZstd: true }], [{ study: VSTUDY }, [{ syntax: JPEG_LOSSLESS, q: 1 }], {}], [{ study: VSTUDY }, [{ syntax: PRIVATE_DEMO, q: 1 }, { syntax: EVRLE, q: 0.5 }], { passthroughZstd: true }]] as const) {
+      for (const [scope, plan, options] of [[{ study: STUDY }, ANY, {}], [{ study: STUDY }, ANY, { passthroughZstd: true }], [{ study: VSTUDY }, [{ syntax: JPEG_LOSSLESS, q: 1 }], {}], [{ study: VSTUDY }, [{ syntax: PRIVATE_TEST_SYNTAX, q: 1 }, { syntax: EVRLE, q: 0.5 }], { passthroughZstd: true }]] as const) {
         const x = await a.openInstances(scope, plan as any, options), y = await b.openInstances(scope, plan as any, options);
         expect(y.plan).toEqual(x.plan!);
         const dx = await drain(x), dy = await drain(y);

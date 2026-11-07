@@ -1,5 +1,5 @@
 import { tfetch } from "../trace";
-import { EVRLE, isStandard, J2K_LOSSLESS, JPEG_BASELINE, JPEG_LOSSLESS, PRIVATE_DEMO } from "@smart-imaging-proxy/core";
+import { EVRLE, isStandard, J2K_LOSSLESS, JPEG_BASELINE, JPEG_LOSSLESS, PRIVATE_TEST_SYNTAX } from "@smart-imaging-proxy/core";
 import { ACCEPT_ANY, siteOptions, StepStopped, studyOptions, type Flow, type Ctx } from "./runtime";
 import { CONFIG } from "../config";
 
@@ -201,8 +201,8 @@ export const protocolFlows: Flow[] = [
         c.check("* never returns a private syntax", r.parts.every(p => p.syntax && isStandard(p.syntax)), [...new Set(r.parts.map(p => p.syntax))].join(", "));
         if (c.backend === "orthanc") { c.check("Fixture isn't loaded in Orthanc", true); return; }
         const series = s.resource.series[0].uid;
-        const listed = await c.retrieve("App", "Accept the private syntax explicitly", c.studyUrl(s.base, s.uid, `/series/${series}`), c.state.token, part(PRIVATE_DEMO));
-        c.check("Listing it returns it", listed.status === 200 && listed.parts[0]?.syntax === PRIVATE_DEMO, listed.parts[0]?.syntax);
+        const listed = await c.retrieve("App", "Accept the private syntax explicitly", c.studyUrl(s.base, s.uid, `/series/${series}`), c.state.token, part(PRIVATE_TEST_SYNTAX));
+        c.check("Listing it returns it", listed.status === 200 && listed.parts[0]?.syntax === PRIVATE_TEST_SYNTAX, listed.parts[0]?.syntax);
       } },
     ],
   },

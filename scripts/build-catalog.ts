@@ -3,7 +3,7 @@
 // already running keeps the catalog it opened until it restarts.
 import { renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { CONFIG, DEFAULT_CATALOG_DB } from "../src/config";
+import { ACCESSION_SYSTEM, CONFIG, DEFAULT_CATALOG_DB } from "../src/config";
 import { createCatalog, fileStore, rebuildFromArchive, seedPatientLinks } from "@smart-imaging-proxy/core";
 
 const root = join(import.meta.dir, "..");
@@ -12,7 +12,7 @@ const target = process.env.CATALOG_DB || DEFAULT_CATALOG_DB;
 const building = `${target}.building`;
 for (const f of [building, `${building}-wal`, `${building}-shm`]) rmSync(f, { force: true });
 
-const catalog = createCatalog(building);
+const catalog = createCatalog(building, { accessionSystem: ACCESSION_SYSTEM });
 seedPatientLinks(catalog, await Bun.file(join(root, "data/patient.json")).json());
 const report = await rebuildFromArchive(fileStore(archive), catalog);
 const stats = catalog.stats();

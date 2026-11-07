@@ -29,7 +29,7 @@ export async function rebuildFromArchive(source: ObjectSource, catalog: CatalogS
         instances: index.instances.map(i => ({ uid: i.uid, number: i.number, sopClass: i.sopClass })),
       });
     }
-    catalog.publish(publicationFor(document, patient, hierarchy));
+    catalog.publish(publicationFor(document, patient, hierarchy, catalog.accessionSystem));
     report.published.push(uid);
   }
   return report;

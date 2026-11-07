@@ -1,6 +1,6 @@
 // Focused tests for details the flows rely on.
 import { describe, expect, test } from "bun:test";
-import { ath, chooseOffer, closing, EVRLE, generateEd25519, isLossy, isStandard, JPEG_BASELINE, JPEG_LOSSLESS, parseAccept, partFooter, partHeader, PRIVATE_DEMO, readMultipart, signJws, verifyJws } from "../src";
+import { ath, chooseOffer, closing, EVRLE, generateEd25519, isLossy, isStandard, JPEG_BASELINE, JPEG_LOSSLESS, parseAccept, partFooter, partHeader, PRIVATE_TEST_SYNTAX, readMultipart, signJws, verifyJws } from "../src";
 
 const part = (s: string, q?: number) => `multipart/related; type=application/dicom; transfer-syntax=${s}${q !== undefined ? `; q=${q}` : ""}`;
 
@@ -27,10 +27,10 @@ describe("Representation choice", () => {
     expect(chooseOffer([stored(JPEG_BASELINE)] as any, [{ syntax: "*", q: 1 }])!.syntax).toBe(JPEG_BASELINE);
   });
   test("* substitutes a standard syntax for a private one", () => {
-    expect(chooseOffer([stored(PRIVATE_DEMO, { private: true }), alt(EVRLE)] as any, [{ syntax: "*", q: 1 }])!.syntax).toBe(EVRLE);
+    expect(chooseOffer([stored(PRIVATE_TEST_SYNTAX, { private: true }), alt(EVRLE)] as any, [{ syntax: "*", q: 1 }])!.syntax).toBe(EVRLE);
   });
   test("a listed private syntax is returned", () => {
-    expect(chooseOffer([stored(PRIVATE_DEMO), alt(EVRLE)] as any, [{ syntax: PRIVATE_DEMO, q: 1 }])!.syntax).toBe(PRIVATE_DEMO);
+    expect(chooseOffer([stored(PRIVATE_TEST_SYNTAX), alt(EVRLE)] as any, [{ syntax: PRIVATE_TEST_SYNTAX, q: 1 }])!.syntax).toBe(PRIVATE_TEST_SYNTAX);
   });
   test("lossy data doesn't satisfy a .1.2.1-only request", () => {
     expect(chooseOffer([stored(JPEG_BASELINE)] as any, [{ syntax: EVRLE, q: 1 }])).toBeUndefined();
@@ -39,7 +39,7 @@ describe("Representation choice", () => {
     expect(chooseOffer([stored(EVRLE), alt(JPEG_LOSSLESS)] as any, [{ syntax: JPEG_LOSSLESS, q: 1 }, { syntax: EVRLE, q: 0.5 }])!.syntax).toBe(JPEG_LOSSLESS);
   });
   test("syntax classification", () => {
-    expect(isStandard(PRIVATE_DEMO)).toBe(false);
+    expect(isStandard(PRIVATE_TEST_SYNTAX)).toBe(false);
     expect(isStandard(EVRLE)).toBe(true);
     expect(isLossy(JPEG_BASELINE)).toBe(true);
     expect(isLossy(JPEG_LOSSLESS)).toBe(false);

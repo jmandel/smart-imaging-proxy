@@ -15,14 +15,18 @@ const at = (port: number, path: string) => `http://127.0.0.1:${port}${path}`;
 const AUTH = /^\/(fhir|authorize|account)(\/|$)|^\/(token|introspect|revoke)$/;
 function target(path: string): string {
   if (path.startsWith("/imaging/")) return at(PORTS.imaging, path.slice("/imaging".length));
-  if (path.startsWith("/wado/") || path === "/internal/keys/refresh") return at(PORTS.proxy, path);
+  if (path.startsWith("/wado/")) return at(PORTS.proxy, path);
   if (path.startsWith("/trace/")) return at(PORTS.trace, path.slice("/trace".length));
   if (AUTH.test(path)) return at(PORTS.auth, path);
   return at(PORTS.demo, path);
 }
 
+/** Service-to-service APIs, which callers reach on the services' own loopback ports, never through here. */
+const INTERNAL = /^\/imaging\/policy(\/|$)|^\/internal\//;
+
 export async function gatewayFetch(req: Request): Promise<Response> {
   const url = new URL(req.url);
+  if (INTERNAL.test(url.pathname)) return new Response(null, { status: 404 });
   // The trace's pages use relative links, so its root needs the slash.
   if (url.pathname === "/trace") return new Response(null, { status: 308, headers: { location: `/trace/${url.search}` } });
   const to = target(url.pathname);

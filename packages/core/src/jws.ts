@@ -1,4 +1,4 @@
-import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify, type KeyObject } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, timingSafeEqual, verify, type KeyObject } from "node:crypto";
 
 export const b64url = (b: Uint8Array | string) => Buffer.from(b as any).toString("base64url");
 export const fromB64url = (s: string) => new Uint8Array(Buffer.from(s, "base64url"));
@@ -41,4 +41,13 @@ export function verifyJws(token: string, keys: Map<string, KeyObject>): any | un
     if (!verify(null, Buffer.from(`${parts[0]}.${parts[1]}`), key, Buffer.from(parts[2]!, "base64url"))) return undefined;
     return JSON.parse(Buffer.from(parts[1]!, "base64url").toString());
   } catch { return undefined; }
+}
+
+/**
+ * Whether a presented credential is the expected one, in time that doesn't depend on where they
+ * differ. With no expected credential configured, nothing matches.
+ */
+export function sameSecret(given: string | undefined, expected: string | undefined): boolean {
+  const digest = (v: string) => createHash("sha256").update(v).digest();
+  return !!given && !!expected && timingSafeEqual(digest(given), digest(expected));
 }

@@ -6,7 +6,7 @@ import type { KeyObject } from "node:crypto";
 import { acceptsZstd, parseAccept, type PlanItem } from "./accept";
 import { BackendError, type Backend, type InstancePart, type PartStream, type PlannedPart, type Scope } from "./backends/types";
 import { jwksKeys, staticKeys, type KeySource } from "./jwks";
-import { ath, kidOf, sha, verifyJws } from "./jws";
+import { ath, kidOf, sameSecret, sha, verifyJws } from "./jws";
 import { closing, newBoundary, partFooter, partHeader, stableBoundary } from "./multipart";
 import { readFileMeta } from "./dicom";
 import { EVRLE, isStandard } from "./syntax";
@@ -492,7 +492,7 @@ export function createProxy(opts: KeyOption & {
     // Tells this proxy to refetch the keys now, rather than wait for their TTL. Takes no input.
     if (pathname === "/internal/keys/refresh") {
       if (req.method !== "POST") return new Response(null, { status: 405, headers: { Allow: "POST" } });
-      if (!check("dicomweb-proxy", "caller holds the service credential", bearerOf(req) === opts.serviceSecret)) return new Response(null, { status: 401, headers: { "WWW-Authenticate": "Bearer" } });
+      if (!check("dicomweb-proxy", "caller holds the service credential", sameSecret(bearerOf(req), opts.serviceSecret))) return new Response(null, { status: 401, headers: { "WWW-Authenticate": "Bearer" } });
       const refreshed = await keySource.refresh();
       check("dicomweb-proxy", "signing keys refetched", refreshed);
       return new Response(null, { status: refreshed ? 204 : 503 });
@@ -533,7 +533,7 @@ export function createProxy(opts: KeyOption & {
       const form = acceptable(BULK_FORMS);
       return form ? bulk(study, series, instance, tail.slice(5), form, decision.version, ev, server, started) : new Response(null, { status: 406 });
     }
-    if (tail) { ev.note = `${tail.split("/")[0]} is a SHOULD this demo proxy does not implement`; return new Response(null, { status: 501 }); }
+    if (tail) { ev.note = `${tail.split("/")[0]} is a SHOULD this proxy does not implement`; return new Response(null, { status: 501 }); }
 
     const accept = parseAccept(req.headers.get("accept"), "dicom");
     // PS3.18 8.7.5: a request without Accept gets 406.
