@@ -7,7 +7,7 @@ import { ref, type PolicyDocument } from "@smart-imaging-proxy/core";
 import { PATIENT_NAMES, USERS, type BackendClient } from "./auth-server";
 import { defaultsFor, FLOWS, runStep, startFlowIn } from "./flows";
 import { Ctx, StepStopped } from "./flows/runtime";
-import { referenceModel, type RefStudy } from "./reference-model";
+import { cascade, referenceModel, type RefStudy } from "./reference-model";
 import { citedBy, referralsFrom, reportTitle } from "./referrals";
 import { RULE_SETS } from "./rule-presets";
 import { patientAttributes } from "./stores";
@@ -19,9 +19,11 @@ const APP = "portal-app";
 const JOSH = "josh", SAM = "sam-caregiver", JOSH_PATIENT = "josh-example";
 const SERVICE = "hand-referral-service";
 
+/** A world's policy document now, with every row's id and basis. */
+const documentOf = (world: World): PolicyDocument => { const { revision: _r, ...doc } = world.store.snapshot(); return doc; };
 /** The reference model over a world as it is now, or with its document changed as given. */
 export function modelOf(world: World, change?: (doc: PolicyDocument) => PolicyDocument) {
-  const { revision: _r, ...snap } = world.store.snapshot();
+  const snap = documentOf(world);
   const doc = change ? change(snap) : snap;
   const studies: RefStudy[] = world.catalog.allStudies().map(st => ({ id: st.id, patient: st.patient, site: st.site, labels: st.labels, date: st.date, modalities: [...new Set(st.series.map(x => x.modality))], seriesUids: st.series.map(x => x.uid) }));
   return referenceModel({ doc, studies, now: world.clock.now(), birthDate: p => patientAttributes(p)?.birthDate, patientOf: u => USERS[u]?.patient });
@@ -42,7 +44,7 @@ interface Run {
 }
 interface TourStep {
   id: string; title: string; actor: string;
-  /** The policy as it will be once this step's action is done, for the expectation shown before it runs. */
+  /** The policy as it will be once this step's action is done: the expectation comes from it, and the store's policy after the step must match it. */
   intends?: (r: Run, doc: PolicyDocument) => PolicyDocument;
   expect(r: Run, m: ReturnType<typeof modelOf>): Answer;
   act(r: Run): Promise<Answer>;
@@ -57,7 +59,46 @@ const statusText = (status: number) => ({ value: status, text: status === 200 ? 
 const joshSites = (r: Run) => sorted(new Set(r.world.catalog.allStudies().filter(s => s.patient === JOSH_PATIENT).flatMap(s => s.site ? [s.site] : [])));
 /** A share of every site but the last, so narrowing shows. */
 const someSites = (r: Run) => { const all = joshSites(r); return all.length > 1 ? all.slice(0, -1) : all; };
-const withShare = (sites: string[]) => (_r: Run, doc: PolicyDocument): PolicyDocument => ({ ...doc, shares: [...doc.shares.filter(s => !(s.from === ref("user", JOSH) && s.with === ref("user", SAM))), { from: ref("user", JOSH), with: ref("user", SAM), patient: ref("patient", JOSH_PATIENT), sites, label: "caregiver" }] });
+/**
+ * The policy once Josh shares these sites with Sam: his earlier share with Sam, if any, keeps its id,
+ * with sites narrowed to those he may name, and records the route he shares through.
+ */
+const withShare = (sites: string[]) => (r: Run, doc: PolicyDocument): PolicyDocument => {
+  const m = r.model(() => doc);
+  const from = ref("user", JOSH), to = ref("user", SAM);
+  const earlier = doc.shares.find(s => s.from === from && s.with === to && s.patient === ref("patient", JOSH_PATIENT));
+  // A new share gets an id of its own here, so the model can name it as a route. The check ignores ids.
+  const share = { id: earlier?.id ?? "intended-share", from, with: to, patient: ref("patient", JOSH_PATIENT), sites: sites.filter(x => m.nameableSites(JOSH, JOSH_PATIENT).includes(x)), label: "caregiver", basis: m.shareBasis(JOSH, JOSH_PATIENT) };
+  return { ...doc, shares: earlier ? doc.shares.map(s => s === earlier ? share : s) : [...doc.shares, share] };
+};
+
+/** A document as a step's check compares it: rows without their ids, and each basis as the rows it names. */
+function comparable(doc: PolicyDocument, keepBasis: (kind: "share" | "approval", row: any) => boolean = () => true) {
+  const named = (b: string) => {
+    if (b === "self") return "self";
+    const rel = doc.relationships.find(x => x.id === b);
+    if (rel) return `${rel.subject} ${rel.relation} ${rel.object}`;
+    const sh = doc.shares.find(x => x.id === b);
+    return sh ? `share from ${sh.from} with ${sh.with}` : "a row no longer on file";
+  };
+  const bySort = <T>(xs: T[]) => xs.map(x => JSON.stringify(x)).sort();
+  return {
+    relationships: bySort(doc.relationships.map(({ subject, relation, object, recordedBy }) => ({ subject, relation, object, recordedBy }))),
+    policies: bySort([...doc.policies].sort((a, b) => a.id.localeCompare(b.id))),
+    shares: bySort(doc.shares.map(s => ({ from: s.from, with: s.with, patient: s.patient, sites: sorted(s.sites), label: s.label, ...(keepBasis("share", s) && s.basis !== undefined ? { basis: named(s.basis) } : {}) }))),
+    approvals: bySort(doc.approvals.map(a => ({ by: a.by, app: a.app, patient: a.patient, ...(a.sites ? { sites: sorted(a.sites) } : {}), ...(keepBasis("approval", a) && a.basis ? { basis: sorted(a.basis.map(named)) } : {}) }))),
+  };
+}
+/** How the policy a step left differs from the policy it intended, part by part, or undefined if it doesn't. */
+export function writeMismatch(intended: PolicyDocument, actual: PolicyDocument): string | undefined {
+  // A fresh row in the intended document without a basis says nothing about the basis the store records.
+  const fresh = (kind: "share" | "approval") => new Set((kind === "share" ? intended.shares : intended.approvals).filter((x: any) => !x.id && !x.basis).map((x: any) => kind === "share" ? `${x.from} ${x.with} ${x.patient}` : `${x.by} ${x.app} ${x.patient}`));
+  const keep = (kind: "share" | "approval", x: any) => !fresh(kind).has(kind === "share" ? `${x.from} ${x.with} ${x.patient}` : `${x.by} ${x.app} ${x.patient}`);
+  const want = comparable(intended, keep), got = comparable(actual, keep);
+  const parts = (Object.keys(want) as (keyof typeof want)[]).filter(k => !same(want[k], got[k]));
+  if (!parts.length) return undefined;
+  return parts.map(k => `${k}: it intended ${want[k].length ? want[k].join("; ") : "none"}, and the store holds ${got[k].length ? got[k].join("; ") : "none"}`).join(". ");
+}
 
 /** A user's approval of the app for a patient, as a check reads it. */
 const approvalText = (sites: string[] | undefined) => sites === undefined ? "every site" : list(sorted(sites));
@@ -216,7 +257,8 @@ const TOURS: Tour[] = [
       searchStep("search", SAM, JOSH_PATIENT, "The app searches Josh's studies"),
       {
         id: "revoke", title: "Josh stops sharing with Sam", actor: first(JOSH),
-        intends: (_r, doc) => ({ ...doc, shares: doc.shares.filter(s => !(s.from === ref("user", JOSH) && s.with === ref("user", SAM))), approvals: doc.approvals.filter(a => !(a.by === ref("user", SAM) && a.patient === ref("patient", JOSH_PATIENT))) }),
+        // The share goes, and with it what rested only on it.
+        intends: (_r, doc) => cascade({ ...doc, shares: doc.shares.filter(s => !(s.from === ref("user", JOSH) && s.with === ref("user", SAM))) }),
         expect: (_r, m) => holdsText(SAM, JOSH_PATIENT, m.approvableSites(SAM, JOSH_PATIENT)),
         async act(r) { await r.c.revokeDelegation(JOSH, SAM); return accessOf(r, SAM, JOSH_PATIENT); },
       },
@@ -307,14 +349,13 @@ export function createTours(world: World, clients: Record<string, BackendClient>
     const trace = randomBytes(16).toString("hex");
     let result: any;
     try {
-      // A step that changes policy is checked against the model of the policy it leaves; any other, against the policy it ran under.
-      const before = s.intends ? undefined : s.expect(r, r.model());
-      const actual = await inScope(world.scope, () => runInSession(run!.session, () => withSpan("user", "action", `${tour.title}: ${s.title}`, { tour: tour.id, step: s.id, mode }, async () => {
-        const a = await s.act(r);
-        return a;
-      }, { session: run!.session, trace })));
-      const expected = before ?? s.expect(r, r.model());
-      result = { ok: same(actual.value, expected.value), expected: expected.text, actual: actual.text };
+      // Everything is decided before the action: a step that changes policy is checked against the model
+      // of the policy it intends, and then the store's policy against that intended policy.
+      const intended = s.intends?.(r, documentOf(world));
+      const expected = s.expect(r, r.model(intended ? () => intended : undefined));
+      const actual = await inScope(world.scope, () => runInSession(run!.session, () => withSpan("user", "action", `${tour.title}: ${s.title}`, { tour: tour.id, step: s.id, mode }, () => s.act(r), { session: run!.session, trace })));
+      const mismatch = intended && writeMismatch(intended, documentOf(world));
+      result = { ok: same(actual.value, expected.value) && !mismatch, expected: expected.text, actual: actual.text, ...(mismatch ? { write: `The step didn't write what it intended. ${mismatch}` } : {}) };
     } catch (e) { result = { ok: false, expected: "", actual: String((e as Error).message ?? e), stopped: e instanceof StepStopped }; }
     await traceSettled();
     result.trace = trace;

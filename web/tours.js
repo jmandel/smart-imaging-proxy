@@ -25,7 +25,7 @@ function stepHtml(s, i, steps) {
   return `<li class="${cls}">
     <span class="what"><b>${esc(s.title)}</b><span>${esc(s.actor)}${next && s.expect ? `. The model expects: ${esc(s.expect)}` : ""}</span></span>
     ${r ? `<span class="verdict ${r.ok ? "ok" : "bad"}">${r.ok ? "Matches the model" : r.stopped ? "Stopped" : "Differs from the model"}</span>` : next ? `<button type="button" class="primary" data-step="${esc(s.id)}" ${running ? "disabled" : ""}>${running ? "Running…" : "Run"}</button>` : "<span></span>"}
-    ${r ? `<dl class="compare">${r.expected ? `<dt>Expected</dt><dd>${esc(r.expected)}</dd>` : ""}<dt>Got</dt><dd>${esc(r.actual)}</dd></dl>
+    ${r ? `<dl class="compare">${r.expected ? `<dt>Expected</dt><dd>${esc(r.expected)}</dd>` : ""}<dt>Got</dt><dd>${esc(r.actual)}</dd>${r.write ? `<dt>Policy written</dt><dd>${esc(r.write)}</dd>` : ""}</dl>
       <div class="result"><details><summary>What happened, ${plural(r.events.length, "event")}</summary>${Cards.list(r.events)}</details></div>` : ""}
   </li>`;
 }

@@ -2,7 +2,7 @@
 // against: written apart from core's evaluation, it has to agree with it everywhere.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { createModel, ref, type PolicyDocument } from "@smart-imaging-proxy/core";
+import { createModel, PolicyStore, ref, type AppApproval, type PolicyDocument, type Relationship, type Share } from "@smart-imaging-proxy/core";
 import { startStack, type Stack } from "../src/stack";
 import { registerClients } from "../src/flows";
 import { createDemoServer } from "../src/demo-server";
@@ -10,8 +10,9 @@ import { CONFIG } from "../src/config";
 import { USERS } from "../src/auth-server";
 import { patientAttributes, ON_FILE } from "../src/stores";
 import { nameOf } from "../src/world";
-import { ageAt, referenceModel, type RefStudy } from "../src/reference-model";
+import { ageAt, cascade, referenceModel, type RefStudy } from "../src/reference-model";
 import { RULE_SETS } from "../src/rule-presets";
+import { Ctx } from "../src/flows/runtime";
 
 const root = join(import.meta.dir, "..");
 let stack: Stack; let demo: ReturnType<typeof createDemoServer>;
@@ -81,6 +82,33 @@ describe("each tour", () => {
     expect(step.result.expected).toStartWith("200");
     expect(step.result.actual).toStartWith("404");
   }, 60000);
+  /** Runs a tour with one of Ctx's actions replaced, and gives each step's result. */
+  async function runWith(tour: string, method: "revokeDelegation" | "delegate", replacement: (real: any) => any) {
+    const proto = Ctx.prototype as any, real = proto[method];
+    proto[method] = replacement(real);
+    try { return (await runAll(tour)).state.steps as any[]; } finally { proto[method] = real; }
+  }
+  test("a revoke that writes nothing fails its step, which says what it intended", async () => {
+    const steps = await runWith("revoke", "revokeDelegation", () => async () => {});
+    const revoke = steps.find(s => s.id === "revoke");
+    expect(revoke.result.ok).toBe(false);
+    expect(revoke.result.expected).toBe("Sam holds none of Josh Example's records");
+    expect(revoke.result.write).toContain("shares: it intended none, and the store holds");
+  }, 120000);
+  test("a share that writes nothing, or writes more than it should, fails its step", async () => {
+    const none = await runWith("caregiver", "delegate", () => async () => 303);
+    expect(none.find(s => s.id === "share").result).toMatchObject({ ok: false, write: expect.stringContaining("shares: it intended") });
+    const more = await runWith("caregiver", "delegate", real => async function (this: any, ...args: any[]) {
+      const status = await real.apply(this, args);
+      await this.world.policy.share({ from: "user:josh", with: "user:alex-neighbor", patient: "patient:josh-example", sites: ["Lakeside Imaging"], label: "neighbor" });
+      return status;
+    });
+    const share = more.find(s => s.id === "share").result;
+    // Sam's records are what the model said, and the write still differs.
+    expect(share.actual).toBe(share.expected);
+    expect(share.ok).toBe(false);
+    expect(share.write).toContain("user:alex-neighbor");
+  }, 120000);
   test("steps run in order, once, only in the tour's own scope", async () => {
     expect((await call("POST", "/api/tours/caregiver/steps/share", {})).status).toBe(409);
     expect((await call("POST", "/api/tours/nope/start", {})).status).toBe(404);
@@ -108,22 +136,39 @@ describe("checks", () => {
 
 describe("the reference model", () => {
   const studies = (): RefStudy[] => stack.catalog.allStudies().map(st => ({ id: st.id, patient: st.patient, site: st.site, labels: st.labels, date: st.date, modalities: [...new Set(st.series.map(x => x.modality))], seriesUids: st.series.map(x => x.uid) }));
-  const shares = [
-    { from: "user:josh", with: "user:sam-caregiver", patient: "patient:josh-example", sites: ["Lakeside Imaging", "Riverside Hospital"], label: "caregiver" },
-    { from: "user:sam-caregiver", with: "user:alex-neighbor", patient: "patient:riley-example", sites: ["Lakeside Imaging", "Northside Pathology"], label: "neighbor" },
-    { from: "user:sam-caregiver", with: "user:josh", patient: "patient:josh-example", sites: ["Northside Pathology"], label: "spouse" },
+  // What's on file, with the ids a store gives its rows, and a second guardian of Riley's, Josh.
+  const onFile = () => new PolicyStore({ mode: "memory", onFile: { ...ON_FILE, relationships: [...ON_FILE.relationships, { subject: "user:josh", relation: "guardian_of", object: "patient:riley-example", recordedBy: "registration" }] }, patientOf: u => USERS[u]?.patient }).snapshot();
+  const relId = (rels: Relationship[], subject: string) => rels.find(r => r.subject === subject && r.object === "patient:riley-example")!.id!;
+  const shares = (rels: Relationship[]): Share[] => [
+    { id: "share-1", from: "user:josh", with: "user:sam-caregiver", patient: "patient:josh-example", sites: ["Lakeside Imaging", "Riverside Hospital"], label: "caregiver", basis: "self" },
+    { id: "share-2", from: "user:sam-caregiver", with: "user:alex-neighbor", patient: "patient:riley-example", sites: ["Lakeside Imaging"], label: "neighbor", basis: relId(rels, "user:sam-caregiver") },
+    { id: "share-3", from: "user:sam-caregiver", with: "user:josh", patient: "patient:josh-example", sites: ["Northside Pathology"], label: "spouse", basis: "self" },
+    // Made after Alex approved the app: Alex's approval doesn't rest on it.
+    { id: "share-4", from: "user:josh", with: "user:alex-neighbor", patient: "patient:riley-example", sites: ["Northside Pathology"], label: "neighbor", basis: relId(rels, "user:josh") },
+    // A share recording a route its sharer doesn't hold reaches nothing.
+    { id: "share-5", from: "user:sam-caregiver", with: "user:robin", patient: "patient:riley-example", sites: ["Lakeside Imaging"], label: "aunt", basis: "self" },
   ];
-  const approvals = [
-    { by: "user:sam-caregiver", app: "app:portal-app", patient: "patient:josh-example", sites: ["Riverside Hospital"] },
-    { by: "user:josh", app: "app:portal-app", patient: "patient:josh-example" },
-    { by: "user:alex-neighbor", app: "app:separate-viewer", patient: "patient:riley-example" },
-    { by: "user:sam-caregiver", app: "app:portal-app", patient: "patient:riley-example", sites: ["Northside Pathology"] },
+  const approvals = (rels: Relationship[]): AppApproval[] => [
+    { id: "approval-1", by: "user:sam-caregiver", app: "app:portal-app", patient: "patient:josh-example", sites: ["Riverside Hospital"], basis: ["share-1"] },
+    { id: "approval-2", by: "user:josh", app: "app:portal-app", patient: "patient:josh-example", basis: ["self"] },
+    { id: "approval-3", by: "user:alex-neighbor", app: "app:separate-viewer", patient: "patient:riley-example", basis: ["share-2"] },
+    { id: "approval-4", by: "user:sam-caregiver", app: "app:portal-app", patient: "patient:riley-example", sites: ["Northside Pathology"], basis: [relId(rels, "user:sam-caregiver")] },
+    // Josh holds Riley's records two ways, and approved through both.
+    { id: "approval-5", by: "user:josh", app: "app:portal-app", patient: "patient:riley-example", basis: [relId(rels, "user:josh"), "share-6"] },
+    { id: "approval-6", by: "user:robin", app: "app:portal-app", patient: "patient:riley-example", basis: ["share-5"] },
   ];
   const services = () => [...RULE_SETS.find(s => s.id === "all-three-services")!.rules(stack.catalog)!, { id: "any-ct", type: "service-access" as const, service: "service:research-donation", patients: "any" as const, allow: { modalities: ["CT", "MR"], since: "2021-01-01" } }];
+  const withChoices = (policies: (d: PolicyDocument) => PolicyDocument["policies"]) => () => {
+    const d = onFile();
+    const sixth: Share = { id: "share-6", from: "user:sam-caregiver", with: "user:josh", patient: "patient:riley-example", sites: ["Lakeside Imaging", "Northside Pathology"], label: "aunt", basis: relId(d.relationships, "user:sam-caregiver") };
+    return { relationships: d.relationships, policies: policies(d), shares: [...shares(d.relationships), sixth], approvals: approvals(d.relationships) } as PolicyDocument;
+  };
   const docs: [string, () => PolicyDocument][] = [
-    ["on file", () => ({ ...ON_FILE, shares: [], approvals: [] }) as PolicyDocument],
-    ["with choices and service policies", () => ({ relationships: ON_FILE.relationships, policies: [...ON_FILE.policies, ...services()], shares, approvals }) as PolicyDocument],
-    ["with no sharing policy", () => ({ relationships: ON_FILE.relationships, policies: ON_FILE.policies.filter(p => p.type !== "sharing"), shares, approvals }) as PolicyDocument],
+    ["on file", () => ({ relationships: onFile().relationships, policies: onFile().policies, shares: [], approvals: [] }) as PolicyDocument],
+    ["with choices and service policies", withChoices(d => [...d.policies, ...services()])],
+    ["with no sharing policy", withChoices(d => d.policies.filter(p => p.type !== "sharing"))],
+    // Josh's guardian relationship with Riley removed: what rested only on it goes, and his approval keeps the share it also rests on.
+    ["with one of two routes removed", () => { const d = withChoices(x => x.policies)(); return cascade({ ...d, relationships: d.relationships.filter(r => r.id !== relId(d.relationships, "user:josh")) }); }],
   ];
   // Riley at 10, 15 and 19.
   const times = [Date.UTC(2021, 5, 1), Date.UTC(2026, 5, 1), Date.UTC(2030, 5, 1)].map(t => t / 1000);
@@ -152,6 +197,35 @@ describe("the reference model", () => {
       }
     });
   }
+  test("the basis matters: a route gained after approving, and a route removed", () => {
+    const now = Date.UTC(2021, 5, 1) / 1000;
+    const doc = withChoices(d => d.policies)();
+    const m = referenceModel({ doc, studies: studies(), now, birthDate: p => patientAttributes(p)?.birthDate, patientOf: u => USERS[u]?.patient });
+    // Alex holds both of Riley's studies, through two shares, and approved the app through the first alone.
+    expect(m.userReach("alex-neighbor", "riley-example").map(s => s.id).sort()).toEqual(["syn-riley-knee-mr-2022", "syn-riley-skin-slide-2023"]);
+    expect(m.appReach("alex-neighbor", "separate-viewer", "riley-example").map(s => s.id)).toEqual(["syn-riley-knee-mr-2022"]);
+    expect(m.userReach("robin", "riley-example")).toEqual([]);
+    const removed = docs.find(([n]) => n === "with one of two routes removed")![1]();
+    expect(removed.shares.map(s => s.id)).not.toContain("share-4");
+    expect(removed.approvals.map(a => a.id)).toContain("approval-5");
+  });
+  test("deleting a row cascades as the store's deletion does, by ids alone", () => {
+    const doc = withChoices(d => d.policies)();
+    // Rows the store would refuse to write are left out: it records only bases their sharers hold.
+    const valid = { ...doc, shares: doc.shares.filter(s => s.id !== "share-3" && s.id !== "share-5"), approvals: doc.approvals.filter(a => a.id !== "approval-6") };
+    const ids = (d: Pick<PolicyDocument, "shares" | "approvals">) => ({ shares: d.shares.map(s => s.id).sort(), approvals: d.approvals.map(a => a.id).sort() });
+    const removals: [string, (d: PolicyDocument) => PolicyDocument][] = [
+      ...valid.relationships.map(r => [`relationship ${r.subject}`, (d: PolicyDocument) => ({ ...d, relationships: d.relationships.filter(x => x.id !== r.id) })] as [string, (d: PolicyDocument) => PolicyDocument]),
+      ...valid.shares.map(s => [`share ${s.id}`, (d: PolicyDocument) => ({ ...d, shares: d.shares.filter(x => x.id !== s.id) })] as [string, (d: PolicyDocument) => PolicyDocument]),
+    ];
+    for (const [name, remove] of removals) {
+      const store = new PolicyStore({ mode: "memory", onFile: { ...ON_FILE, relationships: [] }, patientOf: u => USERS[u]?.patient });
+      store.setDocument(valid);
+      const { revision: _, ...written } = store.snapshot();
+      store.setDocument(remove(written as PolicyDocument));
+      expect([name, ids(store.snapshot())]).toEqual([name, ids(cascade(remove(valid)))]);
+    }
+  });
   test("counts ages in whole years, and has none for a missing or future birth date", () => {
     const at = Date.UTC(2026, 0, 1) / 1000;
     expect(ageAt("2011-01-01", at)).toBe(15);
