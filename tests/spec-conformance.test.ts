@@ -195,6 +195,7 @@ for (const backend of (process.env.BACKENDS?.split(",") ?? ["static-files", "min
       sw();
       const r = await get(`${base(WRIST)}/studies/${uid(WRIST)}`, part("*"));
       expect(r.parts.some(p => p.syntax === "1.2.840.10008.1.2" || p.syntax === "1.2.840.10008.1.2.2")).toBe(false);
+      for (const syntax of ["1.2.840.10008.1.2", "1.2.840.10008.1.2.2", "1.2.840.10008.1.2.1.99"]) expect([syntax, (await get(`${base(WRIST)}/studies/${uid(WRIST)}`, part(syntax))).status]).toEqual([syntax, 406]);
     });
     test("* is as stored, adds no lossy compression, and hides private syntaxes", async () => {
       sw();

@@ -71,6 +71,7 @@ The window is `min(now + context lifetime, token exp)`, set when the context or 
 
 - **Flush decisions** ends the cached window only, not signed URLs.
 - **Rotate the key,** with the proxy told, ends the signed-URL window at once. A revoked token then gets `401`, and a valid token still works by asking.
+- **Revoking a share or an app** on the account page works the same way: search reflects it at once, and an uncached plain URL gets `404`, while a signed URL or cached decision already issued keeps working until it expires.
 - **Ending access at once** takes all three on `/admin`: revoke tokens, flush decisions, and rotate the key.
 
 ## The archive
@@ -244,4 +245,4 @@ BACKENDS=static-files bun test   # flows, Browse, rotation, and conformance on o
 `bun run test:ui` drives the pages in real Chromium: focus, overflow, contrast, popups, and what the pages draw from real responses. It runs its own stack in memory, and takes the browser from `CHROMIUM`, or `/usr/bin/chromium`.
 
 
-The tests use the same ports as the demo, so stop `bun run start` first, or give the test run its own `DEMO_PORT_OFFSET`. They need the setup steps above, including Docker, even with `BACKENDS` set. Spec checks read the guide's text from a local clone, set with `SPEC_REPO` and `SPEC_REF`.
+The tests use the same ports as the demo, so stop `bun run start` first, or give the test run its own `DEMO_PORT_OFFSET`. The suite also creates and deletes a temporary bucket in the MinIO it points at. They need the setup steps above, including Docker, even with `BACKENDS` set. Spec checks read the guide's text from a local clone, set with `SPEC_REPO` and `SPEC_REF`.

@@ -37,7 +37,7 @@ export async function runStep(c: Ctx, flow: Flow, stepId: string, inputs: Record
     const v = inputs[i.id];
     if (v === undefined) continue;
     const fits = i.type === "multi" ? Array.isArray(v) && v.every(x => typeof x === "string" && (!i.options || i.options.some(o => o.value === x))) : typeof v === "string" && (i.type !== "select" || !i.options || i.options.some(o => o.value === v));
-    if (!fits) throw new BadStepInput(`"${i.label}" isn't one of this step's choices.`);
+    if (!fits) throw new BadStepInput(i.options?.length === 0 ? `There's nothing to choose for "${i.label}", because the earlier steps left none.` : `"${i.label}" isn't one of this step's choices.`);
   }
   c.beginStep();
   // A request can leave out a step's choices, and a step always has them.

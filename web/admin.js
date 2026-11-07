@@ -117,6 +117,8 @@ $("#reset-saved").onclick = () => {
 $("#rule-set-select").onchange = e => { ruleSetPick = e.target.value; renderRuleSets(); };
 $("#apply-rule-set").onclick = () => {
   const pick = ruleSets.choices.find(c => c.id === ruleSetPick);
+  // Applying disables this button, so focus moves to the choice beside it.
+  $("#rule-set-select").focus();
   if (pick) act($("#rules-msg"), `Applied: ${pick.label}.`, () => call("POST", "/rule-set", { id: pick.id }));
 };
 document.querySelectorAll("[data-setting]").forEach(select => {

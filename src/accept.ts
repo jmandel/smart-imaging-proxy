@@ -1,3 +1,4 @@
+import { NOT_ON_THE_WEB } from "./syntax";
 // Parses Accept into an ordered plan. The plan, not the client's header, is what backends see.
 export interface PlanItem { syntax: string; q: number; }
 export interface AcceptResult { kind: "dicom" | "metadata" | "octet" | "none" | "bad"; plan: PlanItem[]; }
@@ -40,7 +41,8 @@ export function parseAccept(header: string | null, expect: "dicom" | "metadata" 
     if (isDicomPart || t === "application/dicom") {
       matched = true;
       // PS3.18 8.7.3: without a parameter, the default is Explicit VR Little Endian.
-      if (q > 0) items.push({ syntax: p["transfer-syntax"] ?? "1.2.840.10008.1.2.1", q, order });
+      const syntax = p["transfer-syntax"] ?? "1.2.840.10008.1.2.1";
+      if (q > 0 && !NOT_ON_THE_WEB.has(syntax)) items.push({ syntax, q, order });
     } else if (t === "*/*" || t === "multipart/related" && !p.type) {
       matched = true;
       if (q > 0) items.push({ syntax: "1.2.840.10008.1.2.1", q, order });

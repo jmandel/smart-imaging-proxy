@@ -1,7 +1,7 @@
 // WADO-RS proxy. It has the Imaging Server's public keys, a service credential, and a backend. It
 // holds no policy, patient data, or signing secret: a request is either covered by a signed context,
-// or it asks. It also holds nothing per study. Its only state is the bounded decision cache, the
-// bounded event log, and its copy of the public keys, so another process could serve the same request.
+// or it asks. Its only state is bounded and rebuildable: the decision cache, the event log, its copy
+// of the public keys, and cached study documents, so another process could serve the same request.
 import type { KeyObject } from "node:crypto";
 import { acceptsZstd, parseAccept, type PlanItem } from "./accept";
 import { BackendError, type Backend, type InstancePart, type PartStream, type PlannedPart, type Scope } from "./backends/types";
