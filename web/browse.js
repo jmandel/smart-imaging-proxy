@@ -11,11 +11,14 @@ const call = async (method, path, body) => {
 const say = text => { $("#announce").textContent = text; };
 const bytes = n => {
   const v = Number(n ?? 0);
+  return `${shortBytes(v)} (${v.toLocaleString()} bytes)`;
+};
+const shortBytes = v => {
   const short = v >= 1e9 ? `${(v / 1e9).toFixed(2)} GB` : v >= 1e6 ? `${(v / 1e6).toFixed(1)} MB` : v >= 1e3 ? `${(v / 1e3).toFixed(1)} KB` : `${v} B`;
-  return `${short} (${v.toLocaleString()} bytes)`;
+  return short;
 };
 
-let options, view = null, shown = "", timer, popup, popupSent = false, closedPolls = 0, wantFocus = false, pageError = "", backendSet = false;
+let options, view = null, shown = "", timer, popup, popupSent = false, closedPolls = 0, wantFocus = false, pageError = "", backendSet = false, optionsOpen = false;
 const choices = { mode: "scripted", app: "portal-app", count: 5, patient: "josh-example", records: {} };
 
 function showStore(store) {
@@ -30,19 +33,22 @@ function showStore(store) {
 function renderPick() {
   const busy = !!view?.running;
   const current = view && (view.start.user ?? view.start.client);
-  const person = p => `<li><button class="who" data-user="${esc(p.id)}" data-fid="who-${esc(p.id)}" aria-current="${current === p.id}" ${busy ? "disabled" : ""}><b>${esc(p.name)}</b><span class="role">${esc(p.role)}${p.detail ? `. ${esc(p.detail)}` : ""}</span><span class="go">Sign in and see studies</span></button>${p.records.length > 1 ? `<label class="note">Whose records <select data-records="${esc(p.id)}">${p.records.map(r => `<option value="${esc(r.patient)}" ${choices.records[p.id] === r.patient ? "selected" : ""}>${esc(r.name)}${r.via === "self" ? ": their own" : ""}</option>`).join("")}</select></label>` : ""}</li>`;
-  const client = c => `<li><button class="who" data-client="${esc(c.id)}" data-fid="who-${esc(c.id)}" aria-current="${current === c.id}" ${busy ? "disabled" : ""}><b>${esc(c.id)}</b><span class="role">${esc(c.role)}</span><span class="go">Get a token and search</span></button></li>`;
+  const person = p => `<li><button class="who" data-user="${esc(p.id)}" data-fid="who-${esc(p.id)}" aria-current="${current === p.id}" ${busy ? "disabled" : ""}><b>${esc(p.name)}</b><span class="role">${esc(p.role)}${p.detail ? `. ${esc(p.detail)}` : ""}</span><span class="sr-only">Sign in and see studies</span></button>${p.records.length > 1 ? `<label class="note">Whose records <select data-records="${esc(p.id)}">${p.records.map(r => `<option value="${esc(r.patient)}" ${choices.records[p.id] === r.patient ? "selected" : ""}>${esc(r.name)}${r.via === "self" ? ": their own" : ""}</option>`).join("")}</select></label>` : ""}</li>`;
+  const client = c => `<li><button class="who" data-client="${esc(c.id)}" data-fid="who-${esc(c.id)}" aria-current="${current === c.id}" ${busy ? "disabled" : ""}><b>${esc(c.id)}</b><span class="role">${esc(c.role)}</span><span class="sr-only">Get a token and search</span></button></li>`;
   const focused = document.activeElement?.dataset?.fid;
+  const appName = options.apps.find(a => a.id === choices.app)?.name ?? "";
   $("#pick").innerHTML = `
-    <fieldset><legend>How a person signs in</legend>
-      <label class="choice"><input type="radio" name="mode" value="scripted" ${choices.mode === "scripted" ? "checked" : ""}> Sign in for me</label>
-      <label class="choice"><input type="radio" name="mode" value="window" ${choices.mode === "window" ? "checked" : ""}> Sign in yourself in a real window</label>
-    </fieldset>
-    <label class="field">App a person signs in to <select id="app">${options.apps.map(a => `<option value="${esc(a.id)}" ${choices.app === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></label>
-    <label class="field">Studies per page <select id="count">${options.pageSizes.map(n => `<option ${choices.count === n ? "selected" : ""}>${n}</option>`).join("")}</select></label>
-    <h3>People</h3><ul class="who-list">${options.people.map(person).join("")}</ul>
-    <h3>Backend clients</h3>
-    <label class="field">Patient a client searches for <select id="patient">${options.patients.map(p => `<option value="${esc(p.id)}" ${choices.patient === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>
+    <details class="options" id="options" ${optionsOpen ? "open" : ""}><summary>${choices.mode === "scripted" ? "Signs in for you" : "You sign in, in a window"}, to the ${esc(appName)}, ${choices.count} per page</summary><div class="inner">
+      <fieldset><legend>How a person signs in</legend>
+        <label class="choice"><input type="radio" name="mode" value="scripted" ${choices.mode === "scripted" ? "checked" : ""}> Sign in for me</label>
+        <label class="choice"><input type="radio" name="mode" value="window" ${choices.mode === "window" ? "checked" : ""}> Sign in yourself in a real window</label>
+      </fieldset>
+      <label class="field">App a person signs in to <select id="app">${options.apps.map(a => `<option value="${esc(a.id)}" ${choices.app === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></label>
+      <label class="field">Studies per page <select id="count">${options.pageSizes.map(n => `<option ${choices.count === n ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+    </div></details>
+    <h3>People, who sign in</h3><ul class="who-list">${options.people.map(person).join("")}</ul>
+    <h3>Backend clients, which request a token</h3>
+    <label class="field clients-for">Searching for <select id="patient">${options.patients.map(p => `<option value="${esc(p.id)}" ${choices.patient === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>
     <ul class="who-list">${options.clients.map(client).join("")}</ul>`;
   if (focused) $(`[data-fid="${focused}"]`)?.focus();
 }
@@ -115,7 +121,7 @@ function render() {
   if (key !== shown) {
     shown = key;
     const focused = document.activeElement?.dataset?.fid;
-    $("#result").innerHTML = (pageError ? `<p class="error" role="alert">${esc(pageError)}</p>` : "") + (view ? renderView() : '<p class="note">Pick someone, and their studies appear here.</p>');
+    $("#result").innerHTML = (pageError ? `<p class="error" role="alert">${esc(pageError)}</p>` : "") + (view ? renderView() : EMPTY);
     if (options) renderPick();
     if (focused) $(`[data-fid="${focused}"]`)?.focus();
     if (view && !view.running) {
@@ -126,6 +132,7 @@ function render() {
   renderRetrievals();
 }
 
+const EMPTY = '<div class="viewbox-empty"><p>Pick someone, and their studies go up here, from a real sign-in and a real search.</p><div class="ghosts" aria-hidden="true"><i></i><i></i><i></i><i></i></div></div>';
 const WAITING_TEXT = "Discovery, PKCE, sign-in, consent, and the code exchange are running against the real services.";
 function renderView() {
   const v = view;
@@ -159,6 +166,9 @@ function renderView() {
     </div>${shares}${studies()}${narrow}${steps()}${serverView()}`;
 }
 
+// A frame draws its series from the search result: more instances, a larger exposure and finer rules.
+const exposure = n => Math.min(1, Math.log10(Math.max(1, Number(n))) / 3).toFixed(2);
+const rule = n => Math.max(2, Math.round(26 - 8 * Math.log10(Math.max(1, Number(n)))));
 function studies() {
   const v = view, p = v.page;
   if (v.status !== "results") return "";
@@ -168,9 +178,17 @@ function studies() {
     <button class="primary" data-to="next" data-fid="to-next" ${p.hasNext && !v.searching ? "" : "disabled"}>Next page</button>
     <button class="secondary" data-to="again" data-fid="to-again" ${v.searching ? "disabled" : ""}>Search again</button>
     <label>Per page <select id="page-size" data-fid="page-size">${options.pageSizes.map(n => `<option ${p.count === n ? "selected" : ""}>${n}</option>`).join("")}</select></label></div>`;
-  const study = s => `<article class="panel study" data-study="${esc(s.id)}">
-    <h3>${esc(s.description ?? s.title ?? s.id)}</h3>
-    ${s.title && s.title !== s.description ? `<p class="title">${esc(s.title)}</p>` : ""}
+  const frame = f => f.withheld
+    ? `<li class="frame withheld" title="Series ${esc(f.number)} withheld"><span class="mod">${esc(f.modality)}</span><span class="no">${esc(f.number)}</span><span class="gone">withheld</span><span class="count">${esc(f.instances)}</span></li>`
+    : `<li class="frame" data-mod="${esc(f.modality)}" title="${esc(f.description ?? `Series ${f.number}`)}: ${esc(f.instances)} ${f.instances === 1 ? "instance" : "instances"}"><span class="exposure" style="--n:${exposure(f.instances)};--rule:${rule(f.instances)}px"></span><span class="mod">${esc(f.modality)}</span><span class="no">${esc(f.number)}</span><span class="count">${esc(f.instances)}</span></li>`;
+  const frames = s => [...(s.seriesList ?? []), ...s.withheld.map(x => ({ number: x.number, modality: x.modality, instances: x.instanceCount, withheld: true }))].sort((a, b) => Number(a.number) - Number(b.number));
+  const study = s => `<article class="study" data-study="${esc(s.id)}">
+    <div class="sheet">
+      <h3>${esc(s.description ?? s.title ?? s.id)}</h3>
+      ${s.title && s.title !== s.description ? `<p class="title">${esc(s.title)}</p>` : ""}
+      ${frames(s).length ? `<ol class="frames" aria-label="Series">${frames(s).map(frame).join("")}</ol>` : ""}
+    </div>
+    <div class="plate">
     <dl class="facts">
       <div><dt>Date</dt><dd>${esc(s.date ?? "not recorded")}</dd></div>
       <div><dt>Site, from the catalog</dt><dd>${esc(s.site ?? "none on file")}</dd></div>
@@ -179,10 +197,11 @@ function studies() {
       <div><dt>Instances</dt><dd>${esc(s.instances ?? "none listed")}</dd></div>
       ${s.status === "available" ? "" : `<div><dt>Status</dt><dd>${esc(s.status)}</dd></div>`}
     </dl>
-    ${s.withheld.length ? `<p class="withheld">${s.withheld.length} ${s.withheld.length === 1 ? "series" : "series"} withheld: ${s.withheld.map(x => `series ${esc(x.number)} (${esc(x.modality)}, ${esc(x.instanceCount)} ${x.instanceCount === 1 ? "instance" : "instances"})`).join(", ")}.</p>` : ""}
+    ${s.withheld.length ? `<p class="withheld-note">${s.withheld.length} series withheld from this client. The hatched frames show what policy holds back, which only this demo's view of the server can see.</p>` : ""}
     ${s.context ? `<p class="context"><b>Signed context:</b> ${esc(s.context.plain)}.</p>` : ""}
-    ${s.retrievable ? `<div class="actions"><button class="secondary" data-retrieve="${esc(s.id)}" data-zstd="1" data-fid="z-${esc(s.id)}">Retrieve as a client that accepts zstd</button><button class="secondary" data-retrieve="${esc(s.id)}" data-zstd="0" data-fid="i-${esc(s.id)}">Retrieve as a client without zstd</button><a href="/api/browse/metadata?study=${encodeURIComponent(s.id)}" target="_blank" rel="noopener">View metadata ↗</a></div>` : `<p class="note">This study has no Endpoint, so there's nothing to retrieve yet.</p>`}
+    ${s.retrievable ? `<div class="actions"><button class="secondary" data-retrieve="${esc(s.id)}" data-zstd="1" data-fid="z-${esc(s.id)}">Retrieve with zstd</button><button class="secondary" data-retrieve="${esc(s.id)}" data-zstd="0" data-fid="i-${esc(s.id)}">Retrieve without zstd</button><a href="/api/browse/metadata?study=${encodeURIComponent(s.id)}" target="_blank" rel="noopener">View metadata ↗</a></div>` : `<p class="note">This study has no Endpoint, so there's nothing to retrieve yet.</p>`}
     <div class="slot" data-slot="${esc(s.id)}"></div>
+    </div>
   </article>`;
   return `${pager}${p.studies.map(study).join("")}${p.studies.length > 2 ? pager.replace(/data-fid="[^"]*"/g, "").replace('id="page-size"', 'data-page-size') : ""}
     <details class="raw panel" id="raw"><summary>Raw FHIR Bundle for this page</summary><p class="links"><a href="/api/browse/bundle" target="_blank" rel="noopener">Open in a new tab ↗</a></p><pre id="raw-text">Loading…</pre></details>`;
@@ -202,7 +221,7 @@ function serverView() {
   const released = rows.filter(r => r.released).length;
   return `<div class="panel server-view"><h3>The Imaging Server's view: an app never sees this</h3>
     <p class="note">Only this demo can see this panel. It runs the same policy evaluation as search over every study for ${esc(v.explain.patientName)}, using the demo's service credential.</p>
-    ${rows.length ? `<p><b>${released} of ${rows.length}</b> released.</p><ul class="view-rows">${rows.map(r => `<li><span class="tag ${r.released ? "good" : "bad"}">${esc(r.releaseLabel)}</span> <b>${esc(r.title ?? r.description ?? r.id)}</b>, ${esc(r.site ?? "no site")}<span class="why">${esc(r.reason)}.</span>${r.chain.length ? `<span class="why">Chain: ${r.chain.map(esc).join(" → ")}</span>` : ""}</li>`).join("")}</ul>` : `<p>The catalog holds no studies for ${esc(v.explain.patientName)}.</p>`}
+    ${rows.length ? `<p class="tally"><b>${released} of ${rows.length}</b> released.</p><ul class="view-rows">${rows.map(r => `<li><span class="tag ${r.released ? "good" : "bad"}">${esc(r.releaseLabel)}</span> <b>${esc(r.title ?? r.description ?? r.id)}</b>, ${esc(r.site ?? "no site")}<span class="why">${esc(r.reason)}.</span>${r.chain.length ? `<span class="why">Chain: ${r.chain.map(esc).join(" → ")}</span>` : ""}</li>`).join("")}</ul>` : `<p>The catalog holds no studies for ${esc(v.explain.patientName)}.</p>`}
   </div>`;
 }
 
@@ -217,7 +236,9 @@ function renderRetrievals() {
   for (const b of document.querySelectorAll("[data-retrieve]")) b.disabled = !!v.retrieving;
 }
 function renderRetrieval(r) {
-  const label = r.mode === "zstd" ? "As a client that accepts zstd" : "As a client without zstd";
+  const label = r.mode === "zstd" ? "With zstd" : "Without zstd";
+  const most = Math.max(Number(r.wireBytes ?? 0), Number(r.decodedBytes ?? 0), 1);
+  const bar = (name, n, cls = "") => `<span>${name}</span><span><i class="${cls}" style="width:${(100 * Number(n ?? 0) / most).toFixed(1)}%"></i></span><span class="v" title="${esc(bytes(n))}">${esc(shortBytes(Number(n ?? 0)))}</span>`;
   const ok = r.status >= 200 && r.status < 300;
   const head = r.running && !r.status ? `<span class="spinner" aria-hidden="true"></span>${label}: requesting…` : `${r.running ? '<span class="spinner" aria-hidden="true"></span>' : ""}${label}: <span class="status ${ok ? "ok" : "err"}">${esc(r.status ?? "no response")}</span>`;
   return `<div class="retrieved"><h4>${head}</h4>
@@ -225,11 +246,10 @@ function renderRetrieval(r) {
     ${r.status === 401 ? `<p class="error">This token no longer works. Sign in again.</p>` : ""}
     ${r.denial ? `<p class="note">The proxy reported: ${esc(r.denial)}</p>` : ""}
     <p class="context"><b>How the proxy authorized it:</b> ${esc(r.authzPlain ?? "not reported yet")}.</p>
+    <div class="wire">${bar("On the wire", r.wireBytes, "on-wire")}${bar("Decoded", r.decodedBytes)}</div>
     <dl class="facts">
       <div><dt>Parts</dt><dd>${esc(r.parts)}</dd></div>
       <div><dt>Syntaxes</dt><dd>${r.syntaxes.map(s => `<code>${esc(s)}</code>`).join(" ") || "none"}</dd></div>
-      <div><dt>On the wire</dt><dd>${esc(bytes(r.wireBytes))}</dd></div>
-      <div><dt>Decoded multipart</dt><dd>${esc(bytes(r.decodedBytes))}</dd></div>
       <div><dt>DICOM in the parts</dt><dd>${esc(bytes(r.dicomBytes))}</dd></div>
       <div><dt>Content-Encoding</dt><dd>${esc(r.encoding ?? "not reported yet")}</dd></div>
       <div><dt>Closing boundary</dt><dd>${r.running ? "reading…" : r.complete ? "received" : "not received"}</dd></div>
@@ -261,9 +281,9 @@ document.addEventListener("click", async e => {
 });
 document.addEventListener("change", async e => {
   const t = e.target;
-  if (t.name === "mode") choices.mode = t.value;
-  else if (t.id === "app") choices.app = t.value;
-  else if (t.id === "count") choices.count = Number(t.value);
+  if (t.name === "mode") { choices.mode = t.value; renderPick(); }
+  else if (t.id === "app") { choices.app = t.value; renderPick(); }
+  else if (t.id === "count") { choices.count = Number(t.value); renderPick(); }
   else if (t.id === "patient") choices.patient = t.value;
   else if (t.dataset.records) choices.records[t.dataset.records] = t.value;
   else if (t.id === "page-size" || t.dataset.pageSize !== undefined) {
@@ -280,6 +300,7 @@ document.addEventListener("change", async e => {
 });
 // The Bundle can be large, so it's read when opened. A toggle doesn't bubble, so this listens in capture.
 document.addEventListener("toggle", async e => {
+  if (e.target.id === "options") optionsOpen = e.target.open;
   if (e.target.id !== "raw" || !e.target.open || e.target.dataset.loaded) return;
   e.target.dataset.loaded = "1";
   const r = await fetch("/api/browse/bundle");

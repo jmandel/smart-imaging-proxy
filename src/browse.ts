@@ -215,6 +215,7 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
       return {
         id: st.id, description: st.description, title: row?.title, site: row?.site, date: st.started, status: st.status,
         modalities: (st.modality ?? []).map((m: any) => m.code), series: st.numberOfSeries, instances: st.numberOfInstances,
+        seriesList: (st.series ?? []).map((x: any) => ({ number: x.number, modality: x.modality?.code, instances: x.numberOfInstances, description: x.description })),
         withheld: row?.withheldSeries ?? [], context: ep ? contextForm(ep.address) : undefined, retrievable: !!ep,
       };
     });

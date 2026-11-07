@@ -3,55 +3,26 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Demo Admin</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Crect width='20' height='20' rx='3' fill='%230f2a3d'/%3E%3Cellipse cx='10' cy='10' rx='4.5' ry='6' fill='%23e8f1f6'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/styles.css">
-<style>
-  .admin { max-width:860px; margin:0 auto; padding:1rem 1rem 4rem; }
-  .admin section { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:.85rem 1rem 1rem; margin-bottom:.9rem; min-width:0; }
-  .admin h2 { font-size:1rem; margin:0 0 .45rem; }
-  .admin p { margin:.3rem 0 .6rem; }
-  .admin .note { color:var(--muted); font-size:.85rem; }
-  .admin .warning { background:var(--warn-soft); color:var(--warn); font-weight:600; font-size:.9rem; padding:.5rem .7rem; border-radius:6px; margin:0 0 .9rem; }
-  .admin .actions { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; margin:.6rem 0 0; }
-  .admin button.danger { background:var(--panel); border:1px solid var(--bad); color:var(--bad); border-radius:6px; padding:.4rem .8rem; cursor:pointer; }
-  .admin button.small { padding:.12rem .55rem; font-size:.84rem; }
-  .admin table { border-collapse:collapse; width:100%; font-size:.88rem; table-layout:fixed; }
-  .admin th, .admin td { text-align:left; padding:.28rem .5rem .28rem 0; border-bottom:1px solid var(--line); vertical-align:top; overflow-wrap:anywhere; }
-  .admin th { font-weight:600; color:var(--muted); }
-  .admin thead th { color:var(--ink); }
-  .admin td + td, .admin th + td, .admin th + th { padding-left:.5rem; }
-  .admin td.active-col, .admin th.active-col { background:var(--accent-soft); }
-  .admin .rows { list-style:none; margin:.2rem 0 .6rem; padding:0; font-size:.9rem; }
-  .admin .rows li { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:.25rem .8rem; padding:.35rem 0; border-bottom:1px solid var(--line); }
-  .admin .rows li > span { flex:1 1 14rem; min-width:0; overflow-wrap:anywhere; }
-  .admin .controls li > span { flex-basis:18rem; }
-  .admin .controls button { flex:none; }
-  .admin h3 { font-size:.88rem; margin:.7rem 0 .15rem; }
-  .admin pre { white-space:pre-wrap; overflow-wrap:anywhere; max-width:100%; max-height:none; }
-  .admin .fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:.6rem; }
-  .admin .fields label { font-weight:600; font-size:.86rem; display:flex; flex-direction:column; gap:.2rem; justify-content:space-between; }
-  .admin select { background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:.35rem .5rem; font:inherit; color:inherit; width:100%; font-weight:400; }
-  .admin .inline-field { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; }
-  .admin .inline-field select { width:auto; flex:1 1 7rem; min-width:0; max-width:14rem; }
-  .admin .inline-field select.wide { flex-basis:20rem; max-width:28rem; }
-  .admin .msg { font-size:.86rem; margin:.5rem 0 0; }
-  .admin .msg.bad { color:var(--bad); font-weight:600; }
-  .admin .msg ul { margin:.2rem 0 0; padding-left:1.1rem; font-weight:400; }
-  .admin .ok { color:var(--good); font-weight:600; } .admin .fail { color:var(--bad); font-weight:600; }
-</style>
 </head>
 <body>
-<header>
-  <div><h1>Demo Admin</h1><p>Fixed choices for the demo's policy, settings and services.</p></div>
-  <span id="store-badge" class="store-badge" role="status"></span>
-  <a class="admin-link" href="/">Demo home</a>
-  <a class="admin-link" href="/browse">Browse studies</a>
+<header class="topbar">
+  <a class="mark" href="/"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="1" y="1" width="18" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><ellipse cx="10" cy="10" rx="4" ry="5.5" fill="currentColor"/></svg>SMART Imaging</a>
+  <nav class="pages" aria-label="Pages"><a href="/">Overview</a><a href="/browse">Browse studies</a><a class="live-link" id="live-link" href="#" target="smart-imaging-live" rel="noopener">Live trace ↗</a><a href="/admin" aria-current="page">Admin</a></nav>
+  <div class="bar-status"><span id="store-badge" class="store-badge" role="status"></span></div>
 </header>
 <main class="admin" id="admin">
-  <p class="warning">Every control here is a fixed choice. Nothing on this page can reach the file system or run a command: it can't name a file or a path, and its changes go only to the demo's state and to the policy database shown below. There's no login. Every service listens on 127.0.0.1 and, when Tailscale is running, on this machine's tailnet address, so anyone on your tailnet can use this page, and the worst outcome is changed or reset demo data. Writes naming another Host or web origin are refused.</p>
+  <h1>Admin</h1>
+  <details class="rails"><summary>Every control here is a fixed choice, and none can touch your files.</summary>
+    <p>Nothing on this page can reach the file system or run a command: it can't name a file or a path, and its changes go only to the demo's state and to the policy database shown below.</p>
+    <p>There's no login. Every service listens on 127.0.0.1 and, when Tailscale is running, on this machine's tailnet address, so anyone on your tailnet can use this page, and the worst outcome is changed or reset demo data. Writes naming another Host or web origin are refused.</p>
+  </details>
 
+  <h2 class="group">Policy</h2>
   <section aria-labelledby="h-store">
-    <h2 id="h-store">Policy store</h2>
-    <p class="note">The account page and the sections below act on the active store, and the flow page's policy panel changes only flow scratch. Starting a flow activates and resets flow scratch, and running a flow step activates it. Only an explicit control goes back to saved policy: the button below, or the one beside the badge on the demo home.</p>
+    <div class="about"><h2 id="h-store">Policy store</h2><p>Flows work in scratch, which resets when a flow starts. Saved policy changes only when you act on it here or on the account page.</p></div>
+    <div class="controls">
     <div id="store-table"></div>
     <div class="actions">
       <button class="secondary" data-activate="saved">Use saved policy</button>
@@ -60,19 +31,21 @@
       <button class="danger" id="reset-saved">Reset saved policy</button>
     </div>
     <p class="msg" id="store-msg" role="status"></p>
-    <p class="note">Kept in the saved store: delegations, app grants, rules, settings, the Imaging Server's signing key, and token records, as SHA-256 hashes. Kept only in memory: sign-ins in progress, authorization codes, account sessions, used assertion IDs, the demo clock, and backend client keys, which are generated at startup.</p>
+<p class="note">Kept in the saved store: delegations, app grants, rules, settings, the signing key, and token records, as SHA-256 hashes. Kept only in memory: sign-ins in progress, authorization codes, account sessions, used assertion IDs, the demo clock, and backend client keys.</p>
+    </div>
   </section>
-
   <section aria-labelledby="h-chain">
-    <h2 id="h-chain">Delegations and app grants</h2>
+    <div class="about"><h2 id="h-chain">Delegations and app grants</h2><p>Who shared what, and with which app.</p></div>
+    <div class="controls">
     <div id="chain-list"></div>
     <p class="msg" id="chain-msg" role="status"></p>
-  </section>
 
+    </div>
+  </section>
   <section aria-labelledby="h-rules">
-    <h2 id="h-rules">Rules</h2>
+    <div class="about"><h2 id="h-rules">Rules</h2><p>Applying a rule set replaces every rule in the active store. The first rule that matches decides.</p></div>
+    <div class="controls">
     <p id="rules-current"></p>
-    <p class="note">Applying a rule set replaces every rule in the active store. Rules are checked in order, and the first one that matches decides.</p>
     <div class="inline-field">
       <label for="rule-set-select">Rule set</label>
       <select id="rule-set-select" class="wide"></select>
@@ -86,11 +59,12 @@
       <pre id="custom-rules-text" tabindex="0" aria-labelledby="custom-rules-title"></pre>
     </div>
     <div class="msg" id="rules-msg" role="status"></div>
-  </section>
 
+    </div>
+  </section>
   <section aria-labelledby="h-settings">
-    <h2 id="h-settings">Settings</h2>
-    <p class="note">A choice applies to the active store as soon as you pick it. A value from a flow shows as itself until you pick a choice.</p>
+    <div class="about"><h2 id="h-settings">Settings</h2><p>A choice applies to the active store as soon as you pick it.</p></div>
+    <div class="controls">
     <div class="fields">
       <label>Context lifetime <select data-setting="contextLifetimeSeconds"></select></label>
       <label>Most series listed in a URL <select data-setting="maxSeriesInContext"></select></label>
@@ -98,18 +72,13 @@
       <label>Refresh token lifetime <select data-setting="refreshTokenLifetimeSeconds"></select></label>
     </div>
     <div class="msg" id="settings-msg" role="status"></div>
-  </section>
 
-  <section aria-labelledby="h-clock">
-    <h2 id="h-clock">Demo clock</h2>
-    <p id="clock-now"></p>
-    <div class="actions" id="clock-buttons" role="group" aria-label="Advance the demo clock"></div>
-    <div class="actions"><button class="secondary" id="clock-reset">Reset to real time</button></div>
-    <div class="msg" id="clock-msg" role="status"></div>
+    </div>
   </section>
-
+  <h2 class="group">Services</h2>
   <section aria-labelledby="h-backend">
-    <h2 id="h-backend">Backend</h2>
+    <div class="about"><h2 id="h-backend">Backend</h2><p>Where the proxy reads images from.</p></div>
+    <div class="controls">
     <div class="inline-field">
       <label for="backend-select">Image store</label>
       <select id="backend-select"></select>
@@ -117,31 +86,48 @@
     </div>
     <div id="self-test-results"></div>
     <div class="msg" id="backend-msg" role="status"></div>
-  </section>
 
+    </div>
+  </section>
   <section aria-labelledby="h-catalog">
-    <h2 id="h-catalog">Catalog</h2>
+    <div class="about"><h2 id="h-catalog">Catalog</h2><p>What search reads, chosen by the backend. It holds no policy and can be rebuilt from its source.</p></div>
+    <div class="controls">
     <div id="catalog-stats"></div>
-    <p class="note">What search reads, chosen by the backend above. The catalog holds no policy and can be rebuilt from its source: <code>bun scripts/build-catalog.ts</code> for the archive, and <code>bun scripts/catalog-from-orthanc.ts</code> for Orthanc.</p>
+<p class="note">Rebuild with <code>bun scripts/build-catalog.ts</code> for the archive, and <code>bun scripts/catalog-from-orthanc.ts</code> for Orthanc.</p>
+    </div>
   </section>
-
   <section aria-labelledby="h-outage">
-    <h2 id="h-outage">Decision service</h2>
+    <div class="about"><h2 id="h-outage">Decision service</h2><p>During an outage, requests that need a decision get a 503. Requests the proxy answers from a signed URL keep working.</p></div>
+    <div class="controls">
     <p id="outage-state"></p>
-    <p class="note">During an outage, requests that need a decision get a 503. Requests the proxy answers from a signed URL keep working.</p>
     <div class="actions"><button class="secondary" id="outage-toggle"></button></div>
     <p class="msg" id="outage-msg" role="status"></p>
-  </section>
 
+    </div>
+  </section>
+  <section aria-labelledby="h-clock">
+    <div class="about"><h2 id="h-clock">Demo clock</h2><p>Moves time for this demo only, to try expiry without waiting.</p></div>
+    <div class="controls">
+    <p id="clock-now"></p>
+    <div class="actions" id="clock-buttons" role="group" aria-label="Advance the demo clock"></div>
+    <div class="actions"><button class="secondary" id="clock-reset">Reset to real time</button></div>
+    <div class="msg" id="clock-msg" role="status"></div>
+
+    </div>
+  </section>
+  <h2 class="group">Ending access</h2>
   <section aria-labelledby="h-tokens">
-    <h2 id="h-tokens">Revocation</h2>
+    <div class="about"><h2 id="h-tokens">Revocation</h2><p>What each control ends, and what keeps working until it expires.</p></div>
+    <div class="controls">
     <p id="token-counts"></p>
-    <ul class="rows controls">
-      <li><span>Ends every access and refresh token in the active store, while a signed URL or cached decision already issued keeps working until it expires, which is the revocation window.</span><button class="danger" id="revoke-all">Revoke all tokens</button></li>
-      <li><span>Clears every decision the proxy has cached, so its next request for each goes back to the Imaging Server.</span><button class="danger" id="flush-cache">Flush proxy decision cache</button></li>
-      <li><span>Replaces the Imaging Server's signing key and retires the old one. This screen tells this demo's proxy to refetch its keys, so every signed URL already issued loses the instant path at once here. A proxy that isn't told learns from the Imaging Server's public keys within 60 seconds, when its copy expires. After that, each request on an old URL goes to the Imaging Server, and a currently valid token still gets what policy allows.</span><button class="danger" id="rotate-key">Rotate signing key</button></li>
+    <ul class="rows acts">
+      <li><span>Ends every access and refresh token in the active store. A signed URL or cached decision already issued keeps working until it expires.</span><button class="danger" id="revoke-all">Revoke all tokens</button></li>
+      <li><span>Clears every decision the proxy has cached, so its next request for each asks the Imaging Server.</span><button class="danger" id="flush-cache">Flush proxy decision cache</button></li>
+      <li><span>Replaces the signing key and tells this proxy, so URLs already issued stop answering instantly. A valid token still gets what policy allows by asking. A proxy that isn't told learns within 60 seconds.</span><button class="danger" id="rotate-key">Rotate signing key</button></li>
     </ul>
     <p class="msg" id="tokens-msg" role="status"></p>
+
+    </div>
   </section>
 </main>
 <script src="/admin.js"></script>

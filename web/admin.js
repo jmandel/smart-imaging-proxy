@@ -146,3 +146,4 @@ $("#rotate-key").onclick = () => {
   });
 };
 call("GET", "/status").then(render).catch(e => { document.querySelector(".warning").insertAdjacentHTML("afterend", `<p class="msg bad">${esc(e.message)}</p>`); });
+fetch("/api/flows").then(r => r.json()).then(d => { $("#live-link").href = d.services["live trace"]; }).catch(() => {});

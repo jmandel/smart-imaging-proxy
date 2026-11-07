@@ -48,8 +48,8 @@ export interface Directory {
 }
 
 const PAGE_CSS = `
-:root{color-scheme:light dark;--bg:#f7f7f5;--panel:#fff;--ink:#1d2329;--muted:#5b6670;--line:#dcdfe2;--accent:#14507a;--accent-soft:#e6f0f6;--bad:#a3271f;--bad-soft:#fbe9e7;--warn:#7a5a00;--warn-soft:#fbf3d9;--code:#f1f2f3}
-@media (prefers-color-scheme:dark){:root{--bg:#14171a;--panel:#1c2024;--ink:#e7eaec;--muted:#9aa5ae;--line:#333a40;--accent:#7ab8e0;--accent-soft:#1e3442;--bad:#f09088;--bad-soft:#3a1f1c;--warn:#e2c35c;--warn-soft:#352c10;--code:#262b30}}
+:root{color-scheme:light dark;--bg:#e9f0f5;--panel:#fbfdfe;--ink:#13242f;--muted:#4f6675;--line:#cfdbe3;--accent:#0a6a9c;--accent-soft:#d9e9f2;--bad:#ad2f28;--bad-soft:#f8e2df;--warn:#845800;--warn-soft:#f6ebcd;--code:#e3ebf0}
+@media (prefers-color-scheme:dark){:root{--bg:#0a1822;--panel:#10232f;--ink:#e4edf2;--muted:#9ab0bd;--line:#27404f;--accent:#6cbfe8;--accent-soft:#17384c;--bad:#ff9d92;--bad-soft:#42201d;--warn:#f2c55c;--warn-soft:#3a2f10;--code:#1b3241}}
 *{box-sizing:border-box}
 body{margin:0;padding:1.5rem 1rem 2rem;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
 .brand,.store-line{max-width:560px;margin:0 auto;color:var(--muted);font-size:.8rem}

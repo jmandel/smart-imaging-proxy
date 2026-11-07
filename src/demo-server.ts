@@ -48,6 +48,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     if (p === "/" || p === "/index.html") return file("index.html");
     if (p === "/app.js") return file("app.js");
     if (p === "/styles.css") return file("styles.css");
+    if (p === "/fonts/atkinson-next.woff2" || p === "/fonts/atkinson-mono.woff2") return file(p.slice(1));
     if (p === "/admin") return file("admin.html");
     if (p === "/admin.js") return file("admin.js");
     if (p === "/browse") return file("browse.html");

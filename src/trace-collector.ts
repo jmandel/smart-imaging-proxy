@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { SpanRecord } from "./trace";
 import { summaryOf, TraceStore, type TraceStoreConfig } from "./trace-store";
 
-const PAGES: Record<string, string> = { "/live.js": "web/live.js", "/live.css": "web/live.css", "/trace-view.js": "web/trace-view.js", "/span.html": "web/span.html", "/span.js": "web/span.js", "/log.html": "web/log.html", "/log.js": "web/log.js" };
+const PAGES: Record<string, string> = { "/live.js": "web/live.js", "/live.css": "web/live.css", "/fonts/atkinson-next.woff2": "web/fonts/atkinson-next.woff2", "/fonts/atkinson-mono.woff2": "web/fonts/atkinson-mono.woff2", "/trace-view.js": "web/trace-view.js", "/span.html": "web/span.html", "/span.js": "web/span.js", "/log.html": "web/log.html", "/log.js": "web/log.js" };
 
 const json = (text: string) => new Response(text, { headers: { "content-type": "application/json;charset=utf-8" } });
 const publicSession = ({ id, startedAt, lastAt, spans }: { id: string; startedAt: number; lastAt: number; spans: number }) => ({ id, startedAt, lastAt, spans });

@@ -68,26 +68,54 @@ function renderNav() {
   nav.querySelectorAll("button[data-id]").forEach(b => b.onclick = () => openFlow(b.dataset.id));
   $("#run-all").onclick = runEvery;
 }
+const ROUTE_WHY = {
+  instant: "The URL's signature, expiry, study and token hash all check out, so the proxy answers with no network call.",
+  asked: 'Anything else, such as a refreshed token, a separate client or an expired URL. The proxy asks with an <a href="https://openid.net/specs/authorization-api-1_0.html">AuthZEN</a> evaluation, <code>can_i</code>, and keeps the answer briefly.',
+};
+const routeNode = (x, y, name, sub) => `<rect class="node" x="${x}" y="${y}" width="210" height="72" rx="6"/><text x="${x + 16}" y="${y + 31}">${name}</text><text class="sub" x="${x + 16}" y="${y + 54}">${sub}</text>`;
+const routeSvg = (cls, box, instantPath, askedPath, nodes) => `<svg class="route ${cls}" data-route="instant" viewBox="0 0 ${box}" role="img" aria-label="An app requests images from the proxy, which reads the image store, and asks the Imaging Server only when the URL can't answer.">
+    <path class="path asked" d="${askedPath}"/><path class="path instant" d="${instantPath}"/>${nodes}
+    <circle class="pulse instant-pulse" r="7" style="offset-path:path('${instantPath}')"/><circle class="pulse asked-pulse" r="7" style="offset-path:path('${askedPath}')"/></svg>`;
 function renderIntro(services) {
   document.querySelector(".live-link").href = services["live trace"];
-  $("#main").innerHTML = `<section class="intro"><div class="browse-cta"><p><b>Start here:</b> pick a person or a backend client, and see the studies they can reach, from a real sign-in and search.</p><a class="button" href="/browse">Browse studies</a></div><h2>How this works</h2>
-  <p>An app gets a signed URL from the Imaging Server's search. The proxy in front of the image store either answers from that URL, instantly, or asks the Imaging Server. It holds a public key and no policy.</p>
-  <div class="grid">
-    <div class="card"><h3>Instant</h3>The signature, expiry, study and token hash all check out. No network call.</div>
-    <div class="card"><h3>Asked <code>can_i</code></h3>Anything else: a refreshed token, a separate client, an expired context. It's an <a href="https://openid.net/specs/authorization-api-1_0.html">AuthZEN</a> evaluation.</div>
-    <div class="card"><h3>Nothing for clients to learn</h3><code>Endpoint.address</code> is an opaque URL, and any currently valid token covering the study works.</div>
-  </div>
-  <h3>Who can access what</h3>
-  <ol class="chain-doc">
-    <li><b>Sign in.</b> Every person has their own account at the Authorization Server, and in this demo picking an account stands in for real authentication. Patients see their own records.</li>
-    <li><b>Delegate to a related person.</b> A patient can let someone else sign in as themselves and see all or part of the patient's records.</li>
-    <li><b>Delegate to an app.</b> Anyone with access, patient or related person, can authorize an app through SMART App Launch, and can give it part of what they hold.</li>
-  </ol>
-  <p>Each link can only narrow what the one before it allows. The Imaging Server keeps these choices as policy. Tokens carry the patient and scope, and the proxy learns none of it. Try the <a href="${esc(services.authorization ?? "")}/account" target="_blank" rel="noopener">account page</a>, which works on the policy the badge above names, or flows 1 and 2.</p>
-  <p>Pick a flow on the left. Each step makes real requests to these local services, and you can change the choices and the policy as you go. A flow works in flow scratch, which is reset when it starts, so saved policy isn't affected. The button beside the badge goes back to saved policy, and the <a href="/admin">admin screen</a> manages both.</p>
-  <ul>${Object.entries(services).map(([k, v]) => `<li>${esc(k)}: <code>${esc(v)}</code></li>`).join("")}</ul></section>`;
+  const wide = routeSvg("wide", "920 250", "M125 190 H795", "M125 190 H420 V90 H500 V190 H795",
+    routeNode(20, 154, "App", "token, signed URL") + routeNode(355, 154, "Proxy", "a key, no policy") + routeNode(690, 154, "Image store", "bytes only") + routeNode(355, 18, "Imaging Server", "all the policy"));
+  const tall = routeSvg("tall", "460 366", "M115 56 V316", "M115 56 V172 H345 V200 H115 V316",
+    routeNode(10, 20, "App", "token, signed URL") + routeNode(10, 150, "Proxy", "a key, no policy") + routeNode(10, 280, "Image store", "bytes only") + routeNode(240, 150, "Imaging Server", "all the policy"));
+  $("#main").innerHTML = `<section class="intro">
+    <div class="hero">
+      <h1>The proxy decides without ever holding the policy.</h1>
+      <p>Search signs each study's URL. The proxy checks that signature on every request, and asks the Imaging Server only when it can't answer alone.</p>
+      <div class="route-tabs" role="group" aria-label="Which route a request takes"><button data-route="instant" aria-pressed="true">Signed URL checks out</button><button data-route="asked" aria-pressed="false">Anything else</button></div>
+      ${wide}${tall}
+      <p class="route-why" id="route-why" role="status">${ROUTE_WHY.instant}</p>
+    </div>
+    <div class="narrowing">
+      <div>
+        <h2>Each link can only narrow access</h2>
+        <ol class="links-of-access">
+          <li><b>Josh, the patient</b><span>All their own studies</span></li>
+          <li><b>Sam, a related person</b><span>What Josh shares with Sam</span></li>
+          <li><b>An app</b><span>What Sam gives it</span></li>
+        </ol>
+        <p>Anyone with access can authorize an app, through a real SMART App Launch. The Imaging Server keeps these choices as policy, tokens carry the patient and scope, and the proxy learns none of it.</p>
+      </div>
+      <div class="next">
+        <h2>See it work</h2>
+        <p>Sign in as someone and see exactly the studies they can reach.</p>
+        <p><a class="button" href="/browse">Browse studies</a></p>
+        <p class="note">Or run a flow from the list. Each step makes real requests, in a scratch policy that resets when the flow starts. Accounts share from their own <a href="${esc(services.authorization ?? "")}/account" target="_blank" rel="noopener">account page</a>, and the <a href="/admin">admin screen</a> manages the rest.</p>
+      </div>
+    </div>
+    <details class="addresses"><summary>Service addresses</summary><dl>${Object.entries(services).map(([k, v]) => `<dt>${esc(k)}</dt><dd><code>${esc(v)}</code></dd>`).join("")}</dl></details></section>`;
 }
-
+document.addEventListener("click", e => {
+  const b = e.target.closest?.(".route-tabs button");
+  if (!b) return;
+  document.querySelectorAll(".route-tabs button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+  document.querySelectorAll(".route").forEach(svg => { svg.dataset.route = ""; void svg.getBoundingClientRect(); svg.dataset.route = b.dataset.route; });
+  $("#route-why").innerHTML = ROUTE_WHY[b.dataset.route];
+});
 async function openFlow(id) {
   try { showFlow(id, await post(`/api/flows/${id}/start`)); }
   catch (e) { $("#main").innerHTML = `<p class="error" role="alert">${esc(e.message)}</p>`; }
