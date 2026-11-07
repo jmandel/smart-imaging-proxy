@@ -6,6 +6,7 @@ import { registerClients } from "../src/flows";
 import { createDemoServer } from "../src/demo-server";
 import { accountUrl, submitDelegation } from "../src/flows/oauth";
 import { CONFIG, PORTS } from "../src/config";
+import { createCollector } from "../src/trace-collector";
 
 let stack: Stack; let server: ReturnType<typeof Bun.serve>;
 beforeAll(async () => {
@@ -27,6 +28,30 @@ test("spans are refused from a browser or under another host name", async () => 
 test("traces can't be cleared from another origin or host name", async () => {
   expect((await raw("/api/sessions", "DELETE", { origin: "https://evil.example" })).status).toBe(403);
   expect((await raw("/api/sessions", "DELETE", { host: "evil.example" })).status).toBe(403);
+});
+
+const READS = ["/api/stats", "/api/sessions", "/api/sessions/guard-test/spans", `/api/sessions/guard-test/spans/${"b".repeat(16)}`, "/api/sessions/guard-test/http", "/api/sessions/guard-test/export", "/stream"];
+
+test("traces can't be read under another host name", async () => {
+  for (const path of READS) {
+    const res = await raw(path, "GET", { host: "evil.example" });
+    expect([path, res.status]).toEqual([path, 403]);
+    expect(await res.text()).not.toContain("guard-test");
+  }
+  expect((await raw("/api/sessions", "GET", { host: `evil.example:${PORTS.trace}` })).status).toBe(403);
+  expect((await raw("/api/sessions", "GET", { host: `127.0.0.1:${PORTS.trace + 1}` })).status).toBe(403);
+});
+
+test("traces can be read at this service's own addresses, the viewer's pages load, and a request with no Host is fine", async () => {
+  for (const host of [`127.0.0.1:${PORTS.trace}`, `localhost:${PORTS.trace}`]) {
+    for (const path of ["/", "/api/stats", "/api/sessions", "/live.js"]) expect([host, path, (await raw(path, "GET", { host })).status]).toEqual([host, path, 200]);
+    const stream = await raw("/stream", "GET", { host });
+    expect(stream.status).toBe(200);
+    await stream.body!.cancel();
+  }
+  const c = createCollector(join(import.meta.dir, ".."));
+  expect((await c.fetch(new Request("http://trace.test/api/sessions"))).status).toBe(200);
+  c.close();
 });
 
 test("a delegation takes only an offered relationship", async () => {

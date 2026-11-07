@@ -1,7 +1,7 @@
 // Where the live trace keeps its spans: a SQLite file of its own, apart from policy. Writes are
 // batched, and anything that goes wrong here stays here: the services being traced never see it.
 // Records arrive already redacted by src/trace.ts, so nothing secret reaches this file.
-import { Database } from "bun:sqlite";
+import { Database, SQLiteError } from "bun:sqlite";
 import { chmodSync, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { SpanRecord } from "./trace";
@@ -33,6 +33,9 @@ export const summaryOf = (r: SpanRecord): SpanRecord => {
 
 export interface SessionInfo { id: string; startedAt: number; lastAt: number; spans: number; bytes: number; }
 const MAX_PENDING = 5000;
+const keyOf = (r: SpanRecord) => `${r.session}\n${r.span}`;
+/** The database refused this row, rather than being unavailable, so trying again would fail the same way. */
+const rowAtFault = (e: unknown) => !(e instanceof SQLiteError) || /^SQLITE_(CONSTRAINT|MISMATCH|TOOBIG)/.test(e.code ?? "");
 
 export class TraceStore {
   private db!: Database;
@@ -45,7 +48,7 @@ export class TraceStore {
   private known = new Map<string, number>();
   private seen = new Set<string>();
   private closed = false;
-  private counters = { flushes: 0, written: 0, failures: 0, droppedPending: 0, droppedOverLimit: 0, lastFlushMs: 0, maxFlushMs: 0 };
+  private counters = { flushes: 0, written: 0, failures: 0, droppedPending: 0, droppedOverLimit: 0, droppedInvalid: 0, lastFlushMs: 0, maxFlushMs: 0 };
   private lastError: string | undefined;
   private q!: Record<string, ReturnType<Database["query"]>>;
   /** Called with sessions that retention removed, so the viewer can stop listing them. */
@@ -133,7 +136,7 @@ export class TraceStore {
   put(record: SpanRecord, summary: string) {
     if (this.closed) return;
     this.seen.add(record.session);
-    const key = `${record.session}\n${record.span}`;
+    const key = keyOf(record);
     this.pending.delete(key);
     this.pending.set(key, { record, summary });
     while (this.pending.size > MAX_PENDING) {
@@ -145,7 +148,10 @@ export class TraceStore {
     (this.timer as any).unref?.();
   }
 
-  /** Writes what's queued in one transaction, then applies retention. It never throws. */
+  /**
+   * Writes what's queued in one transaction, then applies retention. It never throws. A row the database
+   * refuses can't hold up the others, and anything else that goes wrong leaves the queue to try again.
+   */
   flush() {
     if (this.timer) { clearTimeout(this.timer); this.timer = undefined; }
     if (!this.pending.size || this.closed) return;
@@ -153,21 +159,40 @@ export class TraceStore {
     const batch = [...this.pending.values()];
     try {
       this.db.transaction(() => { for (const p of batch) this.write(p.record, p.summary); })();
-      for (const p of batch) this.pending.delete(`${p.record.session}\n${p.record.span}`);
+      for (const p of batch) this.pending.delete(keyOf(p.record));
       this.counters.flushes++;
       this.counters.written += batch.length;
-      this.applyRetention();
       this.lastError = undefined;
     } catch (e) {
       this.counters.failures++;
       this.lastError = (e as Error).message;
       this.known = new Map((this.safeSessions()).map(s => [s.id, s.spans]));
+      if (rowAtFault(e)) this.writeEach(batch);
+    }
+    try { this.applyRetention(); }
+    catch (e) { this.counters.failures++; this.lastError = (e as Error).message; }
+    if (this.pending.size) {
       this.timer ??= setTimeout(() => this.flush(), 1000);
       (this.timer as any).unref?.();
     }
     const ms = performance.now() - started;
     this.counters.lastFlushMs = ms;
     this.counters.maxFlushMs = Math.max(this.counters.maxFlushMs, ms);
+  }
+
+  /** One row at a time, dropping and counting each one the database refuses. A problem with the database itself leaves the rest queued. */
+  private writeEach(batch: { record: SpanRecord; summary: string }[]) {
+    for (const p of batch) {
+      try {
+        this.db.transaction(() => this.write(p.record, p.summary))();
+        this.counters.written++;
+      } catch (e) {
+        this.lastError = (e as Error).message;
+        if (!rowAtFault(e)) return;
+        this.counters.droppedInvalid++;
+      }
+      this.pending.delete(keyOf(p.record));
+    }
   }
 
   private write(r: SpanRecord, summary: string) {

@@ -26,13 +26,15 @@ export async function startFlow(stack: Stack, clients: Record<string, BackendCli
 /** An error after someone chose another account says so, since the choice is the likely cause. */
 async function runInSessionNoted<T>(c: Ctx, run: () => Promise<T>): Promise<T> {
   try { return await run(); }
-  catch (e) { throw c.accountNote ? new Error(`${(e as Error).message}. ${c.accountNote}`) : e; }
+  catch (e) { if (c.accountNote) (e as Error).message = `${(e as Error).message}. ${c.accountNote}`; throw e; }
 }
 
 export async function runStep(c: Ctx, flow: Flow, stepId: string, inputs: Record<string, any>): Promise<StepResult> {
   const step = flow.steps.find(s => s.id === stepId);
   if (!step) throw new Error(`no step ${stepId}`);
   c.beginStep();
+  // A request can leave out a step's choices, and a step always has them.
+  inputs = { ...defaultsFor(c, flow, stepId), ...inputs };
   const narrative = await runInSessionNoted(c, () => runInSession(c.session, () => withSpan("user", "action", `${flow.number}. ${step.title}`, { flow: flow.title, step: step.id, backend: c.backend, actor: step.actor, inputs }, async s => {
     const n = await step.run(c, inputs);
     const failed = c.checks.filter(k => !k.ok).length;

@@ -2,7 +2,10 @@
 // launch, search and retrieval across them, then a clean shutdown.
 import { afterAll, describe, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DEFAULT_CATALOG_DB } from "../src/catalog";
 import { CONFIG, PORTS } from "../src/config";
 import { scriptedLaunch } from "../src/flows/oauth";
 import { boundaryOf, readMultipart } from "../src/multipart";
@@ -10,18 +13,21 @@ import { boundaryOf, readMultipart } from "../src/multipart";
 const root = join(import.meta.dir, "..");
 const ACCEPT = "multipart/related; type=application/dicom; transfer-syntax=*";
 const running = new Set<ReturnType<typeof Bun.spawn>>();
-afterAll(() => { for (const p of running) p.kill("SIGKILL"); });
+// The archive this run reads, and a catalog of the run's own unless it was given one, so a child never opens the default files.
+const scratch = mkdtempSync(join(tmpdir(), "proxy-separate-"));
+const catalogDb = process.env.CATALOG_DB || join(scratch, "catalog.sqlite");
+afterAll(() => { for (const p of running) p.kill("SIGKILL"); rmSync(scratch, { recursive: true, force: true }); });
 
 function start(role: string, secret: string | undefined, extra: Record<string, string> = {}) {
   // Only what a process needs, plus PATH and HOME, so it can't be leaning on anything else from here.
-  const env: Record<string, string> = { PATH: process.env.PATH!, HOME: process.env.HOME!, DEMO_PORT_OFFSET: process.env.DEMO_PORT_OFFSET ?? "0", DEMO_TAILNET: "0", POLICY_STORE: "memory", TRACE_STORE: "memory", ...extra };
+  const env: Record<string, string> = { PATH: process.env.PATH!, HOME: process.env.HOME!, DEMO_PORT_OFFSET: process.env.DEMO_PORT_OFFSET ?? "0", DEMO_TAILNET: "0", POLICY_STORE: "memory", TRACE_STORE: "memory", ARCHIVE_DIR: CONFIG.archive.dir, CATALOG_DB: catalogDb, ...extra };
   if (secret) env.SERVICE_SECRET = secret;
   const p = Bun.spawn(["bun", join(root, "src/main.ts"), "--role", role], { cwd: root, env, stdout: "pipe", stderr: "pipe" });
   running.add(p);
   return p;
 }
 const reachable = (url: string) => fetch(url, { signal: AbortSignal.timeout(500) }).then(() => true, () => false);
-async function waitFor(urls: string[], ms = 10000) {
+async function waitFor(urls: string[], ms = 30000) {
   const end = Date.now() + ms;
   for (const u of urls) while (!await reachable(u)) { if (Date.now() > end) throw new Error(`${u} never came up`); await Bun.sleep(50); }
 }
@@ -47,6 +53,8 @@ for (const others of [["imaging,auth,trace"], ["imaging", "auth", "trace"]]) {
       const rest = others.map(role => start(role, secret));
       const proxy = start("proxy", secret, { PROXY_BACKEND: "static-files" });
       await waitFor([...SERVICE_URLS, `${CONFIG.proxyUrl}/wado/-/studies/1.2`]);
+      expect(catalogDb).not.toBe(DEFAULT_CATALOG_DB);
+      expect(existsSync(catalogDb)).toBe(true);
 
       const t = await scriptedLaunch("josh");
       expect(t.access_token).toBeTruthy();

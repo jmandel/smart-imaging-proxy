@@ -137,7 +137,7 @@ export interface StudyPublication { document: StudyDocument; patient: string; st
  * no bucket reads. Queries are scoped to a patient, since the search API always is.
  */
 export interface CatalogStore {
-  /** Atomically makes this version of the study live. This is ingest's publish step. */
+  /** Atomically makes this version of the study searchable. Ingest makes a version live separately, by writing `current.json`. */
   publish(p: StudyPublication): void;
   /** Rows for one patient, in order, starting after `after`, without hierarchies. */
   candidates(q: CatalogSearch, after?: CatalogPosition, batch?: number): CatalogStudy[];

@@ -1,7 +1,6 @@
 {
-  "_note": "Inputs to scripts/build-data.ts. The DICOM studies are Josh Mandel's own, de-identified as \"Josh Example\" and published in github.com/jmandel/my-health-data (imaging/, made by imaging/deid.py there); the sandbox serves them unchanged. The whole-slide study is a CC BY 4.0 slide from the NCI Imaging Data Commons, rewritten here to the same patient. Sources are pinned by SHA-256.",
-  "uidNamespace": "shlink-dicom/imaging-sandbox/v1",
-  "_sources": "The my-health-data archives are pinned to commit 911ee41, except the reconstructed series, which point at master until they are pushed; the SHA-256 pins hold either way. Set SOURCE_CACHE to a local my-health-data/imaging (and the slide download directory) to build without network.",
+  "_note": "Read by scripts/fetch-data.ts, which downloads the sources, and scripts/ingest.ts, which builds the archive from them. The DICOM studies are Josh Mandel's own, de-identified as \"Josh Example\" and published in github.com/jmandel/my-health-data (imaging/, made by imaging/deid.py there); ingest takes them unchanged. The whole-slide study is a CC BY 4.0 slide from the NCI Imaging Data Commons, rewritten here to the same patient. Sources are pinned by SHA-256.",
+  "_sources": "The my-health-data archives are pinned to commit 911ee41, except the reconstructed series, which point at master until they are pushed; the SHA-256 pins hold either way.",
   "sources": [
     {
       "archive": "mri-brain-2020/0003-4-SHOT-PG-DWI.tgz",

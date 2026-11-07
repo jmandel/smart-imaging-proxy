@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { traced } from "./trace";
 import type { BackendName, Stack } from "./stack";
 import { FLOWS, flowById, runStep, startFlow } from "./flows";
-import type { Ctx } from "./flows/runtime";
+import { StepStopped, type Ctx } from "./flows/runtime";
 import { CONFIG } from "./config";
 import { adminApi, extraField, readJson, refuseWrite, BACKEND_NAMES } from "./admin-api";
 import { PolicyValidationError } from "./policy-store";
@@ -17,12 +17,12 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
   // What a reload needs to show this flow again, and what stops another tab from disturbing it.
   let session: { flowId: string; ctx: Ctx; completed: Record<string, { inputs: unknown; result: unknown }>; running?: string } | undefined;
 
-  // The redirect URI the demo app registered. Flows check `state` when they receive it. The redirect
-  // is a real protocol message with no trace fields, so its span joins the flow waiting on it.
+  // The redirect URI the demo app registered. Whoever is waiting takes only its own redirect, by `state`.
+  // The redirect is a real protocol message with no trace fields, so its span joins the flow waiting on it.
   const browse = createBrowse(stack, clients, { flowRunning: () => session?.running });
   const callback = traced("app", async req => {
     const back = new URL(req.url);
-    if (!browse.receiveCallback(back)) session?.ctx.resolveCallback?.(back);
+    if (!browse.receiveCallback(back) && !session?.ctx.receiveCallback(back)) return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Not expected</title></head><body style="font:15px system-ui;padding:2rem"><p>This redirect doesn't match a sign-in the app is waiting for, so the app ignored it.</p></body></html>`, { status: 400, headers: { "content-type": "text/html" } });
     return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Back in the app</title></head><body style="font:15px system-ui;padding:2rem"><p>Back in the app. You can close this window.</p><script>window.close()</script></body></html>`, { headers: { "content-type": "text/html" } });
   }, (_req, url) => `Redirect back to the app: ${url.pathname}`, (_req, url) => browse.callbackContext(url) ?? session?.ctx.callbackContext ?? (session ? { session: session.ctx.session } : undefined));
 
@@ -124,7 +124,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         const result = await runStep(s.ctx, s.flow, step[2]!, b.inputs ?? {});
         s.session.completed[step[2]!] = { inputs: b.inputs ?? {}, result };
         return json({ result, steps: stepInfo(s.flow, s.ctx), policy: stack.imaging.getPolicy(), events: stack.proxy.events.slice(-12), store: storeStatus() });
-      } catch (e) { return json({ error: String((e as Error).message ?? e) }, 500); }
+      } catch (e) { return json({ error: String((e as Error).message ?? e) }, e instanceof StepStopped ? 409 : 500); }
       finally { s.session.running = undefined; }
     }
     return new Response("not found", { status: 404 });

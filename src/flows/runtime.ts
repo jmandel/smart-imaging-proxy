@@ -2,7 +2,7 @@
 import { boundaryOf, readMultipart } from "../multipart";
 import { currentContext, startSpan, tfetch, traceparentOf, withSpan, check as traceCheck } from "../trace";
 import { accountUrl, buildAuthorization, CLINICAL_FHIR, submitConsent, submitDelegation, submitRevocation, tokenRequestBody } from "./oauth";
-import { clientAssertion, type BackendClient } from "../auth-server";
+import { clientAssertion, USERS, type BackendClient } from "../auth-server";
 import { CONFIG } from "../config";
 import { advance, resetClock } from "../clock";
 import type { Rule } from "../imaging-server";
@@ -27,6 +27,9 @@ const redact = (h: Record<string, string>) => {
   return o;
 };
 const shortUrl = (u: string) => u.replace(/\/wado\/([^/]{16})[^/]*\//, "/wado/$1…/");
+
+/** Ends a step, with this as the explanation. An earlier step's outcome left this one nothing to work with. */
+export class StepStopped extends Error {}
 
 export interface Retrieval { status: number; complete: boolean; parts: { syntax?: string; bytes: number }[]; failed: boolean; authz?: string; denial?: string; contentType: string | null; }
 
@@ -59,6 +62,29 @@ export class Ctx {
   siteOf(id: string) { return this.studies().find(s => s.id === id)?.site; }
   /** Set once a person in a window picks an account other than the one a step expects. */
   accountNote: string | undefined;
+  /** Why no token is held, for any step that goes on to need one. */
+  private noToken = "An earlier step has to get a token first";
+  /** What an earlier step should have left. Without it, this step ends here and sends nothing more. */
+  need<T>(value: T | null | undefined, why: string): T {
+    if (value === undefined || value === null) throw new StepStopped(why);
+    return value;
+  }
+  token(token: string | undefined) { return this.need(token, this.noToken); }
+  /** A study an earlier search returned. */
+  found(id: string) { return this.need<any>(this.state.studies?.[id], `An earlier search has to return ${id} first`); }
+  /** The token a launch ended with. Without one, the step ends here, saying why. */
+  launched(t: { access_token?: string; error?: string }) {
+    if (!t.access_token) this.noToken = this.whyNoToken(t.error);
+    return this.token(t.access_token);
+  }
+  private whyNoToken(error: string | undefined) {
+    if (error === "state_mismatch") return "The redirect's state didn't match the request, so the app stopped there and has no token";
+    const who = this.signedIn;
+    if (error !== "access_denied" || !who) return `The launch ended in ${error ?? "an error"}, so the app has no token`;
+    const name = USERS[who]?.name.split(" ")[0] ?? who;
+    const holds = !!USERS[who]?.patient || this.stack.imaging.getPolicy().delegations.some(d => d.delegate === who);
+    return holds ? `${name} chose not to approve the app, so it has no token` : `No patient has shared records with ${name}, so the app has no token`;
+  }
   check(label: string, ok: boolean, detail?: string) {
     // A failure after someone chose another account reads as the result of that choice.
     if (!ok && this.accountNote && !detail?.includes(this.accountNote)) detail = detail ? `${detail}. ${this.accountNote}` : this.accountNote;
@@ -108,7 +134,9 @@ export class Ctx {
       if (signedIn) browser.summary = `Authorization Server's pages: ${signedIn} signed in${back.searchParams.get("code") ? " and approved" : ""}. ${redirected}`;
       this.checkAccount(signedIn, user);
     }
-    this.check("Redirect's state matches the request", back.searchParams.get("state") === a.state);
+    const stateMatches = back.searchParams.get("state") === a.state;
+    this.check("Redirect's state matches the request", stateMatches);
+    if (!stateMatches) return { error: "state_mismatch" } as any;
     const code = back.searchParams.get("code");
     if (!code) return { error: back.searchParams.get("error") } as any;
     const r = await this.json(actor, "Exchange the code, with the PKCE verifier", conf.body.token_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: tokenRequestBody(a, code) });
@@ -127,6 +155,17 @@ export class Ctx {
         timer = setTimeout(() => reject(new Error("timed out waiting for you in the other window")), 300000);
       });
     } finally { clearTimeout(timer); this.pendingAuthUrl = undefined; this.resolveCallback = undefined; this.cancelWindow = undefined; this.callbackContext = undefined; }
+  }
+  /**
+   * A redirect for the wait in progress ends it. A sign-in's redirect has to carry its `state`, and the
+   * account page's says it's done, so a forged redirect goes nowhere and the wait carries on.
+   */
+  receiveCallback(back: URL) {
+    if (!this.pendingAuthUrl || !this.resolveCallback) return false;
+    const state = new URL(this.pendingAuthUrl).searchParams.get("state");
+    if (state ? back.searchParams.get("state") !== state : back.searchParams.get("account") !== "done") return false;
+    this.resolveCallback(back);
+    return true;
   }
   private traceFields() { const x = currentContext(); return x ? { traceparent: traceparentOf(x), session: x.session } : undefined; }
 
@@ -149,11 +188,13 @@ export class Ctx {
     const r = await this.json(clientId, "SMART Backend Services token request", conf.body.token_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "client_credentials", scope, client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: assertion }).toString() });
     return r.body;
   }
-  async refresh(refreshToken: string) {
-    const r = await this.json("App", "Refresh the access token", this.stack.auth.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken }).toString() });
+  async refresh(refreshToken: string | undefined) {
+    this.need(refreshToken, this.noToken);
+    const r = await this.json("App", "Refresh the access token", this.stack.auth.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken! }).toString() });
     return r.body;
   }
-  async search(token: string, query = "patient=josh-example&_include=ImagingStudy:endpoint", actor = "App") {
+  async search(token: string | undefined, query = "patient=josh-example&_include=ImagingStudy:endpoint", actor = "App") {
+    this.token(token);
     const r = await this.json(actor, "Search ImagingStudy", `${CONFIG.imagingUrl}/fhir/ImagingStudy?${query}`, { headers: { Authorization: `Bearer ${token}`, Accept: "application/fhir+json" } });
     const last = this.exchanges[this.exchanges.length - 1]!;
     last.body = summarizeBundle(r.body, id => this.siteOf(id));
@@ -170,7 +211,8 @@ export class Ctx {
     return { status: r.status, studies };
   }
   /** One page of a search, by its URL, shown as it came back. For following `next` links. */
-  async searchPage(title: string, token: string, url: string, actor = "App") {
+  async searchPage(title: string, token: string | undefined, url: string, actor = "App") {
+    this.token(token);
     const r = await this.json(actor, title, url, { headers: { Authorization: `Bearer ${token}`, Accept: "application/fhir+json" } });
     const last = this.exchanges[this.exchanges.length - 1]!;
     last.url = last.url.replace(/_cursor=[^&]+/, "_cursor=…");
@@ -179,8 +221,9 @@ export class Ctx {
   }
   plainBase() { return `${CONFIG.proxyUrl}/wado/-`; }
 
-  /** A WADO-RS retrieval that reads the whole multipart body, as a careful client would. */
-  async retrieve(actor: string, title: string, url: string, token: string | undefined, accept: string | undefined = ACCEPT_ANY): Promise<Retrieval> {
+  /** A WADO-RS retrieval that reads the whole multipart body, as a careful client would. `null` sends no token on purpose. */
+  async retrieve(actor: string, title: string, url: string, token: string | null | undefined, accept: string | undefined = ACCEPT_ANY): Promise<Retrieval> {
+    if (token === undefined) this.token(token);
     const headers: Record<string, string> = {};
     if (accept !== undefined) headers.Accept = accept;
     if (token) headers.Authorization = `Bearer ${token}`;
