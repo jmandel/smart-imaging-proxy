@@ -1,5 +1,6 @@
 // The public API. See README.md.
 export * from "./observer";
+export * from "./events";
 export * from "./clock";
 
 // WADO-RS proxy, its key source, and its server

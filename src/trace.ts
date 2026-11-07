@@ -36,20 +36,61 @@ export const sessionKey = (scope: string | undefined, session: string) => scope 
 /** The scope a session key belongs to, if any. */
 export const scopeOfSession = (session: string) => session.includes("@") ? session.slice(session.lastIndexOf("@") + 1) : undefined;
 
-let buffer: SpanRecord[] = [];
+/**
+ * A typed event: a stable `kind`, its fields in `data`, and what the activity view filters and links
+ * on. `who` is the person or service it's about, `user:{id}` or `client:{id}`, and `links` the values
+ * cards join on: `token:{hash}`, `context:{hash}`, `study:{id}`, `uid:{study uid}`, `patient:{id}`.
+ */
+export interface EventRecord {
+  session: string; trace: string; span?: string; scope?: string; service: Service; at: number;
+  kind: string; outcome: "ok" | "denied" | "error" | "info"; who?: string; links: string[]; data: Record<string, unknown>; seq?: number;
+}
+export const OUTCOMES = ["ok", "denied", "error", "info"] as const;
+
+let buffer: SpanRecord[] = [], events: EventRecord[] = [];
 let timer: ReturnType<typeof setTimeout> | undefined;
 let sinkUrl: string | undefined, sinkSecret: string | undefined;
 /** Where spans go, with the credential the collector takes them with. */
 export const setTraceSink = (url: string, secret?: string) => { sinkUrl = url; sinkSecret = secret; };
-const flush = () => {
+const send = (path: string, body: string) => fetch(localUrl(`${sinkUrl}${path}`), { method: "POST", headers: { "content-type": "application/json", ...(sinkSecret ? { authorization: `Bearer ${sinkSecret}` } : {}) }, body }).then(() => {}, () => {});
+const flush = (): Promise<void> => {
   timer = undefined;
-  if (!sinkUrl || !buffer.length) { buffer = []; return; }
-  const body = JSON.stringify(buffer);
-  buffer = [];
-  fetch(localUrl(`${sinkUrl}/v1/spans`), { method: "POST", headers: { "content-type": "application/json", ...(sinkSecret ? { authorization: `Bearer ${sinkSecret}` } : {}) }, body }).catch(() => {});
+  if (!sinkUrl) { buffer = []; events = []; return Promise.resolve(); }
+  const sent: Promise<void>[] = [];
+  if (buffer.length) { sent.push(send("/v1/spans", JSON.stringify(buffer))); buffer = []; }
+  if (events.length) { sent.push(send("/v1/events", JSON.stringify(events))); events = []; }
+  return Promise.all(sent).then(() => {});
 };
 const emit = (s: SpanRecord) => { buffer.push({ ...s, attrs: { ...s.attrs }, http: s.http && { ...s.http } }); timer ??= setTimeout(flush, 25); };
 export const flushTraces = () => { if (timer) clearTimeout(timer); flush(); };
+/** Sends everything held, and resolves once the collector has it. */
+export const traceSettled = () => { if (timer) clearTimeout(timer); return flush(); };
+
+/** What an event's fields say about who it's about, what it links to, and how it came out. */
+function describeEvent(e: Record<string, any>): Pick<EventRecord, "outcome" | "who" | "links"> {
+  const links = [
+    e.tokenHash && `token:${e.tokenHash}`, e.contextHash && `context:${e.contextHash}`, e.study && `study:${e.study}`, e.studyUid && `uid:${e.studyUid}`, e.patient && `patient:${e.patient}`,
+    ...(Array.isArray(e.found) ? e.found.map((s: string) => `study:${s}`) : []),
+  ].filter(Boolean) as string[];
+  const who = e.user ? `user:${e.user}` : e.client ? `client:${e.client}` : undefined;
+  const status = typeof e.status === "number" ? e.status : undefined;
+  const outcome: EventRecord["outcome"] =
+    e.kind === "decision.answered" ? (e.decision ? "ok" : "denied")
+    : e.kind === "proxy.decision" ? (e.unavailable ? "error" : e.allowed ? "ok" : "denied")
+    : e.kind === "proxy.fast-path" ? (e.taken ? "ok" : "info")
+    : e.kind === "stream.done" ? (e.complete ? "ok" : "error")
+    : e.ok === false ? "denied"
+    : status === undefined ? "ok" : status >= 500 ? "error" : status >= 400 ? "denied" : "ok";
+  return { outcome, who, links: [...new Set(links)] };
+}
+/** Records a typed event in the current span's session and trace. */
+export function recordEvent(service: Service, e: { kind: string } & Record<string, unknown>) {
+  const p = als.getStore();
+  const scope = p?.scope ?? scopes.getStore();
+  const { kind, ...data } = e;
+  events.push({ session: sessionKey(scope, p?.session ?? "unattributed"), trace: p?.trace ?? hex(16), ...(p?.span ? { span: p.span } : {}), ...(scope ? { scope } : {}), service, at: nowMs(), kind, ...describeEvent(e), data: JSON.parse(JSON.stringify(data)) });
+  timer ??= setTimeout(flush, 25);
+}
 
 const hex = (n: number) => randomBytes(n).toString("hex");
 
@@ -228,4 +269,5 @@ export const traceObserver: Observer = {
   withSpan: (service, kind, name, attrs, fn) => withSpan(service, kind, name, attrs, s => fn(spanOf(s))),
   check,
   fetch: tfetch,
+  event: (service, e) => recordEvent(service, e as any),
 };

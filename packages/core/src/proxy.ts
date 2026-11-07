@@ -13,6 +13,7 @@ import { EVRLE, isStandard } from "./syntax";
 import { systemClock, type Clock } from "./clock";
 import { noopObserver, type Observer, type ServerSpan, type Span } from "./observer";
 import { rawFrame, rawFrameSize, RawFrameWriter } from "./zstd-frames";
+import { shortHash, type Authz } from "./events";
 
 const UID = /^[0-9]+(\.[0-9]+)*$/;
 const CTX = /^[A-Za-z0-9_\-.]+$|^-$/;
@@ -63,7 +64,11 @@ export interface ProxyEvent {
   syntaxes?: string[]; note?: string; rewritten?: number; truncated?: boolean;
   /** Bytes handed to the client so far. */
   bytes?: number; disconnected?: boolean;
+  /** What the typed events name: the study, the resource asked for, and hashes of the token and context. */
+  studyUid?: string; resource?: string; tokenHash?: string; contextHash?: string; encoding?: "zstd" | "identity"; streamed?: boolean;
 }
+
+const hashesOf = (ev: ProxyEvent) => ({ ...(ev.tokenHash ? { tokenHash: ev.tokenHash } : {}), ...(ev.contextHash ? { contextHash: ev.contextHash } : {}) });
 
 /** Keys come from a JWKS URL or, in tests, from a map. */
 type KeyOption = { jwksUrl: string; jwksTtlSeconds?: number; jwksCooldownSeconds?: number; jwksClock?: () => number; keys?: undefined } | { keys: Map<string, KeyObject>; jwksUrl?: undefined };
@@ -133,17 +138,25 @@ export function createProxy(opts: KeyOption & {
     return outcome;
   }
 
+  /** The signed context's own answer, if it gives one. Reported as one `proxy.fast-path` event. */
   async function fastPath(token: string, ctx: string | undefined, study: string, series: string | undefined): Promise<Outcome | undefined> {
+    let failed: string | undefined;
+    const out = await fastPathChecks(token, ctx, study, series, name => { failed ??= name.replace(/^fast path: /, ""); });
+    obs.event("dicomweb-proxy", { kind: "proxy.fast-path", studyUid: study, tokenHash: ath(token).slice(0, 10), ...(ctx ? { contextHash: shortHash(ctx) } : {}), taken: !!out, ...(failed ? { failed } : {}) });
+    return out;
+  }
+  async function fastPathChecks(token: string, ctx: string | undefined, study: string, series: string | undefined, fail: (name: string) => void): Promise<Outcome | undefined> {
     const T = "dicomweb-proxy" as const;
-    if (!check(T, "fast path: URL carries a signed context", !!ctx)) return undefined;
+    const pass = (name: string, ok: boolean, attrs?: Record<string, unknown>) => { if (!check(T, name, ok, attrs)) { fail(name); return false; } return true; };
+    if (!pass("fast path: URL carries a signed context", !!ctx)) return undefined;
     const claims = await verified(ctx!);
-    if (!check(T, "fast path: signature verifies", !!claims && claims.v === 1, { alg: "EdDSA" })) return undefined;
-    if (!check(T, "fast path: context isn't marked restricted", !claims.restricted)) return undefined;
-    if (!check(T, "fast path: context hasn't expired", claims.exp > now(), { exp: claims.exp, now: now() })) return undefined;
-    if (!check(T, "fast path: requested study is in the context", claims.study === study, { requested: study, context: claims.study })) return undefined;
-    if (!check(T, "fast path: token hash matches ath", claims.ath === ath(token), { presented: ath(token).slice(0, 10), context: String(claims.ath).slice(0, 10) })) return undefined;
-    if (series && !check(T, "fast path: requested series is released", !claims.series || claims.series.includes(series), { series, listed: claims.series?.length ?? "whole study" })) return undefined;
-    if (!check(T, "fast path: study version is understood", validVersion(claims.ver), { version: claims.ver })) return undefined;
+    if (!pass("fast path: signature verifies", !!claims && claims.v === 1, { alg: "EdDSA" })) return undefined;
+    if (!pass("fast path: context isn't marked restricted", !claims.restricted)) return undefined;
+    if (!pass("fast path: context hasn't expired", claims.exp > now(), { exp: claims.exp, now: now() })) return undefined;
+    if (!pass("fast path: requested study is in the context", claims.study === study, { requested: study, context: claims.study })) return undefined;
+    if (!pass("fast path: token hash matches ath", claims.ath === ath(token), { presented: ath(token).slice(0, 10), context: String(claims.ath).slice(0, 10) })) return undefined;
+    if (series && !pass("fast path: requested series is released", !claims.series || claims.series.includes(series), { series, listed: claims.series?.length ?? "whole study" })) return undefined;
+    if (!pass("fast path: study version is understood", validVersion(claims.ver), { version: claims.ver })) return undefined;
     return { allowed: true, release: claims.series ? { series: claims.series } : "study", via: "instant", ...(claims.ver !== undefined ? { version: claims.ver } : {}) };
   }
 
@@ -174,11 +187,16 @@ export function createProxy(opts: KeyOption & {
    */
   function deliver(frames: AsyncGenerator<Uint8Array>, closeBackend: () => Promise<unknown>, progress: () => { parts: number; syntaxes: string[] }, ev: ProxyEvent, server: ServerSpan, streamSpan: Span, started: number) {
     let sent = 0, over = false;
+    ev.streamed = true;
     const finish = (status: "ok" | "error", attrs: Record<string, unknown>) => {
       over = true;
       const { parts, syntaxes } = progress();
       ev.parts = parts; ev.syntaxes = syntaxes; ev.bytes = sent;
       ev.ms = Math.round((performance.now() - started) * 10) / 10;
+      obs.event("dicomweb-proxy", {
+        kind: "stream.done", studyUid: ev.studyUid ?? "", resource: ev.resource ?? "study", status: 200, ...(ev.authz ? { authz: ev.authz as Authz } : {}), ...hashesOf(ev),
+        parts, bytes: sent, encoding: ev.encoding ?? "identity", syntaxes, complete: status === "ok", ...(ev.note ? { note: ev.note } : {}),
+      });
       streamSpan.end(status, { parts, syntaxes: syntaxes.join(", "), bytes_sent: sent, ...attrs });
       server.end(status);
     };
@@ -502,6 +520,9 @@ export function createProxy(opts: KeyOption & {
     const m = path.match(ROUTE);
     if (!m) return new Response(null, { status: 404 });
     const [, ctxSeg, study, series, instance, tail] = m as unknown as [string, string, string, string | undefined, string | undefined, string | undefined];
+    ev.studyUid = study;
+    ev.resource = tail ? tail.split("/")[0]! : instance ? "instance" : series ? "series" : "study";
+    if (ctxSeg !== "-") ev.contextHash = shortHash(ctxSeg);
     if (!check("dicomweb-proxy", "UIDs and context are well formed", CTX.test(ctxSeg) && validUid(study) && (!series || validUid(series)) && (!instance || validUid(instance)), { study, series, instance })) return new Response(null, { status: 400 });
     if (instance && !series) return new Response(null, { status: 404 });
 
@@ -509,7 +530,9 @@ export function createProxy(opts: KeyOption & {
     if (!check("dicomweb-proxy", "request has a bearer token", !!token, token ? { token_hash: ath(token).slice(0, 10) } : {})) { ev.authz = "no token"; return new Response(null, { status: 401, headers: { "WWW-Authenticate": "Bearer" } }); }
     const ctx = ctxSeg === "-" ? undefined : ctxSeg;
     const operation = tail === "metadata" ? "metadata" : "retrieve";
+    ev.tokenHash = ath(token!).slice(0, 10);
     const decision = await fastPath(token!, ctx, study, series) ?? await canI(token!, ctx, study, operation);
+    if (decision.via !== "instant") obs.event("dicomweb-proxy", { kind: "proxy.decision", studyUid: study, tokenHash: ev.tokenHash, ...(ev.contextHash ? { contextHash: ev.contextHash } : {}), via: decision.via, allowed: decision.allowed, ...(decision.denial ? { denial: decision.denial } : {}), ...(decision.unavailable ? { unavailable: true } : {}) });
     ev.authz = decision.via;
     server.set({ authz: decision.via, allowed: decision.allowed, denial: decision.denial });
     if (!decision.allowed) { ev.denial = decision.unavailable ? "decision service unavailable" : decision.denial; return denyResponse(decision); }
@@ -550,6 +573,9 @@ export function createProxy(opts: KeyOption & {
       while (events.length > maxEvents) events.shift();
       const res = await handle(req, ev, server, start).catch(e => { ev.note = String(e); return new Response(null, { status: 502 }); });
       ev.status = res.status;
+      ev.encoding = res.headers.get("content-encoding") === "zstd" ? "zstd" : "identity";
+      // A stream reports itself when it ends.
+      if (!ev.streamed && ev.resource) obs.event("dicomweb-proxy", { kind: "retrieval.answered", studyUid: ev.studyUid, resource: ev.resource, status: res.status, ...(ev.authz ? { authz: ev.authz as Authz } : {}), ...(ev.denial ? { denial: ev.denial } : {}), ...(ev.note ? { note: ev.note } : {}), ...hashesOf(ev) });
       // A stream sets this again when delivery ends.
       ev.ms = Math.round((performance.now() - start) * 10) / 10;
       return res;

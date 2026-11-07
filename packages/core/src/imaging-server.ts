@@ -4,6 +4,7 @@ import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from
 import { ath, publicJwk, signJws, verifyJws, sameSecret } from "./jws";
 import { systemClock, type Clock } from "./clock";
 import { noopObserver, type Observer } from "./observer";
+import { shortHash, type SearchReturned } from "./events";
 import { createPolicyApi, POLICY_API_PATH, type Access, type ExplainQuery } from "./policy-api";
 import type { PolicyStore } from "./policy-store";
 import { createModel, defaultName, GUARDIAN_OF, idOf, ref, SELF, type Decision, type Namer, type PatientAttributes, type Snapshot } from "./policy-model";
@@ -221,8 +222,11 @@ export function createImagingServer(opts: ImagingServerOptions) {
       if (ev.release.series.length > policy.maxSeriesInContext) claims.restricted = true;
       else claims.series = ev.release.series;
     }
-    check("imaging-fhir", `sign study context: ${study.id}`, true, { kid: key.kid, form: claims.restricted ? "restricted" : claims.series ? "series list" : "whole study", exp: claims.exp, token_hash: claims.ath.slice(0, 10) });
-    return signJws(key, claims);
+    const form = claims.restricted ? "restricted" : claims.series ? "series list" : "whole study";
+    check("imaging-fhir", `sign study context: ${study.id}`, true, { kid: key.kid, form, exp: claims.exp, token_hash: claims.ath.slice(0, 10) });
+    const signed = signJws(key, claims);
+    obs.event("imaging-fhir", { kind: "context.signed", study: study.id, studyUid: study.uid, kid: key.kid, form, ...(claims.series ? { series: claims.series.length } : {}), exp: claims.exp, tokenHash: claims.ath.slice(0, 10), contextHash: shortHash(signed) });
+    return signed;
   }
 
   /**
@@ -319,34 +323,49 @@ export function createImagingServer(opts: ImagingServerOptions) {
     }
   }
 
+  /** Search, reported as one `search.returned` event, whatever it answers. */
   async function search(req: Request, url: URL): Promise<Response> {
+    const shown = new URLSearchParams(url.searchParams);
+    shown.delete("_cursor");
+    const e: SearchReturned = { kind: "search.returned", status: 0, query: shown.toString() };
+    const res = await searchFor(req, url, e);
+    e.status = res.status;
+    obs.event("imaging-fhir", e);
+    return res;
+  }
+  async function searchFor(req: Request, url: URL, e: SearchReturned): Promise<Response> {
+    const fail = (status: number, code: string, text: string) => { e.reason = text; return Response.json(outcome(code, text), { status }); };
     const bearer = bearerOf(req);
-    if (!bearer) return new Response(null, { status: 401, headers: { "WWW-Authenticate": "Bearer" } });
+    if (!bearer) { e.reason = "no bearer token"; return new Response(null, { status: 401, headers: { "WWW-Authenticate": "Bearer" } }); }
+    e.tokenHash = ath(bearer).slice(0, 10);
     const t = await opts.introspect(bearer);
-    if (!check("imaging-fhir", "token is active", t.active, { client: t.client_id, scope: t.scope, patient_context: t.patient, user: t.sub })) return new Response(null, { status: 401, headers: { "WWW-Authenticate": 'Bearer error="invalid_token"' } });
+    if (!check("imaging-fhir", "token is active", t.active, { client: t.client_id, scope: t.scope, patient_context: t.patient, user: t.sub })) { e.reason = "the token is not active"; return new Response(null, { status: 401, headers: { "WWW-Authenticate": 'Bearer error="invalid_token"' } }); }
+    e.client = t.client_id;
+    if (t.sub) e.user = t.sub;
     const level = accessLevel(t);
-    if (!level || !hasImagingScope(t.scope, level)) return Response.json(outcome("forbidden", "scope does not cover ImagingStudy"), { status: 403 });
+    if (!level || !hasImagingScope(t.scope, level)) return fail(403, "forbidden", "scope does not cover ImagingStudy");
     const patientParams = url.searchParams.getAll("patient");
-    if (!patientParams[0]) return Response.json(outcome("required", "the patient parameter is required"), { status: 400 });
-    if (patientParams.length > 1) return Response.json(outcome("invalid", "a search covers one patient"), { status: 400 });
+    if (!patientParams[0]) return fail(400, "required", "the patient parameter is required");
+    if (patientParams.length > 1) return fail(400, "invalid", "a search covers one patient");
     const parsed = patientOf(patientParams[0]);
-    if (!("id" in parsed)) return Response.json(outcome(parsed.code, parsed.text), { status: parsed.status });
+    if (!("id" in parsed)) return fail(parsed.status, parsed.code, parsed.text);
     const patient = parsed.id;
-    if (level === "patient" && patient !== t.patient) return Response.json(outcome("forbidden", "patient does not match the token's patient context"), { status: 403 });
+    e.patient = patient;
+    if (level === "patient" && patient !== t.patient) return fail(403, "forbidden", "patient does not match the token's patient context");
     const policy = snapshotOf(patient);
-    if (level === "system" && !model.preAuthorized(policy, t.client_id, patient).length) return Response.json(outcome("forbidden", "this patient is outside the client's authorized access"), { status: 403 });
+    if (level === "system" && !model.preAuthorized(policy, t.client_id, patient).length) return fail(403, "forbidden", "this patient is outside the client's authorized access");
 
     const countParam = url.searchParams.get("_count");
-    if (countParam !== null && !/^\d+$/.test(countParam)) return Response.json(outcome("invalid", "_count must be a whole number"), { status: 400 });
+    if (countParam !== null && !/^\d+$/.test(countParam)) return fail(400, "invalid", "_count must be a whole number");
     const count = countParam === null ? DEFAULT_COUNT : Math.min(Number(countParam), MAX_COUNT);
     const filters = searchFilters(url, patient);
-    if ("error" in filters) return Response.json(outcome("invalid", filters.error), { status: 400 });
+    if ("error" in filters) return fail(400, "invalid", filters.error);
     const cursorParam = url.searchParams.get("_cursor");
     let after: CatalogPosition | undefined;
     if (cursorParam !== null) {
       let read: ReturnType<typeof readCursor>;
       try { read = readCursor(cursorParam, filters); } catch { read = { error: "the _cursor parameter isn't one this server issued" }; }
-      if (!check("imaging-fhir", "paging cursor is valid", "position" in read, { why: "error" in read ? read.error : undefined })) return Response.json(outcome("invalid", (read as { error: string }).error), { status: 400 });
+      if (!check("imaging-fhir", "paging cursor is valid", "position" in read, { why: "error" in read ? read.error : undefined })) return fail(400, "invalid", (read as { error: string }).error);
       after = (read as { position: CatalogPosition }).position;
     }
 
@@ -355,9 +374,10 @@ export function createImagingServer(opts: ImagingServerOptions) {
     const catalog = opts.catalog();
     const page: { study: CatalogStudy; ev: Evaluation }[] = [];
     let total = 0, bytes = 0, more = false;
+    const withheld: { study: string; why: string }[] = [];
     for (const study of candidates(catalog, filters)) {
       const ev = evaluate(t, study, policy);
-      if (ev.release === "none") continue;
+      if (ev.release === "none") { withheld.push({ study: study.id, why: ev.why }); continue; }
       total++;
       if (after && !isAfter(study, after)) continue;
       if (more) continue;
@@ -366,6 +386,7 @@ export function createImagingServer(opts: ImagingServerOptions) {
       bytes += study.hierarchyBytes;
     }
 
+    Object.assign(e, { found: page.map(p => p.study.id), total, withheld });
     const hasEndpoint = (s: CatalogStudy) => s.status === "available";
     const withEndpoint = page.filter(p => hasEndpoint(p.study));
     const hierarchies = withEndpoint.length ? catalog.hierarchies(withEndpoint.map(p => p.study.pk)) : new Map<number, StudyHierarchy>();
@@ -426,9 +447,17 @@ export function createImagingServer(opts: ImagingServerOptions) {
     const str = (v: unknown) => typeof v === "string" && v.length > 0;
     const wellFormed = !!body && typeof body === "object" && !Array.isArray(body) && str(body.subject?.type) && str(body.subject?.id) && str(body.resource?.type) && str(body.resource?.id) && str(body.action?.name);
     if (!check("policy", "request has the required AuthZEN attributes", wellFormed)) return Response.json({ error: "subject, resource and action are required" }, { status: 400, headers: echo });
+    let asker: { client?: string; user?: string; patient?: string; study?: string } = {};
     const respond = (decision: boolean, context: any, why: string) => {
       const res = { decision, context: { decision_id: `d-${randomUUID().slice(0, 8)}`, ...context } };
       check("policy", `decision: ${decision ? "allow" : "deny"}`, decision, { decision_id: res.context.decision_id, why, release: typeof context.release === "object" ? `${context.release.series.length} series` : context.release, denial: context.denial, max_age_seconds: context.max_age_seconds });
+      const presented = body.subject?.properties?.access_token, signedContext = body.context?.signed_context;
+      const tokenHash = typeof presented === "string" ? ath(presented).slice(0, 10) : undefined;
+      const request = { ...body, subject: { ...body.subject, properties: { access_token: tokenHash ? `sha256:${tokenHash}…` : "(none)" } } };
+      obs.event("policy", {
+        kind: "decision.answered", ...asker, ...(typeof body.resource?.id === "string" ? { studyUid: body.resource.id } : {}), ...(tokenHash ? { tokenHash } : {}),
+        ...(typeof signedContext === "string" ? { contextHash: shortHash(signedContext) } : {}), decision, why, request, response: res,
+      });
       decisions.push({ at: Date.now(), why, request: { ...body, subject: { ...body.subject, properties: { access_token: "(redacted in this log)" } } }, response: res });
       if (decisions.length > 200) decisions.shift();
       return Response.json(res, { headers: echo });
@@ -436,6 +465,7 @@ export function createImagingServer(opts: ImagingServerOptions) {
     const token = body.subject?.properties?.access_token;
     const t = token ? await opts.introspect(token) : { active: false };
     if (!t.active) return respond(false, { denial: "invalid_token", max_age_seconds: 0 }, "token is not active");
+    asker = { client: t.client_id, ...(t.sub ? { user: t.sub } : {}) };
     const level = accessLevel(t);
     if (!level || !hasImagingScope(t.scope, level)) return respond(false, { denial: "insufficient_scope", max_age_seconds: 30 }, "scope does not cover imaging");
     const signed = body.context?.signed_context;
@@ -447,6 +477,7 @@ export function createImagingServer(opts: ImagingServerOptions) {
     }
     const study = opts.catalog().studyByUid(body.resource?.id);
     if (!study || study.status !== "available") return respond(false, { denial: "not_released", max_age_seconds: 30 }, "no such study");
+    asker = { ...asker, patient: study.patient, study: study.id };
     const snap = snapshotOf(study.patient);
     const ev = evaluate(t, study, snap);
     // The revisions this decision read, for a cache to compare against later.
@@ -456,7 +487,7 @@ export function createImagingServer(opts: ImagingServerOptions) {
   }
 
   const policyApi = createPolicyApi({
-    policySecret: opts.policySecret, store: opts.store, check, name,
+    policySecret: opts.policySecret, store: opts.store, check, name, event: e => obs.event("policy", e),
     model: {
       access: accessFor, explain,
       /** A share's sites narrow to what the sharer may name. */

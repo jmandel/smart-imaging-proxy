@@ -13,7 +13,7 @@ describe("spans measure delivery", () => {
   /** The latest version of each span the proxy reported, from a real trace sink. */
   async function collecting(run: () => Promise<void>) {
     const seen = new Map<string, SpanRecord>();
-    const sink = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) { for (const r of await req.json() as SpanRecord[]) seen.set(r.span, r); return new Response(null, { status: 204 }); } });
+    const sink = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) { if (new URL(req.url).pathname === "/v1/spans") for (const r of await req.json() as SpanRecord[]) seen.set(r.span, r); return new Response(null, { status: 204 }); } });
     cleanups.push(() => sink.stop(true));
     setTraceSink(`http://127.0.0.1:${sink.port}`);
     try { await run(); flushTraces(); await sleep(60); } finally { setTraceSink(""); }

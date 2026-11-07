@@ -62,8 +62,22 @@ Each factory takes an optional `observer` and `clock`.
 | `withSpan(service, kind, name, attrs, fn)` | A backend call, ended when `fn` settles |
 | `check(service, name, ok, attrs)` | Each check on a request: a signature, a cache lookup, a policy evaluation. Returns `ok` |
 | `fetch(service, name, url, init, attrs)` | Every outbound request: AuthZEN evaluations, the JWKS, and Orthanc |
+| `event(service, event)` | A typed event, in the span of the work that made it. See below |
 
 A `Span` has `set(attrs)`, `end(status, attrs)`, and `within(fn)`, which runs `fn` as part of the span, for work a response stream does after its handler returned. A `ServerSpan` also has `streaming()`, saying the handler ends it when its stream finishes, and `creditTo(service)`, which the Imaging Server uses for its `policy` routes. Services are `imaging-fhir`, `policy`, `dicomweb-proxy`, and `backend`. Statuses are `ok`, `error`, and `denied`.
+
+**Typed events** have a stable `kind` and fixed fields, in `src/events.ts`, for an audit or activity view to render one card per kind. A token appears only as `tokenHash` and a signed context as `contextHash`: the first 10 characters of the base64url SHA-256 of each, which is also how a token's `ath` begins.
+
+| Kind | Sent by | Fields |
+|---|---|---|
+| `search.returned` | Imaging Server, once per search | `status`, `query`, `client`, `user`, `patient`, `tokenHash`, and for a `200` `found` (this page), `total`, and `withheld`, each `{ study, why }`. Otherwise `reason` |
+| `context.signed` | Imaging Server, per Endpoint | `study`, `studyUid`, `kid`, `form`, `series`, `exp`, `tokenHash`, `contextHash` |
+| `decision.answered` | Imaging Server's decision API | `decision`, `why`, `study`, `studyUid`, `client`, `user`, `patient`, `tokenHash`, `contextHash`, and the AuthZEN `request` (its token as a hash) and `response` |
+| `proxy.fast-path` | Proxy, per retrieval with a token | `studyUid`, `tokenHash`, `contextHash`, `taken`, and the first check that `failed` |
+| `proxy.decision` | Proxy, when it didn't take the fast path | `via` (`cached` or `asked`), `allowed`, `denial`, `unavailable` |
+| `stream.done` | Proxy, when a streamed response ends | `studyUid`, `resource`, `authz`, `parts`, `bytes`, `encoding`, `syntaxes`, `complete`, `note` |
+| `retrieval.answered` | Proxy, for any other response | `studyUid`, `resource`, `status`, `authz`, `denial`, `note` |
+| `policy.written` | Policy API, per write the credential allowed | `operation`, `level`, `status`, `body`, `query`, `revision`, `patient`, and `error` for a refusal |
 
 ## The proxy
 

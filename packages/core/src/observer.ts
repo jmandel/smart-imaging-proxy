@@ -1,6 +1,7 @@
 // What core reports as it works, and how it makes outbound requests. An embedder plugs in its own
 // tracing; the default records nothing. Each service instance takes its own, so two side by side
 // share an observer only when given the same one.
+import type { CoreEvent } from "./events";
 
 /** The services core's spans are credited to. */
 export type CoreService = "imaging-fhir" | "policy" | "dicomweb-proxy" | "backend";
@@ -32,6 +33,8 @@ export interface Observer {
   check(service: CoreService, name: string, ok: boolean, attrs?: Attrs): boolean;
   /** An outbound request. Redirects aren't followed unless `init.redirect` says so. */
   fetch(service: CoreService, name: string, url: string, init?: RequestInit & { headers?: Record<string, string> }, attrs?: Attrs): Promise<Response>;
+  /** A typed event, in the span the work runs in. See events.ts. */
+  event(service: CoreService, e: CoreEvent): void;
 }
 
 const quietSpan: ServerSpan = { set() {}, end() {}, within: fn => fn(), streaming() {}, creditTo() {} };
@@ -43,4 +46,5 @@ export const noopObserver: Observer = {
   withSpan: async (_service, _kind, _name, _attrs, fn) => fn(quietSpan),
   check: (_service, _name, ok) => ok,
   fetch: (_service, _name, url, init = {}) => fetch(url, { ...init, redirect: init.redirect ?? "manual" }),
+  event: () => {},
 };

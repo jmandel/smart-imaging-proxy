@@ -2,7 +2,7 @@
 // what it's told, and small catalog fixtures.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
-import { ARCHIVE_FORMAT, publicationFor, type Attrs, type CatalogStore, type Clock, type CoreService, type Observer, type ServerSpan, type SpanKind, type SpanStatus, type StudyDocument, type StudyHierarchy } from "../src";
+import { ARCHIVE_FORMAT, publicationFor, type Attrs, type CoreEvent, type CatalogStore, type Clock, type CoreService, type Observer, type ServerSpan, type SpanKind, type SpanStatus, type StudyDocument, type StudyHierarchy } from "../src";
 
 export function manualClock(start = Math.floor(Date.now() / 1000)): Clock & { advance(seconds: number): void; set(seconds: number): void; reset(): void } {
   let t = start;
@@ -46,8 +46,10 @@ export function recordingObserver() {
       try { const res = await fetch(url, { ...init, redirect: init.redirect ?? "manual" }); span.end(res.status >= 400 ? "denied" : "ok", { status: res.status }); return res; }
       catch (e) { span.end("error"); throw e; }
     },
+    event: (service, e) => { events.push({ service, span: als.getStore(), ...e }); },
   };
-  return { observer, spans, named: (name: string) => spans.filter(s => s.name === name) };
+  const events: (CoreEvent & { service: CoreService; span?: string })[] = [];
+  return { observer, spans, events, named: (name: string) => spans.filter(s => s.name === name), kinds: (kind: string) => events.filter(e => e.kind === kind) as any[] };
 }
 
 export const hierarchyOf = (uid: string, modality = "CT", instances = 2): StudyHierarchy => ({

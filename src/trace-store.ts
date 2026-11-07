@@ -5,7 +5,10 @@ import { STORAGE } from "./config";
 import { Database, SQLiteError } from "bun:sqlite";
 import { chmodSync, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { SpanRecord } from "./trace";
+import type { EventRecord, SpanRecord } from "./trace";
+
+/** What the activity view filters events by. `scope: ""` is the root's alone. */
+export interface EventQuery { session?: string; scope?: string; kind?: string; outcome?: string; who?: string; trace?: string; link?: string; after?: number; limit?: number; }
 
 export const DEFAULT_TRACE_DB = `${STORAGE}/traces.sqlite`;
 export const TRACE_LIMITS = { maxSessions: 100, maxSpansPerSession: 20000, maxBytes: 512 * 1024 * 1024 };
@@ -92,6 +95,9 @@ export class TraceStore {
       CREATE INDEX IF NOT EXISTS spans_by_start ON spans (session, start);
       CREATE INDEX IF NOT EXISTS spans_by_trace ON spans (session, trace, start) WHERE has_http = 1;
       CREATE TABLE IF NOT EXISTS bodies (session TEXT NOT NULL, span TEXT NOT NULL, http TEXT NOT NULL, PRIMARY KEY (session, span)) WITHOUT ROWID;
+      CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY, session TEXT NOT NULL, scope TEXT, trace TEXT NOT NULL, span TEXT, service TEXT NOT NULL, at REAL NOT NULL, kind TEXT NOT NULL, outcome TEXT NOT NULL, who TEXT, links TEXT NOT NULL, data TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS events_by_session ON events (session, seq);
+      CREATE INDEX IF NOT EXISTS events_by_kind ON events (kind, seq);
       PRAGMA user_version = 1;
     `);
     this.db = db;
@@ -228,7 +234,7 @@ export class TraceStore {
           if (scoped(s.id) !== (kind === "scoped")) continue;
           if ((kind === "root" && count.root <= 1) || count.root + count.scoped <= 1) break;
           if (count[kind] <= this.maxSessions && bytes <= this.maxBytes) break;
-          for (const t of ["bodies", "spans"]) this.db.query(`DELETE FROM ${t} WHERE session = ?`).run(s.id);
+          for (const t of ["bodies", "spans", "events"]) this.db.query(`DELETE FROM ${t} WHERE session = ?`).run(s.id);
           this.db.query("DELETE FROM sessions WHERE id = ?").run(s.id);
           this.known.delete(s.id);
           this.seen.delete(s.id);
@@ -265,6 +271,47 @@ export class TraceStore {
   /** Every span in a session, with its bodies. */
   fullSession(id: string): SpanRecord[] { this.flush(); return (this.q.full!.all(id) as { summary: string; http: string | null }[]).map(r => this.merged(r)); }
 
+  /** Who each token was issued to or used by, so an event that names only a token's hash names its person too. */
+  private whoByToken = new Map<string, string>();
+  /**
+   * Keeps typed events at once, in one transaction. An event that names a token but no one gets the
+   * person an earlier event named for that token.
+   */
+  putEvents(records: EventRecord[]) {
+    if (this.closed || !records.length) return;
+    if (!this.whoByToken.size) for (const r of this.db.query("SELECT who, links FROM events WHERE who IS NOT NULL").all() as { who: string; links: string }[]) for (const l of r.links.trim().split(" ")) if (l.startsWith("token:")) this.whoByToken.set(l, r.who);
+    const insert = this.db.query("INSERT INTO events (session, scope, trace, span, service, at, kind, outcome, who, links, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    try {
+      this.db.transaction(() => {
+        for (const r of records) {
+          const token = r.links.find(l => l.startsWith("token:"));
+          if (!r.who && token) r.who = this.whoByToken.get(token);
+          if (r.who && token) this.whoByToken.set(token, r.who);
+          if (r.who && !r.links.includes(r.who)) r.links.push(r.who);
+          r.seq = Number(insert.run(r.session, r.scope ?? null, r.trace, r.span ?? null, r.service, r.at, r.kind, r.outcome, r.who ?? null, ` ${r.links.join(" ")} `, JSON.stringify(r.data)).lastInsertRowid);
+        }
+      })();
+    } catch (e) { this.counters.failures++; this.lastError = (e as Error).message; }
+  }
+  /** Events in order, matching every filter given: a link value matches any of an event's links. */
+  events(q: EventQuery = {}): EventRecord[] {
+    const where: string[] = [], args: (string | number)[] = [];
+    if (q.session) { where.push("session = ?"); args.push(q.session); }
+    if (q.scope !== undefined) { if (q.scope === "") where.push("scope IS NULL"); else { where.push("scope = ?"); args.push(q.scope); } }
+    for (const [col, v] of [["kind", q.kind], ["outcome", q.outcome], ["who", q.who], ["trace", q.trace]] as const) if (v) { where.push(`${col} = ?`); args.push(v); }
+    if (q.link) { where.push("instr(links, ?) > 0"); args.push(` ${q.link} `); }
+    if (q.after) { where.push("seq > ?"); args.push(q.after); }
+    const limit = Math.min(Math.max(1, q.limit ?? 500), 2000);
+    // The newest `limit`, oldest first.
+    const rows = this.db.query(`SELECT * FROM (SELECT * FROM events ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY seq DESC LIMIT ${limit}) ORDER BY seq`).all(...args) as any[];
+    return rows.map(r => ({ seq: r.seq, session: r.session, ...(r.scope ? { scope: r.scope } : {}), trace: r.trace, ...(r.span ? { span: r.span } : {}), service: r.service, at: r.at, kind: r.kind, outcome: r.outcome, ...(r.who ? { who: r.who } : {}), links: r.links.trim().split(" ").filter(Boolean), data: JSON.parse(r.data) }));
+  }
+  /** The values events can be filtered by, for the activity view's choices. */
+  eventFacets(scope?: string) {
+    const by = (col: string) => (this.db.query(`SELECT DISTINCT ${col} AS v FROM events WHERE ${col} IS NOT NULL ${scope !== undefined ? "AND scope IS ?" : ""} ORDER BY v`).all(...(scope !== undefined ? [scope || null] : [])) as { v: string }[]).map(r => r.v);
+    return { kinds: by("kind"), outcomes: by("outcome"), who: by("who"), scopes: scope !== undefined ? [] : by("scope") };
+  }
+
   fileBytes(): number {
     if (!this.path) return 0;
     return [this.path, `${this.path}-wal`, `${this.path}-shm`].reduce((n, f) => { try { return n + statSync(f).size; } catch { return n; } }, 0);
@@ -280,7 +327,8 @@ export class TraceStore {
   clear() {
     this.pending.clear();
     if (this.timer) { clearTimeout(this.timer); this.timer = undefined; }
-    this.db.exec("DELETE FROM bodies; DELETE FROM spans; DELETE FROM sessions;");
+    this.db.exec("DELETE FROM bodies; DELETE FROM spans; DELETE FROM sessions; DELETE FROM events;");
+    this.whoByToken.clear();
     this.known.clear();
     this.seen.clear();
     this.db.exec("PRAGMA incremental_vacuum");

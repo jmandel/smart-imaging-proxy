@@ -6,7 +6,7 @@ import { ath, b64url, sameSecret, type Clock, type PolicyStore } from "@smart-im
 import { demoClock } from "./clock";
 import { refuseWrite } from "./admin-api";
 import { PORTS } from "./config";
-import { check, traced } from "./trace";
+import { check, recordEvent, traced } from "./trace";
 
 export interface Grant { client_id: string; scope: string; patient?: string; sub?: string; fhirUser?: string; family?: string; }
 
@@ -163,7 +163,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
   const codes = new Map<string, { grant: Grant; client_id: string; redirect_uri: string; code_challenge: string; exp: number }>();
   const backendKeys = new Map<string, { kid: string; publicKey: KeyObject; scopes: string[] }>();
 
-  const issue = (given: Grant, withRefresh: boolean) => {
+  const issue = (given: Grant, withRefresh: boolean, grantType: string) => {
     // Tokens from one refresh chain share a family, so replaying a used one can revoke the others.
     const g = withRefresh ? { ...given, family: given.family ?? randomBytes(16).toString("base64url") } : given;
     const access_token = randomBytes(32).toString("base64url");
@@ -174,6 +174,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     const res: any = { access_token, token_type: "Bearer", expires_in: tokenLifetime, scope: g.scope };
     if (g.patient) res.patient = g.patient;
     if (withRefresh) { const r = randomBytes(32).toString("base64url"); opts.store().putToken(r, "refresh", g, now() + opts.store().getSettings().refreshTokenLifetimeSeconds); res.refresh_token = r; }
+    recordEvent("authorization-server", { kind: "token.issued", grant: grantType, client: g.client_id, ...(g.sub ? { user: g.sub } : {}), ...(g.patient ? { patient: g.patient } : {}), scope: g.scope, tokenHash: ath(access_token).slice(0, 10), expiresIn: tokenLifetime, exp, refresh: withRefresh });
     return res;
   };
   const tokenResponse = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store", Pragma: "no-cache" } });
@@ -438,7 +439,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
         if (!reg) return oauthError("invalid_client", 401);
         const asked = (f.get("scope") ?? "").split(" ").filter(s => reg.scopes.includes(s));
         if (!check("authorization-server", "requested scope is within the client's registration", asked.length > 0, { requested: f.get("scope"), granted: asked.join(" ") })) return oauthError("invalid_scope");
-        return tokenResponse(issue({ client_id: reg.client_id, scope: asked.join(" ") }, false));
+        return tokenResponse(issue({ client_id: reg.client_id, scope: asked.join(" ") }, false, "client_credentials"));
       }
       if (grant === "authorization_code") {
         const code = f.get("code") ?? "";
@@ -450,7 +451,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
         const verifier = f.get("code_verifier") ?? "";
         const computed = createHash("sha256").update(verifier).digest("base64url");
         if (!check("authorization-server", "PKCE: S256 of code_verifier equals code_challenge", computed === c!.code_challenge, { computed: computed.slice(0, 10), challenge: c!.code_challenge.slice(0, 10) })) return oauthError("invalid_grant");
-        return tokenResponse(issue(c!.grant, /(^| )(online|offline)_access( |$)/.test(c!.grant.scope)));
+        return tokenResponse(issue(c!.grant, /(^| )(online|offline)_access( |$)/.test(c!.grant.scope), "authorization_code"));
       }
       if (grant === "refresh_token") {
         const presented = f.get("refresh_token") ?? "";
@@ -468,7 +469,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
         }
         opts.store().revokeToken(presented);
         const { revoked: _revoked, exp: _exp, ...g } = held;
-        return tokenResponse(issue(g, true));
+        return tokenResponse(issue(g, true, "refresh_token"));
       }
       return oauthError("unsupported_grant_type");
     }

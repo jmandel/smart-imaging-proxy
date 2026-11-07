@@ -9,6 +9,7 @@ import { sameSecret } from "./jws";
 import { PolicyValidationError, type PolicyStore, type Settings } from "./policy-store";
 import { bandText, GUARDIAN_OF, idOf, POLICY_TYPES, ref, SELF, type Revision, type Share, type AppApproval, type GuardianAccessPolicy, type Namer, type OrgPolicy, type PolicyDocument, type SharingPolicy } from "./policy-model";
 import type { Observer } from "./observer";
+import type { PolicyWritten } from "./events";
 
 export const POLICY_API_PATH = "/policy/v2";
 
@@ -46,7 +47,33 @@ const bearerOf = (req: Request) => req.headers.get("authorization")?.match(/^bea
 const refused = (r: Refusal) => json(r, 403);
 const isSites = (v: unknown): v is string[] => Array.isArray(v) && v.every(x => typeof x === "string");
 
-export function createPolicyApi(deps: { policySecret: string; store: () => PolicyStore; check: Observer["check"]; model: PolicyModelView; name: Namer }) {
+/** The level a write's path is at. */
+const LEVELS: Record<string, PolicyWritten["level"]> = { "/document": "document", "/relationships": "fact", "/policies": "policy", "/shares": "choice", "/app-approvals": "choice", "/settings": "settings", "/reset": "reset" };
+
+export function createPolicyApi(deps: { policySecret: string; store: () => PolicyStore; check: Observer["check"]; model: PolicyModelView; name: Namer; event?: (e: PolicyWritten) => void }) {
+  const api = policyApiOf(deps);
+  if (!deps.event) return api;
+  // Every write the credential allowed, refused or not, as one `policy.written` event.
+  return async (req: Request, url: URL): Promise<Response> => {
+    if (req.method === "GET" || !sameSecret(bearerOf(req), deps.policySecret)) return api(req, url);
+    const text = await req.clone().text();
+    const res = await api(req, url);
+    const p = url.pathname.slice(POLICY_API_PATH.length);
+    let body: any, answer: any;
+    try { body = text.trim() ? JSON.parse(text) : undefined; } catch { body = undefined; }
+    try { answer = await res.clone().json(); } catch { answer = undefined; }
+    const query = Object.fromEntries(url.searchParams);
+    const patient = [body?.patient, query.patient, body?.object, query.object].find(v => typeof v === "string" && v.startsWith("patient:"));
+    deps.event!({
+      kind: "policy.written", operation: `${req.method} ${p}`, level: LEVELS[p] ?? (p.startsWith("/policies/") ? "policy" : "document"), status: res.status,
+      ...(body !== undefined ? { body } : {}), ...(Object.keys(query).length ? { query } : {}), ...(answer?.revision ? { revision: answer.revision } : {}),
+      ...(res.ok ? {} : { error: answer?.error ?? `HTTP ${res.status}` }), ...(patient ? { patient: patient.slice("patient:".length) } : {}),
+    });
+    return res;
+  };
+}
+
+function policyApiOf(deps: { policySecret: string; store: () => PolicyStore; check: Observer["check"]; model: PolicyModelView; name: Namer }) {
   const { check, model, name } = deps;
   const body = async (req: Request): Promise<unknown> => { const t = await req.text(); if (!t.trim()) return undefined; try { return JSON.parse(t); } catch { throw new SyntaxError("the request body must be JSON"); } };
 

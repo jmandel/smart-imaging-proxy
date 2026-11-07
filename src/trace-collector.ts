@@ -3,8 +3,8 @@
 import { LISTEN_HOSTS, PORTS, TAILNET } from "./config";
 import { join } from "node:path";
 import { sameSecret } from "@smart-imaging-proxy/core";
-import { KINDS, scopeOfSession, SERVICES, STATUSES, type SpanRecord } from "./trace";
-import { summaryOf, TraceStore, type TraceStoreConfig } from "./trace-store";
+import { KINDS, OUTCOMES, scopeOfSession, SERVICES, STATUSES, type EventRecord, type SpanRecord } from "./trace";
+import { summaryOf, TraceStore, type EventQuery, type TraceStoreConfig } from "./trace-store";
 
 const PAGES: Record<string, string> = { "/live.js": "web/live.js", "/live.css": "web/live.css", "/fonts/atkinson-next.woff2": "web/fonts/atkinson-next.woff2", "/fonts/atkinson-mono.woff2": "web/fonts/atkinson-mono.woff2", "/trace-view.js": "web/trace-view.js", "/span.html": "web/span.html", "/span.js": "web/span.js", "/log.html": "web/log.html", "/log.js": "web/log.js" };
 
@@ -45,6 +45,25 @@ function spanProblem(r: unknown) {
   if (scopeOfSession(r.session) !== r.scope) return "the session must be its scope's own";
   if (r.http !== undefined) return httpProblem(r.http);
 }
+/** Why the store couldn't keep this as an event, if so. */
+function eventProblem(r: unknown) {
+  if (!isObject(r)) return "an event must be an object";
+  for (const k of ["session", "trace", "kind"]) if (!isText(r[k])) return `${k} must be a non-empty string`;
+  if (!SERVICES.includes(r.service)) return "service isn't one of the demo's services";
+  if (!OUTCOMES.includes(r.outcome)) return `outcome must be one of ${OUTCOMES.join(", ")}`;
+  if (!isTime(r.at)) return "at must be a number";
+  if (!Array.isArray(r.links) || !r.links.every((l: unknown) => isText(l) && !/\s/.test(l as string))) return "links must be a list of values without spaces";
+  if (!isObject(r.data)) return "data must be an object";
+  for (const k of ["span", "who", "scope"]) if (r[k] !== undefined && !isText(r[k])) return `${k} must be a non-empty string`;
+  if (scopeOfSession(r.session) !== r.scope) return "the session must be its scope's own";
+}
+/** The filters `/api/events` takes. */
+export function eventQueryOf(url: URL): EventQuery {
+  const q: EventQuery = {};
+  for (const k of ["session", "kind", "outcome", "who", "trace", "link", "scope"] as const) { const v = url.searchParams.get(k); if (v !== null) q[k] = v; }
+  for (const k of ["after", "limit"] as const) { const v = Number(url.searchParams.get(k)); if (url.searchParams.has(k) && Number.isInteger(v)) q[k] = v; }
+  return q;
+}
 const decodable = (path: string) => { try { decodeURIComponent(path); return true; } catch { return false; } };
 
 /**
@@ -77,7 +96,22 @@ export function createCollector(root: string, config: TraceStoreConfig = { mode:
     const p = url.pathname;
     if (!ownHost(req)) return new Response("this service answers only at its own addresses", { status: 403 });
     // A scope's view reads only its own sessions, and changes nothing.
-    if (scope && (p === "/v1/spans" || req.method !== "GET")) return new Response("not found", { status: 404 });
+    if (scope && (p === "/v1/spans" || p === "/v1/events" || req.method !== "GET")) return new Response("not found", { status: 404 });
+    if (p === "/v1/events" && req.method === "POST") {
+      if (req.headers.get("origin")) return new Response(null, { status: 403 });
+      if (!sameSecret(req.headers.get("authorization")?.match(/^bearer +(.+)$/i)?.[1], spanSecret)) return new Response(null, { status: 401 });
+      const text = await req.text();
+      if (text.length > MAX_SPANS_BODY) return bad("too many events at once", 413);
+      let records: unknown;
+      try { records = JSON.parse(text); } catch { return bad("the request body must be valid JSON"); }
+      if (!Array.isArray(records)) return bad("the request body must be a JSON array of events");
+      for (const [i, r] of records.entries()) { const problem = eventProblem(r); if (problem) return bad(`event ${i}: ${problem}`); }
+      store.putEvents(records as EventRecord[]);
+      for (const r of records as EventRecord[]) for (const c of clients) if ((!c.session || c.session === r.session) && (!c.scope || r.scope === c.scope)) c.send(`event: event\ndata: ${JSON.stringify(r)}\n\n`);
+      return new Response(null, { status: 202 });
+    }
+    // A scope's view lists only its own events.
+    if (p === "/api/events") { const q = eventQueryOf(url); return Response.json({ events: store.events(scope ? { ...q, scope } : q), facets: store.eventFacets(scope) }); }
     const session = p.match(/^\/api\/sessions\/([^/]+)\//)?.[1];
     if (scope && session && decodable(session) && scopeOf(decodeURIComponent(session)) !== scope) return new Response("not found", { status: 404 });
     if (p === "/v1/spans" && req.method === "POST") {
