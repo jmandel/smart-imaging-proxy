@@ -57,7 +57,10 @@ export function scopedHandler(root: World, scopes: Scopes, serviceOf: (w: World)
     if (nested) return notFound("a scope can't hold another scope");
     const found = scopes.resolve(scope);
     if (!("world" in found)) return notFound(found.error, found.status);
-    const inner = new Request(new URL(rest + url.search, url.origin), req);
+    // Set as a path, never reparsed as a URL, so a rest of `//host/...` stays a path on this origin.
+    const u = new URL(url);
+    u.pathname = rest;
+    const inner = new Request(u, req);
     return inScope(scope, () => serviceOf(found.world)(inner));
   };
 }

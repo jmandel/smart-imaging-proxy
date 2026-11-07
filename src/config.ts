@@ -52,7 +52,8 @@ export const serveOn = (port: number, options: Omit<Parameters<typeof Bun.serve>
     fetch(req: Request, server: unknown) {
       if (foreignHost(req.headers.get("host"), (server as { port: number }).port)) return FOREIGN_HOST();
       // With no Host header, Bun gives a relative URL, and the services read absolute ones.
-      const url = new URL(req.url, `http://${hostname}:${port}`);
+      // Joined as text, so a relative `//host/...` stays a path here rather than naming another origin.
+      const url = /^https?:/.test(req.url) ? new URL(req.url) : new URL(`http://${hostname}:${port}${req.url.startsWith("/") ? "" : "/"}${req.url}`);
       if (url.pathname === "/favicon.ico") return new Response(null, { status: 204 });
       return (options as any).fetch(/^https?:/.test(req.url) ? req : new Request(url, req), server);
     },

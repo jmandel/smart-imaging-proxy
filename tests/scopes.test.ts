@@ -119,6 +119,24 @@ describe("isolation", () => {
   });
 });
 
+describe("a scope's rest of path", () => {
+  test("is never read as another origin, so the write guard and the internal-path block still hold", async () => {
+    const a = stack.scopes.mint();
+    const evil = { method: "POST", headers: { origin: "http://evil.example", "content-type": "application/json" }, body: "{}" };
+    expect((await get(`${CONFIG.demoUrl}/api/scopes`, evil)).status).toBe(403);
+    const before = stack.scopes.size;
+    const sneaky = await get(`${urlsFor(`/s/${a.scope}`).demo}//evil.example/api/scopes`, evil);
+    expect([403, 404]).toContain(sneaky.status);
+    expect(stack.scopes.size).toBe(before);
+    for (const path of ["//h/policy/v1/policy", "//127.0.0.1/policy/v1/policy"]) {
+      expect([path, (await get(`${a.urls.imaging}${path}`, { headers: { Authorization: "Bearer x" } })).status]).toEqual([path, 404]);
+      expect([path, (await get(`${CONFIG.imagingUrl}${path}`, { headers: { Authorization: "Bearer x" } })).status]).toEqual([path, 404]);
+    }
+    // On a service's own port, too.
+    expect((await fetch(`http://127.0.0.1:${PORTS.imaging}/s/${a.scope}//h/policy/v1/policy`, { headers: { Authorization: "Bearer x" } })).status).toBe(404);
+  });
+});
+
 describe("every URL a scope issues carries its prefix", () => {
   test("discovery, the authorize redirects, a search Bundle and its Endpoint.address, and a next link", async () => {
     const w = stack.scopes.mint();
