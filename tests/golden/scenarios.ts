@@ -162,8 +162,9 @@ export async function runScenarios(stack: any, clients: any) {
   service("form", "research-donation", "any", { all: true }, { contextForm: "restricted" });
   await record("backend: restricted form", await backendToken("research-donation"), ALL);
   await fresh();
-  service("gone", "research-donation", "any", { all: true }, { withdrawn: true });
-  await record("backend: withdrawn", await backendToken("research-donation"), ALL);
+  service("gone", "research-donation", "any", { all: true });
+  stack.store.removePolicy("gone");
+  await record("backend: policy removed", await backendToken("research-donation"), ALL);
   await fresh();
   service("short", "research-donation", "any", { all: true });
   stack.store.setSettings({ contextLifetimeSeconds: 60 });

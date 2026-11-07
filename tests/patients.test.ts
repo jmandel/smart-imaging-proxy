@@ -5,12 +5,11 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Database } from "bun:sqlite";
 import { startStack, type BackendName, type Stack } from "../src/stack";
 import { defaultsFor, FLOWS, registerClients, runStep, startFlow } from "../src/flows";
 import { accountUrl, buildAuthorization, CLINICAL_FHIR, scriptedLaunch, submitConsent, submitDelegation, submitRevocation } from "../src/flows/oauth";
 import { createDemoServer } from "../src/demo-server";
-import { ArchiveReader, fileStore, parsePart10, PolicyStore, SCHEMA_VERSION, str } from "@smart-imaging-proxy/core";
+import { ArchiveReader, fileStore, parsePart10, PolicyStore, str } from "@smart-imaging-proxy/core";
 import { CONFIG } from "../src/config";
 import { GUARDIANS_ON_FILE, ON_FILE } from "../src/stores";
 import { syntheticInstance, syntheticStudies, writeSynthetic } from "../scripts/generate-synthetic";
@@ -244,38 +243,19 @@ describe("the guardian", () => {
     const t = await launchFor("riley-example", "alex-neighbor");
     expect((await search(t.access_token, "riley-example")).ids).toEqual(RILEY);
   }, 60000);
-  test("what a guardian shared grants only while they're the guardian, checked at each decision", async () => {
+  test("removing a guardian relationship removes what that guardian shared, and putting it back brings none of it back", async () => {
     await submitDelegation(accountUrl(SAM_ACCOUNT), { user: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"], patient: "riley-example" });
     expect(stack.store.shares()[0]).toMatchObject({ patient: "patient:riley-example", from: `user:${SAM_ACCOUNT}` });
     const t = await launchFor("riley-example", "alex-neighbor");
     expect((await search(t.access_token, "riley-example")).ids).toEqual(["syn-riley-knee-mr-2022"]);
     await stack.policy.removeRelationship(GUARDIANS_ON_FILE[0]!);
     expect((await search(t.access_token, "riley-example")).ids).toEqual([]);
+    expect([stack.store.shares(), stack.store.approvals().filter(a => a.patient === "patient:riley-example")]).toEqual([[], []]);
+    await stack.policy.putRelationship(GUARDIANS_ON_FILE[0]!);
+    expect((await search(t.access_token, "riley-example")).ids).toEqual([]);
     const e = await stack.explain({ client: "portal-app", user: "alex-neighbor", fhirUser: "RelatedPerson/alex-neighbor", patient: "riley-example" });
-    expect(e.studies[0].why).toContain("no sharing policy lets Sam, who is neither the patient nor a guardian, share");
+    expect(e.studies[0].why).toBe("Alex has no share of Riley's records");
   }, 60000);
-  test("a store from before the three levels gains them when it opens, keeping what people chose", () => {
-    const dir = mkdtempSync(join(tmpdir(), "patients-store-"));
-    try {
-      const path = join(dir, "old.sqlite");
-      const old = new Database(path, { create: true });
-      old.exec(`CREATE TABLE delegations (patient TEXT NOT NULL, delegate TEXT NOT NULL, granted_by TEXT NOT NULL, relationship TEXT NOT NULL, sites TEXT NOT NULL, PRIMARY KEY (patient, delegate));
-        CREATE TABLE app_grants (client TEXT NOT NULL, user TEXT NOT NULL, patient TEXT NOT NULL, sites TEXT, PRIMARY KEY (client, user, patient));
-        CREATE TABLE rules (id TEXT PRIMARY KEY, position INTEGER NOT NULL, body TEXT NOT NULL);
-        CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-        CREATE TABLE signing_keys (kid TEXT PRIMARY KEY, private_key TEXT NOT NULL, public_key TEXT NOT NULL, retired INTEGER NOT NULL DEFAULT 0);
-        CREATE TABLE tokens (hash TEXT PRIMARY KEY, kind TEXT NOT NULL, record TEXT NOT NULL, exp INTEGER, revoked INTEGER NOT NULL DEFAULT 0);
-        INSERT INTO delegations VALUES ('josh-example', 'sam-caregiver', 'josh', 'caregiver', '["Lakeside Imaging"]');
-        PRAGMA user_version = 2;`);
-      old.close();
-      const s = new PolicyStore({ mode: "file", path, onFile: ON_FILE });
-      expect(s.info().schemaVersion).toBe(SCHEMA_VERSION);
-      expect(s.relationships()).toEqual([riley]);
-      expect(s.policies()).toEqual(ON_FILE.policies);
-      expect(s.shares()).toEqual([{ from: "user:josh", with: `user:${SAM_ACCOUNT}`, patient: "patient:josh-example", sites: ["Lakeside Imaging"], label: "caregiver" }]);
-      s.close();
-    } finally { rmSync(dir, { recursive: true, force: true }); }
-  });
   test("the document round-trips through validation, and a bad relationship is refused", () => {
     const s = new PolicyStore({ mode: "memory", onFile: ON_FILE });
     const { revision, ...doc } = s.snapshot();

@@ -61,13 +61,13 @@ const releaseLabel = (r: any, seriesCount: number) => r === "none" ? "Not releas
 
 /**
  * The chain behind a list: the reasons, from all three levels, of a study it releases, or failing
- * that, why the first one isn't. A study's own labels aren't part of the list's chain.
+ * that, why the first one shown isn't. Studies a label keeps from an app user are left out before this.
  */
 function plainChain(x: any) {
-  if (x.level === "system") return x.policy ? `${x.client} is pre-authorized for ${PATIENT_NAMES[x.patient] ?? x.patient} by the service-access policy "${x.policy.description ?? x.policy.id}"` : `No service-access policy here pre-authorizes ${x.client} for ${PATIENT_NAMES[x.patient] ?? x.patient}`;
+  if (x.level === "system") return x.policies.length ? `${x.client} is pre-authorized for ${PATIENT_NAMES[x.patient] ?? x.patient} by ${list(x.policies.map((p: any) => `the service-access policy "${p.description ?? p.id}"`))}` : `No service-access policy here pre-authorizes ${x.client} for ${PATIENT_NAMES[x.patient] ?? x.patient}`;
   const row = x.studies.find((r: any) => r.release !== "none") ?? x.studies[0];
-  if (!row) return `Nothing of ${patientFirst(x.patient)}'s is in the catalog`;
-  const links = row.because.filter((b: any) => !b.ref.startsWith("study:")).map((b: any) => b.text);
+  if (!row) return `Nothing of ${patientFirst(x.patient)}'s is released here`;
+  const links = row.because.map((b: any) => b.text);
   return row.release === "none" ? [...links, plainWords(row.why)].join("; ") : links.join("; ");
 }
 
@@ -262,6 +262,8 @@ export function createBrowse(world: World, clients: Record<string, BackendClient
     drainSteps(s);
     try {
       const x = await world.explain({ client: s.start.client, patient, ...(who ? { user: who, fhirUser: USERS[who]?.fhirUser ?? "" } : {}) });
+      // An app user's page never shows a study a label keeps from them, nor its reason.
+      if (who) x.studies = x.studies.filter((row: any) => !row.because.some((b: any) => b.ref.startsWith("study:")));
       s.explain = {
         patient, patientName: PATIENT_NAMES[patient] ?? patient, chain: plainChain(x), level: x.level,
         // This user's approval of this app for this patient, which the site ticks show.

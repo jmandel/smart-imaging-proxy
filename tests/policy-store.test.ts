@@ -1,9 +1,10 @@
 // Saved policy has to survive a restart, and a flow, in its own scope, must never disturb it. Everything here runs
 // against memory stores, or a file in its own temporary directory. The store itself is tested in core.
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { Database } from "bun:sqlite";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { boundaryOf, PolicyStore, readMultipart, type AppApproval, type Share, type ServiceAccessPolicy } from "@smart-imaging-proxy/core";
 import { startStack } from "../src/stack";
 import { defaultsFor, FLOWS, registerClients, runStep, startFlow } from "../src/flows";
@@ -107,6 +108,17 @@ describe("the root and scopes", () => {
       expect(b.clock.now()).toBeLessThan(real() + 10);
       expect(now()).toBeGreaterThanOrEqual(real() + 99);
     } finally { stack.stop(); }
+  });
+});
+
+describe("a saved store in an older format", () => {
+  test("stops startup with a message to reset saved policy", async () => {
+    const path = tempPath();
+    mkdirSync(dirname(path), { recursive: true });
+    const db = new Database(path);
+    db.exec("CREATE TABLE delegations (patient TEXT); PRAGMA user_version = 5");
+    db.close();
+    await expect(startStack(root, { store: { mode: "file", path, durability: "normal" } })).rejects.toThrow(/older format \(schema 5\).*Reset saved policy/);
   });
 });
 

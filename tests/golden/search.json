@@ -14810,7 +14810,7 @@
    ]
   }
  },
- "backend: withdrawn": {
+ "backend: policy removed": {
   "query": "patient=josh-example&_include=ImagingStudy:endpoint",
   "status": 403,
   "contentType": "application/json;charset=utf-8",

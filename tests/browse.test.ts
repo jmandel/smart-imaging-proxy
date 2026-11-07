@@ -222,6 +222,20 @@ describe("explain", () => {
   }, 120000);
 });
 
+describe("a guardian's view", () => {
+  test("never gives a study a label hides as the reason for the list, even when nothing is released", async () => {
+    const b = browser();
+    for (const sites of [[], ["Lakeside Imaging"]]) {
+      const s = await b.pick("sam-caregiver", { patient: "riley-example", sites });
+      expect(s.status).toBe("results");
+      const text = JSON.stringify(s.explain);
+      // The organization's rule for the age band may show; the study, its label and the label's effect don't.
+      for (const hidden of ["Labeled", "keeps it from guardians", "syn-riley-skin-slide-2023", "SKIN BIOPSY", "Skin biopsy", "Northside Pathology"]) expect(text).not.toContain(hidden);
+      expect(s.explain.chain).toContain("Sam is Riley's guardian");
+    }
+  }, 60000);
+});
+
 describe("backend clients", () => {
   test("with no pre-authorization, the real 403, and explain agrees", async () => {
     const b = browser();

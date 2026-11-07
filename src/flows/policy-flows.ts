@@ -346,11 +346,10 @@ export const policyFlows: Flow[] = [
         },
       },
       {
-        id: "withdraw", title: "Josh withdraws consent", actor: "Patient", doc: `<p>Policy changes immediately at the Imaging Server. New searches reflect it at once. The proxy hasn't heard, because it holds no policy and isn't told.</p>`,
+        id: "withdraw", title: "Josh withdraws consent", actor: "Patient", doc: `<p>Withdrawing removes the service-access policy that granted access. Policy changes immediately at the Imaging Server. New searches reflect it at once. The proxy hasn't heard, because it holds no policy and isn't told.</p>`,
         run: async c => {
           c.need(c.state.s, "The service has to be enrolled first");
-          const consent = (await c.world.policy.policies("service-access")).find(p => p.id === "research-consent")!;
-          await c.world.policy.putPolicy({ ...consent, withdrawn: true });
+          await c.world.policy.removePolicy("research-consent");
           const r = await c.search(c.state.token, undefined, "research-donation");
           c.check("Search reflects it immediately", Object.keys(r.studies).length === 0);
           const g = await c.retrieve("research-donation", "Retrieve inside the window", c.studyUrl(c.state.s.base, c.state.s.uid), c.state.token);
