@@ -465,6 +465,7 @@ export function createImagingServer(opts: ImagingServerOptions) {
       sitesFor: patient => opts.catalog().sitesFor(patient),
       sharingFor: (store, from, patient) => model.sharingFor(snapshotOf(idOf(patient, "patient")!, store), from, patient),
       guardianPolicies: (store, patient) => model.guardianPolicies(snapshotOf(idOf(patient, "patient")!, store), patient),
+      stillReaches: (s, user, patient) => model.hasRoute(s, user, patient),
       isGuardian: (store, user, patient) => !!model.guardianOf(snapshotOf(patient, store), ref("user", user), ref("patient", patient)),
     },
   });

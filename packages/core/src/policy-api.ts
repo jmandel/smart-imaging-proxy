@@ -6,7 +6,7 @@
 // about one patient, and the policy revision. A choice organization policy doesn't allow gets a 403
 // naming the policy.
 import { sameSecret } from "./jws";
-import { PolicyValidationError, type PolicyStore, type Settings } from "./policy-store";
+import { PolicyValidationError, type PolicyStore, type Settings, type StillReaches } from "./policy-store";
 import { bandText, idOf, POLICY_TYPES, ref, type Revision, type Share, type AppApproval, type GuardianAccessPolicy, type Namer, type OrgPolicy, type PolicyDocument, type SharingPolicy } from "./policy-model";
 import type { Observer } from "./observer";
 
@@ -34,6 +34,8 @@ export interface PolicyModelView {
   sharingFor(store: PolicyStore, from: string, patient: string): { role?: "patient" | "guardian"; policy?: SharingPolicy };
   guardianPolicies(store: PolicyStore, patient: string): { age?: number; policies: GuardianAccessPolicy[] };
   isGuardian(store: PolicyStore, user: string, patient: string): boolean;
+  /** Whether a user still has a route to a patient, which keeps their app approvals through a revocation. */
+  stillReaches: StillReaches;
 }
 
 const json = (b: unknown, status = 200) => Response.json(b, { status });
@@ -73,7 +75,7 @@ export function createPolicyApi(deps: { policySecret: string; store: () => Polic
     const done = (revision: Revision | undefined, what = "nothing matched") => revision === undefined ? json({ error: what }, 404) : json({ revision });
     try {
       if (p === "/document" && m === "GET") return json(store.snapshot());
-      if (p === "/document" && m === "PUT") { const b = await body(req); return json({ revision: store.setDocument((b === undefined ? {} : b) as Partial<PolicyDocument>) }); }
+      if (p === "/document" && m === "PUT") { const b = await body(req); return json({ revision: store.setDocument((b === undefined ? {} : b) as Partial<PolicyDocument>, model.stillReaches) }); }
 
       // Level 1
       if (p === "/relationships" && m === "GET") return json({ revision: store.revision(), relationships: store.relationships() });
@@ -81,7 +83,7 @@ export function createPolicyApi(deps: { policySecret: string; store: () => Polic
       if (p === "/relationships" && m === "DELETE") {
         const subject = q("subject"), relation = q("relation"), object = q("object");
         if (!subject || !relation || !object) return bad("subject, relation and object are required");
-        return done(store.removeRelationship({ subject, relation, object }), "no such relationship");
+        return done(store.removeRelationship({ subject, relation, object }, model.stillReaches), "no such relationship");
       }
 
       // Level 2
@@ -122,7 +124,7 @@ export function createPolicyApi(deps: { policySecret: string; store: () => Polic
       if (p === "/shares" && m === "DELETE") {
         const by = q("from"), to = q("with"), patient = q("patient");
         if (!to || !(by || patient)) return bad("with is required, with from, patient or both");
-        const revision = store.removeShares({ with: to, from: by, patient });
+        const revision = store.removeShares({ with: to, from: by, patient }, model.stillReaches);
         check("policy", "revoke a share", true, { from: by, with: to, patient });
         return done(revision, "no such share");
       }

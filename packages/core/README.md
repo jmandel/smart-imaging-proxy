@@ -140,7 +140,7 @@ Policy has three levels, and references are written `kind:id`, such as `user:sam
 
 1. **Facts.** Relationships, `{ subject, relation, object, recordedBy? }`, such as `user:sam guardian_of patient:riley`. Labels on studies, such as `confidential-adolescent`, which are catalog data, set from each study's data when it's published. Patient attributes, a birth date, from `patientAttributes`. No fact grants anything alone.
 2. **Organization policy.** A fixed list of types, each with an `id` and parameters. Each one grants: none denies.
-   - `guardian-access`: `when: { age: { min?, max? } }`, whole years with both ends included and at least one end given, `allow: "all"`, and `except`, labels whose studies it doesn't reach.
+   - `guardian-access`: `when: { age: { min?, max? } }`, whole years with both ends included and at least one end given, `allow: "all"`, `except`, labels whose studies it doesn't reach, and `knownLabels`, labels it reaches. Bands never overlap: a write that would leave two overlapping gets `400` naming both, so one policy decides what a guardian sees at each age, and adding one can only grant for ages no band covered.
    - `sharing`: `allowedFrom`, `patient`, `guardian` or both: who may share a patient's records.
    - `service-access`: a backend service's access, `service`, `patients` (`any` or one patient), and `allow` (`all`, `sites`, `modalities`, `studies`, `since`), with `withholdSeries`, series it doesn't reach, and `contextForm`.
 3. **People's choices**, within level 2. Shares, `{ from, with, patient, sites, label }`, one for each patient, sharer and recipient, where the label is how the person is related, such as caregiver. App approvals, `{ by, app, patient, sites? }`, where no `sites` means everything `by` can see.
@@ -151,9 +151,11 @@ Access is the union of every grant that applies. Policies and choices only grant
 - An app approval narrows: the app gets the user's access, at the approval's sites.
 - A backend service gets the union of every `service-access` policy for it and the patient, with no choices. A series one policy withholds and another reaches is released.
 
-Revoking is deleting the grant. Removing a guardian relationship removes, in the same write, that guardian's shares and app approvals for the patient. Removing a share removes the app approvals its recipient made on that patient, so sharing again never brings an app's access back.
+Revoking is deleting the grant, by a single removal or by a document write that leaves it out. Removing a guardian relationship removes, in the same write, that guardian's shares for the patient. Removing a share removes the app approvals its recipient made on that patient, so sharing again never brings an app's access back. A guardian whose relationship goes loses their own approvals for the patient too. An approval stays while its maker still has a route to the patient: as the patient, as a guardian a `guardian-access` policy covers, or through another share.
 
-Labels are facts a grant's reach checks. A study's labels are trimmed and lowercased before matching. A label name is lowercase letters and digits in hyphenated words, and policies' `except` lists take only those. A study label that isn't one, or that no `guardian-access` policy names, keeps the study from every `guardian-access` grant: this fails closed at check time, and ingest doesn't refuse the study. A patient's own access, shares from the patient, and services aren't affected.
+Some grants go quiet rather than being deleted, and come back when their cause does: shares and approvals while no `sharing` policy allows the sharer's role, or no `guardian-access` policy covers the patient's age, including when a patient ages out of a band or their birth date changes.
+
+Labels are facts a grant's reach checks. A study's labels are trimmed and lowercased before matching. A label name is lowercase letters and digits in hyphenated words, and policies' `except` and `knownLabels` take only those. The `guardian-access` policy covering the patient's age decides alone: a study label it neither excepts nor knows, or one that isn't a label name, keeps the study from guardians. Other policies' labels never count. This fails closed at check time, and ingest doesn't refuse the study. A patient's own access, shares from the patient, and services aren't affected.
 
 A birth date is `YYYY-MM-DD` and a real calendar date. A missing, invalid or future one gives no `guardian-access` grant. Age is whole years on today's date in the organization's time zone, the Imaging Server's `timeZone` option, an IANA name, UTC unless given, computed at each check from the clock.
 
@@ -180,7 +182,7 @@ Version 2, at `/policy/v2` on the Imaging Server. JSON in and out. Every call ca
 | Call | Body or query | Answer |
 |---|---|---|
 | `GET /document` | | `{ relationships, policies, shares, approvals, revision }` |
-| `PUT /document` | Any of those parts | Replaces the parts given |
+| `PUT /document` | Any of those parts | Replaces the parts given. What it leaves out takes what hangs off it, as the single removals do |
 | `GET /relationships` | | `{ relationships, revision }` |
 | `PUT /relationships` | `{ subject, relation, object, recordedBy? }` | Adds one |
 | `DELETE /relationships` | `subject`, `relation`, `object` | Removes one. For `guardian_of`, also that guardian's shares and app approvals for the patient |

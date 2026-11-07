@@ -9,7 +9,7 @@ import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { createPrivateKey, createPublicKey, randomBytes, type KeyObject } from "node:crypto";
 import { generateEd25519, sha, type KeyPair } from "./jws";
-import { GUARDIAN_OF, validateApproval, validateDocument, validateOrgPolicy, validateRelationship, validateShare, type AppApproval, type OrgPolicy, type PolicyDocument, type Relationship, type Revision, type Share, type Snapshot } from "./policy-model";
+import { bandOverlaps, GUARDIAN_OF, type Ref, validateApproval, validateDocument, validateOrgPolicy, validateRelationship, validateShare, type AppApproval, type OrgPolicy, type PolicyDocument, type Relationship, type Revision, type Share, type Snapshot } from "./policy-model";
 
 export interface Settings { contextLifetimeSeconds: number; maxSeriesInContext: number; tokenLifetimeSeconds: number; refreshTokenLifetimeSeconds: number; }
 const REFRESH_DEFAULT = 30 * 86400;
@@ -57,6 +57,14 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS tokens (
     hash TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK (kind IN ('access', 'refresh')), record TEXT NOT NULL, exp INTEGER, revoked INTEGER NOT NULL DEFAULT 0);`;
 const POLICY_TABLES = ["relationships", "policies", "shares", "approvals", "settings"];
+
+/**
+ * Whether a user still has a route to a patient after a revocation, from the patient's rows after it.
+ * The policy API passes the Imaging Server's, which knows ages and who each patient is. Without one,
+ * another share with them or a guardian relationship counts.
+ */
+export type StillReaches = (s: Snapshot, user: Ref, patient: Ref) => boolean;
+const anyRoute: StillReaches = (s, user, patient) => s.shares.some(x => x.with === user && x.patient === patient) || s.relationships.some(r => r.subject === user && r.relation === GUARDIAN_OF && r.object === patient);
 
 /** Throws PolicyValidationError if any of `items` fails `check`. */
 function checked<T>(items: unknown[], at: string, check: (x: unknown, at: string, errors: string[]) => void): T[] {
@@ -143,16 +151,29 @@ export class PolicyStore {
   putRelationship(r: Relationship): Revision { checked([r], "relationship", validateRelationship); return this.patientWrite(PolicyStore.patientOfRelationship(r), () => this.putRelationshipRow(r))!; }
   /**
    * Removes a relationship, and returns the revisions, or undefined if there was none. Removing a guardian
-   * relationship removes, in the same write, that guardian's shares and app approvals for the patient,
-   * and what removing those shares removes.
+   * relationship removes, in the same write, that guardian's shares for the patient, and what removing
+   * those shares removes, and the guardian's own app approvals for the patient unless a route remains.
    */
-  removeRelationship(r: Pick<Relationship, "subject" | "relation" | "object">): Revision | undefined {
+  removeRelationship(r: Pick<Relationship, "subject" | "relation" | "object">, stillReaches: StillReaches = anyRoute): Revision | undefined {
     return this.patientWrite(PolicyStore.patientOfRelationship(r), () => {
       if (this.db.run("DELETE FROM relationships WHERE subject = ? AND relation = ? AND object = ?", [r.subject, r.relation, r.object]).changes === 0) return false;
-      if (r.relation !== GUARDIAN_OF) return;
-      for (const s of this.shareRows("patient = ?1 AND from_user = ?2", r.object, r.subject)) this.deleteShareRow(s);
-      this.db.run("DELETE FROM approvals WHERE patient = ? AND by_user = ?", [r.object, r.subject]);
+      if (r.relation === GUARDIAN_OF) this.cascade([r], [], stillReaches);
     });
+  }
+  /**
+   * What removing grants takes with it: each removed guardian relationship, that guardian's shares for the
+   * patient; and for each removed share's recipient, and each removed guardian, their app approvals on
+   * the patient, unless they still have a route to it.
+   */
+  private cascade(guardians: Pick<Relationship, "subject" | "object">[], shares: Pick<Share, "patient" | "with">[], stillReaches: StillReaches) {
+    const affected: [Ref, Ref][] = [...guardians.map(g => [g.subject, g.object] as [Ref, Ref]), ...shares.map(x => [x.with, x.patient] as [Ref, Ref])];
+    for (const g of guardians) for (const x of this.shareRows("patient = ?1 AND from_user = ?2", g.object, g.subject)) {
+      this.db.run("DELETE FROM shares WHERE patient = ? AND from_user = ? AND with_user = ?", [x.patient, x.from, x.with]);
+      affected.push([x.with, x.patient]);
+    }
+    for (const [user, patient] of affected) {
+      if (!stillReaches(this.patientRows(patient), user, patient)) this.db.run("DELETE FROM approvals WHERE patient = ? AND by_user = ?", [patient, user]);
+    }
   }
 
   // Level 2
@@ -174,12 +195,18 @@ export class PolicyStore {
     this.db.run("INSERT OR REPLACE INTO policies (id, position, body) VALUES (?, ?, ?)", [p.id, position, JSON.stringify(p)]);
   }
   /** Adds a policy, or replaces the one with its id. Order is only for listing: access is the union of every policy. */
-  putPolicy(p: OrgPolicy): Revision { checked([p], "policy", validateOrgPolicy); return this.policyWrite(() => this.putPolicyRow(p)); }
+  putPolicy(p: OrgPolicy): Revision {
+    checked([p], "policy", validateOrgPolicy);
+    const overlaps = bandOverlaps([...this.policies().filter(x => x.id !== p.id), p]);
+    if (overlaps.length) throw new PolicyValidationError(overlaps);
+    return this.policyWrite(() => this.putPolicyRow(p));
+  }
   removePolicy(id: string): Revision | undefined { return this.db.query("SELECT 1 FROM policies WHERE id = ?").get(id) ? this.policyWrite(() => this.db.run("DELETE FROM policies WHERE id = ?", [id])) : undefined; }
   /** Replaces every policy of one type with these. */
   replacePolicies(type: OrgPolicy["type"], ps: OrgPolicy[]): Revision {
     const errors = validateDocument({ policies: ps });
     for (const [i, p] of ps.entries()) if (p.type !== type) errors.push(`policies[${i}].type must be ${type}`);
+    if (!errors.length) errors.push(...bandOverlaps([...this.policies().filter(x => x.type !== type), ...ps]));
     if (errors.length) throw new PolicyValidationError(errors);
     return this.policyWrite(() => {
       for (const p of this.policiesOf(type)) this.db.run("DELETE FROM policies WHERE id = ?", [p.id]);
@@ -199,19 +226,20 @@ export class PolicyStore {
   private putShareRow(s: Share) {
     this.db.run("INSERT OR REPLACE INTO shares (patient, with_user, from_user, sites, label) VALUES (?, ?, ?, ?, ?)", [s.patient, s.with, s.from, JSON.stringify(s.sites), s.label]);
   }
-  /** Deletes a share, and the app approvals its recipient made on that patient, so sharing again brings no app back. */
-  private deleteShareRow(s: Pick<Share, "patient" | "from" | "with">) {
-    this.db.run("DELETE FROM shares WHERE patient = ? AND from_user = ? AND with_user = ?", [s.patient, s.from, s.with]);
-    this.db.run("DELETE FROM approvals WHERE patient = ? AND by_user = ?", [s.patient, s.with]);
-  }
   /** Puts a share as given, one per patient, sharer and recipient. The policy API checks it against organization policy first. */
   putShare(s: Share): Revision { checked([s], "share", validateShare); return this.patientWrite(s.patient, () => this.putShareRow(s))!; }
-  /** Removes shares matching every field given, with their recipients' app approvals on those patients, and returns the revisions, or undefined if there were none. */
-  removeShares(m: { with: string; from?: string; patient?: string }): Revision | undefined {
+  /**
+   * Removes shares matching every field given, and returns the revisions, or undefined if there were none.
+   * A recipient's app approvals on a patient go too, unless another route to the patient remains, so
+   * sharing again never brings an app back.
+   */
+  removeShares(m: { with: string; from?: string; patient?: string }, stillReaches: StillReaches = anyRoute): Revision | undefined {
     const hit = this.shareRows("with_user = ?1 AND (?2 IS NULL OR from_user = ?2) AND (?3 IS NULL OR patient = ?3)", m.with, m.from ?? null as any, m.patient ?? null as any);
     if (!hit.length) return undefined;
     return this.tx(() => {
-      for (const s of hit) { this.deleteShareRow(s); this.bumpPatient(s.patient); }
+      for (const s of hit) this.db.run("DELETE FROM shares WHERE patient = ? AND from_user = ? AND with_user = ?", [s.patient, s.from, s.with]);
+      this.cascade([], hit, stillReaches);
+      for (const p of new Set(hit.map(s => s.patient))) this.bumpPatient(p);
       return this.revision(hit.length === 1 ? hit[0]!.patient : undefined);
     });
   }
@@ -236,11 +264,12 @@ export class PolicyStore {
   // Reads for decisions, which never scan other patients' rows
 
   /** Organization policy, and one patient's relationships and choices, at their revisions. */
-  patientSnapshot(patient: string): Snapshot {
-    return this.tx(() => ({
+  patientSnapshot(patient: string): Snapshot { return this.tx(() => this.patientRows(patient)); }
+  private patientRows(patient: string): Snapshot {
+    return {
       policies: this.policies(), relationships: this.relationshipRows("object = ?", patient),
       shares: this.shareRows("patient = ?", patient), approvals: this.approvalRows("patient = ?", patient), revision: this.revision(patient),
-    }));
+    };
   }
   /** Organization policy, and one person's own relationships and choices: what their account pages read. */
   personSnapshot(user: string): Snapshot {
@@ -256,15 +285,25 @@ export class PolicyStore {
   snapshot(): PolicyDocument & { revision: Revision } {
     return this.tx(() => ({ relationships: this.relationships(), policies: this.policies(), shares: this.shares(), approvals: this.approvals(), revision: this.revision() }));
   }
-  /** Replaces the parts given, all or none. Throws PolicyValidationError, changing nothing, if any part is invalid. */
-  setDocument(d: Partial<PolicyDocument>): Revision {
+  /**
+   * Replaces the parts given, all or none. Throws PolicyValidationError, changing nothing, if any part is
+   * invalid. What it removes takes what hangs off it, as the single removals do: a removed guardian
+   * relationship, that guardian's shares and approvals for the patient, and a removed share, its
+   * recipient's approvals there, each unless a route remains. The cascade applies after the parts given.
+   */
+  setDocument(d: Partial<PolicyDocument>, stillReaches: StillReaches = anyRoute): Revision {
     const errors = validateDocument(d);
     if (errors.length) throw new PolicyValidationError(errors);
     return this.policyWrite(() => {
+      const key = (x: { subject: string; relation: string; object: string }) => `${x.subject} ${x.relation} ${x.object}`, shareKey = (x: Share) => `${x.patient} ${x.from} ${x.with}`;
+      const guardiansBefore = this.relationshipRows("relation = ?", GUARDIAN_OF), sharesBefore = this.shares();
       if (d.relationships) { this.db.run("DELETE FROM relationships"); for (const r of d.relationships) this.putRelationshipRow(r); }
       if (d.policies) { this.db.run("DELETE FROM policies"); for (const p of d.policies) this.putPolicyRow(p); }
       if (d.shares) { this.db.run("DELETE FROM shares"); for (const s of d.shares) this.putShareRow(s); }
       if (d.approvals) { this.db.run("DELETE FROM approvals"); for (const a of d.approvals) this.putApprovalRow(a); }
+      this.policies.cache = undefined;
+      const guardiansAfter = new Set(this.relationshipRows("relation = ?", GUARDIAN_OF).map(key)), sharesAfter = new Set(this.shares().map(shareKey));
+      this.cascade(guardiansBefore.filter(r => !guardiansAfter.has(key(r))), sharesBefore.filter(s => !sharesAfter.has(shareKey(s))), stillReaches);
     }, () => this.patientsWithRows());
   }
 

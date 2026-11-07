@@ -24,8 +24,12 @@ export interface PatientAttributes { birthDate?: string; }
 
 /** Whole years, both ends included. */
 export interface AgeBand { min?: number; max?: number; }
-/** Guardians of patients in an age band see the patient's studies, except those with any of `except`'s labels. */
-export interface GuardianAccessPolicy { id: string; type: "guardian-access"; description?: string; when: { age: AgeBand }; allow: "all"; except?: string[]; }
+/**
+ * Guardians of patients in an age band see the patient's studies, except those with any of `except`'s
+ * labels, or with a label it doesn't know: `knownLabels` are labels it reaches, and `except`'s it knows
+ * too. Bands never overlap, so one policy decides each age.
+ */
+export interface GuardianAccessPolicy { id: string; type: "guardian-access"; description?: string; when: { age: AgeBand }; allow: "all"; except?: string[]; knownLabels?: string[]; }
 /** Who may share a patient's records: the patient, a guardian, or both. A share never exceeds the sharer's own access. */
 export interface SharingPolicy { id: string; type: "sharing"; description?: string; allowedFrom: ("patient" | "guardian")[]; }
 /** A backend service's access, to any patient or one, by modalities, studies, sites, or date. */
@@ -91,7 +95,7 @@ export function validateOrgPolicy(p: unknown, at: string, errors: string[]) {
   if (!isText(p.id)) errors.push(`${at}.id must be a non-empty string`);
   if (p.description !== undefined && typeof p.description !== "string") errors.push(`${at}.description must be a string`);
   if (p.type === "guardian-access") {
-    unknownKeys(p, ["id", "type", "description", "when", "allow", "except"], at, errors);
+    unknownKeys(p, ["id", "type", "description", "when", "allow", "except", "knownLabels"], at, errors);
     const age = isObject(p.when) ? p.when.age : undefined;
     if (!isObject(p.when) || !isObject(age)) errors.push(`${at}.when.age must be an object, with min, max, or both`);
     else if (age.min === undefined && age.max === undefined) errors.push(`${at}.when.age must have min, max, or both`);
@@ -103,6 +107,7 @@ export function validateOrgPolicy(p: unknown, at: string, errors: string[]) {
     }
     if (p.allow !== "all") errors.push(`${at}.allow must be "all"`);
     if (p.except !== undefined && !(Array.isArray(p.except) && p.except.every(isLabel))) errors.push(`${at}.except must be a list of labels, such as confidential-adolescent`);
+    if (p.knownLabels !== undefined && !(Array.isArray(p.knownLabels) && p.knownLabels.every(isLabel))) errors.push(`${at}.knownLabels must be a list of labels, such as confidential-adolescent`);
   } else if (p.type === "sharing") {
     unknownKeys(p, ["id", "type", "description", "allowedFrom"], at, errors);
     if (!(Array.isArray(p.allowedFrom) && p.allowedFrom.length && p.allowedFrom.every(x => x === "patient" || x === "guardian"))) errors.push(`${at}.allowedFrom must list patient, guardian, or both`);
@@ -162,6 +167,18 @@ export function validateDocument(d: unknown): string[] {
   list("policies", validateOrgPolicy, p => `id ${p.id}`);
   list("shares", validateShare, shareKey);
   list("approvals", validateApproval, approvalKey);
+  if (!errors.length && Array.isArray(d.policies)) errors.push(...bandOverlaps(d.policies as OrgPolicy[]));
+  return errors;
+}
+
+/** Each pair of guardian-access policies whose age bands overlap, which no set of policies may hold. */
+export function bandOverlaps(policies: OrgPolicy[]): string[] {
+  const g = policies.filter((p): p is GuardianAccessPolicy => p.type === "guardian-access");
+  const errors: string[] = [];
+  for (let i = 0; i < g.length; i++) for (let j = i + 1; j < g.length; j++) {
+    const [a, b] = [g[i]!.when.age, g[j]!.when.age];
+    if ((a.min ?? 0) <= (b.max ?? Infinity) && (b.min ?? 0) <= (a.max ?? Infinity)) errors.push(`policies: guardian-access policies ${g[i]!.id} (${bandText(a)}) and ${g[j]!.id} (${bandText(b)}) overlap`);
+  }
   return errors;
 }
 
@@ -182,7 +199,7 @@ export const TEXT = {
   relationship: (r: Relationship, name: Namer) => r.relation === GUARDIAN_OF ? `${name(r.subject)} is ${possessive(name(r.object))} guardian` : `${name(r.subject)} ${r.relation.replaceAll("_", " ")} ${name(r.object)}`,
   self: (user: Ref, _patient: Ref, name: Namer) => `${name(user)} is the patient`,
   label: (label: string, name: Namer) => `Labeled ${name(`label:${label}`)}`,
-  unknownLabel: () => "Has a label no guardian-access policy names",
+  unknownLabel: () => "Has a label the guardian-access policy doesn't know",
   policy(p: OrgPolicy, name: Namer): string {
     if (p.type === "guardian-access") return `Guardians of patients ${bandText(p.when.age)} see all studies${p.except?.length ? `, except those labeled ${list(p.except.map(l => name(`label:${l}`)))}` : ""}`;
     if (p.type === "sharing") return `${p.allowedFrom.length === 2 ? "Patients and guardians" : p.allowedFrom[0] === "patient" ? "Patients" : "Guardians"} may share what they can see`;
@@ -287,11 +304,11 @@ export function createModel(ctx: ModelContext) {
     const is = fact(rel.subject, TEXT.relationship(rel, name));
     const { age, policies } = guardianPolicies(s, patient);
     if (!policies.length) routes.push(no(age === undefined ? `${possessive(name(patient))} birth date isn't on file as a valid past date, so no guardian-access policy applies` : `no guardian-access policy covers patients aged ${age}`, [is]));
-    // A label no guardian-access policy names, or one that isn't a label, keeps the study from every guardian.
+    // The policy covering the age decides alone: a label it doesn't know, or one that isn't a label, keeps the study from guardians.
     const labels = (study.labels ?? []).map(normalizeLabel);
-    const known = new Set(s.policies.flatMap(p => p.type === "guardian-access" ? p.except ?? [] : []));
-    const unknown = labels.some(l => !isLabel(l) || !known.has(l));
     for (const p of policies) {
+      const known = new Set([...(p.except ?? []), ...(p.knownLabels ?? [])]);
+      const unknown = labels.some(l => !isLabel(l) || !known.has(l));
       const hidden = labels.find(l => p.except?.includes(l));
       if (unknown) routes.push(no(`an unknown label keeps it from guardians`, [is, pol(p), fact(ref("study", study.id), TEXT.unknownLabel())], p));
       else if (hidden) routes.push(no(`${name(`label:${hidden}`)}: ${p.id} keeps it from guardians`, [is, pol(p), fact(ref("study", study.id), TEXT.label(hidden, name))], p));
@@ -375,9 +392,16 @@ export function createModel(ctx: ModelContext) {
     return { release, because: granted.map(r => pol(r.p)), why: release === "study" && granted.every(r => r.release !== "study") ? `${why}; together they release every series` : why, policies: granted.map(r => r.p) };
   }
 
+  /**
+   * Whether a user still has a route to a patient: as the patient, a guardian a guardian-access policy
+   * covers, or a share's recipient. Revocation keeps an app approval while one remains.
+   */
+  const hasRoute = (s: Snapshot, user: Ref, patient: Ref) =>
+    isPatient(user, patient) || (!!guardianOf(s, user, patient) && guardianPolicies(s, patient).policies.length > 0) || s.shares.some(x => x.with === user && x.patient === patient);
+
   /** The studies of a patient's that a user sees before any app approval, by the same routes evaluation takes. */
   const visible = (s: Snapshot, user: Ref, patient: Ref, studies: CatalogStudy[], fhirUser?: string) => studies.filter(st => userRoute(s, user, patient, st, fhirUser).ok);
 
-  return { evaluate, baseline, userRoute, sharingFor, guardianOf, guardianPolicies, preAuthorized, visible, ageOf, pol, fact };
+  return { evaluate, baseline, userRoute, sharingFor, guardianOf, guardianPolicies, preAuthorized, visible, hasRoute, ageOf, pol, fact };
 }
 export type Model = ReturnType<typeof createModel>;

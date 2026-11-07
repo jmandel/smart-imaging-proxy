@@ -17,7 +17,7 @@ put(catalog, "7.1", { site: "Site D" }, "adult");
 const BIRTH: Record<string, string> = { pat: "1980-05-05", kid: "2016-01-01", teen: "2011-01-01", adult: "1990-01-01" };
 const NAMES: Record<string, string> = { "user:parent": "Parent", "user:pat": "Pat", "user:sitter": "Sitter", "patient:teen": "Teen", "patient:kid": "Kid", "app:viewer": "the Viewer", "label:confidential-adolescent": "confidential adolescent care" };
 const guardian = (p: string): Relationship => ({ subject: "user:parent", relation: "guardian_of", object: `patient:${p}`, recordedBy: "registration" });
-const UNDER_13: OrgPolicy = { id: "guardians-under-13", type: "guardian-access", when: { age: { max: 12 } }, allow: "all" };
+const UNDER_13: OrgPolicy = { id: "guardians-under-13", type: "guardian-access", when: { age: { max: 12 } }, allow: "all", knownLabels: [CONFIDENTIAL] };
 const TEENS: OrgPolicy = { id: "guardians-13-to-17", type: "guardian-access", when: { age: { min: 13, max: 17 } }, allow: "all", except: [CONFIDENTIAL] };
 const SHARING: OrgPolicy = { id: "patients-and-guardians-share", type: "sharing", allowedFrom: ["patient", "guardian"] };
 const REFERRAL: OrgPolicy = { id: "referral", type: "service-access", service: "service:referral", patients: "patient:pat", allow: { sites: ["Site B"] } };

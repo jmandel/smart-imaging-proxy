@@ -6,7 +6,7 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createCatalog, createImagingServer, createModel, createPolicyClient, type CatalogStudy, type OrgPolicy, PolicyStore, type Relationship, type Snapshot, validateOrgPolicy } from "../src";
+import { createCatalog, createImagingServer, createModel, createPolicyClient, type CatalogStudy, type OrgPolicy, PolicyStore, type Relationship, type Snapshot, validateDocument, validateOrgPolicy } from "../src";
 import { manualClock, put } from "./support";
 
 const SECRET = "s3cret", POLICY_SECRET = "p0licy";
@@ -82,15 +82,21 @@ describe("union of grants", () => {
     validateOrgPolicy({ id: "x", type: "service-access", service: "service:svc", patients: "any", allow: { all: true }, withdrawn: true }, "p", errors);
     expect(errors).toEqual(['p: unknown field "withdrawn"']);
   });
-  test("overlapping guardian-access policies add up, in either order, and explain lists each one that granted", async () => {
+  test("a guardian-access policy for ages no band covered adds access, in either order, and explain lists the grants that contributed", async () => {
     approve("parent", "teen");
-    const ALL_TEENS: OrgPolicy = { id: "teen-guardians-see-all", type: "guardian-access", when: { age: { min: 15, max: 15 } }, allow: "all" };
-    for (const order of [[UNDER_13, TEENS, ALL_TEENS, SHARING], [ALL_TEENS, UNDER_13, TEENS, SHARING]]) {
+    const YOUNG_TEENS: OrgPolicy = { id: "guardians-13-to-14", type: "guardian-access", when: { age: { min: 13, max: 14 } }, allow: "all", except: [CONF] };
+    const OLDER_TEENS: OrgPolicy = { id: "guardians-15-to-17", type: "guardian-access", when: { age: { min: 15, max: 17 } }, allow: "all", knownLabels: [CONF] };
+    store.setDocument({ policies: [UNDER_13, YOUNG_TEENS, SHARING] });
+    expect(await search("parent-teen", "teen")).toEqual([]);
+    for (const order of [[UNDER_13, YOUNG_TEENS, OLDER_TEENS, SHARING], [OLDER_TEENS, SHARING, UNDER_13, YOUNG_TEENS]]) {
       store.setDocument({ policies: order });
       // The studies with unknown labels stay hidden from every guardian grant.
       expect(await search("parent-teen", "teen")).toEqual(["study-1.1", "study-1.2", "study-1.3"]);
+      share("teen", "parent", "teen", ["Site A"]);
       const row = (await explainFor("parent", "teen")).studies.find((s: any) => s.id === "study-1.1");
-      expect(row.because.filter((b: any) => b.level === "policy").map((b: any) => b.ref).sort()).toEqual(["policy:guardians-13-to-17", "policy:teen-guardians-see-all"]);
+      expect(row.because.filter((b: any) => b.level !== "fact").map((b: any) => b.ref)).toEqual(["policy:guardians-15-to-17", "policy:share", "share:user:teen:user:parent:patient:teen", "approval:user:parent:app:viewer:patient:teen"]);
+      store.removeShares({ with: "user:parent", from: "user:teen" });
+      approve("parent", "teen");
     }
   });
   test("overlapping service-access policies add up: modalities, and series one withholds that another releases", async () => {
@@ -218,18 +224,23 @@ describe("adding a grant never takes access away", () => {
   const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
   const pick = <T>(xs: readonly T[]) => xs[Math.floor(rnd() * xs.length)]!;
   const some = <T>(xs: readonly T[]) => xs.filter(() => rnd() < 0.5);
-  const USERS = ["u1", "u2", "u3", "u4"], PATIENTS = ["p1", "p2", "p3"], SITES = ["A", "B", "C"], LABELS = [CONF, "other-label", "Confidential-Adolescent"], MODS = ["CT", "MR", "CR"];
+  const USERS = ["u1", "u2", "u3", "u4"], PATIENTS = ["p1", "p2", "p3"], SITES = ["A", "B", "C"], GOOD_LABELS = [CONF, "other-label", "third-label"], MODS = ["CT", "MR", "CR"];
+  const LABELS = [...GOOD_LABELS, "Confidential-Adolescent", "bad label!"];
   const PATIENT_OF: Record<string, string> = { u1: "p1", u2: "p2" };
   const BIRTHS: Record<string, string> = { p1: "2011-06-01", p2: "2016-03-01", p3: "1990-01-01" };
   const STUDIES: CatalogStudy[] = PATIENTS.flatMap(p => [0, 1, 2, 3].map(i => ({
-    pk: 0, uid: `${p}.${i}`, id: `${p}-${i}`, patient: p, status: "available" as const, date: `20${10 + i}0101`, site: pick(SITES), labels: rnd() < 0.4 ? [pick(LABELS)] : undefined,
+    pk: 0, uid: `${p}.${i}`, id: `${p}-${i}`, patient: p, status: "available" as const, date: `20${10 + i}0101`, site: pick(SITES), labels: rnd() < 0.5 ? some(LABELS) : undefined,
     lastUpdated: "2020-01-01T00:00:00Z", version: 1, seriesCount: 2, instanceCount: 2, hierarchyBytes: 0,
     series: [{ uid: `${p}.${i}.1`, number: 1, modality: pick(MODS), instanceCount: 1 }, { uid: `${p}.${i}.2`, number: 2, modality: pick(MODS), instanceCount: 1 }],
   })));
   const model = createModel({ patientOf: u => PATIENT_OF[u], attributesOf: p => ({ birthDate: BIRTHS[p] }), now: () => Date.UTC(2026, 10, 7) / 1000, name: r => r });
   const randomPolicy = (i: number): OrgPolicy => {
     const t = pick(["guardian-access", "sharing", "service-access"] as const);
-    if (t === "guardian-access") { const min = pick([undefined, 0, 13]), max = pick([undefined, 12, 17, 40]); return { id: `g${i}`, type: t, when: { age: min === undefined && max === undefined ? { max: 12 } : { ...(min !== undefined ? { min } : {}), ...(max !== undefined && (min === undefined || max >= min) ? { max } : {}) } }, allow: "all", ...(rnd() < 0.5 ? { except: [CONF] } : {}) }; }
+    if (t === "guardian-access") {
+      const min = pick([undefined, 0, 13, 15, 18]), max = pick([undefined, 12, 14, 17, 40]);
+      const age = min === undefined && max === undefined ? { max: 12 } : { ...(min !== undefined ? { min } : {}), ...(max !== undefined && (min === undefined || max >= min) ? { max } : {}) };
+      return { id: `g${i}`, type: t, when: { age }, allow: "all", ...(rnd() < 0.5 ? { except: some(GOOD_LABELS) } : {}), ...(rnd() < 0.5 ? { knownLabels: some(GOOD_LABELS) } : {}) };
+    }
     if (t === "sharing") return { id: `s${i}`, type: t, allowedFrom: pick([["patient"], ["guardian"], ["patient", "guardian"]] as const) as any };
     const allow = pick([{ all: true }, { sites: some(SITES) }, { modalities: some(MODS) }, { since: "2012-01-01" }, { studies: some(STUDIES.map(s => s.id)) }]);
     return { id: `v${i}`, type: t, service: pick(["service:s1", "service:s2"]), patients: pick(["any", ...PATIENTS.map(p => `patient:${p}`)]), allow, ...(rnd() < 0.3 ? { withholdSeries: some(STUDIES.flatMap(s => s.series.map(x => x.uid))) } : {}) };
@@ -258,20 +269,23 @@ describe("adding a grant never takes access away", () => {
   };
   const insertAt = <T>(xs: T[], x: T) => { const i = Math.floor(rnd() * (xs.length + 1)); return [...xs.slice(0, i), x, ...xs.slice(i)]; };
   test("for random documents, adding any one policy, relationship or choice never shrinks a decision or a search", () => {
-    let checked = 0;
-    for (let n = 0; n < 400; n++) {
+    let checked = 0, refused = 0;
+    for (let n = 0; n < 600; n++) {
       const doc = randomDoc();
+      if (validateDocument(doc).length) continue;
       const kind = pick(["policies", "relationships", "shares", "approvals"] as const);
       const added: Snapshot = { ...doc, [kind]: insertAt(doc[kind] as any[], kind === "policies" ? randomPolicy(99) : kind === "relationships" ? randomRelationship() : kind === "shares" ? randomShare() : randomApproval()) };
       // A choice with the same key as one already there replaces it, which isn't adding.
       const keys = (xs: any[]) => xs.map(x => kind === "shares" ? `${x.patient} ${x.from} ${x.with}` : kind === "approvals" ? `${x.by} ${x.app} ${x.patient}` : JSON.stringify(x));
       if (new Set(keys(added[kind] as any[])).size !== (added[kind] as any[]).length) continue;
+      // A write that would leave two guardian-access bands overlapping is refused, so it adds nothing.
+      if (validateDocument(added).length) { refused++; continue; }
       const before = decisions(doc), after = decisions(added);
       for (const [k, v] of before) for (const series of v) {
         if (!after.get(k)!.has(series)) throw new Error(`adding ${kind} took ${series} away from ${k}\n${JSON.stringify({ doc, added: added[kind] })}`);
       }
       checked++;
     }
-    expect(checked).toBeGreaterThan(300);
+    expect([checked > 250, refused > 10]).toEqual([true, true]);
   });
 });
