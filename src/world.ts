@@ -12,12 +12,12 @@ import type { DemoClock } from "./clock";
 
 export type BackendName = "static-files" | "s3" | "orthanc";
 
-/** What every world reads and none owns. */
+/** What every world reads and none owns. Which backend a world uses is its own choice. */
 export interface Shared {
-  catalog(): CatalogStore;
-  catalogSource(): "archive" | "orthanc";
-  backendName(): BackendName;
+  catalogs: { archive: CatalogStore; orthanc: CatalogStore };
   backends: Record<BackendName, Backend>;
+  /** The backend a new world starts on. */
+  initialBackend(): BackendName;
   /** The demo's Backend Services clients, the same in every world. */
   clientKeys: Map<string, KeyObject>;
 }
@@ -51,6 +51,9 @@ export const policyClient = (base: string, policySecret: string, service: Servic
 
 export function createWorld(o: { scope?: string; store: PolicyStore; clock: DemoClock; shared: Shared; serviceSecret?: string; policySecret?: string; jwksTtlSeconds?: number }) {
   const { store, clock, shared } = o;
+  let current: BackendName = shared.initialBackend();
+  /** Search and decisions read the catalog that describes what this world's backend holds. */
+  const catalog = () => current === "orthanc" ? shared.catalogs.orthanc : shared.catalogs.archive;
   const prefix = o.scope ? `/s/${o.scope}` : "";
   const urls: WorldUrls = urlsFor(prefix);
   const local = (port: number) => `http://127.0.0.1:${port}${prefix}`;
@@ -80,13 +83,13 @@ export function createWorld(o: { scope?: string; store: PolicyStore; clock: Demo
   };
   const imaging = createImagingServer({
     base: `${urls.imaging}/fhir`, clinicalFhirBase: urls.clinicalFhir, proxyBase: () => urls.proxy, introspect, patientOf: user => USERS[user]?.patient,
-    serviceSecret, policySecret, catalog: shared.catalog, keyStore: store, store: () => store, observer: traceObserver, clock,
+    serviceSecret, policySecret, catalog, keyStore: store, store: () => store, observer: traceObserver, clock,
   });
 
   // Truncation is this world's own fault injection, over the shared backends.
   let truncateAfter: number | undefined;
   const wrapped = new Map<Backend, Backend>();
-  const backend = () => { const b = shared.backends[shared.backendName()]; let w = wrapped.get(b); if (!w) wrapped.set(b, w = withTruncation(b, () => truncateAfter)); return w; };
+  const backend = () => { const b = shared.backends[current]; let w = wrapped.get(b); if (!w) wrapped.set(b, w = withTruncation(b, () => truncateAfter)); return w; };
   const proxy = createProxy({ publicBase: () => urls.proxy, jwksUrl: `${urls.imaging}/.well-known/jwks.json`, jwksTtlSeconds: o.jwksTtlSeconds, decisionUrl: `${urls.imaging}/access/v1/evaluation`, serviceSecret, backend, observer: traceObserver, clock });
 
   const clearRuntime = () => { auth.reset(); imaging.reset(); proxy.reset(); truncateAfter = undefined; };
@@ -94,9 +97,10 @@ export function createWorld(o: { scope?: string; store: PolicyStore; clock: Demo
     scope: o.scope, prefix, urls, store, clock, auth, imaging, proxy, clients,
     /** The policy API, with this world's policy credential. */
     policy,
-    get catalog() { return shared.catalog(); },
-    get catalogSource() { return shared.catalogSource(); },
-    get backend() { return shared.backendName(); },
+    get catalog() { return catalog(); },
+    get catalogSource() { return current === "orthanc" ? "orthanc" as const : "archive" as const; },
+    get backend() { return current; },
+    setBackend(n: BackendName) { current = n; },
     backends: shared.backends,
     setTruncateAfter(n: number | undefined) { truncateAfter = n; },
     /** Replaces the signing key, then tells the proxy over HTTP, so it stops trusting the old one now. A proxy that isn't told learns within its TTL. */

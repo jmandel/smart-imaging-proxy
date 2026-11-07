@@ -46,7 +46,7 @@ export async function startRoles(root: string, roles: Role[], env: Record<string
   const clientKeys = new Map(DEMO_BACKEND_CLIENTS.map(id => [id, derivedBackendClient(id, serviceSecret).privateKey]));
   const world = createWorld({
     store, clock: demoClock, serviceSecret, policySecret: policySecret ?? randomBytes(24).toString("base64url"), jwksTtlSeconds: Number(env.JWKS_TTL_SECONDS ?? DEFAULT_JWKS_TTL_SECONDS),
-    shared: { catalog: () => catalog, catalogSource: () => name === "orthanc" ? "orthanc" : "archive", backendName: () => name, backends, clientKeys },
+    shared: { catalogs: { archive: catalog, orthanc: catalog }, backends, clientKeys, initialBackend: () => name },
   });
   if (has("auth")) {
     // The one origin runs with the Authorization Server, whose base is its root.

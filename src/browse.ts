@@ -110,7 +110,7 @@ export function createBrowse(world: World, clients: Record<string, BackendClient
     s.lastTrace = trace;
     s.c.beginStep();
     try {
-      return await runInSession(s.name, () => withSpan("user", "action", name, { backend: stack.backend, ...attrs }, fn, { session: s.name, trace }));
+      return await runInSession(s.name, () => withSpan("user", "action", name, { backend: world.backend, ...attrs }, fn, { session: s.name, trace }));
     } finally {
       drainSteps(s);
       flushTraces();
@@ -119,11 +119,11 @@ export function createBrowse(world: World, clients: Record<string, BackendClient
 
   // Everyone a person holds, by the saved store: what a Browse sign-in will use.
   // A guardian isn't offered a site that only a study confidential from them is at, since that would reveal it.
-  const guardianSites = (g: { patient: string; excludedStudies?: string[] }) => [...new Set(stack.catalog.allStudies().filter(st => st.patient === g.patient && !g.excludedStudies?.includes(st.id)).flatMap(st => st.site ? [st.site] : []))];
+  const guardianSites = (g: { patient: string; excludedStudies?: string[] }) => [...new Set(world.catalog.allStudies().filter(st => st.patient === g.patient && !g.excludedStudies?.includes(st.id)).flatMap(st => st.site ? [st.site] : []))];
   const recordsOf = (id: string) => {
     const u = USERS[id]!;
     const out: { patient: string; name: string; via: "self" | "guardian" | "delegation"; relationship?: string; sites: string[] }[] = [];
-    if (u.patient) out.push({ patient: u.patient, name: PATIENT_NAMES[u.patient] ?? u.patient, via: "self", sites: stack.catalog.sitesFor(u.patient) });
+    if (u.patient) out.push({ patient: u.patient, name: PATIENT_NAMES[u.patient] ?? u.patient, via: "self", sites: world.catalog.sitesFor(u.patient) });
     const guardians = world.store.guardians();
     for (const g of guardians) if (g.guardian === id && g.patient !== u.patient) out.push({ patient: g.patient, name: PATIENT_NAMES[g.patient] ?? g.patient, via: "guardian", relationship: g.relationship, sites: guardianSites(g) });
     for (const d of world.store.delegations()) if (d.delegate === id && !out.some(r => r.patient === d.patient) && (USERS[d.grantedBy]?.patient === d.patient || guardians.some(g => g.guardian === d.grantedBy && g.patient === d.patient))) out.push({ patient: d.patient, name: PATIENT_NAMES[d.patient] ?? d.patient, via: "delegation", relationship: d.relationship, sites: (() => { const g = guardians.find(x => x.guardian === d.grantedBy && x.patient === d.patient); if (!g?.excludedStudies?.length) return d.sites; const open = guardianSites(g); return d.sites.filter(x => open.includes(x)); })() });
@@ -131,7 +131,7 @@ export function createBrowse(world: World, clients: Record<string, BackendClient
   };
   function options() {
     const rules = world.store.rules();
-    const held = stack.catalog.allStudies();
+    const held = world.catalog.allStudies();
     return {
       people: Object.entries(USERS).map(([id, u]) => {
         const records = recordsOf(id);
@@ -143,14 +143,14 @@ export function createBrowse(world: World, clients: Record<string, BackendClient
         return { id, role: mine.length ? `Pre-authorized by ${list(mine.map(r => `rule ${r.id}`))}` : "Backend client, with no pre-authorization in saved policy" };
       }),
       apps: Object.entries(APP_NAMES).map(([id, name]) => ({ id, name })),
-      patients: stack.catalog.linkedPatients().map(id => ({ id, name: PATIENT_NAMES[id] ?? id })),
-      pageSizes: PAGE_SIZES, traceUrl: world.urls.trace, scope, backend: stack.backend,
+      patients: world.catalog.linkedPatients().map(id => ({ id, name: PATIENT_NAMES[id] ?? id })),
+      pageSizes: PAGE_SIZES, traceUrl: world.urls.trace, scope, backend: world.backend,
     };
   }
 
   /** How to pre-authorize a backend client, in the admin screen's own terms. */
   function ruleHelp(client: string, patient: string) {
-    const set = ruleSetFor(client, patient, stack.catalog);
+    const set = ruleSetFor(client, patient, world.catalog);
     return set
       ? { url: `/admin?rule-set=${set.id}#h-rules`, text: `To pre-authorize this client, go to Rules on the admin screen with saved policy active, choose "${set.label}", and select Apply rule set. That replaces the rules saved now.` }
       : { url: "/admin#h-rules", text: "No named rule set pre-authorizes this client for this patient. Rules on the admin screen lists the rule sets there are." };
@@ -177,7 +177,7 @@ export function createBrowse(world: World, clients: Record<string, BackendClient
       page: { studies: s.studies, total: s.total, count: s.count, number: s.pageIndex + 1, first: page && s.studies.length ? page.offset + 1 : 0, last: page ? page.offset + s.studies.length : 0, hasNext: !!s.nextUrl, hasPrevious: s.pageIndex > 0 },
       explain: s.explain, explainError: s.explainError,
       appSites: held && s.status === "results" ? { sites: held.sites, granted: s.explain?.appGrant?.sites ?? held.sites } : undefined,
-      share: delegates.length ? { from: firstName(SHARED_BY), patient: SHARED_PATIENT, sites: stack.catalog.sitesFor(USERS[SHARED_BY]!.patient!).map(name => ({ name, ticked: DEFAULT_SHARED_SITES.includes(name) })), offers: delegates.map(d => ({ delegate: d, label: `Have ${firstName(SHARED_BY)} share with ${firstName(d)}` })) } : undefined,
+      share: delegates.length ? { from: firstName(SHARED_BY), patient: SHARED_PATIENT, sites: world.catalog.sitesFor(USERS[SHARED_BY]!.patient!).map(name => ({ name, ticked: DEFAULT_SHARED_SITES.includes(name) })), offers: delegates.map(d => ({ delegate: d, label: `Have ${firstName(SHARED_BY)} share with ${firstName(d)}` })) } : undefined,
       accounts: who ? [accountLink(s, who), ...(lookingToJosh ? [accountLink(s, SHARED_BY)] : [])] : [],
       retrievals: [...s.retrievals.values()], retrieving: s.retrieving, hasBundle: !!s.bundle,
       ruleHelp: s.status === "forbidden" && !who ? ruleHelp(s.start.client, s.patient ?? s.start.patient!) : undefined,
@@ -314,7 +314,7 @@ export function createBrowse(world: World, clients: Record<string, BackendClient
     if (user !== undefined && !Object.hasOwn(USERS, user)) return { error: "that isn't one of the demo accounts", status: 400 };
     if (user !== undefined && !Object.hasOwn(APP_NAMES, client)) return { error: "that isn't a registered app", status: 400 };
     if (user === undefined && !Object.hasOwn(clients, client)) return { error: "that isn't a registered backend client", status: 400 };
-    const patients = stack.catalog.linkedPatients();
+    const patients = world.catalog.linkedPatients();
     if (body.patient !== undefined && !patients.includes(body.patient)) return { error: "that patient isn't in the catalog's links", status: 400 };
     if (user === undefined && body.patient === undefined) return { error: "a backend client needs a patient", status: 400 };
     const mode = body.mode === "window" && user !== undefined ? "window" : "scripted";
@@ -394,7 +394,7 @@ export function createBrowse(world: World, clients: Record<string, BackendClient
       if (req.method === "GET") {
         if (p === "/options") return json(options());
         const s = sessionOf(req);
-        if (p === "/session") return json({ session: s ? view(s) : null, scope, backend: stack.backend });
+        if (p === "/session") return json({ session: s ? view(s) : null, scope, backend: world.backend });
         if (p === "/bundle") return s?.bundle ? new Response(JSON.stringify(s.bundle, null, 2), { headers: { "content-type": "application/json" } }) : gone();
         if (p === "/metadata") {
           const ep = s?.endpoints.get(url.searchParams.get("study") ?? "");
@@ -416,7 +416,7 @@ export function createBrowse(world: World, clients: Record<string, BackendClient
       if (p === "/start") {
         const r = begin(body);
         if ("error" in r) return json({ error: r.error }, r.status);
-        return json({ session: view(r.session), scope, backend: stack.backend }, 202, { "Set-Cookie": `${COOKIE}=${r.session.id}; HttpOnly; SameSite=Strict; Path=${world.prefix}/api/browse` });
+        return json({ session: view(r.session), scope, backend: world.backend }, 202, { "Set-Cookie": `${COOKIE}=${r.session.id}; HttpOnly; SameSite=Strict; Path=${world.prefix}/api/browse` });
       }
       const s = sessionOf(req);
       if (!s) return gone();
@@ -439,7 +439,7 @@ export function createBrowse(world: World, clients: Record<string, BackendClient
             else await searchPage(s, first(), 0, 0);
           });
         } finally { s.searching = false; }
-        return json({ session: view(s), scope, backend: stack.backend });
+        return json({ session: view(s), scope, backend: world.backend });
       }
       if (p === "/retrieve") {
         const study = String(body.study ?? "");

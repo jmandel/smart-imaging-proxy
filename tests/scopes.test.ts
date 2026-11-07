@@ -119,6 +119,22 @@ describe("isolation", () => {
   });
 });
 
+describe("the backend", () => {
+  test("a scope picks its own, the root's stays as it was, and a new scope starts on the root's", async () => {
+    const w = stack.scopes.mint();
+    const pick = (base: string, backend: string) => get(`${base}/api/backend`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ backend }) });
+    expect((await pick(w.urls.demo, "orthanc")).status).toBe(200);
+    expect([w.backend, w.catalogSource]).toEqual(["orthanc", "orthanc"]);
+    expect([stack.backend, stack.catalogSource, stack.root.backend]).toEqual(["static-files", "archive", "static-files"]);
+    expect(((await (await get(`${w.urls.demo}/api/backends`)).json()) as any).current).toBe("orthanc");
+    expect(((await (await get(`${CONFIG.demoUrl}/api/backends`)).json()) as any).current).toBe("static-files");
+    expect(((await (await get(`${w.urls.demo}/api/flows`)).json()) as any).backend).toBe("orthanc");
+    stack.setBackend("s3");
+    expect(stack.scopes.mint().backend).toBe("s3");
+    expect(w.backend).toBe("orthanc");
+  });
+});
+
 describe("a scope's rest of path", () => {
   test("is never read as another origin, so the write guard and the internal-path block still hold", async () => {
     const a = stack.scopes.mint();
@@ -238,7 +254,8 @@ describe("inline seeds", () => {
 });
 
 describe("scope lifetimes", () => {
-  const shared = { catalog: () => createCatalog(), catalogSource: () => "archive" as const, backendName: () => "static-files" as const, backends: {} as any, clientKeys: new Map() };
+  const catalog = createCatalog();
+  const shared = { catalogs: { archive: catalog, orthanc: catalog }, backends: {} as any, clientKeys: new Map(), initialBackend: () => "static-files" as const };
   test("past the cap, the least recently used go first; an evicted id is gone, and an evicted seed builds again", () => {
     const scopes = createScopes(shared, { max: 2 });
     const a = scopes.mint(), b = scopes.mint();

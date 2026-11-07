@@ -76,13 +76,12 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
   setTraceSink(CONFIG.traceSink);
 
   const backends: Record<BackendName, Backend> = { "static-files": buildBackend("static-files"), s3: buildBackend("s3"), orthanc: buildBackend("orthanc") };
-  let current: BackendName = "static-files";
-  /** Search and decisions read the catalog that describes what the selected backend holds. */
   const catalogFor = (b: BackendName): CatalogStore => b === "orthanc" ? catalogs.orthanc : catalogs.archive;
   const clientKeys = new Map<string, KeyObject>(DEMO_BACKEND_CLIENTS.map(id => [id, generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey]));
-  const shared: Shared = { catalog: () => catalogFor(current), catalogSource: () => current === "orthanc" ? "orthanc" : "archive", backendName: () => current, backends, clientKeys };
-
-  const rootWorld = createWorld({ store, clock: demoClock, shared });
+  // A new scope starts on the root's backend, and then picks its own.
+  let rootWorld!: World;
+  const shared: Shared = { catalogs, backends, clientKeys, initialBackend: () => (rootWorld as World | undefined)?.backend ?? "static-files" };
+  rootWorld = createWorld({ store, clock: demoClock, shared });
   const scopes = createScopes(shared, opts.scopes);
   const route = (serviceOf: (w: World) => (req: Request) => Promise<Response> | Response) => scopedHandler(rootWorld, scopes, serviceOf);
 
@@ -119,11 +118,12 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
     auth: rootWorld.auth, imaging: rootWorld.imaging, proxy: rootWorld.proxy, policy: rootWorld.policy,
     /** The listener a scope-aware service port uses, for the demo's own pages. */
     route,
-    /** The catalog in use. Its `allStudies` is for the demo's displays and tests. */
-    get catalog() { return catalogFor(current); },
-    get catalogSource() { return shared.catalogSource(); },
-    get backend() { return current; },
-    setBackend(n: BackendName) { current = n; },
+    /** The root's catalog in use. Its `allStudies` is for the demo's displays and tests. */
+    get catalog() { return rootWorld.catalog; },
+    get catalogSource() { return rootWorld.catalogSource; },
+    /** The root's backend. Each scope has its own. */
+    get backend() { return rootWorld.backend; },
+    setBackend(n: BackendName) { rootWorld.setBackend(n); },
     setTruncateAfter: rootWorld.setTruncateAfter,
     selfTest,
     stop() { clearInterval(purgeTimer); servers.forEach(s => s.stop(true)); proxyServer.stop(); gatewayServer?.stop(); scopes.close(); store.close(); collector.close(); catalogs.archive.close(); catalogs.orthanc.close(); },

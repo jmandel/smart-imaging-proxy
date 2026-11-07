@@ -77,8 +77,8 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         if (!session || !flow) return json({ scope: scopeOf(world), flow: null });
         return json({ scope: scopeOf(world), flow: session.flowId, running: session.running ?? null, steps: stepInfo(flow, session.ctx), completed: session.completed, policy: world.store.getPolicy() });
       }
-      if (p === "/api/flows") return json({ services, backend: stack.backend, scope: scopeOf(world), flows: FLOWS.map(f => ({ id: f.id, number: f.number, group: f.group, title: f.title, summary: f.summary, shows: f.shows, steps: f.steps.length })) });
-      if (p === "/api/backends") return json({ current: stack.backend, backends: await Promise.all(BACKEND_NAMES.map(n => stack.selfTest(n))) });
+      if (p === "/api/flows") return json({ services, backend: world.backend, scope: scopeOf(world), flows: FLOWS.map(f => ({ id: f.id, number: f.number, group: f.group, title: f.title, summary: f.summary, shows: f.shows, steps: f.steps.length })) });
+      if (p === "/api/backends") return json({ current: world.backend, backends: await Promise.all(BACKEND_NAMES.map(n => stack.selfTest(n))) });
       if ((p === "/api/backend" || p === "/api/scopes" || p.startsWith("/api/flows/")) && req.method === "POST") {
         const refused = refuseWrite(req, url);
         if (refused) return refused;
@@ -88,8 +88,8 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         if (b === undefined || !BACKEND_NAMES.includes(b?.backend)) return json({ error: "unknown backend" }, 400);
         const extra = extraField(b, ["backend"]);
         if (extra) return json({ error: extra }, 400);
-        stack.setBackend(b.backend as BackendName);
-        return json({ backend: stack.backend });
+        world.setBackend(b.backend as BackendName);
+        return json({ backend: world.backend });
       }
       // A new scope, seeded from the guardians on file, for anyone to use by its URLs.
       if (p === "/api/scopes" && req.method === "POST") {
