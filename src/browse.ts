@@ -66,7 +66,7 @@ const releaseLabel = (r: any, seriesCount: number) => r === "none" ? "Not releas
 function plainChain(x: any) {
   if (x.level === "system") return x.policies.length ? `${x.client} is pre-authorized for ${PATIENT_NAMES[x.patient] ?? x.patient} by ${list(x.policies.map((p: any) => `the service-access policy "${p.description ?? p.id}"`))}` : `No service-access policy here pre-authorizes ${x.client} for ${PATIENT_NAMES[x.patient] ?? x.patient}`;
   const row = x.studies.find((r: any) => r.release !== "none") ?? x.studies[0];
-  if (!row) return `Nothing of ${patientFirst(x.patient)}'s is released here`;
+  if (!row) return x.noRoute ? plainWords(x.noRoute) : `Nothing of ${patientFirst(x.patient)}'s is released here`;
   const links = row.because.map((b: any) => b.text);
   return row.release === "none" ? [...links, plainWords(row.why)].join("; ") : links.join("; ");
 }
@@ -120,6 +120,9 @@ export function createBrowse(world: World, clients: Record<string, BackendClient
   // Everyone a person holds, by this world's store, as the Imaging Server's model decides it: what a
   // Browse sign-in will use. A site only a study hidden from them is at isn't offered, since that would reveal it.
   const model = createModel({ patientOf: user => USERS[user]?.patient, attributesOf: patientAttributes, now: () => world.clock.now(), name: nameOf });
+  /** The ids of a patient's studies some route reaches for a user, before any app approval. */
+  const reachedBy = (user: string, patient: string) =>
+    model.visible(world.store.patientSnapshot(ref("patient", patient)), ref("user", user), ref("patient", patient), world.catalog.allStudies().filter(st => st.patient === patient), USERS[user]?.fhirUser).map(st => st.id);
   const sitesSeen = (user: string, patient: string) => {
     const snap = world.store.patientSnapshot(ref("patient", patient));
     const studies = world.catalog.allStudies().filter(st => st.patient === patient);
@@ -262,8 +265,15 @@ export function createBrowse(world: World, clients: Record<string, BackendClient
     drainSteps(s);
     try {
       const x = await world.explain({ client: s.start.client, patient, ...(who ? { user: who, fhirUser: USERS[who]?.fhirUser ?? "" } : {}) });
-      // An app user's page never shows a study a label keeps from them, nor its reason.
-      if (who) x.studies = x.studies.filter((row: any) => !row.because.some((b: any) => b.ref.startsWith("study:")));
+      // An app user's page shows only the studies some route reaches for them, so never one a label or a
+      // share's reach keeps from them, nor its reason.
+      // With no route at all, the reason is the route's, which names no study.
+      if (who) {
+        const reached = new Set(reachedBy(who, patient));
+        const noRoute = !model.hasRoute(world.store.patientSnapshot(ref("patient", patient)), ref("user", who), ref("patient", patient)) && x.studies[0] ? x.studies[0].why : undefined;
+        x.studies = x.studies.filter((row: any) => reached.has(row.id));
+        x.noRoute = noRoute;
+      }
       s.explain = {
         patient, patientName: PATIENT_NAMES[patient] ?? patient, chain: plainChain(x), level: x.level,
         // This user's approval of this app for this patient, which the site ticks show.

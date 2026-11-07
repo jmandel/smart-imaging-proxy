@@ -12,7 +12,7 @@ const everyone: Person[] = [people as Person, ...(people.otherPatients as Person
 export const GUARDIANS_ON_FILE: Relationship[] = everyone.flatMap(p => (p.guardians ?? []).map(g => ({ subject: `user:${g.account}`, relation: "guardian_of", object: `patient:${p.id}`, recordedBy: "registration" })));
 /** The organization's policy on file: what guardians see by the patient's age, and who may share. */
 export const POLICIES_ON_FILE: OrgPolicy[] = [
-  { id: "guardians-under-13", type: "guardian-access", description: "Guardians of children under 13 see all their studies", when: { age: { max: 12 } }, allow: "all" },
+  { id: "guardians-under-13", type: "guardian-access", description: "Guardians of children under 13 see all their studies", when: { age: { max: 12 } }, allow: "all", knownLabels: ["confidential-adolescent"] },
   { id: "guardians-13-to-17", type: "guardian-access", description: "Guardians of 13- to 17-year-olds see all but confidential adolescent care", when: { age: { min: 13, max: 17 } }, allow: "all", except: ["confidential-adolescent"] },
   { id: "patients-and-guardians-share", type: "sharing", description: "Patients and guardians may share what they can see", allowedFrom: ["patient", "guardian"] },
 ];

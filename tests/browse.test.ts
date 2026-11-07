@@ -111,8 +111,8 @@ for (const backend of BACKENDS) {
       expect(s.detail).toContain("No patient has shared records with Alex");
       expect(s.steps.map((x: any) => x.title)).not.toContain("Search ImagingStudy");
       expect(s.explain.chain).toBe("Alex has no share of Josh's records");
-      expect(s.explain.studies.map((r: any) => r.released)).toEqual(ALL.map(() => false));
-      expect(s.explain.studies[0].reason).toBe("Alex has no share of Josh's records");
+      // Alex has no route to Josh's records, so the page names none of his studies.
+      expect(s.explain.studies).toEqual([]);
       expect(s.share.offers.map((o: any) => o.label)).toEqual(["Have Josh share with Alex", "Have Josh share with Sam"]);
     }, 60000);
     test("Sam sees nothing of Josh's, then what Josh shared, then what Sam gave the app", async () => {
@@ -126,9 +126,8 @@ for (const backend of BACKENDS) {
       expect(shared.status).toBe("results");
       expect(b.ids(shared)).toEqual(LAKESIDE_RIVERSIDE);
       expect(shared.explain.chain).toBe("Josh is the patient; Patients and guardians may share what they can see; Josh shared Lakeside Imaging and Riverside Hospital with Sam, as caregiver; Sam approved the Health Records App for all sites");
-      const slide = shared.explain.studies.find((r: any) => r.id === "slide-lung-2023");
-      expect(slide.released).toBe(false);
-      expect(slide.reason).toBe("the share with Sam doesn't include Northside Pathology");
+      // A study at a site Josh didn't share isn't Sam's to see, or to hear about.
+      expect(shared.explain.studies.map((r: any) => r.id).sort()).toEqual(LAKESIDE_RIVERSIDE);
       await expectExplainMatchesSearch(b, shared);
 
       const narrowed = await b.pick("sam-caregiver", { patient: "josh-example", sites: ["Lakeside Imaging"] });
@@ -232,6 +231,17 @@ describe("a guardian's view", () => {
       // The organization's rule for the age band may show; the study, its label and the label's effect don't.
       for (const hidden of ["Labeled", "keeps it from guardians", "syn-riley-skin-slide-2023", "SKIN BIOPSY", "Skin biopsy", "Northside Pathology"]) expect(text).not.toContain(hidden);
       expect(s.explain.chain).toContain("Sam is Riley's guardian");
+    }
+  }, 60000);
+  test("a guardian's share shows its recipient only what the share reaches, and the list's reason never names the rest", async () => {
+    stack.store.putShare({ from: "user:sam-caregiver", with: "user:josh", patient: "patient:riley-example", sites: ["Lakeside Imaging"], label: "aunt" });
+    const b = browser();
+    for (const sites of [undefined, []]) {
+      const s = await b.pick("josh", { patient: "riley-example", ...(sites ? { sites } : {}) });
+      expect(s.status).toBe("results");
+      expect(s.explain.studies.map((r: any) => r.id)).toEqual(["syn-riley-knee-mr-2022"]);
+      const text = JSON.stringify(s.explain);
+      for (const hidden of ["syn-riley-skin-slide-2023", "SKIN BIOPSY", "Skin biopsy", "Northside Pathology", "doesn't reach"]) expect(text).not.toContain(hidden);
     }
   }, 60000);
 });
