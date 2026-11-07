@@ -26,7 +26,8 @@ function start(role: string, secret: string | undefined, extra: Record<string, s
   running.add(p);
   return p;
 }
-const reachable = (url: string) => fetch(url, { signal: AbortSignal.timeout(500) }).then(() => true, () => false);
+// Up means the service itself answered: the one origin's 502 while a service starts doesn't count.
+const reachable = (url: string) => fetch(url, { signal: AbortSignal.timeout(500) }).then(r => r.status !== 502, () => false);
 async function waitFor(urls: string[], ms = 30000) {
   const end = Date.now() + ms;
   for (const u of urls) while (!await reachable(u)) { if (Date.now() > end) throw new Error(`${u} never came up`); await Bun.sleep(50); }
