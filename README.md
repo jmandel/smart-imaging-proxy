@@ -257,3 +257,7 @@ BACKENDS=static-files bun test   # flows, Browse, rotation, and conformance on o
 
 
 The tests use the same ports as the demo, so stop the demo first, with `bun run down` or by ending `bun run start`, or give the test run its own `DEMO_PORT_OFFSET`. The suite also creates and deletes a temporary bucket in the MinIO it points at. They need the setup steps above, including Docker, even with `BACKENDS` set. Spec checks read the guide's text from the `focused-access-updates` branch on GitHub, or from a local clone named by `SPEC_REPO`, at `SPEC_REF`.
+
+## License
+
+The code is under the [Apache License 2.0](LICENSE). The sample data isn't in this repository: `bun run fetch-data` downloads it under its own terms, listed in `data/studies.source.json`.
