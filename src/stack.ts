@@ -4,7 +4,7 @@
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { S3Client } from "bun";
-import { createAuthServer } from "./auth-server";
+import { createAuthServer, USERS } from "./auth-server";
 import { createImagingServer } from "./imaging-server";
 import { createProxy } from "./proxy";
 import { ArchiveBackend } from "./backends/archive";
@@ -73,7 +73,7 @@ export function buildImagingServer(stores: Stores, serviceSecret: string, catalo
     const r = await tfetch("imaging-fhir", "introspect the token", `${CONFIG.authUrl}/introspect`, { method: "POST", headers: { Authorization: `Bearer ${serviceSecret}`, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token }) });
     return r.ok ? r.json() : { active: false };
   };
-  return createImagingServer({ base: `${CONFIG.imagingUrl}/fhir`, clinicalFhirBase: `${CONFIG.authUrl}/fhir`, proxyBase: () => CONFIG.proxyUrl, introspect, serviceSecret, catalog, keyStore: stores.saved, store: () => stores.active });
+  return createImagingServer({ base: `${CONFIG.imagingUrl}/fhir`, clinicalFhirBase: `${CONFIG.authUrl}/fhir`, proxyBase: () => CONFIG.proxyUrl, introspect, patientOf: user => USERS[user]?.patient, serviceSecret, catalog, keyStore: stores.saved, store: () => stores.active });
 }
 
 /** All a proxy gets from the other services: where its keys and its decisions are. */

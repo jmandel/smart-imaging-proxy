@@ -179,7 +179,7 @@ export class Ctx {
 
   /** A patient or their guardian delegates to a related person, on the account page. A refused share reports its status. */
   async delegate(owner: string, delegate: string, relationship: string, sites: string[], opts: { window?: boolean; patient?: string } = {}) {
-    const url = accountUrl(owner, this.traceFields());
+    const url = accountUrl(owner, this.traceFields(), delegate);
     let status = 303;
     if (opts.window) { await this.inWindow(url); this.checkAccount(this.stack.auth.lastAccountSignIn, owner); }
     else status = (await withSpan("user", "action", `Browser: ${owner} signs in and shares with ${delegate}`, { sites: sites.join(", "), patient: opts.patient }, () => submitDelegation(url, { user: owner, delegate, relationship, sites, patient: opts.patient }, browserFetch))).status;

@@ -156,6 +156,39 @@ describe("the guardian", () => {
     expect((await accountPage("alex-neighbor")).html).not.toContain("Northside Pathology");
     stack.useStore("saved");
   }, 60000);
+  test("only the patient or a guardian can grant, however a row is written", async () => {
+    stack.useStore("scratch");
+    const share = (grantedBy: string) => ({ patient: "riley-example", grantedBy, delegate: "robin", relationship: "x", sites: ["Northside Pathology", "Lakeside Imaging"] });
+    for (const grantedBy of ["alex-neighbor", "SAM-CAREGIVER", "sam-caregiver ", "riley-example", "josh"]) {
+      stack.imaging.setPolicy({ delegations: [share(grantedBy)] });
+      expect([grantedBy, (await launchFor("riley-example", "robin")).error]).toEqual([grantedBy, "access_denied"]);
+    }
+    stack.imaging.setPolicy({ delegations: [{ ...share("sam-caregiver") }] });
+    const t = await launchFor("riley-example", "robin");
+    expect((await search(t.access_token, "riley-example")).ids).toEqual(RILEY);
+    expect((await wado(CONFIG.proxyUrl + "/wado/-", uidOf(CONFIDENTIAL), t.access_token)).status).toBe(404);
+    stack.useStore("saved");
+  }, 60000);
+  test("an account page doesn't name a confidential study's site, through someone's app grant either", async () => {
+    stack.useStore("scratch");
+    stack.imaging.setPolicy({ delegations: [{ patient: "riley-example", grantedBy: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"], asGuardian: true }], appGrants: [{ client: "portal-app", user: "alex-neighbor", patient: "riley-example", sites: ["Northside Pathology"] }] });
+    expect((await accountPage("alex-neighbor")).html).not.toContain("Northside Pathology");
+    stack.useStore("saved");
+  }, 30000);
+  test("Orthanc serves encapsulated pixel data with the same bytes as the stores", async () => {
+    const row = stack.catalogs.orthanc.allStudies().find(s => s.id === "slide-lung-2023")!;
+    const hierarchy = stack.catalogs.orthanc.hierarchies([row.pk]).get(row.pk)!.series[0]!;
+    const hash = async (name: "orthanc" | "static-files", instance: string) => {
+      const b = await stack.backends[name].openBulk(row.uid, hierarchy.uid, instance, "7FE00010");
+      const h = createHash("sha256"); let n = 0;
+      for await (const c of b.body) { h.update(c); n += c.length; }
+      return { n, sha: h.digest("hex") };
+    };
+    const instance = hierarchy.instances.find(i => i.uid.endsWith(".28.0"))!.uid;
+    const orthanc = await hash("orthanc", instance);
+    expect(orthanc.n).toBeGreaterThan(1000000);
+    expect(orthanc).toEqual(await hash("static-files", instance));
+  }, 60000);
   test("a guardian's share written while they aren't the guardian isn't kept", () => {
     const riley = stack.imaging.getPolicy().guardians;
     stack.imaging.setPolicy({ guardians: [] });

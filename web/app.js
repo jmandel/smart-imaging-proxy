@@ -287,7 +287,9 @@ async function runStep(id) {
   }
 }
 async function runRemaining() {
-  for (const s of current.steps) if (!stepsDone[s.id]) { if (!(await runStep(s.id))) break; }
+  for (const s of current.steps) if (!stepsDone[s.id]) {
+    if (!(await runStep(s.id))) { flowStatus[current.id] = false; renderNav(); break; }
+  }
 }
 async function runEvery() {
   const btn = $("#run-all");

@@ -9,6 +9,17 @@ export interface OrthancConfig { base: string; user: string; password: string; }
 const asIterable = (s: ReadableStream<Uint8Array>) => s as unknown as AsyncIterable<Uint8Array>;
 const knownLength = (header: string | null | undefined): { bytes?: number } => /^\d+$/.test(header ?? "") ? { bytes: Number(header) } : {};
 
+const BULK_PEEK = 1 << 20;
+const SEQUENCE_DELIMITER = new Uint8Array([0xfe, 0xff, 0xdd, 0xe0, 0, 0, 0, 0]);
+/** One encapsulated item, the form the element has in a PS3.10 file, so it matches what the stores serve. */
+function item(chunks: Uint8Array[]) {
+  const length = chunks.reduce((n, c) => n + c.length, 0), out = new Uint8Array(8 + length);
+  out.set([0xfe, 0xff, 0x00, 0xe0]);
+  new DataView(out.buffer).setUint32(4, length, true);
+  let at = 8;
+  for (const c of chunks) { out.set(c, at); at += c.length; }
+  return out;
+}
 function mapError(status: number): BackendError {
   if (status === 404) return new BackendError("NotFound");
   if (status === 400 || status === 406 || status === 415) return new BackendError("NotAcceptable");
@@ -122,12 +133,42 @@ export class OrthancBackend implements Backend {
     if (!r.ok) throw mapError(r.status);
     const boundary = boundaryOf(r.headers.get("content-type"));
     if (!boundary) return { ...knownLength(r.headers.get("content-length")), body: asIterable(r.body!) };
-    // Orthanc wraps an element in one multipart part, which comes off here.
+    // Orthanc wraps an element in one multipart part, except encapsulated data: an offset table, then a part per fragment.
     const events = readMultipart(asIterable(r.body!), boundary);
     const start = await events.next();
     if (start.done || start.value.type !== "start") { await events.return(undefined); throw new BackendError("Unknown", "upstream bulk response has no part"); }
+    const first: Uint8Array[] = [];
+    let held = 0, firstEnded = false;
+    while (held <= BULK_PEEK && !firstEnded) {
+      const e = await events.next();
+      if (e.done || (e.value.type !== "data" && e.value.type !== "end")) { await events.return(undefined); throw new BackendError("Unknown", "upstream ended before the bulk element was complete"); }
+      if (e.value.type === "data") { first.push(e.value.bytes); held += e.value.bytes.length; } else firstEnded = true;
+    }
+    const after = firstEnded ? await events.next() : undefined;
+    const encapsulated = after?.value?.type === "start";
+    if (firstEnded && !encapsulated && after?.value?.type !== "complete") { await events.return(undefined); throw new BackendError("Unknown", "upstream ended before the bulk element was complete"); }
     const body = (async function* () {
       try {
+        if (encapsulated) {
+          yield item(first);
+          for (;;) {
+            const bytes: Uint8Array[] = [];
+            for (;;) {
+              const e = await events.next();
+              if (e.done || (e.value.type !== "data" && e.value.type !== "end")) throw new Error("upstream ended before the bulk element was complete");
+              if (e.value.type === "end") break;
+              bytes.push(e.value.bytes);
+            }
+            yield item(bytes);
+            const next = await events.next();
+            if (next.value?.type === "complete") break;
+            if (next.done || next.value.type !== "start") throw new Error("upstream ended before the bulk element was complete");
+          }
+          yield SEQUENCE_DELIMITER;
+          return;
+        }
+        for (const b of first) yield b;
+        if (firstEnded) return;
         for await (const e of events) {
           if (e.type === "data") yield e.bytes;
           else if (e.type === "end") return;
@@ -136,7 +177,7 @@ export class OrthancBackend implements Backend {
         throw new Error("upstream ended before the bulk element was complete");
       } finally { await events.return(undefined); }
     })();
-    return { ...knownLength(start.value.headers["content-length"]), body };
+    return { ...(encapsulated ? {} : firstEnded ? { bytes: held } : knownLength(start.value.headers["content-length"])), body };
   }
   async rawProbe(path: string, accept: string) {
     const r = await this.get(path, accept);

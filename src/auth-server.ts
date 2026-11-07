@@ -178,7 +178,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
   const page = (title: string, body: string, status = 200, showStore = false) => new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)}</title><style>${PAGE_CSS}</style></head><body><p class="brand">Authorization Server</p><main>${body}</main>${showStore ? `<p class="store-line">Policy in use: ${esc(opts.storeLabel())}</p>` : ""}</body></html>`, { status, headers: { "content-type": "text/html; charset=utf-8" } });
   const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 
-  const demoQuery = (url: URL) => { const q = new URLSearchParams(); for (const k of ["demo_traceparent", "demo_session", "return", "return_state", "preselect"]) if (url.searchParams.get(k)) q.set(k, url.searchParams.get(k)!); const s = q.toString(); return s ? `&${s}` : ""; };
+  const demoQuery = (url: URL) => { const q = new URLSearchParams(); for (const k of ["demo_traceparent", "demo_session", "return", "return_state", "preselect", "suggest_delegate"]) if (url.searchParams.get(k)) q.set(k, url.searchParams.get(k)!); const s = q.toString(); return s ? `&${s}` : ""; };
   const redirectTo = (location: string) => new Response(null, { status: 303, headers: { Location: location } });
   const initials = (name: string) => name.split(/\s+/).map(w => w[0]).join("").slice(0, 2).toUpperCase();
   /** The account picker. It's a plain form, so it works with no script. */
@@ -331,7 +331,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     const shareForm = canShare.length ? `<form method="post" action="/account/delegations${q}">
         <fieldset><legend>Share with a related person</legend>
           ${canShare.length > 1 ? `<fieldset class="accounts"><legend>Whose records</legend>${whoseRadios(canShare, canShare[0]!.patient)}</fieldset>` : `<input type="hidden" name="patient" value="${esc(canShare[0]!.patient)}">`}
-          <label class="field">Person <select name="delegate">${others.map(([id, u]) => `<option value="${esc(id)}">${esc(u.name)}</option>`).join("")}</select></label>
+          <label class="field">Person <select name="delegate">${others.map(([id, u]) => `<option value="${esc(id)}" ${id === url.searchParams.get("suggest_delegate") ? "selected" : ""}>${esc(u.name)}</option>`).join("")}</select></label>
           <label class="field">Relationship <select name="relationship">${RELATIONSHIPS.map(r => `<option>${esc(r)}</option>`).join("")}</select></label>
           ${whoseSites(canShare, r => `Sites they can see in ${esc(nameOf(r.patient))}'s records`, r => r.sites, () => "They can see no more than this, and can give an app no more than they see.")}
           <div class="buttons"><button class="primary">Share</button></div>

@@ -374,6 +374,7 @@ describe("flows, in real windows", () => {
     await popup.locator("input[name=username][value=josh]").check();
     await popup.getByRole("button", { name: "Continue" }).click();
     await popup.getByRole("link", { name: /Done, back to the demo/ }).waitFor();
+    expect(await popup.locator("select[name=delegate]").inputValue()).toBe("sam-caregiver");
     await popup.getByRole("button", { name: "Sign out" }).click();
     expect(await popup.locator("input[name=username][value=josh]").isChecked()).toBe(true);
     await popup.getByRole("button", { name: "Continue" }).click();

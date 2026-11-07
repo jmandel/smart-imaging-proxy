@@ -125,7 +125,7 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
     if (u.patient) out.push({ patient: u.patient, name: PATIENT_NAMES[u.patient] ?? u.patient, via: "self", sites: stack.catalog.sitesFor(u.patient) });
     const guardians = stack.stores.saved.guardians();
     for (const g of guardians) if (g.guardian === id && g.patient !== u.patient) out.push({ patient: g.patient, name: PATIENT_NAMES[g.patient] ?? g.patient, via: "guardian", relationship: g.relationship, sites: guardianSites(g) });
-    for (const d of stack.stores.saved.delegations()) if (d.delegate === id && !out.some(r => r.patient === d.patient) && (!d.asGuardian || guardians.some(g => g.guardian === d.grantedBy && g.patient === d.patient))) out.push({ patient: d.patient, name: PATIENT_NAMES[d.patient] ?? d.patient, via: "delegation", relationship: d.relationship, sites: (() => { const g = guardians.find(x => x.guardian === d.grantedBy && x.patient === d.patient); if (!g?.excludedStudies?.length) return d.sites; const open = guardianSites(g); return d.sites.filter(x => open.includes(x)); })() });
+    for (const d of stack.stores.saved.delegations()) if (d.delegate === id && !out.some(r => r.patient === d.patient) && (USERS[d.grantedBy]?.patient === d.patient || guardians.some(g => g.guardian === d.grantedBy && g.patient === d.patient))) out.push({ patient: d.patient, name: PATIENT_NAMES[d.patient] ?? d.patient, via: "delegation", relationship: d.relationship, sites: (() => { const g = guardians.find(x => x.guardian === d.grantedBy && x.patient === d.patient); if (!g?.excludedStudies?.length) return d.sites; const open = guardianSites(g); return d.sites.filter(x => open.includes(x)); })() });
     return out;
   };
   function options() {

@@ -284,7 +284,7 @@ describe("paged search", () => {
   function server(catalog: CatalogStore, extra: { pageBytes?: number } = {}) {
     const store = new PolicyStore({ mode: "memory" });
     store.putAppGrant({ client: "app", user: "pat", patient: "p1" });
-    const imaging = createImagingServer({ base: "http://fhir", clinicalFhirBase: "http://clinical", proxyBase: () => "http://proxy", introspect: async () => TOKEN, serviceSecret: "s", catalog: () => catalog, keyStore: store, store: () => store, ...extra });
+    const imaging = createImagingServer({ patientOf: () => undefined, base: "http://fhir", clinicalFhirBase: "http://clinical", proxyBase: () => "http://proxy", introspect: async () => TOKEN, serviceSecret: "s", catalog: () => catalog, keyStore: store, store: () => store, ...extra });
     const get = async (q: string) => {
       const r = await imaging.fetch(new Request(q.startsWith("http") ? q : `http://fhir/fhir/ImagingStudy?${q}`, { headers: { Authorization: "Bearer t" } }));
       return { status: r.status, body: await r.json() as any };
