@@ -1,7 +1,7 @@
 // One card per kind of recorded event: a one-line summary, the fields that matter, links through the
 // values events share, and a drill-in to the raw exchange. Cards render from recorded events only.
 const Cards = (() => {
-  let names = {}, traceUrl = "";
+  let names = {}, traceUrl = "", session = "";
   const nameOf = who => { if (!who) return ""; const id = who.slice(who.indexOf(":") + 1); return names[who] ?? names[id] ?? id; };
   const short = v => String(v ?? "");
   const time = at => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -58,7 +58,7 @@ const Cards = (() => {
     return `<li class="card ${esc(e.outcome)}" data-kind="${esc(e.kind)}" data-seq="${esc(e.seq)}">
       <div class="line"><span class="summary">${esc(k.summary)}</span><span class="who-said">${esc(SERVICE[e.service] ?? e.service)}</span><span class="when">${esc(time(e.at))}</span></div>
       ${fields.length ? `<dl>${fields.map(([a, b]) => `<dt>${esc(a)}</dt><dd>${esc(short(b))}</dd>`).join("")}</dl>` : ""}
-      ${links.length ? `<div class="links">${links.map(l => { const [kind, v] = [l.slice(0, l.indexOf(":")), l.slice(l.indexOf(":") + 1)]; return `<a href="${esc(`${BASE}/activity?link=${encodeURIComponent(l)}`)}" title="Every event with this ${esc(LINK_WORDS[kind] ?? kind)}">${esc(LINK_WORDS[kind] ?? kind)} ${esc(kind === "user" || kind === "client" ? nameOf(l) : v)}</a>`; }).join("")}</div>` : ""}
+      ${links.length ? `<div class="links">${links.map(l => { const [kind, v] = [l.slice(0, l.indexOf(":")), l.slice(l.indexOf(":") + 1)]; return `<a href="${esc(`${BASE}/activity?${session ? `session=${encodeURIComponent(session)}&` : ""}link=${encodeURIComponent(l)}`)}" title="Every event with this ${esc(LINK_WORDS[kind] ?? kind)}">${esc(LINK_WORDS[kind] ?? kind)} ${esc(kind === "user" || kind === "client" ? nameOf(l) : v)}</a>`; }).join("")}</div>` : ""}
       ${e.span ? `<details data-session="${esc(e.session)}" data-span="${esc(e.span)}"><summary>The exchange</summary><div class="raw"><p class="note">Loading…</p></div></details>` : k.raw !== undefined ? `<details><summary>As recorded</summary><div class="raw"><pre>${esc(JSON.stringify(k.raw, null, 2))}</pre></div></details>` : ""}
     </li>`;
   }
@@ -109,7 +109,9 @@ const Cards = (() => {
   }
   return {
     setNames(map) { names = { ...names, ...map }; },
-    setTraceUrl(u) { traceUrl = u; },
+    setTraceUrl(u) { traceUrl = u ?? ""; },
+    /** Keeps a card's links within one session's view, as its viewer may see it. */
+    setSession(s) { session = s ?? ""; },
     list(events, empty = "Nothing recorded yet.") { return events.length ? `<ol class="cards">${events.map(card).join("")}</ol>` : `<p class="note">${esc(empty)}</p>`; },
     wire,
   };

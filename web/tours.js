@@ -55,6 +55,7 @@ function render() {
   const mode = windowMode();
   const focused = document.activeElement?.id || document.activeElement?.dataset?.step;
   $("#tour-list").innerHTML = listHtml();
+  Cards.setSession(state?.session);
   $("#tour").innerHTML = tourHtml();
   if ($("#window-mode")) $("#window-mode").checked = mode;
   Cards.wire($("#tour"));

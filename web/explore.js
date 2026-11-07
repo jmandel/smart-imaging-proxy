@@ -3,6 +3,14 @@
 let options, view = null, shown = "", timer, popup, popupSent = false, closedPolls = 0, wantFocus = false, pageError = "";
 let open = null, openEvents = null, form = null, mode = "scripted";
 const picked = { records: {}, referral: {} };
+/** Each service's referrals, asked for once that service is chosen. */
+const referralsFor = {}, askedReferrals = new Set();
+async function loadReferrals(service) {
+  askedReferrals.add(service);
+  try { referralsFor[service] = (await api("GET", `/api/explore/referrals?service=${encodeURIComponent(service)}`)).referrals; }
+  catch (e) { askedReferrals.delete(service); pageError = e.message; }
+  render(true);
+}
 
 function whoHtml() {
   const busy = !!view?.running;
@@ -29,7 +37,6 @@ function renderWho() {
 async function loadOptions() {
   options = await api("GET", "/api/explore/options");
   Cards.setNames(options.names);
-  Cards.setTraceUrl(options.traceUrl);
   renderWho();
 }
 
@@ -46,7 +53,9 @@ function whoseHtml() {
   if (!view || view.who.kind !== "user") {
     if (view?.who.kind === "service") {
       const chosen = picked.referral[view.who.id] ?? view.who.referral;
-      return `<div class="whose" role="group" aria-label="Referral"><span>Referral</span>${options.referrals.map(r => `<button type="button" class="chip-choice" data-referral="${esc(r.id)}" aria-pressed="${chosen === r.id}" ${view.running ? "disabled" : ""} title="${esc(r.reason)}">${esc(r.report)}${r.patient ? `, ${esc(r.patient.split(" ")[0])}` : ""}</button>`).join("")}</div>`;
+      const referrals = referralsFor[view.who.id];
+      if (!referrals) { if (!askedReferrals.has(view.who.id)) loadReferrals(view.who.id); return ""; }
+      return `<div class="whose" role="group" aria-label="Referral"><span>Referral</span>${referrals.map(r => `<button type="button" class="chip-choice" data-referral="${esc(r.id)}" aria-pressed="${chosen === r.id}" ${view.running ? "disabled" : ""} title="${esc(r.reason)}">${esc(r.report)}${r.patient ? `, ${esc(r.patient.split(" ")[0])}` : ""}</button>`).join("")}</div>`;
     }
     return "";
   }
@@ -120,6 +129,7 @@ function render(force = false) {
   $("#view").innerHTML = viewHtml();
   if (options) renderWho();
   Thumbs.watch($("#view"));
+  Cards.setSession(view?.session);
   Cards.wire($("#view"));
   if (focusedAction && document.getElementById(focusedAction)) document.getElementById(focusedAction).focus();
   if (view && !view.running && wantFocus) { wantFocus = false; $("#headline")?.focus({ preventScroll: innerWidth > 720 }); announce(view.headline ?? ""); }

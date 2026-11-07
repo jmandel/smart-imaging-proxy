@@ -14,6 +14,7 @@ import { referenceModel } from "./reference-model";
 import { nameOf, type World } from "./world";
 import { patientAttributes } from "./stores";
 import { recordEvent, runInSession, sessionKey, tfetch, traceSettled, withSpan } from "./trace";
+import { forViewer, viewerKnows } from "./viewer-events";
 import type { Stack } from "./stack";
 
 const MAX_SESSIONS = 20;
@@ -24,7 +25,6 @@ const NOT_IMAGES = new Set(["SR", "PR", "KO", "DOC", "SEG", "RTSTRUCT", "RTPLAN"
 const STORED_ANY = "multipart/related; type=application/dicom; transfer-syntax=*";
 /** A DICOM UID: digits in dot-separated components, no leading zero in a component, at most 64 characters. */
 export const DICOM_UID = /^(?=.{1,64}$)(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))*$/;
-
 
 type Status = "signing-in" | "results" | "no-access" | "declined" | "forbidden" | "token-rejected" | "failed";
 interface Start { kind: "user"; user: string; patient?: string; mode: "scripted" | "window"; sites?: string[]; }
@@ -109,11 +109,13 @@ export function createExplore(world: World, clients: Record<string, BackendClien
         const mine = world.store.policiesOf("service-access").filter(r => r.service === `service:${id}`);
         return { id, name: serviceName(id), role: mine.length ? `Under ${plural(mine.length, "service-access policy", "service-access policies")}` : "No service-access policy yet" };
       }),
-      referrals: referrals().map(r => { const c = citedBy(r.bundle); return { id: r.id, reason: c.reason, report: c.report, patient: PATIENT_NAMES[r.bundle.entry[0].resource.subject.reference.split("/").pop()] }; }),
-      relationships: RELATIONSHIPS, scope, backend: world.backend, app: APP_NAMES[APP], traceUrl: world.urls.trace,
-      names: { ...Object.fromEntries(Object.entries(USERS).map(([id, u]) => [`user:${id}`, u.name])), ...Object.fromEntries(Object.entries(PATIENT_NAMES).map(([id, n]) => [`patient:${id}`, n])), ...Object.fromEntries(Object.keys(clients).map(id => [`client:${id}`, serviceName(id)])) },
+      relationships: RELATIONSHIPS, scope, backend: world.backend, app: APP_NAMES[APP],
+      names: { ...Object.fromEntries(Object.entries(USERS).map(([id, u]) => [`user:${id}`, u.name])), ...Object.fromEntries(Object.entries(PATIENT_NAMES).map(([id, n]) => [`patient:${id}`, n])), ...Object.fromEntries(Object.keys(clients).map(id => [`client:${id}`, serviceName(id)])), ...Object.fromEntries(Object.entries(APP_NAMES).map(([id, n]) => [`app:${id}`, `the ${n}`])) },
     };
   }
+
+  /** The referrals a service works from, with the report each cites. Only a service is given them. */
+  const referralList = () => referrals().map(r => { const c = citedBy(r.bundle); return { id: r.id, reason: c.reason, report: c.report, patient: PATIENT_NAMES[r.bundle.entry[0].resource.subject.reference.split("/").pop()] }; });
 
   const act = async <T>(s: Session, name: string, attrs: Record<string, unknown>, fn: () => Promise<T>): Promise<T> => {
     s.c.beginStep();
@@ -425,13 +427,20 @@ export function createExplore(world: World, clients: Record<string, BackendClien
     finally { r.ms = Math.round(performance.now() - started); r.running = false; }
   }
 
-  /** What happened in this session, as recorded events. Only what the viewer may know: search's withheld list keeps only studies a route reaches. */
+  /** The studies a session's viewer knows of beyond its events: what their routes reach, what's on their page, and the study a referral cites. */
+  const knownOf = (s: Session) => [...s.knowable, ...s.sheets.map(x => x.id)];
+  const idOfUid = (uid: string) => world.catalog.studyByUid(uid)?.id;
+  /** A session's events, or those given of it, as its viewer may see them. */
+  function forSession(s: Session, events?: ReturnType<typeof stack.collector.store.events>) {
+    const all = stack.collector.store.events({ session: s.name });
+    return forViewer(events ?? all, viewerKnows(all, knownOf(s)), idOfUid);
+  }
+  /** What happened in this session, as recorded events, as its viewer may see them, and for a study, only what's about it. */
   async function happened(s: Session, study?: string) {
     await traceSettled();
     const uid = study ? s.endpoints.get(study)?.uid ?? world.catalog.allStudies().find(x => x.id === study)?.uid : undefined;
-    const all = stack.collector.store.events({ session: s.name });
     const about = (e: any) => !e.links.some((l: string) => l.startsWith("uid:") || (l.startsWith("study:") && e.kind !== "search.returned")) || (study && (e.links.includes(`study:${study}`) || (uid && e.links.includes(`uid:${uid}`))));
-    return all.filter(e => !study || about(e)).map(e => e.kind === "search.returned" && Array.isArray(e.data.withheld) ? { ...e, data: { ...e.data, withheld: (e.data.withheld as any[]).filter(w => s.knowable.has(w.study)) } } : e);
+    return forSession(s).filter(e => !study || about(e));
   }
 
   const sessionOf = (req: Request) => sessions.get(req.headers.get("cookie")?.match(new RegExp(`(?:^|; )${COOKIE}=([^;]+)`))?.[1] ?? "");
@@ -450,13 +459,21 @@ export function createExplore(world: World, clients: Record<string, BackendClien
     return undefined;
   }
 
+  const byName = (name: string) => [...sessions.values()].find(s => s.name === name);
   return {
+    /** What the viewer of this Explore session knows of beyond its events, if it's one of this world's. */
+    knownIn(name: string) { const s = byName(name); return s && knownOf(s); },
     receiveCallback(url: URL) { const s = waiting(url); s?.c.resolveCallback?.(url); return !!s; },
     callbackContext(url: URL) { return waiting(url)?.c.callbackContext; },
     async fetch(req: Request, url: URL): Promise<Response> {
       const p = url.pathname.slice("/api/explore".length);
       if (req.method === "GET") {
         if (p === "/options") return json(options());
+        if (p === "/referrals") {
+          const service = url.searchParams.get("service") ?? "";
+          if (!Object.hasOwn(clients, service)) return json({ error: "name a registered backend service" }, 400);
+          return json({ service, referrals: referralList() });
+        }
         const s = sessionOf(req);
         if (p === "/session") return json({ session: s ? view(s) : null, scope, backend: world.backend });
         if (!s) return gone();

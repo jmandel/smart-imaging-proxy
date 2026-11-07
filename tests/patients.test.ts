@@ -433,7 +433,7 @@ describe("Explore", () => {
     const b = browser();
     const o = await b.call("GET", "/api/explore/options");
     expect(o.services.map((x: any) => x.id)).toEqual(["hand-referral-service", "outside-release-service", "research-donation"]);
-    expect(o.referrals.length).toBe(10);
+    expect((await b.call("GET", "/api/explore/referrals?service=research-donation")).referrals.length).toBe(10);
     await b.call("POST", "/api/explore/start", { client: "research-donation", referral: "referral-syn-riley-knee-mr-2022" });
     const s = await b.settle();
     expect(s.status).toBe("forbidden");

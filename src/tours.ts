@@ -11,7 +11,8 @@ import { cascade, referenceModel, type RefStudy } from "./reference-model";
 import { citedBy, referralsFrom, reportTitle } from "./referrals";
 import { RULE_SETS } from "./rule-presets";
 import { patientAttributes } from "./stores";
-import { inScope, recordEvent, runInSession, sessionKey, traceSettled, withSpan } from "./trace";
+import { inScope, recordEvent, runInSession, sessionKey, traceSettled, withSpan, type EventRecord } from "./trace";
+import { forViewer, viewerKnows } from "./viewer-events";
 import type { World } from "./world";
 import type { Stack } from "./stack";
 
@@ -49,7 +50,11 @@ interface TourStep {
   expect(r: Run, m: ReturnType<typeof modelOf>): Answer;
   act(r: Run): Promise<Answer>;
 }
-interface Tour { id: string; title: string; summary: string; note?: string; steps: TourStep[]; }
+interface Tour {
+  id: string; title: string; summary: string; note?: string; steps: TourStep[];
+  /** The studies the person taking the tour knows of, beyond what its events show: those of the patient they act as, or that a referral cites. */
+  knows(r: Run): string[];
+}
 
 const studyText = (r: Run, ids: string[]) => ids.length ? `${plural(ids.length, "study", "studies")}: ${list(ids.map(id => r.title(id)))}` : "no studies";
 const reachText = (r: Run, ids: string[]) => ({ value: sorted(ids), text: studyText(r, sorted(ids)) });
@@ -230,9 +235,12 @@ function serviceSearchStep(id: string, modality: string, title: string): TourSte
   };
 }
 
+/** Josh's studies: in a tour where he acts, as the patient, he knows of all of them. */
+const joshStudies = (r: Run) => r.world.catalog.allStudies().filter(s => s.patient === JOSH_PATIENT).map(s => s.id);
+
 const TOURS: Tour[] = [
   {
-    id: "caregiver", title: "Josh shares with a caregiver", summary: "Josh shares some sites with Sam. Sam gives an app one of them. Each link can only narrow what the one before allowed.",
+    id: "caregiver", title: "Josh shares with a caregiver", summary: "Josh shares some sites with Sam. Sam gives an app one of them. Each link can only narrow what the one before allowed.", knows: joshStudies,
     steps: [
       shareStep("share", someSites, "Josh shares some of his sites with Sam, on his account page"),
       launchStep("launch", SAM, JOSH_PATIENT, r => someSites(r).slice(0, 1), "Sam signs in, picks Josh's records, and gives the app one site"),
@@ -241,7 +249,7 @@ const TOURS: Tour[] = [
     ],
   },
   {
-    id: "app-consent", title: "An app sees only the sites Josh approves", summary: "Consent at sign-in is kept as Imaging Server policy, not in the token. Search and retrieval both follow it.",
+    id: "app-consent", title: "An app sees only the sites Josh approves", summary: "Consent at sign-in is kept as Imaging Server policy, not in the token. Search and retrieval both follow it.", knows: joshStudies,
     steps: [
       launchStep("launch", JOSH, JOSH_PATIENT, r => joshSites(r).slice(-1), "Josh signs in and approves the app for one site"),
       searchStep("search", JOSH, JOSH_PATIENT, "The app searches Josh's studies"),
@@ -250,7 +258,7 @@ const TOURS: Tour[] = [
     ],
   },
   {
-    id: "revoke", title: "Revoking takes effect", summary: "Search changes at once. A signed URL already given out works until it expires, and then the proxy asks.",
+    id: "revoke", title: "Revoking takes effect", summary: "Search changes at once. A signed URL already given out works until it expires, and then the proxy asks.", knows: joshStudies,
     steps: [
       shareStep("share", r => joshSites(r), "Josh shares all his sites with Sam"),
       launchStep("launch", SAM, JOSH_PATIENT, () => undefined, "Sam signs in, picks Josh's records, and approves the app"),
@@ -270,6 +278,7 @@ const TOURS: Tour[] = [
   {
     id: "backend", title: "A service works from a referral", summary: "A consult referral names the patient on the clinical FHIR server and cites the imaging report, with its accession number. The service searches for exactly that study, and its service-access policy decides what it sees.",
     note: "Across organizations, a referral would carry an MRN instead, and the service would first resolve it with Patient?identifier=. That isn't shown here.",
+    knows: r => ["CR", "CT"].flatMap(m => referralOf(r, m)?.study ?? []),
     steps: [
       {
         id: "check", title: "The referral arrives, and the service checks the patient is on the FHIR server it's authorized for", actor: "The service",
@@ -328,6 +337,10 @@ export function createTours(world: World, clients: Record<string, BackendClient>
     run = { tour, r, results: {}, session };
     return run;
   }
+  /** The studies the person taking this world's tour knows of, beyond its events, if the session is the tour's. */
+  const knownIn = (session: string) => run && run.session === session ? run.tour.knows(run.r) : undefined;
+  /** Events of the tour's session, as the person taking it may see them. */
+  const viewerEvents = (session: string, events: EventRecord[]) => forViewer(events, viewerKnows(stack.collector.store.events({ session }), knownIn(session) ?? []), uid => world.catalog.studyByUid(uid)?.id);
   /** Each step, with what the model says it should come to now, before it runs. */
   function state() {
     if (!run) return { scope: world.scope ? { id: world.scope, base: world.prefix } : null, tour: null };
@@ -366,7 +379,7 @@ export function createTours(world: World, clients: Record<string, BackendClient>
     } catch (e) { result = { ok: false, expected: "", actual: String((e as Error).message ?? e), stopped: e instanceof StepStopped }; }
     await traceSettled();
     result.trace = trace;
-    result.events = stack.collector.store.events({ session: run!.session, trace });
+    result.events = viewerEvents(run!.session, stack.collector.store.events({ session: run!.session, trace }));
     run!.results[id] = result;
     return result;
   }
@@ -388,6 +401,7 @@ export function createTours(world: World, clients: Record<string, BackendClient>
   }
 
   return {
+    knownIn,
     receiveCallback(url: URL) { if (!run?.r.c.pendingAuthUrl) return false; return run.r.c.receiveCallback(url); },
     callbackContext() { return run?.r.c.callbackContext; },
     async fetch(req: Request, url: URL): Promise<Response> {

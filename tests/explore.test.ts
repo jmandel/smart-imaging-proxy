@@ -12,6 +12,7 @@ import { resetClock } from "../src/clock";
 import { CONFIG, ONE_ORIGIN, PORTS } from "../src/config";
 import { traceSettled } from "../src/trace";
 import { RULE_SETS } from "../src/rule-presets";
+import { USERS } from "../src/auth-server";
 
 const root = join(import.meta.dir, "..");
 const BACKENDS: BackendName[] = (process.env.BACKENDS?.split(",") as BackendName[]) ?? ["static-files", "s3", "orthanc"];
@@ -203,11 +204,76 @@ describe("people", () => {
   }, 60000);
 });
 
+/** Everything a viewer could be shown of the skin biopsy a label keeps from guardians. */
+const BIOPSY_TRACES = () => {
+  const st = stack.catalog.allStudies().find(x => x.id === CONFIDENTIAL)!;
+  return [CONFIDENTIAL, st.uid, st.title!, "skin biopsy", "Skin biopsy", "SKIN BIOPSY", "Northside", "confidential-adolescent", "confidential adolescent", "keeps it from guardians", "doesn't reach"].filter(Boolean);
+};
+/** The text of everything a session's activity view, and each exchange behind its cards, gives. */
+async function activityText(b: ReturnType<typeof browser>, session: string) {
+  const r = await b.call("GET", `/api/activity?session=${encodeURIComponent(session)}`);
+  expect(r.status).toBe(200);
+  const body = r.json();
+  expect(body.events.some((e: any) => e.kind === "search.returned")).toBe(true);
+  // A viewer's view doesn't link into the live trace.
+  expect(body.traceUrl).toBeUndefined();
+  const texts = [r.text];
+  for (const e of body.events.filter((x: any) => x.span)) {
+    const span = await b.call("GET", `/api/activity/span?session=${encodeURIComponent(session)}&span=${encodeURIComponent(e.span)}`);
+    expect([e.kind, span.status]).toEqual([e.kind, 200]);
+    texts.push(span.text);
+  }
+  texts.push((await b.call("GET", "/api/explore/events")).text);
+  return texts.join("\n");
+}
+const expectNoTrace = (who: string, text: string) => { for (const hidden of BIOPSY_TRACES()) expect([who, hidden, text.includes(hidden)]).toEqual([who, hidden, false]); };
+
+describe("the activity of a viewer's session", () => {
+  test("as Sam, guardian of 15-year-old Riley, holds no trace of the study a label keeps from guardians", async () => {
+    const b = browser();
+    const s = await b.pick("sam-caregiver", { patient: "riley-example" });
+    expect(s.status).toBe("results");
+    await traceSettled();
+    expectNoTrace("Sam", await activityText(b, s.session));
+    // The operator's view of every session holds it, which is what the filter takes out.
+    expect((await b.call("GET", "/api/activity")).text).toContain(CONFIDENTIAL);
+  }, 60000);
+  test("as Alex, after Sam shares Lakeside, holds no trace of it either", async () => {
+    stack.store.putShare({ from: "user:sam-caregiver", with: "user:alex-neighbor", patient: "patient:riley-example", sites: ["Lakeside Imaging"], label: "neighbor" });
+    const b = browser();
+    const s = await b.pick("alex-neighbor", { patient: "riley-example" });
+    expect(b.released(s)).toEqual(["syn-riley-knee-mr-2022"]);
+    await traceSettled();
+    const text = await activityText(b, s.session);
+    expectNoTrace("Alex", text);
+    expect(text).toContain("syn-riley-knee-mr-2022");
+    // An exchange no card of the session shows isn't served.
+    expect((await b.call("GET", `/api/activity/span?session=${encodeURIComponent(s.session)}&span=nope`)).status).toBe(404);
+  }, 60000);
+  test("a study the app isn't approved for stays in the person's view, with its reason", async () => {
+    setSaved({ shares: [share(SHARE)] });
+    const b = browser();
+    await b.pick("sam-caregiver", { patient: "josh-example" });
+    const s = await b.post("/approve", { sites: ["Lakeside Imaging"] });
+    await traceSettled();
+    const searches = (await b.call("GET", `/api/activity?session=${encodeURIComponent(s.session)}&kind=search.returned`)).json().events;
+    expect(searches.at(-1).data.withheld.map((w: any) => w.study).sort()).toEqual(LAKESIDE_RIVERSIDE.filter(x => x !== "mri-brain-2020"));
+    // Northside Pathology wasn't shared: Sam's view doesn't name its study.
+    expect(JSON.stringify(searches)).not.toContain("slide-lung-2023");
+  }, 60000);
+  test("the options every viewer is sent name no study", async () => {
+    const text = (await browser().call("GET", "/api/explore/options")).text;
+    for (const st of stack.catalog.allStudies()) for (const v of [st.id, st.title, st.description].filter(Boolean)) expect([v, text.includes(v!)]).toEqual([v, false]);
+  });
+});
+
 describe("services", () => {
   test("every referral cites its report, with the order's accession number and system, and names the patient absolutely", async () => {
     const o = (await browser().call("GET", "/api/explore/options")).json();
-    expect(o.referrals.length).toBe(10);
     expect(o.services.map((x: any) => [x.id, x.name])).toEqual([["hand-referral-service", "Hand referral service"], ["outside-release-service", "Outside release service"], ["research-donation", "Research donation"]]);
+    // Referrals come only for a service, named in a request of their own.
+    for (const service of o.services.map((x: any) => x.id)) expect((await browser().call("GET", `/api/explore/referrals?service=${service}`)).json().referrals.length).toBe(10);
+    for (const q of ["", "?service=mallory", "?service=josh"]) expect((await browser().call("GET", `/api/explore/referrals${q}`)).status).toBe(400);
     const { referralsFrom, citedBy } = await import("../src/referrals");
     for (const r of referralsFrom(stack.catalog, stack.root.urls.clinicalFhir)) {
       const c = citedBy(r.bundle);
@@ -448,6 +514,27 @@ describe("explain", () => {
     expect((await realFetch(`http://127.0.0.1:${PORTS.imaging}${q}`)).status).toBe(401);
     if (ONE_ORIGIN) expect((await realFetch(`${CONFIG.imagingUrl}${q}`)).status).toBe(404);
   });
+  test("releases exactly what search returned, for each person and service Explore shows", async () => {
+    setSaved({ shares: [share(SHARE)], rules: [rule("hand-referral-service", { modalities: ["CR"] }), rule("outside-release-service", { studies: ["ct-abdomen-pelvis-2012"] }), rule("research-donation", { since: "2020-01-01" })] });
+    stack.store.putShare({ from: "user:sam-caregiver", with: "user:alex-neighbor", patient: "patient:riley-example", sites: ["Lakeside Imaging"], label: "neighbor" });
+    const b = browser();
+    const releasedBy = (x: any) => x.studies.filter((r: any) => r.release !== "none").map((r: any) => r.id).sort();
+    for (const [user, patient] of [["josh", "josh-example"], ["sam-caregiver", "josh-example"], ["sam-caregiver", "sam-example"], ["sam-caregiver", "riley-example"], ["alex-neighbor", "riley-example"], ["robin", undefined]] as const) {
+      const s = await b.pick(user, patient ? { patient } : {});
+      expect(s.status).toBe("results");
+      const x = await stack.explain({ client: "portal-app", user, fhirUser: USERS[user]!.fhirUser, patient: s.patient });
+      expect([user, s.patient, b.released(s)]).toEqual([user, s.patient, releasedBy(x)]);
+    }
+    for (const client of ["hand-referral-service", "outside-release-service", "research-donation"]) {
+      for (const r of (await b.call("GET", `/api/explore/referrals?service=${client}`)).json().referrals.filter((r: any) => r.patient === "Josh Example")) {
+        const s = await b.service(client, r.id);
+        const x: any = await stack.explain({ client, patient: "josh-example" });
+        // A service searches for the accession number its referral cites, so only that study can come back.
+        const cited = stack.catalog.allStudies().find(st => `referral-${st.id}` === r.id)!.id;
+        expect([client, r.id, b.released(s)]).toEqual([client, r.id, releasedBy(x).filter((id: string) => id === cited)]);
+      }
+    }
+  }, 180000);
 });
 
 describe("the token stays on the server", () => {

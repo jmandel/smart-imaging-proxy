@@ -11,7 +11,8 @@ import type { BackendClient } from "./auth-server";
 import { createExplore } from "./explore";
 import { createTours } from "./tours";
 import { eventQueryOf } from "./trace-collector";
-import { scopeOfSession } from "./trace";
+import { scopeOfSession, type EventRecord } from "./trace";
+import { forViewer, viewerKnows } from "./viewer-events";
 import { loadViewerKit, VIEWER_KIT_FILES } from "./vendor";
 import { panelOf } from "./stores";
 import type { World } from "./world";
@@ -43,6 +44,11 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     // The redirect is a real protocol message with no trace fields, so its span joins the flow waiting on it.
     const explore = createExplore(world, clients, stack);
     const tours = createTours(world, clients, stack);
+    /** A session's events as its viewer may see them: an Explore view's person or service, a tour's taker, or whoever a flow acts as. */
+    const viewerEvents = (session: string, events: EventRecord[]) => {
+      const all = stack.collector.store.events({ session, limit: 2000 });
+      return forViewer(events, viewerKnows(all, explore.knownIn(session) ?? tours.knownIn(session) ?? []), uid => world.catalog.studyByUid(uid)?.id);
+    };
     const callback = traced("app", async req => {
       const back = new URL(req.url);
       if (!explore.receiveCallback(back) && !tours.receiveCallback(back) && !session?.ctx.receiveCallback(back)) return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Not expected</title></head><body style="font:15px system-ui;padding:2rem"><p>This redirect doesn't match a sign-in the app is waiting for, so the app ignored it.</p></body></html>`, { status: 400, headers: { "content-type": "text/html" } });
@@ -75,14 +81,20 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       }
       if (p.startsWith("/api/settings/")) return settingsApi(stack, world, req, url);
       if (p === "/api/activity" && req.method === "GET") {
-        // A scope's activity is its own. The root's covers every world, and filters by scope.
+        // A scope's activity is its own. The root's covers every world, and filters by scope. One
+        // session's is what its viewer may see; every session's at once is the operator's, which alone
+        // links to the live trace.
         const q = eventQueryOf(url);
         if (world.scope) q.scope = world.scope;
-        return json({ events: stack.collector.store.events(q), facets: stack.collector.store.eventFacets(world.scope), traceUrl: world.urls.trace });
+        const events = stack.collector.store.events(q);
+        if (q.session) return json({ events: viewerEvents(q.session, events), facets: stack.collector.store.eventFacets(world.scope), viewer: true });
+        return json({ events, facets: stack.collector.store.eventFacets(world.scope), traceUrl: world.urls.trace });
       }
       if (p === "/api/activity/span" && req.method === "GET") {
+        // The exchange behind an event its session's viewer may see, and no other.
         const session = url.searchParams.get("session") ?? "", span = url.searchParams.get("span") ?? "";
         if (world.scope && scopeOfSession(session) !== world.scope) return json({ error: "not found" }, 404);
+        if (!span || !viewerEvents(session, stack.collector.store.events({ session, limit: 2000 })).some(e => e.span === span)) return json({ error: "not found" }, 404);
         const r = stack.collector.store.span(session, span);
         return r ? json(r) : json({ error: "not found" }, 404);
       }
