@@ -200,9 +200,6 @@ describe("the guardian", () => {
       return { n, sha: h.digest("hex") };
     };
     const instance = hierarchy.instances.find(i => i.uid.endsWith(".28.0"))!.uid;
-    const large = await stack.backends.orthanc.openBulk(row.uid, hierarchy.uid, instance, "7FE00010");
-    expect(large.bytes).toBeUndefined();
-    await large.body[Symbol.asyncIterator]().return?.(undefined);
     const orthanc = await hash("orthanc", instance);
     expect(orthanc.n).toBeGreaterThan(1000000);
     expect(orthanc).toEqual(await hash("static-files", instance));

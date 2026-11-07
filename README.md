@@ -225,7 +225,7 @@ Sam Example's and Riley Example's are invented people, and they're the only ones
 - With zstd passthrough, content digests are checked at ingest only, and serving checks length.
 - `/metadata` is built whole in memory.
 
-**Orthanc:** retrievals use chunked framing with no total `Content-Length`, as does a bulk element that's encapsulated or over 1 MiB, and there's no zstd passthrough or study versioning. `bun run load` skips a study Orthanc already has, so a corrected study doesn't reach it.
+**Orthanc:** retrievals use chunked framing with no total `Content-Length`, as does encapsulated bulk data, and there's no zstd passthrough or study versioning. `bun run load` skips a study Orthanc already has, so a corrected study doesn't reach it.
 
 **Ingest and storage:** ingest holds each file in memory, and nothing ever removes old versions or unreferenced content.
 

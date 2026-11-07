@@ -180,8 +180,8 @@ export class OrthancBackend implements Backend {
         throw new Error("upstream ended before the bulk element was complete");
       } finally { await events.return(undefined); }
     })();
-    // A part too large to look past could be followed by more, so only a part seen to the end gives the element's length.
-    return { ...(firstEnded && !encapsulated ? { bytes: held } : {}), body };
+    // A part larger than the peek is taken as the whole element: an offset table that size would need over 260,000 frames.
+    return { ...(encapsulated ? {} : firstEnded ? { bytes: held } : knownLength(start.value.headers["content-length"])), body };
   }
   async rawProbe(path: string, accept: string) {
     const r = await this.get(path, accept);
