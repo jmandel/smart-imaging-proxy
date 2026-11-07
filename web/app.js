@@ -249,11 +249,14 @@ function collect(el) {
   });
   return out;
 }
-async function runStep(id) {
+/** `automated` is a run nobody is watching step by step, so sign-ins take the scripted path, never a window. */
+async function runStep(id, automated = false) {
   const el = $(`[data-step="${id}"]`);
   const btn = el.querySelector("[data-run]");
   btn.disabled = true; btn.textContent = "Running…";
   el.querySelector(".result").innerHTML = "";
+  const modeInput = el.querySelector("[data-input=mode]");
+  if (automated && modeInput?.querySelector("option[value=scripted]")) modeInput.value = "scripted";
   const inputs = collect(el);
   // A popup has to open from the click itself, so it opens before the authorization URL exists.
   const popup = inputs.mode === "window" ? window.open("about:blank", "smart-imaging-authorize", "width=600,height=800") : null;
@@ -289,7 +292,7 @@ async function runStep(id) {
 }
 async function runRemaining() {
   for (const s of current.steps) if (!stepsDone[s.id]) {
-    if (!(await runStep(s.id))) { flowStatus[current.id] = false; renderNav(); break; }
+    if (!(await runStep(s.id, true))) { flowStatus[current.id] = false; renderNav(); break; }
   }
 }
 async function runEvery() {

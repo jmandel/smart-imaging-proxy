@@ -380,6 +380,18 @@ describe("flows, in real windows", () => {
     await popup.getByRole("button", { name: "Continue" }).click();
     await popup.getByRole("link", { name: /Done, back to the demo/ }).waitFor();
   });
+  test("running the remaining steps signs in by script, opening no window", async () => {
+    const page = await open("/");
+    await page.locator(".flow-choice[data-id=caregiver]").click();
+    await page.locator("[data-run=delegate]").waitFor();
+    let windows = 0;
+    context!.on("page", () => { windows++; });
+    await page.getByRole("button", { name: "Run remaining steps" }).click();
+    await page.locator("#steps [data-run]").first().waitFor({ state: "detached", timeout: 60000 });
+    expect(windows).toBe(0);
+    expect(await page.locator("#steps .result .error").count()).toBe(0);
+    expect(problems).toEqual([]);
+  });
   test("a patient who approves no sites can still finish the flow", async () => {
     const page = await open("/");
     await consent(page);
