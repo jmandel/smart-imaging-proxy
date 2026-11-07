@@ -331,12 +331,19 @@ export function createTours(world: World, clients: Record<string, BackendClient>
   /** Each step, with what the model says it should come to now, before it runs. */
   function state() {
     if (!run) return { scope: world.scope ? { id: world.scope, base: world.prefix } : null, tour: null };
-    const { tour, r, results } = run;
+    return stateOf(run.tour, run.r, run.results, run);
+  }
+  /** A tour's steps before any has run, with nothing started. */
+  function preview(tour: Tour) {
+    const r: Run = { world, c: undefined as unknown as Ctx, mode: "scripted", state: {}, model: change => modelOf(world, change ? doc => change(doc) : undefined), title };
+    return stateOf(tour, r, {});
+  }
+  function stateOf(tour: Tour, r: Run, results: Record<string, any>, started?: NonNullable<typeof run>) {
     const next = tour.steps.find(s => !results[s.id]);
     let expect: string | undefined;
     if (next) { try { expect = next.expect(r, r.model(next.intends ? doc => next.intends!(r, doc) : undefined)).text; } catch (e) { expect = String((e as Error).message ?? e); } }
     return {
-      scope: { id: world.scope, base: world.prefix }, session: run.session, activityUrl: activityUrl(run.session), running: run.running ?? null, pendingAuthUrl: r.c.pendingAuthUrl ?? null,
+      scope: { id: world.scope, base: world.prefix }, session: started?.session ?? null, activityUrl: started ? activityUrl(started.session) : null, running: started?.running ?? null, pendingAuthUrl: started ? r.c.pendingAuthUrl ?? null : null,
       tour: { id: tour.id, title: tour.title, summary: tour.summary, note: tour.note },
       steps: tour.steps.map(s => ({ id: s.id, title: s.title, actor: s.actor, ...(s === next ? { expect } : {}), ...(results[s.id] ? { result: results[s.id] } : {}) })),
     };
@@ -387,10 +394,9 @@ export function createTours(world: World, clients: Record<string, BackendClient>
       const p = url.pathname;
       if (p === "/api/tours" && req.method === "GET") return json({ tours: TOURS.map(t => ({ id: t.id, title: t.title, summary: t.summary, steps: t.steps.length })), checks: PROTOCOL_CHECKS.map(f => ({ id: f.id, title: f.title, summary: f.summary })), current: run?.tour.id ?? null, scope: world.scope ? { id: world.scope, base: world.prefix } : null });
       if (p === "/api/tours/state" && req.method === "GET") {
-        // A scope minted for a tour shows its steps, and what the model expects of the first, before any runs.
+        // A scope minted for a tour shows its steps, and what the model expects of the first, before any runs. Reading it starts nothing.
         const want = tourById(url.searchParams.get("tour") ?? "");
-        if (!run && world.scope && want) begin(want);
-        return json(state());
+        return json(!run && world.scope && want ? preview(want) : state());
       }
       if (req.method !== "POST") return new Response("not found", { status: 404 });
       const started = p.match(/^\/api\/tours\/([^/]+)\/start$/);

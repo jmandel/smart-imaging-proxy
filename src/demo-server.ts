@@ -2,7 +2,6 @@
 // flow API the checks and tests run flows through. `/s/{scope}/...` is that scope's own: its Explore,
 // its tour, its activity, its settings and its redirects. Starting a tour or a flow mints a scope for it.
 import { join } from "node:path";
-import { PolicyApiError } from "@smart-imaging-proxy/core";
 import { traced } from "./trace";
 import type { BackendName, Stack } from "./stack";
 import { FLOWS, flowById, runStep, startFlowIn, BadStepInput } from "./flows";
@@ -14,7 +13,7 @@ import { createTours } from "./tours";
 import { eventQueryOf } from "./trace-collector";
 import { scopeOfSession } from "./trace";
 import { loadViewerKit, VIEWER_KIT_FILES } from "./vendor";
-import { panelOf, splitPanel } from "./stores";
+import { panelOf } from "./stores";
 import type { World } from "./world";
 
 const json = (b: unknown, status = 200) => Response.json(b, { status });
@@ -123,23 +122,6 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         return json({ scope: w.scope, base: w.prefix, urls: w.urls }, 201);
       }
       if (p === "/api/policy" && req.method === "GET") return json(panelOf(world.store));
-      if (p === "/api/policy" && req.method === "PUT") {
-        const refused = refuseWrite(req, url);
-        if (refused) return refused;
-        if (!world.scope) return json({ error: "This panel changes only a flow's own scope. The root's rules change through the named rule sets on the admin screen." }, 409);
-        const b = await readJson(req);
-        if (b === undefined) return json({ error: "the request body must be valid JSON" }, 400);
-        const { document, settings, errors } = splitPanel(b);
-        if (errors.length) return json({ error: errors.join("; "), errors }, 400);
-        try {
-          if (Object.keys(document).length) await world.policy.setDocument(document);
-          if (Object.keys(settings).length) await world.policy.setSettings(settings);
-        } catch (e) {
-          if (e instanceof PolicyApiError && e.status === 400) return json({ error: e.message, errors: e.errors }, 400);
-          throw e;
-        }
-        return json(panelOf(world.store));
-      }
       const started = p.match(/^\/api\/flows\/([^/]+)\/start$/);
       if (started && req.method === "POST") {
         const r = await startRun(started[1]!);

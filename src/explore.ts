@@ -22,6 +22,9 @@ const APP = "portal-app";
 /** Series that hold no picture to show. */
 const NOT_IMAGES = new Set(["SR", "PR", "KO", "DOC", "SEG", "RTSTRUCT", "RTPLAN"]);
 const STORED_ANY = "multipart/related; type=application/dicom; transfer-syntax=*";
+/** A DICOM UID: digits in dot-separated components, no leading zero in a component, at most 64 characters. */
+export const DICOM_UID = /^(?=.{1,64}$)(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))*$/;
+
 
 type Status = "signing-in" | "results" | "no-access" | "declined" | "forbidden" | "token-rejected" | "failed";
 interface Start { kind: "user"; user: string; patient?: string; mode: "scripted" | "window"; sites?: string[]; }
@@ -360,10 +363,12 @@ export function createExplore(world: World, clients: Record<string, BackendClien
     const items = await pending;
     if (!items) return undefined;
     const typeOf = (i: any) => (tag(i, "00080008") ?? []) as string[];
-    const thumb = items.find(i => typeOf(i)[2] === "THUMBNAIL");
-    if (thumb) return tag(thumb, "00080018")?.[0] as string | undefined;
-    const levels = items.filter(i => typeOf(i)[2] === "VOLUME" && Number(tag(i, "00280008")?.[0] ?? 1) === 1).sort((a, b) => Number(tag(a, "00280010")?.[0] ?? 0) * Number(tag(a, "00280011")?.[0] ?? 0) - Number(tag(b, "00280010")?.[0] ?? 0) * Number(tag(b, "00280011")?.[0] ?? 0));
-    return tag(levels[0], "00080018")?.[0] as string | undefined;
+    // The UID goes into a URL path, so only a well-formed one is used.
+    const uidOf = (i: any) => { const v = tag(i, "00080018")?.[0]; return typeof v === "string" && DICOM_UID.test(v) ? v : undefined; };
+    const thumb = items.find(i => typeOf(i)[2] === "THUMBNAIL" && uidOf(i));
+    if (thumb) return uidOf(thumb);
+    const levels = items.filter(i => typeOf(i)[2] === "VOLUME" && Number(tag(i, "00280008")?.[0] ?? 1) === 1 && uidOf(i)).sort((a, b) => Number(tag(a, "00280010")?.[0] ?? 0) * Number(tag(a, "00280011")?.[0] ?? 0) - Number(tag(b, "00280010")?.[0] ?? 0) * Number(tag(b, "00280011")?.[0] ?? 0));
+    return levels[0] && uidOf(levels[0]);
   }
 
   /** One instance's bytes, retrieved through the proxy with this session's token, in its stored form. */

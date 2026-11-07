@@ -109,6 +109,18 @@ describe("each tour", () => {
     expect(share.ok).toBe(false);
     expect(share.write).toContain("user:alex-neighbor");
   }, 120000);
+  test("reading a tour's state starts nothing", async () => {
+    const base = await start("caregiver");
+    for (let i = 0; i < 2; i++) {
+      const state = (await call("GET", `${base}/api/tours/state?tour=caregiver`)).body;
+      expect(state).toMatchObject({ session: null, activityUrl: null, tour: { id: "caregiver" } });
+      expect(state.steps[0].expect).toBeTruthy();
+    }
+    expect((await call("GET", `${base}/api/tours`)).body.current).toBeNull();
+    // The scope is still free for whichever tour runs a step first.
+    expect((await call("POST", `${base}/api/tours/revoke/steps/share`, {})).status).toBe(200);
+    expect((await call("GET", `${base}/api/tours`)).body.current).toBe("revoke");
+  }, 60000);
   test("steps run in order, once, only in the tour's own scope", async () => {
     expect((await call("POST", "/api/tours/caregiver/steps/share", {})).status).toBe(409);
     expect((await call("POST", "/api/tours/nope/start", {})).status).toBe(404);

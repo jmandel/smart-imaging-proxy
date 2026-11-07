@@ -48,7 +48,7 @@ function tourHtml() {
       ${left ? `<button type="button" class="secondary" id="run-rest" ${running ? "disabled" : ""}>Run the rest</button>` : `<span class="verdict ${steps.every(s => s.result.ok) ? "ok" : "bad"}" role="status">${steps.every(s => s.result.ok) ? "Every step matched the model" : "Some steps differ from the model"}</span>`}
       <button type="button" class="secondary" id="start">Start over</button>
       <label class="note"><input type="checkbox" id="window-mode"> Sign in yourself, in a window</label>
-      <a href="${esc(state.activityUrl)}">All the activity</a></div>`;
+      ${state.activityUrl ? `<a href="${esc(state.activityUrl)}">All the activity</a>` : ""}</div>`;
 }
 
 function render() {

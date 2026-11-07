@@ -6,6 +6,7 @@ import { BackendError } from "@smart-imaging-proxy/core";
 import { startStack, type BackendName, type Stack } from "../src/stack";
 import { registerClients } from "../src/flows";
 import { createDemoServer } from "../src/demo-server";
+import { DICOM_UID } from "../src/explore";
 import { submitConsent } from "../src/flows/oauth";
 import { resetClock } from "../src/clock";
 import { CONFIG, ONE_ORIGIN, PORTS } from "../src/config";
@@ -316,6 +317,22 @@ describe("thumbnails", () => {
       expect((await b.call("GET", "/api/explore/thumbnail?study=xr-wrist-left-2012")).status).toBe(200);
       await traceSettled();
       expect((await b.events("slide-lung-2023")).some(e => e.kind === "stream.done")).toBe(false);
+    } finally { backend.getMetadata = real; }
+  }, 60000);
+  test("a slide's instance UID from metadata goes into a URL only when it's a DICOM UID", async () => {
+    expect(["1.2.840.10008.1.2", "0", "2.25.1"].every(u => DICOM_UID.test(u))).toBe(true);
+    for (const bad of ["../1.2", "1.2/3", "1.02", "1..2", ".1", "1.", "1.2%2F3", "a.b", "1".repeat(65), ""]) expect([bad, DICOM_UID.test(bad)]).toEqual([bad, false]);
+    const backend = stack.backends["static-files"];
+    const real = backend.getMetadata.bind(backend);
+    // Every image's SOP Instance UID is one a URL path mustn't take.
+    backend.getMetadata = async (scope: any) => (await real(scope)).map((i: any) => ({ ...i, "00080018": { vr: "UI", Value: ["1.2.3/../../../studies"] } }));
+    try {
+      const b = browser();
+      await b.pick("josh");
+      const before = stack.proxy.events.length;
+      expect((await b.call("GET", "/api/explore/thumbnail?study=slide-lung-2023")).status).toBe(404);
+      // The metadata was read, and no instance was asked for.
+      expect(stack.proxy.events.slice(before).filter((e: any) => /\/instances\//.test(e.path))).toEqual([]);
     } finally { backend.getMetadata = real; }
   }, 60000);
   test("a withheld study's sheet fetches nothing, and nor does a study the session didn't find", async () => {

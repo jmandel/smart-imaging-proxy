@@ -288,7 +288,7 @@ Sam Example's and Riley Example's are invented people, and they're the only ones
 
 ## Known limits
 
-**Open access:** nothing here has a login. Anyone who can reach these ports can sign in as any account, change saved policy from the settings menu and Explore, and read every trace and event, including response bodies. Over a tailnet, that's anyone on it. Traffic is plain HTTP. Settings writes take named choices, and nothing there reaches the filesystem. `/api/policy` accepts any valid policy JSON, for a scope only.
+**Open access:** nothing here has a login. Anyone who can reach these ports can sign in as any account, change saved policy from the settings menu and Explore, and read every trace and event, including response bodies. Over a tailnet, that's anyone on it. Traffic is plain HTTP. Settings writes take named choices, and nothing there reaches the filesystem.
 
 **Not tried:** other devices on the tailnet, AWS S3 (only RustFS), any cloud deployment, and real patient matching.
 

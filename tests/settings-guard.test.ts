@@ -171,13 +171,9 @@ describe("over HTTP", () => {
     expect(stack.backend).toBe("static-files");
     stillIntact();
   });
-  test("/api/policy is refused at the root, whatever it holds", async () => {
-    for (const body of [{ policies: [] }, { path: bait }, "'; DROP TABLE policies; --"]) expect((await send("PUT", "/api/policy", body)).status).toBe(409);
-    stillIntact();
-  });
-  test("/api/policy in a scope keeps strict validation, with no path-like field", async () => {
+  test("/api/policy takes no writes, at the root or in a scope, whatever they hold", async () => {
     const { base } = await (await send("POST", "/api/scopes")).json() as any;
-    for (const body of [{ path: bait }, { policies: [], file: canary }, { policies: [{ ...RULE, path: bait }] }, { shares: [{ ...SHARE, file: canary }] }, { maxSeriesInContext: bait }]) expect((await send("PUT", `${base}/api/policy`, body)).status).toBe(400);
+    for (const path of ["/api/policy", `${base}/api/policy`]) for (const body of [{ policies: [] }, { path: bait }, { shares: [{ ...SHARE, file: canary }] }, "'; DROP TABLE policies; --"]) expect((await send("PUT", path, body)).status).toBe(404);
     expect((await (await send("GET", `${base}/api/policy`)).json() as any).policies.map((p: any) => p.type)).toEqual(["guardian-access", "guardian-access", "sharing"]);
     stillIntact();
   });

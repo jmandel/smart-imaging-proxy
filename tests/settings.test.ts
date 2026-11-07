@@ -212,7 +212,7 @@ describe("a scope's settings", () => {
   test("move its own clock and backend, reset its own policy, and leave the root's alone", async () => {
     const base = await mint();
     const world = (stack.scopes.resolve(base.slice(3)) as any).world;
-    await ok("PUT", `${base}/api/policy`, { policies: [RULE] });
+    await world.policy.putPolicy(RULE);
     const s = await ok("POST", `${base}/api/settings/clock`, { advanceSeconds: 3600 });
     expect(s.scope.base).toBe(base);
     expect(s.store).toBeUndefined();
@@ -262,48 +262,18 @@ describe("tokens", () => {
 });
 
 describe("/api/policy", () => {
-  test("a PUT at the root is refused with a 409, and changes nothing", async () => {
-    setSaved({ rules: [RULE] });
-    const r = await call("PUT", "/api/policy", { policies: [] });
-    expect(r.status).toBe(409);
-    expect((await r.json() as any).error).toContain("only a flow's own scope");
-    expect((await call("PUT", "/api/policy", "{not json")).status).toBe(409);
-    expect(services(stack.store.snapshot())).toEqual([RULE]);
-    expect(services(await ok("GET", "/api/policy"))).toEqual([RULE]);
-  });
-  test("a PUT changes its scope, and leaves saved policy and other scopes alone", async () => {
+  test("reads a world's policy, and takes no writes: policy changes go through the policy API and the settings menu", async () => {
     setSaved({ rules: [RULE] });
     const base = await mint(), other = await mint();
-    const changed = { ...RULE, id: "scope-rule" };
-    expect((await ok("PUT", `${base}/api/policy`, { policies: [changed] })).policies).toEqual([changed]);
-    expect((await ok("GET", `${base}/api/policy`)).policies).toEqual([changed]);
-    expect(services(await ok("GET", `${other}/api/policy`))).toEqual([]);
+    for (const path of ["/api/policy", `${base}/api/policy`]) for (const method of ["PUT", "POST", "PATCH", "DELETE"]) expect([path, method, (await call(method, path, { policies: [] })).status]).toEqual([path, method, 404]);
     expect(services(stack.store.snapshot())).toEqual([RULE]);
-  });
-  test("a bad PUT gets a 400, and doesn't corrupt the policy", async () => {
-    const base = await mint();
-    await ok("PUT", `${base}/api/policy`, { policies: [RULE] });
-    const cases: [unknown, string][] = [
-      ["{not json", "valid JSON"],
-      [[RULE], "JSON object"],
-      [{ policies: "x" }, "policies must be an array"],
-      [{ policies: [{ id: "a" }] }, "policies[0]"],
-      [{ policies: [], contextLifetimeSeconds: "soon" }, "contextLifetimeSeconds"],
-      [{ policies: [], shares: [{ patient: "p" }] }, "shares[0]"],
-      [{ policies: [], whatever: 1 }, 'unknown field "whatever"'],
-    ];
-    for (const [body, message] of cases) await refused("PUT", `${base}/api/policy`, body, message);
-    expect((await ok("GET", `${base}/api/policy`)).policies).toEqual([RULE]);
-    // Search in that scope keeps working on what's there.
+    // A scope's own policy changes through its policy API, and leaves saved policy and other scopes alone.
     const world = (stack.scopes.resolve(base.slice(3)) as any).world;
-    const t = await scriptedLaunch("josh", "portal-app", { at: world.urls });
-    expect((await fetch(`${world.urls.imaging}/fhir/ImagingStudy?patient=josh-example`, { headers: { Authorization: `Bearer ${t.access_token}` } })).status).toBe(200);
-  });
-  test("what GET returns can be sent back by PUT", async () => {
-    const base = await mint();
-    await ok("PUT", `${base}/api/policy`, { policies: [RULE], shares: [SHARE], approvals: [APPROVAL], maxSeriesInContext: 100 });
-    const p = await ok("GET", `${base}/api/policy`);
-    expect(await ok("PUT", `${base}/api/policy`, p)).toEqual(p);
+    const changed = { ...RULE, id: "scope-rule" };
+    await world.policy.putPolicy(changed);
+    expect(services(await ok("GET", `${base}/api/policy`))).toEqual([changed]);
+    expect(services(await ok("GET", `${other}/api/policy`))).toEqual([]);
+    expect(services(await ok("GET", "/api/policy"))).toEqual([RULE]);
   });
 });
 
@@ -311,7 +281,7 @@ describe("writes from another web origin", () => {
   test("are refused, and same-origin writes are not", async () => {
     const evil = { origin: "https://evil.example" };
     expect((await call("POST", "/api/settings/reset", { confirm: true }, evil)).status).toBe(403);
-    expect((await call("PUT", "/api/policy", { policies: [] }, evil)).status).toBe(403);
+    expect((await call("POST", "/api/scopes", undefined, evil)).status).toBe(403);
     expect((await call("POST", "/api/settings/reset", { confirm: true }, { origin: CONFIG.demoUrl })).status).toBe(200);
   });
 });
@@ -328,16 +298,17 @@ describe("writes naming another Host, over real HTTP", () => {
       expect((await send("/api/settings/reset", host, { method: "POST", body: JSON.stringify({ confirm: true }) })).status).toBe(403);
       expect((await send("/api/scopes", host)).status).toBe(403);
       expect((await send("/api/settings/signing-key/rotate", host)).status).toBe(403);
-      expect((await send("/api/policy", host, { method: "PUT", body: JSON.stringify({ policies: [] }) })).status).toBe(403);
+      expect((await send("/api/settings/clock", host, { method: "POST", body: JSON.stringify({ advanceSeconds: 60 }) })).status).toBe(403);
     }
     expect(services(stack.store.snapshot())).toEqual([RULE]);
   });
   test("this server's own address and port are accepted, with or without naming it", async () => {
     const base = await mint();
-    expect((await send(`${base}/api/policy`, undefined, { method: "PUT", body: JSON.stringify({ maxSeriesInContext: 7 }) })).status).toBe(200);
-    expect((await send(`${base}/api/policy`, `localhost:${PORTS.demo}`, { method: "PUT", body: JSON.stringify({ maxSeriesInContext: 8 }) })).status).toBe(200);
-    expect((await ok("GET", `${base}/api/policy`)).maxSeriesInContext).toBe(8);
-    expect(stack.store.getSettings().maxSeriesInContext).toBe(12);
+    const world = (stack.scopes.resolve(base.slice(3)) as any).world;
+    expect((await send(`${base}/api/settings/clock`, undefined, { method: "POST", body: JSON.stringify({ advanceSeconds: 60 }) })).status).toBe(200);
+    expect((await send(`${base}/api/settings/clock`, `localhost:${PORTS.demo}`, { method: "POST", body: JSON.stringify({ advanceSeconds: 300 }) })).status).toBe(200);
+    expect(world.clock.offset()).toBe(360);
+    expect((await ok("GET", "/api/settings/status")).clock.offsetSeconds).toBe(0);
   });
   test("the admin status is refused under another Host too, and answers with no Host named", async () => {
     expect((await send("/api/settings/status", "evil.example", { method: "GET" })).status).toBe(403);
