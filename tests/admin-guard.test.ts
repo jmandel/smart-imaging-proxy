@@ -38,7 +38,10 @@ describe("the admin API's source", () => {
     test(`${file} has no file, process, or code-running access`, () => { expect(violations(source)).toEqual([]); });
     test(`${file} imports only a short list of the demo's own modules`, () => {
       expect(importsOf(source).length).toBeGreaterThan(0);
-      for (const name of importsOf(source)) expect(["./stack", "./policy-store", "./clock", "./config", "./rule-presets", "./archive/types"]).toContain(name);
+      for (const name of importsOf(source)) expect(["./stack", "@smart-imaging-proxy/core", "./clock", "./config", "./rule-presets"]).toContain(name);
+      // From core, only the policy API's error and types.
+      const fromCore = [...source.matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+"@smart-imaging-proxy\/core"/g)].flatMap(m => m[1]!.split(",").map(n => n.trim().replace(/^type\s+/, "")).filter(Boolean));
+      for (const name of fromCore) expect(["PolicyApiError", "Settings", "CatalogStore", "Rule"]).toContain(name);
     });
   }
   test("the guard catches each thing it looks for", () => {
@@ -70,9 +73,9 @@ describe("over HTTP", () => {
     writeFileSync(canary, "untouched");
   });
   afterAll(() => { stack.stop(); rmSync(dir, { recursive: true, force: true }); });
-  beforeEach(() => {
+  beforeEach(async () => {
     stack.useStore("saved");
-    stack.resetSaved();
+    await stack.resetSaved();
     stack.stores.saved.setPolicy({ rules: [RULE], delegations: [DELEGATION], appGrants: [GRANT] });
     stack.imaging.setOutage(false);
     resetClock();
@@ -128,7 +131,7 @@ describe("over HTTP", () => {
   });
   test("the clock takes only one named action", async () => {
     for (const body of [{ reset: true, advanceSeconds: 60 }, { reset: true, path: bait }, { advanceSeconds: 61 }, {}]) expect((await send("POST", "/api/admin/clock", body)).status).toBe(400);
-    expect(stack.imaging.getPolicy() && (await (await send("GET", "/api/admin/status")).json() as any).clock.offsetSeconds).toBe(0);
+    expect(stack.stores.active.getPolicy() && (await (await send("GET", "/api/admin/status")).json() as any).clock.offsetSeconds).toBe(0);
   });
   for (const path of ["/store/reset-scratch", "/tokens/revoke-all", "/proxy/flush", "/signing-key/rotate"]) {
     test(`POST /api/admin${path} takes no input at all`, async () => {

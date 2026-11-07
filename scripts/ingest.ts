@@ -2,8 +2,7 @@
 // an unchanged study writes nothing, and a changed one writes a new version.
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { ingestStudies, runTool, QUARANTINE_REPORT_KEY, type StudyInput } from "../src/archive/ingest";
-import { fileStore } from "../src/archive/sources";
+import { fileStore, ingestStudies, QUARANTINE_REPORT_KEY, runTool, type StudyInput } from "@smart-imaging-proxy/core";
 import { CONFIG } from "../src/config";
 import { syntheticStudies, writeSynthetic } from "./generate-synthetic";
 

@@ -6,15 +6,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { acceptsZstd, type PlanItem } from "../src/accept";
-import { BackendError, type Backend, type InstancePart, type OpenOptions, type PartStream, type PlannedPart, type Scope } from "../src/backends/types";
-import { advance, resetClock } from "../src/clock";
-import { ath, generateEd25519, publicJwk, signJws, type KeyPair } from "../src/jws";
-import { boundaryOf, readMultipart } from "../src/multipart";
-import { createProxy } from "../src/proxy";
-import { serveStreaming } from "../src/serve-streaming";
-import { flushTraces, setTraceSink, type SpanRecord } from "../src/trace";
-import { RAW_BLOCK_MAX, rawFrame, rawFrameSize, RawFrameWriter } from "../src/zstd-frames";
+import { acceptsZstd, ath, type Backend, BackendError, boundaryOf, createProxy, generateEd25519, type InstancePart, type KeyPair, type OpenOptions, type PartStream, type PlanItem, type PlannedPart, publicJwk, RAW_BLOCK_MAX, rawFrame, rawFrameSize, RawFrameWriter, readMultipart, type Scope, serveStreaming, signJws } from "@smart-imaging-proxy/core";
+import { advance, demoClock, resetClock } from "../src/clock";
+import { flushTraces, setTraceSink, traceObserver, type SpanRecord } from "../src/trace";
 
 const EVRLE = "1.2.840.10008.1.2.1", JPEG = "1.2.840.10008.1.2.4.50";
 const STUDY = "1.2.3", TOKEN = "the-token";
@@ -113,7 +107,7 @@ class FakeBackend implements Backend {
 const key = generateEd25519("k1");
 const context = (k: KeyPair = key, claims: object = {}) => signJws(k, { v: 1, study: STUDY, ath: ath(TOKEN), exp: 4102444800, ...claims });
 const request = (headers: Record<string, string> = {}, ctx = context(), path = "") => new Request(`http://proxy/wado/${ctx}/studies/${STUDY}${path}`, { headers: { Authorization: `Bearer ${TOKEN}`, Accept: ACCEPT, ...headers } });
-const proxyOver = (backend: Backend) => createProxy({ publicBase: () => "http://proxy", keys: new Map([[key.kid, key.publicKey]]), decisionUrl: "http://127.0.0.1:1/none", serviceSecret: "s", backend: () => backend });
+const proxyOver = (backend: Backend) => createProxy({ publicBase: () => "http://proxy", keys: new Map([[key.kid, key.publicKey]]), decisionUrl: "http://127.0.0.1:1/none", serviceSecret: "s", backend: () => backend, observer: traceObserver, clock: demoClock });
 
 const cleanups: (() => void)[] = [];
 afterEach(() => { for (const c of cleanups.splice(0)) c(); resetClock(); });
@@ -766,7 +760,7 @@ describe("study version", () => {
     const pdp = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => Response.json({ decision: true, context: { release: "study", max_age_seconds: 30, ...context_ } }) });
     cleanups.push(() => pdp.stop(true));
     const backend = new FakeBackend([fakeInstance("1.1.1", EVRLE, 300)], { plan: true });
-    const proxy = createProxy({ publicBase: () => "http://proxy", keys: new Map([[key.kid, key.publicKey]]), decisionUrl: `http://127.0.0.1:${pdp.port}/x`, serviceSecret: "s", backend: () => backend });
+    const proxy = createProxy({ publicBase: () => "http://proxy", keys: new Map([[key.kid, key.publicKey]]), decisionUrl: `http://127.0.0.1:${pdp.port}/x`, serviceSecret: "s", backend: () => backend, observer: traceObserver, clock: demoClock });
     return { proxy, backend };
   };
   const plain = () => new Request(`http://proxy/wado/-/studies/${STUDY}`, { headers: { Authorization: `Bearer ${TOKEN}`, Accept: ACCEPT } });
@@ -877,7 +871,7 @@ describe("what the proxy holds", () => {
     return `http://127.0.0.1:${pdp.port}/x`;
   };
   const ask = (token: string) => new Request(`http://proxy/wado/-/studies/${STUDY}`, { headers: { Authorization: `Bearer ${token}`, Accept: ACCEPT } });
-  const make = (decisionUrl: string, limits: { maxDecisions?: number; maxEvents?: number }) => createProxy({ publicBase: () => "http://proxy", keys: new Map(), decisionUrl, serviceSecret: "s", backend: () => new FakeBackend([fakeInstance("1.1.1", EVRLE, 300)], { plan: true }), ...limits });
+  const make = (decisionUrl: string, limits: { maxDecisions?: number; maxEvents?: number }) => createProxy({ publicBase: () => "http://proxy", keys: new Map(), decisionUrl, serviceSecret: "s", backend: () => new FakeBackend([fakeInstance("1.1.1", EVRLE, 300)], { plan: true }), clock: demoClock, ...limits });
 
   test("the decision cache stays within its count, dropping the oldest", async () => {
     const proxy = make(pdpFor(300), { maxDecisions: 3 });

@@ -6,7 +6,7 @@ import { FLOWS, flowById, runStep, startFlow, BadStepInput } from "./flows";
 import { StepStopped, type Ctx } from "./flows/runtime";
 import { CONFIG } from "./config";
 import { adminApi, extraField, readJson, refuseHost, refuseWrite, BACKEND_NAMES } from "./admin-api";
-import { PolicyValidationError } from "./policy-store";
+import { PolicyApiError } from "@smart-imaging-proxy/core";
 import type { BackendClient } from "./auth-server";
 import { createBrowse } from "./browse";
 
@@ -94,7 +94,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       stack.setBackend(b.backend as BackendName);
       return json({ backend: stack.backend });
     }
-    if (p === "/api/policy" && req.method === "GET") return json(stack.imaging.getPolicy());
+    if (p === "/api/policy" && req.method === "GET") return json(stack.stores.active.getPolicy());
     if (p === "/api/policy" && req.method === "PUT") {
       const refused = refuseWrite(req, url);
       if (refused) return refused;
@@ -102,9 +102,9 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       const b = await readJson(req);
       if (b === undefined) return json({ error: "the request body must be valid JSON" }, 400);
       try {
-        stack.stores.scratch.setPolicy(b);
+        await stack.policy.withStore("scratch").setPolicy(b);
       } catch (e) {
-        if (e instanceof PolicyValidationError) return json({ error: e.message, errors: e.errors }, 400);
+        if (e instanceof PolicyApiError && e.status === 400) return json({ error: e.message, errors: e.errors }, 400);
         throw e;
       }
       return json(stack.stores.scratch.getPolicy());
@@ -115,7 +115,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       if (held) return json({ error: held }, 409);
       const s = await ensureSession(start[1]!, true);
       if (!s) return json({ error: "unknown flow" }, 404);
-      return json({ steps: stepInfo(s.flow, s.ctx), policy: stack.imaging.getPolicy(), session: s.ctx.session, store: storeStatus() });
+      return json({ steps: stepInfo(s.flow, s.ctx), policy: stack.stores.active.getPolicy(), session: s.ctx.session, store: storeStatus() });
     }
     const step = p.match(/^\/api\/flows\/([^/]+)\/steps\/([^/]+)$/);
     if (step && req.method === "POST") {
@@ -135,7 +135,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       try {
         const result = await runStep(s.ctx, s.flow, step[2]!, b.inputs ?? {});
         s.session.completed[step[2]!] = { inputs: b.inputs ?? {}, result };
-        return json({ result, steps: stepInfo(s.flow, s.ctx), policy: stack.imaging.getPolicy(), events: stack.proxy.events.slice(-12), store: storeStatus() });
+        return json({ result, steps: stepInfo(s.flow, s.ctx), policy: stack.stores.active.getPolicy(), events: stack.proxy.events.slice(-12), store: storeStatus() });
       } catch (e) { return json({ error: String((e as Error).message ?? e) }, e instanceof StepStopped ? 409 : e instanceof BadStepInput ? 400 : /^no step /.test((e as Error).message) ? 404 : 500); }
       finally { s.session.running = undefined; }
     }

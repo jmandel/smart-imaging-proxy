@@ -8,9 +8,10 @@
 // client sees a short body or a missing final chunk. A client that hangs up cancels the body, and
 // so does one that accepts nothing for `stallSeconds`.
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { FOREIGN_HOST, foreignHost, LISTEN_HOSTS } from "./config";
-
 export interface StreamingServer { port: number; stop(): void; }
+
+/** What a request under a host name that isn't the server's own gets. */
+export const FOREIGN_HOST = () => Response.json({ error: "this server answers only at its own addresses and port" }, { status: 403 });
 
 /** Enough for a sign-in form or a token request, which are the only bodies the one origin passes on. */
 const MAX_REQUEST_BODY = 64 * 1024;
@@ -27,7 +28,9 @@ async function bodyOf(req: IncomingMessage): Promise<Uint8Array | undefined> {
   return new Uint8Array(Buffer.concat(chunks));
 }
 
-async function send(req: IncomingMessage, res: ServerResponse, handler: (req: Request) => Promise<Response> | Response, stallMs: number) {
+type ForeignHost = (host: string | undefined, port: number) => boolean;
+
+async function send(req: IncomingMessage, res: ServerResponse, handler: (req: Request) => Promise<Response> | Response, stallMs: number, foreignHost: ForeignHost) {
   let response: Response;
   try {
     const hosts = req.rawHeaders.filter((_, i) => i % 2 === 0 && req.rawHeaders[i]!.toLowerCase() === "host").length;
@@ -70,10 +73,15 @@ async function send(req: IncomingMessage, res: ServerResponse, handler: (req: Re
   }
 }
 
-export async function serveStreaming(port: number, handler: (req: Request) => Promise<Response> | Response, opts: { hosts?: string[]; stallSeconds?: number } = {}): Promise<StreamingServer> {
+/**
+ * `hosts` are the addresses to listen on, loopback by default. `foreignHost` says whether a Host header
+ * names something other than this server, which gets a 403. Without it, any Host is served.
+ */
+export async function serveStreaming(port: number, handler: (req: Request) => Promise<Response> | Response, opts: { hosts?: string[]; stallSeconds?: number; foreignHost?: ForeignHost } = {}): Promise<StreamingServer> {
   const stallMs = (opts.stallSeconds ?? 240) * 1000;
-  const servers: Server[] = await Promise.all((opts.hosts ?? LISTEN_HOSTS).map(host => new Promise<Server>((resolve, reject) => {
-    const server = createServer((req, res) => { send(req, res, handler, stallMs).catch(() => res.destroy()); });
+  const foreignHost = opts.foreignHost ?? (() => false);
+  const servers: Server[] = await Promise.all((opts.hosts ?? ["127.0.0.1"]).map(host => new Promise<Server>((resolve, reject) => {
+    const server = createServer((req, res) => { send(req, res, handler, stallMs, foreignHost).catch(() => res.destroy()); });
     server.keepAliveTimeout = 60000;
     server.once("error", reject);
     server.listen(port, host, () => resolve(server));

@@ -4,6 +4,7 @@
 // other credentials appear as hash prefixes, and passwords not at all.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes } from "node:crypto";
+import type { Observer, ServerSpan, Span as CoreSpan } from "@smart-imaging-proxy/core";
 import { localUrl } from "./config";
 
 export const SERVICES = ["user", "app", "authorization-server", "imaging-fhir", "policy", "dicomweb-proxy", "backend", "demo"] as const;
@@ -202,3 +203,14 @@ export function traced(service: Service, handler: (req: Request, span: SpanHandl
     } catch (e) { s.end("error", { error: String(e) }); throw e; }
   };
 }
+
+const spanOf = (s: SpanHandle): CoreSpan => ({ set: a => s.set(a), end: (status, a) => s.end(status, a), within: fn => inSpan(s.ctx, fn) });
+const serverSpanOf = (s: SpanHandle): ServerSpan => ({ ...spanOf(s), streaming: () => s.set({ streaming: true }), creditTo: service => { s.record.service = service; } });
+/** Core's spans, checks and outbound requests, recorded here like the demo's own. */
+export const traceObserver: Observer = {
+  serve: (service, handler) => traced(service, (req, s) => handler(req, serverSpanOf(s))),
+  span: (service, kind, name, attrs) => spanOf(startSpan(service, kind, name, attrs)),
+  withSpan: (service, kind, name, attrs, fn) => withSpan(service, kind, name, attrs, s => fn(spanOf(s))),
+  check,
+  fetch: tfetch,
+};

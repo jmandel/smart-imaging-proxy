@@ -6,14 +6,13 @@ import { createHash, sign, verify } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createStores, DEFAULT_POLICY_DB, PolicyStore, PolicyValidationError, SCHEMA_VERSION, storeConfigFromEnv, type Delegation, type Rule } from "../src/policy-store";
+import { boundaryOf, type Delegation, generateEd25519, PolicyStore, PolicyValidationError, readMultipart, type Rule, SCHEMA_VERSION } from "@smart-imaging-proxy/core";
 import { startStack } from "../src/stack";
 import { defaultsFor, FLOWS, registerClients, runStep, startFlow } from "../src/flows";
 import { accountUrl, scriptedLaunch, submitDelegation } from "../src/flows/oauth";
-import { CONFIG } from "../src/config";
-import { generateEd25519 } from "../src/jws";
+import { CONFIG, DEFAULT_POLICY_DB } from "../src/config";
+import { createStores, storeConfigFromEnv } from "../src/stores";
 import { resetClock, now, advance } from "../src/clock";
-import { boundaryOf, readMultipart } from "../src/multipart";
 
 const root = join(import.meta.dir, "..");
 const dirs: string[] = [];
@@ -226,7 +225,7 @@ describe("saved and scratch", () => {
     try {
       const clients = registerClients(stack);
       expect(stack.stores.activeName).toBe("saved");
-      stack.imaging.setPolicy({ rules: [RULE], delegations: [DELEGATION], appGrants: [GRANT], contextLifetimeSeconds: 77 });
+      stack.stores.active.setPolicy({ rules: [RULE], delegations: [DELEGATION], appGrants: [GRANT], contextLifetimeSeconds: 77 });
       stack.stores.saved.setSettings({ tokenLifetimeSeconds: 111 });
       const savedToken = await scriptedLaunch("josh", "portal-app");
       expect(savedToken.expires_in).toBe(111);
@@ -236,9 +235,9 @@ describe("saved and scratch", () => {
       const flow = FLOWS.find(f => f.id === "caregiver")!;
       const c = await startFlow(stack, clients, flow);
       expect(stack.stores.activeName).toBe("scratch");
-      expect(stack.imaging.getPolicy().rules).toEqual([]);
-      expect(stack.imaging.getPolicy().delegations).toEqual([]);
-      expect(stack.imaging.getPolicy().contextLifetimeSeconds).toBe(300);
+      expect(stack.stores.active.getPolicy().rules).toEqual([]);
+      expect(stack.stores.active.getPolicy().delegations).toEqual([]);
+      expect(stack.stores.active.getPolicy().contextLifetimeSeconds).toBe(300);
       for (const s of flow.steps) {
         const r = await runStep(c, flow, s.id, defaultsFor(c, flow, s.id));
         expect(r.checks.filter(k => !k.ok)).toEqual([]);
@@ -253,8 +252,8 @@ describe("saved and scratch", () => {
       expect(dump()).toBe(before);
 
       stack.useStore("saved");
-      expect(stack.imaging.getPolicy().rules).toEqual([RULE]);
-      expect(stack.imaging.getPolicy().contextLifetimeSeconds).toBe(77);
+      expect(stack.stores.active.getPolicy().rules).toEqual([RULE]);
+      expect(stack.stores.active.getPolicy().contextLifetimeSeconds).toBe(77);
     } finally { stack.stop(); }
   }, 60000);
 
@@ -263,7 +262,7 @@ describe("saved and scratch", () => {
     try {
       const introspect = (token: string) => stack.auth.grantOf(token);
       const saved = await scriptedLaunch("josh");
-      stack.resetAll();
+      await stack.resetAll();
       expect(introspect(saved.access_token)).toBeUndefined();
       const scratch = await scriptedLaunch("josh");
       stack.useStore("saved");
@@ -276,13 +275,13 @@ describe("saved and scratch", () => {
     const stack = await startStack(root);
     try {
       const real = () => Math.floor(Date.now() / 1000);
-      stack.resetAll();
+      await stack.resetAll();
       advance(4000);
       stack.useStore("saved");
       expect(now()).toBeLessThan(real() + 10);
       stack.useStore("scratch");
       expect(now()).toBeGreaterThanOrEqual(real() + 3990);
-      stack.resetAll();
+      await stack.resetAll();
       expect(now()).toBeLessThan(real() + 10);
     } finally { stack.stop(); }
   });
@@ -309,8 +308,8 @@ describe("a restart", () => {
     try {
       expect(second.stores.activeName).toBe("saved");
       expect(JSON.stringify(second.imaging.jwks())).toBe(publicKeyBefore);
-      expect(second.imaging.getPolicy().delegations.map(d => d.delegate)).toEqual(["sam-caregiver"]);
-      expect(second.imaging.getPolicy().appGrants[0]!.sites).toEqual(["Riverside Hospital"]);
+      expect(second.stores.active.getPolicy().delegations.map(d => d.delegate)).toEqual(["sam-caregiver"]);
+      expect(second.stores.active.getPolicy().appGrants[0]!.sites).toEqual(["Riverside Hospital"]);
 
       const search = await fetch(`${CONFIG.imagingUrl}/fhir/ImagingStudy?patient=josh-example`, { headers: { Authorization: `Bearer ${token.access_token}` } });
       expect(search.status).toBe(200);
@@ -391,7 +390,7 @@ describe("token lifecycle", () => {
     const stack = await startStack(root);
     try {
       const saved = await scriptedLaunch("josh");
-      stack.resetAll();
+      await stack.resetAll();
       advance(100000);
       stack.purgeTokens();
       expect(stack.stores.saved.getToken(saved.access_token, "access")).toBeDefined();

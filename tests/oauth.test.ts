@@ -8,15 +8,14 @@ import { Database } from "bun:sqlite";
 import { startStack, type Stack } from "../src/stack";
 import { CONFIG, serveOn } from "../src/config";
 import { APP_NAMES, clientAssertion, createAuthServer, PATIENT_NAMES, USERS, type BackendClient } from "../src/auth-server";
-import { PolicyStore } from "../src/policy-store";
+import { b64url, PolicyStore } from "@smart-imaging-proxy/core";
 import { advance, now, resetClock } from "../src/clock";
-import { b64url } from "../src/jws";
 import { Ctx } from "../src/flows/runtime";
 import { FLOWS, registerClients, runStep, startFlow } from "../src/flows";
 import { accountUrl, buildAuthorization, CALLBACK, CLINICAL_FHIR, scriptedLaunch, submitConsent, submitDelegation, submitRevocation, tokenRequestBody } from "../src/flows/oauth";
 
 let stack: Stack; let conf: any;
-beforeAll(async () => { stack = await startStack(join(import.meta.dir, "..")); stack.resetAll(); conf = await (await fetch(`${CLINICAL_FHIR}/.well-known/smart-configuration`)).json(); });
+beforeAll(async () => { stack = await startStack(join(import.meta.dir, "..")); await stack.resetAll(); conf = await (await fetch(`${CLINICAL_FHIR}/.well-known/smart-configuration`)).json(); });
 afterAll(() => stack.stop());
 const post = (body: string) => fetch(conf.token_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body });
 const mutate = (url: string, change: (q: URLSearchParams) => void) => { const u = new URL(url); change(u.searchParams); return u.toString(); };
@@ -74,11 +73,11 @@ describe("Authorization request", () => {
   });
   test("a user's token with a system scope and no patient gets nothing, even where a rule names its client", async () => {
     const store = stack.stores.active;
-    stack.imaging.setPolicy({ rules: [{ id: "names-client", when: { client: "separate-viewer" }, allow: { all: true } }] });
+    stack.stores.active.setPolicy({ rules: [{ id: "names-client", when: { client: "separate-viewer" }, allow: { all: true } }] });
     store.putToken("user-system-token", "access", { client_id: "separate-viewer", scope: "system/ImagingStudy.rs", sub: "robin", fhirUser: "RelatedPerson/robin" }, Math.floor(Date.now() / 1000) + 300);
     const r = await fetch(`${CONFIG.imagingUrl}/fhir/ImagingStudy?patient=josh-example`, { headers: { Authorization: "Bearer user-system-token" } });
     expect(r.status).toBe(403);
-    stack.resetAll();
+    await stack.resetAll();
   });
   test("a request for the Imaging FHIR Server as aud is accepted", async () => {
     const r = await statusOf(mutate(auth().url, q => q.set("aud", conf.associated_endpoints[0].url)));
@@ -103,13 +102,13 @@ describe("Consent", () => {
     expect(back.searchParams.get("state")).toBe(a.state);
   });
   test("site choice becomes policy, and doesn't change the token's scope", async () => {
-    stack.resetAll();
+    await stack.resetAll();
     const t = await scriptedLaunch("josh", "portal-app", { sites: ["Lakeside Imaging"] });
     expect(t.scope).toBe("launch/patient patient/ImagingStudy.rs online_access");
-    expect(stack.imaging.getPolicy().appGrants[0]!.sites).toEqual(["Lakeside Imaging"]);
+    expect(stack.stores.active.getPolicy().appGrants[0]!.sites).toEqual(["Lakeside Imaging"]);
     const b: any = await (await fetch(`${conf.associated_endpoints[0].url}/ImagingStudy?patient=josh-example`, { headers: { Authorization: `Bearer ${t.access_token}` } })).json();
     expect(b.total).toBe(1);
-    stack.resetAll();
+    await stack.resetAll();
   });
 });
 
@@ -200,7 +199,7 @@ describe("Account picker", () => {
   });
   const roleOn = (html: string, id: string) => html.split(`value="${id}"`)[1]!.match(/<span class="role">([^<]*)</)![1];
   test("role lines come from what's in place when the page renders", async () => {
-    stack.resetAll();
+    await stack.resetAll();
     let html = await signInPage();
     expect(roleOn(html, "josh")).toBe("Patient");
     expect(roleOn(html, "robin")).toBe("Patient");
@@ -219,10 +218,10 @@ describe("Account picker", () => {
 
     await submitRevocation(accountUrl("josh"), { user: "josh", delegate: "sam-caregiver" });
     expect(roleOn(await signInPage(), "sam-caregiver")).toBe("Patient, and guardian for Riley Example");
-    stack.resetAll();
+    await stack.resetAll();
   });
   test("the account page's role line comes from the same state", async () => {
-    stack.resetAll();
+    await stack.resetAll();
     const accountRole = async (user: string) => {
       const res = await fetch(`${CLINICAL_FHIR.replace("/fhir", "")}/account/signin`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: `username=${user}`, redirect: "manual" });
       const html = await (await fetch(`${CLINICAL_FHIR.replace("/fhir", "")}/account`, { headers: { cookie: res.headers.get("set-cookie")!.split(";")[0]! } })).text();
@@ -233,7 +232,7 @@ describe("Account picker", () => {
     expect(await accountRole("sam-caregiver")).toBe("Patient, and guardian for Riley Example");
     await submitDelegation(accountUrl("josh"), { user: "josh", delegate: "sam-caregiver", relationship: "adult child", sites: ["Lakeside Imaging"] });
     expect(await accountRole("sam-caregiver")).toBe("Patient, and guardian for Riley Example, adult child for Josh Example");
-    stack.resetAll();
+    await stack.resetAll();
   });
   test("login_hint preselects the account, and nothing is selected without one", async () => {
     expect(checked(await signInPage())).toEqual([]);
@@ -253,7 +252,7 @@ describe("Account picker", () => {
     expect(r.headers.get("location")).toContain("/authorize/consent?txn=");
   });
   test("Robin signs in as a patient, and their own record shows zero studies", async () => {
-    stack.resetAll();
+    await stack.resetAll();
     const t = await scriptedLaunch("robin");
     expect(t.patient).toBe("robin-example");
     const r = await fetch(`${conf.associated_endpoints[0].url}/ImagingStudy?patient=robin-example&_include=ImagingStudy:endpoint`, { headers: { Authorization: `Bearer ${t.access_token}` } });
@@ -263,14 +262,14 @@ describe("Account picker", () => {
     expect(b.entry).toBeUndefined();
   });
   test("Robin can't reach Josh's studies, by search or by retrieval", async () => {
-    stack.resetAll();
+    await stack.resetAll();
     const t = await scriptedLaunch("robin");
     expect((await fetch(`${conf.associated_endpoints[0].url}/ImagingStudy?patient=josh-example`, { headers: { Authorization: `Bearer ${t.access_token}` } })).status).toBe(403);
     const uid = stack.catalog.allStudies()[0]!.uid;
     expect((await fetch(`${CONFIG.proxyUrl}/wado/-/studies/${uid}`, { headers: { Authorization: `Bearer ${t.access_token}`, Accept: "multipart/related; type=application/dicom; transfer-syntax=*" } })).status).toBe(404);
   });
   test("Robin's consent and account pages say there's no imaging, and offer no sites", async () => {
-    stack.resetAll();
+    await stack.resetAll();
     const a = buildAuthorization(conf.authorization_endpoint, "portal-app", undefined, undefined, "robin");
     const page = await (await statusOf(a.url)).text();
     const action = page.match(/action="([^"]+)"/)![1]!.replaceAll("&amp;", "&");
@@ -288,7 +287,7 @@ describe("Account picker", () => {
     expect(acct).not.toContain('name="delegate"');
   });
   test("a window launch reports who actually signed in, not who was hinted", async () => {
-    stack.resetAll();
+    await stack.resetAll();
     const c = new Ctx(stack, {});
     const launching = c.launch("josh", "portal-app", { window: true });
     while (!c.pendingAuthUrl) await Bun.sleep(5);
@@ -356,7 +355,7 @@ describe("Delegation: patient to related person to app", () => {
   const share = (sites: string[]) => submitDelegation(accountUrl("josh"), { user: "josh", delegate: "sam-caregiver", relationship: "caregiver", sites });
 
   test("signing in isn't enough: a user with no delegation gets no code", async () => {
-    stack.resetAll();
+    await stack.resetAll();
     const t = await scriptedLaunch("alex-neighbor");
     expect(t.error).toBe("access_denied");
     expect(t.access_token).toBeUndefined();
@@ -365,7 +364,7 @@ describe("Delegation: patient to related person to app", () => {
     expect(sam.access_token).toBeUndefined();
   });
   test("a related person signs in with their own login, and sees the subset", async () => {
-    stack.resetAll();
+    await stack.resetAll();
     expect((await share(["Lakeside Imaging"])).status).toBe(303);
     const t = await scriptedLaunch("sam-caregiver", "portal-app", { patient: "josh-example" });
     expect(t.patient).toBe("josh-example");
@@ -373,35 +372,35 @@ describe("Delegation: patient to related person to app", () => {
     expect(sitesOf(await search(t.access_token))).toBe(1);
   });
   test("a related person's app holds only what both links allow", async () => {
-    stack.resetAll();
+    await stack.resetAll();
     await share(["Lakeside Imaging", "Riverside Hospital"]);
     const t = await scriptedLaunch("sam-caregiver", "portal-app", { sites: ["Riverside Hospital"], patient: "josh-example" });
     expect(sitesOf(await search(t.access_token))).toBe(4);
   });
   test("a related person can't give an app more than they hold", async () => {
-    stack.resetAll();
+    await stack.resetAll();
     await share(["Lakeside Imaging"]);
     const t = await scriptedLaunch("sam-caregiver", "portal-app", { sites: ["Lakeside Imaging", "Northside Pathology"], patient: "josh-example" });
-    expect(stack.imaging.getPolicy().appGrants[0]!.sites).toEqual(["Lakeside Imaging"]);
+    expect(stack.stores.active.getPolicy().appGrants[0]!.sites).toEqual(["Lakeside Imaging"]);
     expect(sitesOf(await search(t.access_token))).toBe(1);
   });
   test("only a patient or their guardian can delegate", async () => {
-    stack.resetAll();
+    await stack.resetAll();
     expect((await submitDelegation(accountUrl("alex-neighbor"), { user: "alex-neighbor", delegate: "sam-caregiver", relationship: "neighbor", sites: ["Lakeside Imaging"] })).status).toBe(403);
     await share(["Lakeside Imaging"]);
     const r = await submitDelegation(accountUrl("sam-caregiver"), { user: "sam-caregiver", delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"], patient: "josh-example" });
     expect(r.status).toBe(403);
-    expect(stack.imaging.getPolicy().delegations.map(d => d.delegate)).toEqual(["sam-caregiver"]);
+    expect(stack.stores.active.getPolicy().delegations.map(d => d.delegate)).toEqual(["sam-caregiver"]);
   });
   test("revoking the delegation ends what the related person's app can find", async () => {
-    stack.resetAll();
+    await stack.resetAll();
     await share(["Lakeside Imaging"]);
     const t = await scriptedLaunch("sam-caregiver", "portal-app", { patient: "josh-example" });
     expect((await submitRevocation(accountUrl("josh"), { user: "josh", delegate: "sam-caregiver" })).status).toBe(303);
     expect(sitesOf(await search(t.access_token))).toBe(0);
   });
   test("the account page needs a session, and shows what the user holds", async () => {
-    stack.resetAll();
+    await stack.resetAll();
     expect(await (await fetch(`${CLINICAL_FHIR.replace("/fhir", "")}/account`)).text()).toContain("Sign in");
     const denied = await fetch(`${CLINICAL_FHIR.replace("/fhir", "")}/account/delegations`, { method: "POST", body: "delegate=sam-caregiver" });
     expect(denied.status).toBe(401);
@@ -487,7 +486,7 @@ describe("Token responses can't be cached", () => {
 
 describe("Refresh tokens", () => {
   const refresh = (token: string, client?: string) => post(new URLSearchParams({ grant_type: "refresh_token", refresh_token: token, ...(client ? { client_id: client } : {}) }).toString());
-  const launch = async () => { stack.resetAll(); return scriptedLaunch("josh"); };
+  const launch = async () => { await stack.resetAll(); return scriptedLaunch("josh"); };
   const liveAccess = (token: string) => !stack.stores.active.getToken(token, "access")!.revoked;
 
   test("only the client it was issued to can use one, and a refused try doesn't spend it", async () => {
@@ -591,7 +590,7 @@ describe("The Clinical FHIR Server's Patient", () => {
     }
   });
   test("answers a token for that patient, and no other", async () => {
-    stack.resetAll();
+    await stack.resetAll();
     const josh = await scriptedLaunch("josh");
     const r = await read("josh-example", josh.access_token);
     expect(r.status).toBe(200);
@@ -601,7 +600,7 @@ describe("The Clinical FHIR Server's Patient", () => {
     expect((await read("josh-example/extra", josh.access_token)).status).toBe(403);
   });
   test("refuses a refresh token, a revoked token, an expired one, or one with no patient", async () => {
-    stack.resetAll();
+    await stack.resetAll();
     const josh = await scriptedLaunch("josh");
     expect((await read("josh-example", josh.refresh_token)).status).toBe(401);
     const c = stack.auth.registerBackendClient("patient-read-test", ["system/ImagingStudy.rs"]);

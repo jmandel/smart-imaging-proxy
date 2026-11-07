@@ -2,8 +2,7 @@
 // and users manage apps, SMART App Launch (authorization code with PKCE), Backend Services
 // (signed client assertions), refresh, revocation, introspection, and SMART discovery.
 import { createECDH, createHash, createPrivateKey, createPublicKey, generateKeyPairSync, hkdfSync, randomBytes, sign, verify, type KeyObject } from "node:crypto";
-import { ath, b64url } from "./jws";
-import type { PolicyStore } from "./policy-store";
+import { ath, b64url, type PolicyStore } from "@smart-imaging-proxy/core";
 import { now } from "./clock";
 import { refuseWrite } from "./admin-api";
 import { PORTS } from "./config";

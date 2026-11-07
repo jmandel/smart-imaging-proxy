@@ -1,13 +1,11 @@
-// Durable state for the demo: Imaging Server policy, its signing key, and the Authorization
-// Server's token records. One SQLite database holds all of it, which a deployment wouldn't do:
-// here it keeps the configuration in one place you can inspect and reset.
-import { STORAGE } from "./config";
+// Durable state: Imaging Server policy, its signing key, and the Authorization Server's token
+// records. One SQLite database holds all of it, which keeps the configuration in one place you can
+// inspect and reset.
 import { Database } from "bun:sqlite";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { createPrivateKey, createPublicKey, randomBytes, type KeyObject } from "node:crypto";
 import { generateEd25519, sha, type KeyPair } from "./jws";
-import people from "../data/patient.json";
 
 export interface Rule {
   id: string;
@@ -23,12 +21,9 @@ export interface Rule {
 export interface Delegation { patient: string; grantedBy: string; delegate: string; relationship: string; sites: string[]; asGuardian?: boolean; }
 /** An account on file as able to act for a patient, covering their record apart from `excludedStudies`, which are confidential from them. No one chose it by sharing. */
 export interface Guardian { patient: string; guardian: string; relationship: string; excludedStudies?: string[]; }
-/** The guardians on file in `data/patient.json`, which stands in for a registration office. */
-export const STANDING_GUARDIANS: Guardian[] = people.otherPatients.flatMap((p: { id: string; guardians?: { account: string; relationship: string; excludedStudies?: string[] }[] }) => (p.guardians ?? []).map(g => ({ patient: p.id, guardian: g.account, relationship: g.relationship, ...(g.excludedStudies ? { excludedStudies: g.excludedStudies } : {}) })));
 /** A signed-in user lets an app act for them. No `sites` means everything that user can see. */
 export interface AppGrant { client: string; user: string; patient: string; sites?: string[]; }
 export interface Policy { rules: Rule[]; delegations: Delegation[]; guardians: Guardian[]; appGrants: AppGrant[]; contextLifetimeSeconds: number; maxSeriesInContext: number; }
-export const defaultPolicy = (): Policy => ({ rules: [], delegations: [], guardians: STANDING_GUARDIANS, appGrants: [], contextLifetimeSeconds: 300, maxSeriesInContext: 12 });
 
 export interface Settings { contextLifetimeSeconds: number; maxSeriesInContext: number; tokenLifetimeSeconds: number; refreshTokenLifetimeSeconds: number; }
 const REFRESH_DEFAULT = 30 * 86400;
@@ -42,18 +37,13 @@ export interface TokenRecord { client_id: string; scope: string; patient?: strin
 export const SCHEMA_VERSION = 4;
 export type Durability = "off" | "normal" | "full";
 const SYNCHRONOUS: Record<Durability, number> = { off: 0, normal: 1, full: 2 };
-export const DEFAULT_POLICY_DB = `${STORAGE}/policy.sqlite`;
+export const DURABILITIES = Object.keys(SYNCHRONOUS) as Durability[];
 
-export interface StoreConfig { mode: "file" | "memory"; path?: string; durability?: Durability; }
-
-/** Reads POLICY_STORE, POLICY_DB and POLICY_DURABILITY. A bad value stops startup with a clear message. */
-export function storeConfigFromEnv(env: Record<string, string | undefined> = process.env): StoreConfig {
-  const mode = env.POLICY_STORE ?? "file";
-  if (mode !== "file" && mode !== "memory") throw new Error(`POLICY_STORE must be file or memory, not "${mode}"`);
-  const durability = env.POLICY_DURABILITY ?? "normal";
-  if (!Object.hasOwn(SYNCHRONOUS, durability)) throw new Error(`POLICY_DURABILITY must be off, normal or full, not "${durability}"`);
-  return { mode, path: env.POLICY_DB || DEFAULT_POLICY_DB, durability: durability as Durability };
-}
+/**
+ * A file store needs `path`. `guardians` are the ones on file, which a new database starts with and a
+ * reset puts back: no one chose them by sharing.
+ */
+export interface StoreConfig { mode: "file" | "memory"; path?: string; durability?: Durability; guardians?: Guardian[]; }
 
 export class PolicyValidationError extends Error {
   constructor(public errors: string[]) { super(errors.join("; ")); this.name = "PolicyValidationError"; }
@@ -177,10 +167,13 @@ export class PolicyStore {
   readonly mode: "file" | "memory";
   readonly path: string;
   readonly durability: Durability;
+  private readonly onFile: Guardian[];
 
   constructor(config: StoreConfig) {
+    if (config.mode === "file" && !config.path) throw new Error("a file policy store needs a path");
     this.mode = config.mode;
-    this.path = config.mode === "file" ? (config.path ?? DEFAULT_POLICY_DB) : ":memory:";
+    this.path = config.mode === "file" ? config.path! : ":memory:";
+    this.onFile = (config.guardians ?? []).map(g => ({ ...g }));
     this.durability = config.durability ?? "normal";
     if (config.mode === "file") mkdirSync(dirname(this.path), { recursive: true });
     this.db = new Database(this.path, { create: true });
@@ -223,7 +216,7 @@ export class PolicyStore {
   }
   guardians(): Guardian[] { return (this.db.query("SELECT patient, guardian, relationship, excluded_studies FROM guardians ORDER BY rowid").all() as any[]).map(({ excluded_studies, ...g }) => { const excluded = JSON.parse(excluded_studies); return excluded.length ? { ...g, excludedStudies: excluded } : g; }); }
   private putGuardian(g: Guardian) { this.db.run("INSERT OR REPLACE INTO guardians (patient, guardian, relationship, excluded_studies) VALUES (?, ?, ?, ?)", [g.patient, g.guardian, g.relationship, JSON.stringify(g.excludedStudies ?? [])]); }
-  private seedGuardians() { for (const g of STANDING_GUARDIANS) this.putGuardian(g); }
+  private seedGuardians() { for (const g of this.onFile) this.putGuardian(g); }
   appGrants(): AppGrant[] {
     return (this.db.query("SELECT client, user, patient, sites FROM app_grants ORDER BY rowid").all() as any[])
       .map(g => ({ client: g.client, user: g.user, patient: g.patient, ...(g.sites === null ? {} : { sites: JSON.parse(g.sites) }) }));
@@ -373,26 +366,3 @@ export class PolicyStore {
   }
   close() { this.db.close(); }
 }
-
-export type StoreName = "saved" | "scratch";
-export const STORE_LABELS: Record<StoreName, string> = { saved: "Saved policy", scratch: "Flow scratch: reset when a flow starts" };
-
-/**
- * The saved store holds configuration that outlives a flow. Flows run against a scratch store in
- * memory, so they can start from a known state every time without disturbing saved configuration.
- * The signing key lives only in the saved store, and URLs from both stores are signed with it.
- */
-export function createStores(config: StoreConfig) {
-  const saved = new PolicyStore(config);
-  const scratch = new PolicyStore({ mode: "memory" });
-  let activeName: StoreName = "saved";
-  return {
-    saved, scratch,
-    get active() { return activeName === "saved" ? saved : scratch; },
-    get activeName() { return activeName; },
-    get activeLabel() { return STORE_LABELS[activeName]; },
-    activate(name: StoreName) { activeName = name; },
-    close() { saved.close(); scratch.close(); },
-  };
-}
-export type Stores = ReturnType<typeof createStores>;

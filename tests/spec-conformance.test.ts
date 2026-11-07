@@ -7,13 +7,9 @@ import { startStack, type BackendName, type Stack } from "../src/stack";
 import { registerClients } from "../src/flows";
 import { clientAssertion } from "../src/auth-server";
 import { CONFIG } from "../src/config";
-import { boundaryOf, readMultipart } from "../src/multipart";
-import { createProxy } from "../src/proxy";
+import { ath, boundaryOf, createProxy, EVRLE, generateEd25519, isStandard, JPEG_BASELINE, JPEG_LOSSLESS, OrthancBackend, readMultipart, signJws } from "@smart-imaging-proxy/core";
 import { scriptedLaunch } from "../src/flows/oauth";
-import { OrthancBackend } from "../src/backends/orthanc";
-import { generateEd25519, signJws, ath } from "../src/jws";
 import { now } from "../src/clock";
-import { EVRLE, JPEG_BASELINE, JPEG_LOSSLESS, isStandard } from "../src/syntax";
 
 // The guide's text comes from a local clone when SPEC_REPO names one, and otherwise from GitHub.
 const SPEC_REPO = process.env.SPEC_REPO;
@@ -55,7 +51,7 @@ async function get(url: string, accept: string | undefined, t: string | undefine
 beforeAll(async () => {
   stack = await startStack(join(import.meta.dir, ".."));
   clients = registerClients(stack);
-  stack.resetAll();
+  await stack.resetAll();
   token = (await launch()).access_token;
   bundle = await (await searchFor(token, "patient=josh-example&_include=ImagingStudy:endpoint")).json();
 });
@@ -88,27 +84,27 @@ describe("Discovery and search", () => {
     const backendToken = async () => ((await (await fetch(stack.auth.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "client_credentials", scope: "system/ImagingStudy.rs", client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: clientAssertion(c, stack.auth.tokenUrl) }).toString() })).json()) as any).access_token as string;
     const t = await backendToken();
     const none = await searchFor(t, "patient=josh-example");
-    stack.imaging.setPolicy({ rules: [{ id: "hand-referral", when: { client: "hand-referral-service", patient: "josh-example" }, allow: { modalities: ["CR"] } }] });
+    stack.stores.active.setPolicy({ rules: [{ id: "hand-referral", when: { client: "hand-referral-service", patient: "josh-example" }, allow: { modalities: ["CR"] } }] });
     try {
       const allowed: any = await (await searchFor(t, "patient=josh-example")).json();
       expect(allowed.total).toBeGreaterThan(0);
-      stack.imaging.updateRule("hand-referral", { withdrawn: true });
+      stack.stores.active.updateRule("hand-referral", { withdrawn: true });
       const withdrawn = await searchFor(t, "patient=josh-example");
       expect(withdrawn.status).toBe(403);
       expect(await withdrawn.json()).toEqual(await none.json());
       const seen = await stack.explain({ client: "hand-referral-service", patient: "josh-example" });
       expect(seen.searchAllowed).toBe(false);
       expect(seen.rule).toBeUndefined();
-    } finally { stack.imaging.setPolicy({ rules: [] }); }
+    } finally { stack.stores.active.setPolicy({ rules: [] }); }
   });
   test("a user's token sees a withdrawn rule as omitted studies, within the patient they can see", async () => {
     says("SHALL omit studies and included Endpoints");
-    stack.imaging.setPolicy({ rules: [{ id: "gone", when: { client: "portal-app" }, allow: { all: true }, withdrawn: true }] });
+    stack.stores.active.setPolicy({ rules: [{ id: "gone", when: { client: "portal-app" }, allow: { all: true }, withdrawn: true }] });
     try {
       const r = await searchFor(token, "patient=josh-example");
       expect(r.status).toBe(200);
       expect(((await r.json()) as any).total).toBe(0);
-    } finally { stack.imaging.setPolicy({ rules: [] }); }
+    } finally { stack.stores.active.setPolicy({ rules: [] }); }
   });
   test("real search filters: nothing is silently ignored", async () => {
     const total = async (q: string) => { const r = await searchFor(token, `patient=josh-example&${q}`); return r.status === 200 ? ((await r.json()) as any).total : r.status; };

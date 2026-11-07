@@ -1,14 +1,13 @@
-// Imaging Server: ImagingStudy search, policy, signed contexts, and the AuthZEN decision API.
-// All policy lives here. The proxy never sees it.
+// Imaging Server: ImagingStudy search, policy, signed contexts, the AuthZEN decision API, and the
+// policy API. All policy lives here. The proxy never sees it.
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { ath, publicJwk, signJws, verifyJws } from "./jws";
-import { now } from "./clock";
-import { check, traced } from "./trace";
+import { systemClock, type Clock } from "./clock";
+import { noopObserver, type Observer } from "./observer";
+import { createPolicyApi, POLICY_API_PATH, type Access, type ExplainQuery } from "./policy-api";
 import type { Guardian, Policy, PolicyStore, Rule } from "./policy-store";
 import type { CatalogPosition, CatalogSearch, CatalogStore, CatalogStudy, InstantRange, StudyHierarchy, TokenFilter, TokenTerm } from "./archive/types";
 import { ACCESSION_SYSTEM, DICOM_UID_SYSTEM } from "./catalog";
-
-export type { AppGrant, Delegation, Policy, Rule } from "./policy-store";
 
 const DEFAULT_COUNT = 20, MAX_COUNT = 100;
 /** Raw hierarchy per page, by the sizes the catalog stores. A page always has at least one study. */
@@ -89,13 +88,43 @@ export function accessLevel(t: { patient?: string; sub?: string }): "patient" | 
   return t.patient ? "patient" : t.sub ? undefined : "system";
 }
 
+export interface ImagingServerOptions {
+  /** The FHIR base this server is reached at, ending in `/fhir`. Every URL it issues starts here or at `proxyBase`. */
+  base: string;
+  /** The clinical FHIR server, whose Patient references search accepts and issues. */
+  clinicalFhirBase: string;
+  /** The proxy's public base, for each Endpoint.address. */
+  proxyBase: () => string;
+  /** Token introspection at the Authorization Server. */
+  introspect: (token: string) => Promise<any>;
+  /** The patient a user account is, if any. */
+  patientOf: (user: string) => string | undefined;
+  /** The credential the proxy and the policy API's callers present. */
+  serviceSecret: string;
+  catalog: () => CatalogStore;
+  /** Holds the signing key. */
+  keyStore: PolicyStore;
+  /** The policy that search and decisions use. */
+  store: () => PolicyStore;
+  /** Other stores the policy API can name with `?store=`. */
+  namedStore?: (name: string) => PolicyStore | undefined;
+  /** Signs paging cursors. Several processes behind one address have to share it. */
+  cursorKey?: Uint8Array;
+  pageBytes?: number;
+  observer?: Observer;
+  clock?: Clock;
+}
+
 /**
- * The Imaging Server reads the catalog and has no way to read an archive object. `cursorKey` signs
- * paging cursors: several processes behind one address have to share it. Without one, a key is made
- * here, and a restart turns cursors already issued into 400s, which a client handles by searching again.
+ * The Imaging Server reads the catalog and has no way to read an archive object. Without a `cursorKey`,
+ * a key is made here, and a restart turns cursors already issued into 400s, which a client handles by
+ * searching again.
  */
-export function createImagingServer(opts: { base: string; clinicalFhirBase: string; proxyBase: () => string; introspect: (token: string) => Promise<any>; patientOf: (user: string) => string | undefined; serviceSecret: string; catalog: () => CatalogStore; keyStore: PolicyStore; store: () => PolicyStore; cursorKey?: Uint8Array; pageBytes?: number }) {
-  // Where callers reach this server, which is behind the one origin unless DEMO_ONE_ORIGIN=0.
+export function createImagingServer(opts: ImagingServerOptions) {
+  const obs = opts.observer ?? noopObserver, clock = opts.clock ?? systemClock;
+  const now = () => clock.now();
+  const check: Observer["check"] = (...a) => obs.check(...a);
+  // Where callers reach this server.
   const serviceBase = opts.base.replace(/\/fhir$/, "");
   let key = opts.keyStore.currentSigningKey();
   // This server's own view. A proxy reads the same keys from /.well-known/jwks.json.
@@ -108,7 +137,7 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
   type PolicyRows = Pick<Policy, "rules" | "delegations" | "guardians" | "appGrants">;
   type Evaluation = { release: "none" | "study" | { series: string[] }; rule?: Rule; why: string; chain?: string[] };
   /** One search evaluates every candidate against the same policy, read once. */
-  const policyRows = (): PolicyRows => { const s = opts.store(); return { rules: s.rules(), delegations: s.delegations(), guardians: s.guardians(), appGrants: s.appGrants() }; };
+  const policyRows = (s: PolicyStore = opts.store()): PolicyRows => { return { rules: s.rules(), delegations: s.delegations(), guardians: s.guardians(), appGrants: s.appGrants() }; };
 
   const matchRule = (t: any, patient: string, policy: PolicyRows): Rule | undefined =>
     policy.rules.find(r =>
@@ -162,11 +191,11 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
     return sites.filter(s => open.has(s));
   };
   /** What one signed-in user can see and has shared, for the Authorization Server's pages. Their own record is first, then the people they're guardian for, then what's shared with them. */
-  function accessFor(user: string, fhirUser: string) {
-    const records: { patient: string; via: "self" | "guardian" | "delegation"; relationship?: string; sites: string[] }[] = [];
+  function accessFor(store: PolicyStore, user: string, fhirUser: string): Access {
+    const records: Access["records"] = [];
     const self = fhirUser.match(/^Patient\/(.+)$/)?.[1];
     if (self) records.push({ patient: self, via: "self", sites: opts.catalog().sitesFor(self) });
-    const policy = opts.store().getPolicy();
+    const policy = store.getPolicy();
     for (const g of policy.guardians) if (g.guardian === user && g.patient !== self) records.push({ patient: g.patient, via: "guardian", relationship: g.relationship, sites: guardianSites(g) });
     for (const d of policy.delegations) if (d.delegate === user && !records.some(r => r.patient === d.patient) && mayGrant(policy, d)) records.push({ patient: d.patient, via: "delegation", relationship: d.relationship, sites: withinGuardian(policy, d.grantedBy, d.patient, d.sites) });
     return {
@@ -180,11 +209,10 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
    * What the same `evaluate` that search uses decides for each of a patient's studies, for one client
    * and, for a launch, one user. Only the demo calls this, to show why a list looks as it does.
    */
-  function explain(url: URL): Response {
-    const client = url.searchParams.get("client"), user = url.searchParams.get("user"), fhirUser = url.searchParams.get("fhirUser"), patient = url.searchParams.get("patient");
-    if (!client || !patient || (user && !fhirUser)) return Response.json({ error: "client and patient are required, and a user needs a fhirUser" }, { status: 400 });
+  function explain(store: PolicyStore, { client, user, fhirUser, patient }: Partial<ExplainQuery>) {
+    if (!client || !patient || (user && !fhirUser)) return { error: "client and patient are required, and a user needs a fhirUser" };
     const t = user ? { client_id: client, sub: user, fhirUser, patient } : { client_id: client };
-    const policy = policyRows();
+    const policy = policyRows(store);
     const rule = matchRule(t, patient, policy);
     const studies = [...candidates(opts.catalog(), { patient })].map(study => {
       const ev = evaluate(t, study, policy);
@@ -196,14 +224,14 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
         withheldSeries: released ? study.series.filter(s => !released.has(s.uid)).map(s => ({ uid: s.uid, number: s.number, modality: s.modality, instanceCount: s.instanceCount })) : [],
       };
     });
-    return Response.json({
+    return {
       client, user: user ?? undefined, fhirUser: fhirUser ?? undefined, patient, level: user ? "patient" : "system",
       searchAllowed: !!user || !!preAuthorizing(rule), rule: user ? rule : preAuthorizing(rule),
       guardian: user ? policy.guardians.find(g => g.guardian === user && g.patient === patient) : undefined,
       delegation: user ? [policy.delegations.find(d => d.delegate === user && d.patient === patient)].flatMap(d => d && mayGrant(policy, d) ? [{ ...d, sites: withinGuardian(policy, d.grantedBy, patient, d.sites) }] : [])[0] : undefined,
       appGrant: user ? [policy.appGrants.find(g => g.client === client && g.user === user && g.patient === patient)].flatMap(g => g ? [g.sites ? { ...g, sites: withinGuardian(policy, user, patient, g.sites) } : g] : [])[0] : undefined,
       studies,
-    });
+    };
   }
 
   function evaluateRule(t: any, study: CatalogStudy, policy: PolicyRows): Evaluation {
@@ -477,60 +505,20 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
     return respond(true, { release: ev.release, version: study.version, max_age_seconds: Math.min(opts.store().getSettings().contextLifetimeSeconds, t.exp - now()) }, ev.why);
   }
 
+  const policyApi = createPolicyApi({
+    serviceSecret: opts.serviceSecret, store: opts.store, namedStore: opts.namedStore, check,
+    model: { access: accessFor, explain, guardianSites, sitesFor: patient => opts.catalog().sitesFor(patient) },
+  });
+
   return {
     publicKeys: keys,
     jwks: () => ({ keys: [publicJwk(key)] }),
-    fetch: traced("imaging-fhir", async (req: Request, server): Promise<Response> => {
+    fetch: obs.serve("imaging-fhir", async (req: Request, server): Promise<Response> => {
       const url = new URL(req.url);
       const p = url.pathname;
-      if (p === "/access/v1/evaluation" || p.startsWith("/internal/")) server.record.service = "policy";
-      if (p.startsWith("/internal/")) {
-        if (bearerOf(req) !== opts.serviceSecret) return new Response(null, { status: 401 });
-        if (p === "/internal/relationships") return Response.json([...opts.store().guardians().map(g => ({ patient: g.patient, delegate: g.guardian, relationship: g.relationship })), ...opts.store().delegations().map(d => ({ patient: d.patient, delegate: d.delegate, relationship: d.relationship }))]);
-        if (p === "/internal/access") return Response.json(accessFor(url.searchParams.get("user") ?? "", url.searchParams.get("fhirUser") ?? ""));
-        if (p === "/internal/explain") return explain(url);
-        if (p === "/internal/delegations" && req.method === "POST") {
-          const d: any = await req.json();
-          const self = d.fhirUser === `Patient/${d.patient}`;
-          if (!check("policy", "only the patient or their guardian can delegate their records", self || isGuardian(policyRows(), d.grantedBy, d.patient), { user: d.grantedBy, patient: d.patient })) return new Response(null, { status: 403 });
-          const asGuardian = self ? undefined : opts.store().guardians().find(g => g.guardian === d.grantedBy && g.patient === d.patient);
-          const known = new Set(asGuardian ? guardianSites(asGuardian) : opts.catalog().sitesFor(d.patient));
-          const sites = d.sites.filter((s: string) => known.has(s));
-          opts.store().putDelegation({ patient: d.patient, grantedBy: d.grantedBy, delegate: d.delegate, relationship: d.relationship, sites, ...(self ? {} : { asGuardian: true }) });
-          check("policy", "record delegation to a related person", true, { from: d.grantedBy, to: d.delegate, relationship: d.relationship, sites: sites.join(", ") });
-          return new Response(null, { status: 204 });
-        }
-        if (p === "/internal/delegations" && req.method === "DELETE") {
-          const by = url.searchParams.get("grantedBy"), to = url.searchParams.get("delegate"), patient = url.searchParams.get("patient") ?? undefined;
-          opts.store().removeDelegations({ grantedBy: by ?? "", delegate: to ?? "", patient });
-          check("policy", "revoke delegation", true, { from: by, to, patient });
-          return new Response(null, { status: 204 });
-        }
-        if (p === "/internal/consents" && req.method === "POST") {
-          const c: any = await req.json();
-          const held = accessFor(c.user, c.fhirUser).records.find(r => r.patient === c.patient);
-          if (!check("policy", "user has access to this patient", !!held, { user: c.user, patient: c.patient })) return new Response(null, { status: 403 });
-          const existing = opts.store().appGrants().find(x => x.client === c.client && x.user === c.user && x.patient === c.patient);
-          let sites: string[] | undefined = existing?.sites;
-          if (c.sites) {
-            // A choice can only narrow what the user holds, whatever the form submitted.
-            const narrowed = c.sites.filter((s: string) => held!.sites.includes(s));
-            // Everything the patient has is the same as no limit, which then covers later sites too.
-            const all = opts.catalog().sitesFor(c.patient).length;
-            sites = narrowed.length > 0 && narrowed.length === all ? undefined : narrowed;
-            check("policy", "app's sites stay within what the user holds", narrowed.length === c.sites.length, { requested: c.sites.join(", "), held: held!.sites.join(", "), granted: narrowed.join(", ") });
-          }
-          opts.store().putAppGrant({ client: c.client, user: c.user, patient: c.patient, ...(sites ? { sites } : {}) });
-          return new Response(null, { status: 204 });
-        }
-        if (p === "/internal/consents" && req.method === "DELETE") {
-          const client = url.searchParams.get("client"), user = url.searchParams.get("user"), patient = url.searchParams.get("patient") ?? undefined;
-          opts.store().removeAppGrants({ client: client ?? "", user: user ?? "", patient });
-          check("policy", "revoke app authorization", true, { client, user, patient });
-          return new Response(null, { status: 204 });
-        }
-        return new Response("not found", { status: 404 });
-      }
+      const policyPath = p === POLICY_API_PATH || p.startsWith(`${POLICY_API_PATH}/`);
+      if (p === "/access/v1/evaluation" || policyPath) server.creditTo("policy");
+      if (policyPath) return policyApi(req, url);
       if (p === "/fhir/ImagingStudy" && req.method === "GET") return search(req, url);
       if (p === "/fhir/metadata") return Response.json({ resourceType: "CapabilityStatement", status: "active", date: CAPABILITY_DATE, kind: "instance", implementation: { description: "SMART Imaging proxy demo: Imaging FHIR Server", url: opts.base }, fhirVersion: "4.0.1", format: ["json"], instantiates: ["http://fhir.org/argonaut/smart-imaging/CapabilityStatement/smart-imaging-server"], rest: [{ mode: "server", resource: [{ type: "ImagingStudy", interaction: [{ code: "search-type" }], searchInclude: ["ImagingStudy:endpoint"], searchParam: [{ name: "patient", type: "reference" }, { name: "identifier", type: "token", documentation: "value, system|value, |value or system|. A comma means any of the values, and a repeated parameter means all of them." }, { name: "based-on", type: "reference", documentation: "Searched by order identifier, as based-on:identifier, which takes the same forms as identifier." }, { name: "_lastUpdated", type: "date", documentation: "The value each study's published version states, or otherwise midnight UTC on its study date. Only publishing a study with a different value changes it: in-place DICOM edits, deletions, reassignments and policy changes don't. Takes the prefixes eq, ne, gt, lt, ge, le, sa and eb, or none, and a repeated parameter means all of them. A value with no offset is in UTC, and a partial one covers its whole range." }, { name: "_count", type: "number", documentation: `Studies per page: ${DEFAULT_COUNT} by default, and larger values than ${MAX_COUNT} are treated as ${MAX_COUNT}. A page can hold fewer, to stay within its size limit. 0 returns only the total.` }, { name: "_cursor", type: "string", documentation: "Opaque, and supplied by a Bundle's next link. Use it with the same filters. It grants nothing, and policy applies again on every page." }] }] }] });
       if (p === "/access/v1/evaluation" && req.method === "POST") return evaluation(req);
@@ -538,10 +526,6 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
       if (p === "/.well-known/jwks.json") return Response.json({ keys: [publicJwk(key)] });
       return new Response("not found", { status: 404 });
     }),
-    /** These act on whichever store is active: saved, or a flow's scratch store. */
-    setPolicy(pol: Partial<Policy>) { opts.store().setPolicy(pol); },
-    getPolicy: () => opts.store().getPolicy(),
-    updateRule(id: string, patch: Partial<Rule>) { opts.store().updateRule(id, patch); },
     setOutage(on: boolean) { outage = on; },
     get outage() { return outage; },
     get signingKid() { return key.kid; },

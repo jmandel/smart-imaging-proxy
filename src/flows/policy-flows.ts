@@ -25,7 +25,7 @@ export const policyFlows: Flow[] = [
         run: async (c, i) => {
           const t = await c.launch("josh", "portal-app", i.mode === "window" ? { window: true } : { sites: i.sites });
           c.state.token = c.launched(t);
-          const grant = c.stack.imaging.getPolicy().appGrants.find(g => g.client === "portal-app" && g.user === "josh");
+          const grant = c.stack.stores.active.getPolicy().appGrants.find(g => g.client === "portal-app" && g.user === "josh");
           c.state.sites = grant?.sites ?? c.sites();
           c.check("Scope is unchanged by the choice", t.scope.includes("patient/ImagingStudy.rs") && !/site/i.test(t.scope), t.scope);
           c.check("Token has the patient context from the launch", t.patient === "josh-example", t.patient);
@@ -77,7 +77,7 @@ export const policyFlows: Flow[] = [
         ],
         run: async (c, i) => {
           await c.delegate("josh", "sam-caregiver", "caregiver", i.sites, { window: i.mode === "window" });
-          const d = c.stack.imaging.getPolicy().delegations.find(x => x.delegate === "sam-caregiver");
+          const d = c.stack.stores.active.getPolicy().delegations.find(x => x.delegate === "sam-caregiver");
           c.check("The Imaging Server holds the delegation", !!d, d?.sites.join(", "));
           c.state.delegated = d?.sites ?? [];
         },
@@ -103,7 +103,7 @@ export const policyFlows: Flow[] = [
           c.state.delegated ??= [];
           // What Sam holds for this person: what Josh shared, or all of a record Sam doesn't owe to Josh.
           const held = t.patient === JOSH ? c.state.delegated : c.sites(t.patient);
-          const g = c.stack.imaging.getPolicy().appGrants.find(x => x.user === SAM_ACCOUNT && x.patient === t.patient);
+          const g = c.stack.stores.active.getPolicy().appGrants.find(x => x.user === SAM_ACCOUNT && x.patient === t.patient);
           c.state.appSites = g?.sites ?? held;
           c.check("The app holds no more than Sam was given", c.state.appSites.every((s: string) => held.includes(s)), c.state.appSites.join(", "));
           c.check(`The token names ${firstOf(i.whose)} as the patient, and no sites`, t.patient === i.whose && !/site/i.test(t.scope ?? ""), t.patient === i.whose ? t.scope : `Sam approved ${firstOf(t.patient)}'s records in the window, and this step had ${firstOf(i.whose)} selected`);
@@ -158,7 +158,7 @@ export const policyFlows: Flow[] = [
           if (!s) { c.check("Sam's app held no URL, so there's no revocation window to show", true); return; }
           const inside = await c.retrieve("App (Sam)", "A URL Sam already holds", c.studyUrl(s.base, s.uid), c.state.sam);
           c.check("The existing URL still works until it expires", inside.status === 200 && inside.authz === "instant", "This is the revocation window");
-          c.advanceClock(c.stack.imaging.getPolicy().contextLifetimeSeconds + 5);
+          c.advanceClock(c.stack.stores.active.getPolicy().contextLifetimeSeconds + 5);
           const later = await c.retrieve("App (Sam)", "The same URL, after expiry", c.studyUrl(s.base, s.uid), c.state.sam);
           c.check("Then the proxy asks, and access has ended", later.status === 404 && later.authz === "asked", `status ${later.status}, authorization: ${later.authz}`);
         },
@@ -184,7 +184,7 @@ export const policyFlows: Flow[] = [
         inputs: () => [{ id: "modalities", label: "Modalities pre-authorized by the health system", type: "multi", options: [{ value: "CR", label: "CR (X-rays)" }, { value: "CT", label: "CT" }, { value: "MR", label: "MR" }, { value: "SM", label: "SM (pathology)" }], default: ["CR"] }],
         run: async (c, i) => {
           c.state.modalities = i.modalities;
-          c.setRules([{ id: "hand-referral", description: "Referral program: pre-authorized modalities", when: { client: "hand-referral-service", patient: "josh-example" }, allow: { modalities: i.modalities } }]);
+          await c.setRules([{ id: "hand-referral", description: "Referral program: pre-authorized modalities", when: { client: "hand-referral-service", patient: "josh-example" }, allow: { modalities: i.modalities } }]);
           const t = await c.backendToken("hand-referral-service");
           c.state.token = t.access_token;
           c.check("The token names no patient", t.patient === undefined);
@@ -236,7 +236,7 @@ export const policyFlows: Flow[] = [
         inputs: c => { const s = c.study(CT).series; return [{ id: "withhold", label: "Series to withhold", type: "multi", options: s.map((x: any) => ({ value: x.uid, label: `${x.number}: ${x.description} (${x.instances.length})` })), default: s.filter((x: any) => /Clinical Documents|Dose Report/.test(x.description)).map((x: any) => x.uid) }]; },
         run: async (c, i) => {
           c.state.withhold = i.withhold;
-          c.setRules([{ id: "outside-release", description: "Outside release excludes chosen series", when: { client: "outside-release-service", patient: "josh-example" }, allow: { studies: [CT] }, withholdSeries: i.withhold }]);
+          await c.setRules([{ id: "outside-release", description: "Outside release excludes chosen series", when: { client: "outside-release-service", patient: "josh-example" }, allow: { studies: [CT] }, withholdSeries: i.withhold }]);
           c.state.token = (await c.backendToken("outside-release-service")).access_token;
           c.check("Policy recorded, and token issued", !!c.state.token);
         },
@@ -285,8 +285,8 @@ export const policyFlows: Flow[] = [
           const s = c.study(MRI).series;
           c.state.hidden = s[0].uid;
           c.state.limit = Number(i.limit);
-          c.stack.imaging.setPolicy({ maxSeriesInContext: c.state.limit });
-          c.setRules([{ id: "long-rule", description: "One series withheld, leaving a long release list", when: { client: "outside-release-service", patient: "josh-example" }, allow: { studies: [MRI] }, withholdSeries: [c.state.hidden] }]);
+          await c.stack.policy.setSettings({ maxSeriesInContext: c.state.limit });
+          await c.setRules([{ id: "long-rule", description: "One series withheld, leaving a long release list", when: { client: "outside-release-service", patient: "josh-example" }, allow: { studies: [MRI] }, withholdSeries: [c.state.hidden] }]);
           c.state.token = (await c.backendToken("outside-release-service")).access_token;
           c.check("Token issued", !!c.state.token);
         },
@@ -335,8 +335,8 @@ export const policyFlows: Flow[] = [
         inputs: () => [{ id: "lifetime", label: "Context lifetime", type: "select", options: [{ value: "60", label: "1 minute" }, { value: "300", label: "5 minutes" }, { value: "1800", label: "30 minutes" }], default: "300" }],
         run: async (c, i) => {
           c.state.lifetime = Number(i.lifetime);
-          c.stack.imaging.setPolicy({ contextLifetimeSeconds: c.state.lifetime });
-          c.setRules([{ id: "research-consent", description: "Josh's research donation consent", when: { client: "research-donation", patient: "josh-example" }, allow: { all: true } }]);
+          await c.stack.policy.setSettings({ contextLifetimeSeconds: c.state.lifetime });
+          await c.setRules([{ id: "research-consent", description: "Josh's research donation consent", when: { client: "research-donation", patient: "josh-example" }, allow: { all: true } }]);
           c.state.token = (await c.backendToken("research-donation")).access_token;
           const r = await c.search(c.state.token, undefined, "research-donation");
           c.state.s = c.need(r.studies[WRIST], `The search didn't return ${WRIST}, so there's no URL to show the window with`);
@@ -349,7 +349,7 @@ export const policyFlows: Flow[] = [
         id: "withdraw", title: "Josh withdraws consent", actor: "Patient", doc: `<p>Policy changes immediately at the Imaging Server. New searches reflect it at once. The proxy hasn't heard, because it holds no policy and isn't told.</p>`,
         run: async c => {
           c.need(c.state.s, "The service has to be enrolled first");
-          c.stack.imaging.updateRule("research-consent", { withdrawn: true });
+          await c.stack.policy.updateRule("research-consent", { withdrawn: true });
           const r = await c.search(c.state.token, undefined, "research-donation");
           c.check("Search reflects it immediately", Object.keys(r.studies).length === 0);
           const g = await c.retrieve("research-donation", "Retrieve inside the window", c.studyUrl(c.state.s.base, c.state.s.uid), c.state.token);
@@ -388,7 +388,7 @@ export const policyFlows: Flow[] = [
         id: "guardian", title: "Sam opens Riley's records, as guardian", actor: "Guardian", doc: `<p>Riley is Sam's child, and has no account. Sam is Riley's guardian on file at the Imaging Server, so nobody has to share anything first. One of Riley's studies is marked confidential from Sam, so having Riley's patient context doesn't bring it. Choosing Riley is a new authorization with its own token and app grant. Riley's images are synthetic too.</p>`,
         inputs: () => [{ id: "mode", label: "Who signs in and approves", type: "select", options: [{ value: "window", label: "You, in a real window (Sam Example and Riley's records are preselected)" }, { value: "scripted", label: "Scripted" }], default: "scripted", clickDefault: "window" }],
         run: async (c, i) => {
-          const policy = c.stack.imaging.getPolicy();
+          const policy = c.stack.stores.active.getPolicy();
           c.check("The guardian is on file, and nobody has shared anything", policy.guardians.some(g => g.patient === RILEY && g.guardian === SAM_ACCOUNT) && !policy.delegations.some(d => d.patient === RILEY), policy.guardians.map(g => `${g.guardian} for ${g.patient}: ${g.relationship}`).join(", "));
           const t = await c.launch(SAM_ACCOUNT, "portal-app", { window: i.mode === "window", patient: RILEY });
           c.state.riley = c.launched(t);
@@ -396,10 +396,10 @@ export const policyFlows: Flow[] = [
           c.check("The token is for Riley", t.patient === RILEY, t.patient === RILEY ? t.patient : `Sam approved ${firstOf(t.patient)}'s records in the window, and this step had Riley's selected`);
           const r = await c.search(c.state.riley, searchOf(t.patient));
           c.state.rileyStudies = r.studies;
-          const hidden = c.stack.imaging.getPolicy().guardians.find(g => g.patient === t.patient && g.guardian === SAM_ACCOUNT)?.excludedStudies ?? [];
+          const hidden = c.stack.stores.active.getPolicy().guardians.find(g => g.patient === t.patient && g.guardian === SAM_ACCOUNT)?.excludedStudies ?? [];
           c.check("The search returns that person's studies, and no one else's", Object.keys(r.studies).length === c.studies(t.patient).length - hidden.length && Object.keys(r.studies).every(id => c.study(id).patient === t.patient), Object.keys(r.studies).join(", "));
           if (hidden.length) c.check("A study marked confidential from Sam is left out, though the token is for Riley", hidden.every(id => !r.studies[id]), `${hidden.join(", ")} omitted`);
-          const grants = c.stack.imaging.getPolicy().appGrants.filter(g => g.user === SAM_ACCOUNT && g.client === "portal-app").map(g => g.patient);
+          const grants = c.stack.stores.active.getPolicy().appGrants.filter(g => g.user === SAM_ACCOUNT && g.client === "portal-app").map(g => g.patient);
           c.check("Sam has a separate app grant for each person", new Set(grants).size === grants.length && grants.includes(t.patient), grants.join(", "));
           const s: any = Object.values(r.studies)[0];
           if (!s) return;
@@ -448,7 +448,7 @@ export const policyFlows: Flow[] = [
           const t = await c.launch(SAM_ACCOUNT, "separate-viewer", { patient: i.whose });
           const token = c.launched(t);
           c.check(`The viewer's token is for ${firstOf(i.whose)}`, t.patient === i.whose, t.patient);
-          const grants = c.stack.imaging.getPolicy().appGrants.filter(g => g.user === SAM_ACCOUNT && g.client === "separate-viewer");
+          const grants = c.stack.stores.active.getPolicy().appGrants.filter(g => g.user === SAM_ACCOUNT && g.client === "separate-viewer");
           c.check("Sam gave the viewer one person", grants.length === 1 && grants[0]!.patient === i.whose, grants.map(g => g.patient).join(", "));
           for (const other of [RILEY, SAM, JOSH].filter(p => p !== i.whose)) {
             const r = await c.search(token, searchOf(other), "separate-viewer");
@@ -477,7 +477,7 @@ export const policyFlows: Flow[] = [
           const token = c.launched(t);
           const r = await c.search(token, searchOf(i.whose), "App (Alex)");
           // Sam can share only what Sam holds, and a study confidential from Sam isn't part of that.
-          const hidden = c.stack.imaging.getPolicy().guardians.find(g => g.patient === i.whose && g.guardian === SAM_ACCOUNT)?.excludedStudies ?? [];
+          const hidden = c.stack.stores.active.getPolicy().guardians.find(g => g.patient === i.whose && g.guardian === SAM_ACCOUNT)?.excludedStudies ?? [];
           const expected = c.studies(i.whose).filter(s => i.sites.includes(s.site) && !hidden.includes(s.id));
           c.check("Alex sees only what Sam shared", Object.keys(r.studies).length === expected.length && Object.keys(r.studies).every(id => i.sites.includes(c.siteOf(id))), `${Object.keys(r.studies).length} of ${c.studies(i.whose).length} studies${expected.length ? "" : `. Nothing Sam can share is at the sites ticked`}`);
         },

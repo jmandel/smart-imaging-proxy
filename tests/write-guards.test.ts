@@ -58,7 +58,7 @@ test("traces can be read at this service's own addresses, the viewer's pages loa
 });
 
 test("a delegation takes only an offered relationship", async () => {
-  stack.resetAll();
+  await stack.resetAll();
   const r = await submitDelegation(accountUrl("josh"), { user: "josh", delegate: "sam-caregiver", relationship: "<script>x</script>", sites: ["Lakeside Imaging"] });
   expect(r.status).toBe(400);
   expect(stack.stores.active.delegations()).toEqual([]);
@@ -85,7 +85,7 @@ describe("the Authorization Server's forms", () => {
     }
   });
   test("no account write acts under another Host or origin, even with a real session", async () => {
-    stack.resetAll();
+    await stack.resetAll();
     const cookie = await signedIn();
     expect((await form("/account/delegations", { cookie }, delegation)).status).toBe(303);
     const before = JSON.stringify(stack.stores.active.getPolicy());
@@ -99,7 +99,7 @@ describe("the Authorization Server's forms", () => {
     expect((await form("/account/delegations", { cookie }, delegation)).status).toBe(303);
   });
   test("the authorization forms are refused under another Host or origin, and leave the request usable", async () => {
-    stack.resetAll();
+    await stack.resetAll();
     const txn = await newTxn();
     for (const headers of FOREIGN) expect((await form(`/authorize/signin?txn=${txn}`, headers, "username=josh")).status).toBe(403);
     expect((await fetch(`${CONFIG.authUrl}/authorize/consent?txn=${txn}`)).status).toBe(401);

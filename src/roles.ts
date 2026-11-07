@@ -1,13 +1,10 @@
 // Runs some of the services in this process, for a deployment that splits them. They find each other
 // through CONFIG, and act together only over HTTP.
 import { randomBytes } from "node:crypto";
-import { CONFIG, GATEWAY_HOSTS, ONE_ORIGIN, PORTS, serveOn } from "./config";
+import { createProxy, DEFAULT_JWKS_TTL_SECONDS } from "@smart-imaging-proxy/core";
+import { CONFIG, DEFAULT_CATALOG_DB, GATEWAY_HOSTS, ONE_ORIGIN, PORTS, serveOn, serveStreamingOn } from "./config";
 import { DEMO_BACKEND_CLIENTS, DEMO_BACKEND_SCOPES, derivedBackendClient } from "./auth-server";
-import { createProxy } from "./proxy";
-import { DEFAULT_JWKS_TTL_SECONDS } from "./jwks";
-import { createStores, storeConfigFromEnv } from "./policy-store";
-import { serveStreaming } from "./serve-streaming";
-import { DEFAULT_CATALOG_DB } from "./catalog";
+import { createStores, storeConfigFromEnv } from "./stores";
 import { buildAuthServer, buildBackend, buildImagingServer, openCatalogs, proxyLinks, type BackendName } from "./stack";
 import { flushTraces, setTraceSink } from "./trace";
 import { createCollector } from "./trace-collector";
@@ -57,12 +54,12 @@ export async function startRoles(root: string, roles: Role[], env: Record<string
     if (!BACKENDS.includes(name)) throw new Error(`PROXY_BACKEND must be one of ${BACKENDS.join(", ")}, not "${name}"`);
     const backend = buildBackend(name);
     const proxy = createProxy({ ...proxyLinks, jwksTtlSeconds: Number(env.JWKS_TTL_SECONDS ?? DEFAULT_JWKS_TTL_SECONDS), serviceSecret, backend: () => backend });
-    const server = await serveStreaming(PORTS.proxy, withCors(proxy.fetch));
+    const server = await serveStreamingOn(PORTS.proxy, withCors(proxy.fetch));
     stops.push(() => server.stop());
   }
   if (has("gateway")) {
     if (!ONE_ORIGIN) throw new Error("--role gateway serves the one origin, which DEMO_ONE_ORIGIN=0 turns off");
-    const server = await serveStreaming(PORTS.gateway, gatewayFetch, { hosts: GATEWAY_HOSTS });
+    const server = await serveStreamingOn(PORTS.gateway, gatewayFetch, GATEWAY_HOSTS);
     stops.push(() => server.stop());
   }
   return { stop() { flushTraces(); for (const stop of stops.reverse()) stop(); } };

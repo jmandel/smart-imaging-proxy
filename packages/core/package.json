@@ -1,0 +1,13 @@
+{
+  "name": "@smart-imaging-proxy/core",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test"
+  }
+}

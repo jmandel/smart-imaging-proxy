@@ -8,13 +8,13 @@ import { createDemoServer } from "../src/demo-server";
 import { scriptedLaunch } from "../src/flows/oauth";
 import { now, resetClock } from "../src/clock";
 import { CONFIG, PORTS } from "../src/config";
-import { SCHEMA_VERSION } from "../src/policy-store";
+import { SCHEMA_VERSION } from "@smart-imaging-proxy/core";
 
 const root = join(import.meta.dir, "..");
 let stack: Stack; let demo: ReturnType<typeof createDemoServer>;
 beforeAll(async () => { stack = await startStack(root); demo = createDemoServer(stack, registerClients(stack), root); });
 afterAll(() => stack.stop());
-beforeEach(() => { stack.useStore("saved"); stack.resetSaved(); stack.imaging.setOutage(false); resetClock(); stack.setBackend("static-files"); });
+beforeEach(async () => { stack.useStore("saved"); await stack.resetSaved(); stack.imaging.setOutage(false); resetClock(); stack.setBackend("static-files"); });
 
 const call = (method: string, path: string, body?: unknown, headers: Record<string, string> = {}) =>
   demo.fetch(new Request(`${CONFIG.demoUrl}${path}`, { method, headers: { "content-type": "application/json", host: new URL(CONFIG.demoUrl).host, ...headers }, ...(body === undefined ? {} : { body: typeof body === "string" ? body : JSON.stringify(body) }) }));
@@ -54,7 +54,7 @@ describe("status", () => {
     expect(await (await call("GET", "/admin")).text()).toContain('id="catalog-stats"');
   });
   test("reports both stores: mode, path, durability, schema version, and row counts", async () => {
-    stack.imaging.setPolicy({ rules: [RULE], delegations: [DELEGATION], appGrants: [GRANT] });
+    stack.stores.active.setPolicy({ rules: [RULE], delegations: [DELEGATION], appGrants: [GRANT] });
     const s = await ok("GET", "/api/admin/status");
     expect(s.store.active).toBe("saved");
     expect(s.store.label).toBe("Saved policy");
@@ -124,7 +124,7 @@ describe("flows and the saved store, over HTTP", () => {
 
 describe("delegations and app grants", () => {
   test("delete removes a row from the active store, and 404s when there's none", async () => {
-    stack.imaging.setPolicy({ delegations: [DELEGATION, { ...DELEGATION, delegate: "alex-neighbor" }], appGrants: [GRANT] });
+    stack.stores.active.setPolicy({ delegations: [DELEGATION, { ...DELEGATION, delegate: "alex-neighbor" }], appGrants: [GRANT] });
     const q = new URLSearchParams({ patient: "josh-example", delegate: "sam-caregiver" });
     expect((await ok("DELETE", `/api/admin/delegations?${q}`)).policy.delegations.map((d: any) => d.delegate)).toEqual(["alex-neighbor"]);
     expect((await call("DELETE", `/api/admin/delegations?${q}`)).status).toBe(404);
@@ -187,19 +187,19 @@ describe("rule sets", () => {
     expect(stack.stores.saved.rules().map(r => r.id)).toEqual(["research-consent"]);
   });
   test("rules from elsewhere show as no named set, and a named set can replace them", async () => {
-    stack.imaging.setPolicy({ rules: [RULE] });
+    stack.stores.active.setPolicy({ rules: [RULE] });
     const s = await ok("GET", "/api/admin/status");
     expect(s.ruleSets.current).toBeNull();
     expect(s.policy.rules).toEqual([RULE]);
     expect(applied(await ok("POST", "/api/admin/rule-set", { id: "no-extra-rules" }))).toEqual([]);
   });
   test("a matching rule is the named set, whatever order its fields are in", async () => {
-    stack.imaging.setPolicy({ rules: [{ allow: { all: true }, when: { patient: "josh-example", client: "research-donation" }, description: "Josh's research donation consent", id: "research-consent" }] });
+    stack.stores.active.setPolicy({ rules: [{ allow: { all: true }, when: { patient: "josh-example", client: "research-donation" }, description: "Josh's research donation consent", id: "research-consent" }] });
     expect((await ok("GET", "/api/admin/status")).ruleSets.current).toBe("research-donation");
   });
   test("flow 4's own rule, with other series withheld, isn't the named set", async () => {
     const { policy } = await ok("POST", "/api/admin/rule-set", { id: "outside-release" });
-    stack.imaging.setPolicy({ rules: [{ ...policy.rules[0], withholdSeries: policy.rules[0].withholdSeries.slice(0, 1) }] });
+    stack.stores.active.setPolicy({ rules: [{ ...policy.rules[0], withholdSeries: policy.rules[0].withholdSeries.slice(0, 1) }] });
     expect((await ok("GET", "/api/admin/status")).ruleSets.current).toBeNull();
   });
   test("the page has no rules editor", async () => {
@@ -216,7 +216,7 @@ describe("settings", () => {
   test("a named value applies, and the token lifetime reaches new tokens", async () => {
     const s = await ok("PUT", "/api/admin/settings", { contextLifetimeSeconds: 60, maxSeriesInContext: 100, tokenLifetimeSeconds: 300, refreshTokenLifetimeSeconds: 86400 });
     expect(s.settings).toEqual({ contextLifetimeSeconds: 60, maxSeriesInContext: 100, tokenLifetimeSeconds: 300, refreshTokenLifetimeSeconds: 86400 });
-    expect(stack.imaging.getPolicy().contextLifetimeSeconds).toBe(60);
+    expect(stack.stores.active.getPolicy().contextLifetimeSeconds).toBe(60);
     const t = await scriptedLaunch("josh");
     expect(t.expires_in).toBe(300);
     expect(stack.auth.grantOf(t.access_token)).toBeDefined();
@@ -239,7 +239,7 @@ describe("settings", () => {
   }
   test("an empty request gets a 400", async () => { await refused("PUT", "/api/admin/settings", {}, "at least one"); });
   test("flows keep their own values through the store: the admin route alone is restricted", async () => {
-    stack.imaging.setPolicy({ contextLifetimeSeconds: 7, maxSeriesInContext: 3 });
+    stack.stores.active.setPolicy({ contextLifetimeSeconds: 7, maxSeriesInContext: 3 });
     const s = await ok("GET", "/api/admin/status");
     expect(s.settings).toMatchObject({ contextLifetimeSeconds: 7, maxSeriesInContext: 3 });
     expect((await ok("PUT", "/api/admin/settings", { contextLifetimeSeconds: 300 })).settings).toMatchObject({ contextLifetimeSeconds: 300, maxSeriesInContext: 3 });
@@ -292,7 +292,7 @@ describe("outage", () => {
 
 describe("tokens", () => {
   test("revoke all ends access and refresh tokens in the active store only", async () => {
-    stack.resetAll();
+    await stack.resetAll();
     const scratch = await scriptedLaunch("josh");
     stack.useStore("saved");
     const t = await scriptedLaunch("josh");
@@ -327,7 +327,7 @@ describe("/api/policy", () => {
   });
   test("a bad PUT gets a 400, and doesn't corrupt the policy", async () => {
     stack.useStore("scratch");
-    stack.imaging.setPolicy({ rules: [RULE] });
+    stack.stores.active.setPolicy({ rules: [RULE] });
     const cases: [unknown, string][] = [
       ["{not json", "valid JSON"],
       [[RULE], "JSON object"],
@@ -338,14 +338,14 @@ describe("/api/policy", () => {
       [{ rules: [], whatever: 1 }, 'unknown field "whatever"'],
     ];
     for (const [body, message] of cases) await refused("PUT", "/api/policy", body, message);
-    expect(stack.imaging.getPolicy().rules).toEqual([RULE]);
+    expect(stack.stores.active.getPolicy().rules).toEqual([RULE]);
     // Search keeps working on what's there.
     const t = await scriptedLaunch("josh");
     expect((await fetch(`${CONFIG.imagingUrl}/fhir/ImagingStudy?patient=josh-example`, { headers: { Authorization: `Bearer ${t.access_token}` } })).status).toBe(200);
   });
   test("what GET returns can be sent back by PUT", async () => {
     stack.useStore("scratch");
-    stack.imaging.setPolicy({ rules: [RULE], delegations: [DELEGATION], appGrants: [GRANT] });
+    stack.stores.active.setPolicy({ rules: [RULE], delegations: [DELEGATION], appGrants: [GRANT] });
     const p = await ok("GET", "/api/policy");
     expect(await ok("PUT", "/api/policy", p)).toEqual(p);
   });
@@ -379,7 +379,7 @@ describe("writes naming another Host, over real HTTP", () => {
     stack.useStore("scratch");
     expect((await send("/api/policy", undefined, { method: "PUT", body: JSON.stringify({ maxSeriesInContext: 7 }) })).status).toBe(200);
     expect((await send("/api/policy", `localhost:${PORTS.demo}`, { method: "PUT", body: JSON.stringify({ maxSeriesInContext: 8 }) })).status).toBe(200);
-    expect(stack.imaging.getPolicy().maxSeriesInContext).toBe(8);
+    expect(stack.stores.active.getPolicy().maxSeriesInContext).toBe(8);
   });
   test("the admin status is refused under another Host too, and answers with no Host named", async () => {
     expect((await send("/api/admin/status", "evil.example", { method: "GET" })).status).toBe(403);

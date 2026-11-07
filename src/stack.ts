@@ -4,27 +4,19 @@
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { S3Client } from "bun";
+import {
+  ArchiveBackend, catalogFromOrthanc, createCatalog, createImagingServer, createPolicyClient, createProxy, fileStore, orthancCatalogPath, OrthancBackend,
+  rebuildFromArchive, s3Store, seedPatientLinks, withTruncation, type Backend, type CatalogStore, type PolicyOperation, type StoreConfig,
+} from "@smart-imaging-proxy/core";
 import { createAuthServer, USERS } from "./auth-server";
-import { createImagingServer } from "./imaging-server";
-import { createProxy } from "./proxy";
-import { ArchiveBackend } from "./backends/archive";
-import { fileStore, s3Store } from "./archive/sources";
-import { withTruncation } from "./backends/truncation";
-import { OrthancBackend } from "./backends/orthanc";
-import type { Backend } from "./backends/types";
-import { CONFIG, GATEWAY_HOSTS, ONE_ORIGIN, PORTS, serveOn } from "./config";
+import { CONFIG, GATEWAY_HOSTS, ONE_ORIGIN, PORTS, serveOn, serveStreamingOn } from "./config";
 import { gatewayFetch } from "./gateway";
 import { withCors } from "./cors";
-import { setTraceSink, tfetch } from "./trace";
+import { setTraceSink, tfetch, traceObserver, type Service } from "./trace";
 import { createCollector } from "./trace-collector";
 import type { TraceStoreConfig } from "./trace-store";
-import { createStores, type Stores, type StoreConfig, type StoreName } from "./policy-store";
-import { clockOffset, resetClock, setClockOffset } from "./clock";
-import type { CatalogStore } from "./archive/types";
-import { createCatalog, orthancCatalogPath, seedPatientLinks } from "./catalog";
-import { rebuildFromArchive } from "./catalog-archive";
-import { catalogFromOrthanc } from "./catalog-orthanc";
-import { serveStreaming } from "./serve-streaming";
+import { createStores, type Stores, type StoreName } from "./stores";
+import { clockOffset, demoClock, resetClock, setClockOffset } from "./clock";
 
 export type BackendName = "static-files" | "s3" | "orthanc";
 
@@ -49,22 +41,45 @@ export async function openCatalogs(root: string, path = ":memory:") {
 export function buildBackend(name: BackendName): Backend {
   if (name === "static-files") return new ArchiveBackend(fileStore(CONFIG.archive.dir));
   if (name === "s3") return new ArchiveBackend(s3Store(new S3Client({ endpoint: CONFIG.s3.endpoint, accessKeyId: CONFIG.s3.accessKey, secretAccessKey: CONFIG.s3.secretKey, bucket: CONFIG.archive.bucket })));
-  return new OrthancBackend(CONFIG.orthanc);
+  return new OrthancBackend(CONFIG.orthanc, { observer: traceObserver });
 }
+
+/** How each policy API call reads in the trace. */
+const POLICY_CALLS: Record<PolicyOperation, string> = {
+  relationships: "look up who is related to whom",
+  access: "look up the user's access",
+  explain: "the demo asks for the Imaging Server's view",
+  delegate: "record the delegation at the Imaging Server",
+  "remove-delegations": "revoke the delegation at the Imaging Server",
+  "grant-app": "record the app authorization at the Imaging Server",
+  "remove-app-grants": "revoke the app authorization at the Imaging Server",
+  "get-policy": "read policy at the Imaging Server",
+  "set-policy": "set policy at the Imaging Server",
+  "set-guardians": "set the guardians on file at the Imaging Server",
+  "set-rules": "set the rules at the Imaging Server",
+  "update-rule": "change a rule at the Imaging Server",
+  "get-settings": "read the settings at the Imaging Server",
+  "set-settings": "change the settings at the Imaging Server",
+  reset: "reset policy at the Imaging Server",
+  info: "read the policy store's state at the Imaging Server",
+};
+/** The Imaging Server's policy API, called with the service credential, and traced as `service`. */
+export const policyClient = (serviceSecret: string, service: Service = "demo") =>
+  createPolicyClient({ base: CONFIG.imagingUrl, serviceSecret, fetch: (op, url, init) => tfetch(service, POLICY_CALLS[op], url, init) });
 
 /** The Authorization Server. Its directory of who may see what is the Imaging Server, over HTTP. */
 export function buildAuthServer(stores: Stores, serviceSecret: string) {
-  const policyApi = (name: string, path: string, method = "GET", body?: unknown) => tfetch("authorization-server", name, `${CONFIG.imagingUrl}${path}`, { method, headers: { Authorization: `Bearer ${serviceSecret}`, ...(body ? { "content-type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  const policy = policyClient(serviceSecret, "authorization-server");
   return createAuthServer({
     issuer: CONFIG.authUrl, imagingFhirBase: `${CONFIG.imagingUrl}/fhir`, serviceSecret, redirectUri: `${CONFIG.demoUrl}/oauth/callback`,
     store: () => stores.active, storeLabel: () => stores.activeLabel,
     directory: {
-      relationships: async () => (await policyApi("look up who is related to whom", "/internal/relationships")).json() as any,
-      access: async (user, fhirUser) => (await policyApi("look up the user's access", `/internal/access?user=${encodeURIComponent(user)}&fhirUser=${encodeURIComponent(fhirUser)}`)).json() as any,
-      recordConsent: async c => { await policyApi("record the app authorization at the Imaging Server", "/internal/consents", "POST", c); },
-      delegate: async d => { await policyApi("record the delegation at the Imaging Server", "/internal/delegations", "POST", d); },
-      revokeDelegation: async (grantedBy, delegate, patient) => { await policyApi("revoke the delegation at the Imaging Server", `/internal/delegations?${new URLSearchParams({ grantedBy, delegate, ...(patient ? { patient } : {}) })}`, "DELETE"); },
-      revokeApp: async (client, user, patient) => { await policyApi("revoke the app authorization at the Imaging Server", `/internal/consents?${new URLSearchParams({ client, user, ...(patient ? { patient } : {}) })}`, "DELETE"); },
+      relationships: () => policy.relationships(),
+      access: (user, fhirUser) => policy.access(user, fhirUser),
+      recordConsent: async c => { await policy.grantApp(c); },
+      delegate: async d => { await policy.delegate(d); },
+      revokeDelegation: async (grantedBy, delegate, patient) => { if (delegate) await policy.removeDelegations({ grantedBy, delegate, patient }); },
+      revokeApp: async (client, user, patient) => { if (client) await policy.removeAppGrants({ client, user, patient }); },
     },
   });
 }
@@ -75,11 +90,11 @@ export function buildImagingServer(stores: Stores, serviceSecret: string, catalo
     const r = await tfetch("imaging-fhir", "introspect the token", `${CONFIG.authUrl}/introspect`, { method: "POST", headers: { Authorization: `Bearer ${serviceSecret}`, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token }) });
     return r.ok ? r.json() : { active: false };
   };
-  return createImagingServer({ base: `${CONFIG.imagingUrl}/fhir`, clinicalFhirBase: `${CONFIG.authUrl}/fhir`, proxyBase: () => CONFIG.proxyUrl, introspect, patientOf: user => USERS[user]?.patient, serviceSecret, catalog, keyStore: stores.saved, store: () => stores.active });
+  return createImagingServer({ base: `${CONFIG.imagingUrl}/fhir`, clinicalFhirBase: `${CONFIG.authUrl}/fhir`, proxyBase: () => CONFIG.proxyUrl, introspect, patientOf: user => USERS[user]?.patient, serviceSecret, catalog, keyStore: stores.saved, store: () => stores.active, namedStore: name => stores.named(name), observer: traceObserver, clock: demoClock });
 }
 
-/** All a proxy gets from the other services: where its keys and its decisions are. */
-export const proxyLinks = { publicBase: () => CONFIG.proxyUrl, jwksUrl: `${CONFIG.imagingUrl}/.well-known/jwks.json`, decisionUrl: `${CONFIG.imagingUrl}/access/v1/evaluation` };
+/** All a proxy gets from the other services: where its keys and its decisions are, and the demo's tracing and clock. */
+export const proxyLinks = { publicBase: () => CONFIG.proxyUrl, jwksUrl: `${CONFIG.imagingUrl}/.well-known/jwks.json`, decisionUrl: `${CONFIG.imagingUrl}/access/v1/evaluation`, observer: traceObserver, clock: demoClock };
 
 /**
  * With no store config, the saved store is in memory, and with no catalog path, so are the catalogs:
@@ -93,6 +108,7 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
   setTraceSink(CONFIG.traceSink);
 
   const auth = buildAuthServer(stores, serviceSecret);
+  const policy = policyClient(serviceSecret);
   const imaging = buildImagingServer(stores, serviceSecret, () => catalogFor(current));
 
   let truncateAfter: number | undefined;
@@ -113,9 +129,9 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
     ...serveOn(PORTS.auth, { fetch: withCors(auth.fetch), idleTimeout: 120 }),
     ...serveOn(PORTS.imaging, { fetch: withCors(imaging.fetch), idleTimeout: 120 }),
   ];
-  const proxyServer = await serveStreaming(PORTS.proxy, withCors(proxy.fetch));
+  const proxyServer = await serveStreamingOn(PORTS.proxy, withCors(proxy.fetch));
   // The streaming server, so the proxy's exact Content-Length reaches the client.
-  const gatewayServer = ONE_ORIGIN ? await serveStreaming(PORTS.gateway, gatewayFetch, { hosts: GATEWAY_HOSTS }) : undefined;
+  const gatewayServer = ONE_ORIGIN ? await serveStreamingOn(PORTS.gateway, gatewayFetch, GATEWAY_HOSTS) : undefined;
 
   /** Checks a backend works and reports what it declares. */
   async function selfTest(name: BackendName) {
@@ -153,6 +169,8 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
 
   return {
     auth, imaging, proxy, backends, collector, stores, catalogs,
+    /** The policy API, on the store in use. `policy.withStore("saved")` names one. */
+    policy,
     /** The catalog in use. Its `allStudies` is for the demo's displays and tests. */
     get catalog() { return catalogFor(current); },
     get catalogSource() { return current === "orthanc" ? "orthanc" as const : "archive" as const; },
@@ -168,24 +186,21 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
       return { kid, proxyTold: told };
     },
     /** The Imaging Server's view of why a study is or isn't released, asked with the service credential. */
-    async explain(q: { client: string; user?: string; fhirUser?: string; patient: string }) {
-      const query = new URLSearchParams(Object.entries(q).filter((e): e is [string, string] => !!e[1]));
-      const r = await tfetch("demo", "the demo asks for the Imaging Server's view", `${CONFIG.imagingUrl}/internal/explain?${query}`, { headers: { Authorization: `Bearer ${serviceSecret}` } });
-      if (!r.ok) { await r.body?.cancel(); throw new Error(`the Imaging Server answered ${r.status}`); }
-      return r.json() as Promise<any>;
+    explain(q: { client: string; user?: string; fhirUser?: string; patient: string }) {
+      return policy.explain(Object.fromEntries(Object.entries(q).filter(e => !!e[1])) as typeof q);
     },
     useStore,
     purgeTokens,
     /** Resets the scratch store. The saved store isn't touched, and the active store doesn't change. */
-    resetScratch() {
-      stores.scratch.resetAll();
+    async resetScratch() {
+      await policy.withStore("scratch").reset({ tokens: true });
       offsets.scratch = 0;
       if (stores.activeName === "scratch") { resetClock(); clearRuntime(); }
     },
     /** Resets saved policy to the guardians on file. Saved tokens and the signing key stay. */
-    resetSaved() { stores.saved.resetPolicy(); },
+    async resetSaved() { await policy.withStore("saved").reset(); },
     /** Where every flow starts: the scratch store, holding only the guardians on file, with the clock at zero. */
-    resetAll() { useStore("scratch"); stores.scratch.resetAll(); resetClock(); clearRuntime(); },
+    async resetAll() { useStore("scratch"); await policy.withStore("scratch").reset({ tokens: true }); resetClock(); clearRuntime(); },
   };
 }
 export type Stack = Awaited<ReturnType<typeof startStack>>;

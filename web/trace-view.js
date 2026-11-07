@@ -169,10 +169,10 @@ function httpPreview(span, related = []) {
     const answered = h.status === undefined ? "" : section("can_i response", res?.decision === undefined ? muted(`No decision: status ${h.status}. The proxy fails closed with a 503.`) : kv([["Decision", res.decision ? "allow" : "deny"], ["Why", why], ["Release", release === "study" ? "whole study" : release?.series ? `${release.series.length} series` : release], ["Denial", res.context?.denial], ["Cacheable for", res.context?.max_age_seconds === undefined ? undefined : `${res.context.max_age_seconds} s`], ["Decision ID", res.context?.decision_id]]));
     return asked + answered;
   }
-  if (path.startsWith("/internal/")) {
+  if (path.startsWith("/policy/v1/")) {
     const fields = sent ?? Object.fromEntries([...q].filter(([k]) => !k.startsWith("demo_")));
     const listed = Object.entries(fields).map(([k, v]) => [k, Array.isArray(v) ? v.join(", ") : v]);
-    const title = `Policy ${h.method === "GET" ? "lookup" : h.method === "DELETE" ? "removal" : "update"}: ${path.replace("/internal/", "")}`;
+    const title = `Policy ${h.method === "GET" ? "lookup" : h.method === "DELETE" ? "removal" : "update"}: ${path.replace("/policy/v1/", "")}`;
     const answer = res?.records ? [
       ["Records", res.records.map(r => `${r.patient} via ${r.via}: ${r.sites.join(", ")}`).join("; ") || "none"],
       ["Delegations", res.delegations?.map(d => `${d.delegate ?? d.to} (${d.relationship}): ${(d.sites ?? []).join(", ")}`).join("; ")],

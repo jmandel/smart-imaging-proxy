@@ -21,7 +21,7 @@ mkdirSync(STORAGE, { recursive: true });
 if (await stopDemo()) console.log("Stopped the running demo, to restart it on the current code.");
 if (await demoPortAnswers()) fail(`Something else is using port ${new URL(CONFIG.demoUrl).port}. Stop it, or set DEMO_PORT_OFFSET.`);
 
-await step("Install the browser test driver", ["bun", "install", "--frozen-lockfile"]);
+await step("Install the browser test driver, and link the core package", ["bun", "install", "--frozen-lockfile"]);
 await step("Download the sample data, verifying checksums", ["bun", "scripts/fetch-data.ts"]);
 await step("Generate the synthetic studies, and build the archive", ["bun", "scripts/ingest.ts"]);
 await step("Download the S3 store and Orthanc, checking each against its pinned SHA-256", ["bun", "scripts/backends.ts", "fetch"]);

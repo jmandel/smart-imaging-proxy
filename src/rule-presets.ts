@@ -1,7 +1,6 @@
 // The named rule sets the admin screen offers, and the only rules it can apply. Each set follows the
 // pattern of a flow. Anything a set needs from the catalog, such as a series UID, is read when it's applied.
-import type { CatalogStore } from "./archive/types";
-import type { Rule } from "./policy-store";
+import type { CatalogStore, Rule } from "@smart-imaging-proxy/core";
 
 const PATIENT = "josh-example";
 const CT = "ct-abdomen-pelvis-2012";

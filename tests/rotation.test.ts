@@ -9,9 +9,8 @@ import { registerClients } from "../src/flows";
 import { createDemoServer } from "../src/demo-server";
 import { scriptedLaunch } from "../src/flows/oauth";
 import { CONFIG } from "../src/config";
-import { boundaryOf, readMultipart } from "../src/multipart";
+import { boundaryOf, createProxy, readMultipart } from "@smart-imaging-proxy/core";
 import { resetClock } from "../src/clock";
-import { createProxy } from "../src/proxy";
 
 const root = join(import.meta.dir, "..");
 const BACKENDS: BackendName[] = (process.env.BACKENDS?.split(",") as BackendName[]) ?? ["static-files", "s3", "orthanc"];
@@ -20,7 +19,7 @@ const WRIST = "xr-wrist-left-2012";
 let stack: Stack; let demo: ReturnType<typeof createDemoServer>;
 beforeAll(async () => { stack = await startStack(root); demo = createDemoServer(stack, registerClients(stack), root); });
 afterAll(() => stack.stop());
-beforeEach(() => { stack.useStore("saved"); stack.resetSaved(); stack.stores.saved.revokeAllTokens(); stack.proxy.reset(); resetClock(); });
+beforeEach(async () => { stack.useStore("saved"); await stack.resetSaved(); stack.stores.saved.revokeAllTokens(); stack.proxy.reset(); resetClock(); });
 
 const admin = async (path: string) => {
   const r = await demo.fetch(new Request(`${CONFIG.demoUrl}/api/admin${path}`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host } }));
@@ -77,9 +76,9 @@ for (const backend of BACKENDS) {
     test("an old URL follows current policy, and stays bound to its own study", async () => {
       const { t, url } = await launchAndSearch();
       await admin("/signing-key/rotate");
-      stack.imaging.setPolicy({ rules: [{ id: "none", when: { client: "portal-app" }, allow: { studies: [] } }] });
+      stack.stores.active.setPolicy({ rules: [{ id: "none", when: { client: "portal-app" }, allow: { studies: [] } }] });
       expect(await get(url, t.access_token)).toEqual({ status: 404, parts: 0, authz: "asked" });
-      stack.imaging.setPolicy({ rules: [] });
+      stack.stores.active.setPolicy({ rules: [] });
       const other = stack.catalog.allStudies().find(s => !url.endsWith(s.uid) && url.split("/studies/")[1] !== s.uid)!.uid;
       const base = url.split("/studies/")[0];
       expect(await get(`${base}/studies/${other}`, t.access_token)).toEqual({ status: 404, parts: 0, authz: "asked" });
@@ -187,7 +186,7 @@ describe("rotation", () => {
     stack.setBackend("static-files");
     const jwks = async () => (await fetch(`${CONFIG.imagingUrl}/.well-known/jwks.json`)).json() as Promise<any>;
     const before = await jwks();
-    stack.resetAll();
+    await stack.resetAll();
     const { t, url } = await launchAndSearch();
     await admin("/signing-key/rotate");
     expect((await jwks()).keys[0].kid).not.toBe(before.keys[0].kid);

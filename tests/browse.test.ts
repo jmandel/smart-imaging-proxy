@@ -30,7 +30,7 @@ beforeAll(async () => {
   demo = createDemoServer(stack, registerClients(stack), root);
 });
 afterAll(() => { stack.stop(); globalThis.fetch = realFetch; });
-beforeEach(() => { stack.useStore("saved"); stack.resetSaved(); resetClock(); stack.setBackend("static-files"); });
+beforeEach(async () => { stack.useStore("saved"); await stack.resetSaved(); resetClock(); stack.setBackend("static-files"); });
 
 /** One browser: its cookie, and everything it has been sent. */
 function browser() {
@@ -200,11 +200,11 @@ describe("paging", () => {
 
 describe("explain", () => {
   test("is service-authenticated", async () => {
-    const r = await realFetch(`${CONFIG.imagingUrl}/internal/explain?client=portal-app&patient=josh-example`);
+    const r = await realFetch(`${CONFIG.imagingUrl}/policy/v1/explain?client=portal-app&patient=josh-example`);
     expect(r.status).toBe(401);
   });
   test("matches search for every person and client, for every study", async () => {
-    stack.imaging.setPolicy({
+    stack.stores.active.setPolicy({
       delegations: [{ patient: "josh-example", grantedBy: "josh", delegate: "sam-caregiver", relationship: "caregiver", sites: SHARE }],
       rules: [rule("hand-referral-service", { modalities: ["CR"] }), rule("outside-release-service", { studies: ["ct-abdomen-pelvis-2012"] }), rule("research-donation", { since: "2020-01-01" })],
     });
@@ -233,7 +233,7 @@ describe("backend clients", () => {
   test("with a rule, what it allows, withheld series included", async () => {
     const ct = stack.catalog.allStudies().find(x => x.id === "ct-abdomen-pelvis-2012")!;
     const withhold = [ct.series[0]!.uid];
-    stack.imaging.setPolicy({ rules: [rule("outside-release-service", { studies: [ct.id] }, { withholdSeries: withhold })] });
+    stack.stores.active.setPolicy({ rules: [rule("outside-release-service", { studies: [ct.id] }, { withholdSeries: withhold })] });
     const b = browser();
     const s = await b.start({ client: "outside-release-service", patient: "josh-example", count: 5 });
     expect(s.status).toBe("results");
@@ -248,7 +248,7 @@ describe("backend clients", () => {
     await expectExplainMatchesSearch(b, s);
   }, 120000);
   test("a rule's restricted form shows, and the proxy asks and then uses its cache", async () => {
-    stack.imaging.setPolicy({ rules: [rule("research-donation", { studies: [SMALL] }, { contextForm: "restricted" })] });
+    stack.stores.active.setPolicy({ rules: [rule("research-donation", { studies: [SMALL] }, { contextForm: "restricted" })] });
     const b = browser();
     const s = await b.start({ client: "research-donation", patient: "josh-example", count: 5 });
     expect(s.page.studies[0].context.form).toBe("restricted");
@@ -286,7 +286,7 @@ describe("a real window", () => {
   }, 60000);
   test("someone else signing in shows as that person", async () => {
     const b = browser();
-    stack.imaging.setPolicy({ delegations: [{ patient: "josh-example", grantedBy: "josh", delegate: "sam-caregiver", relationship: "caregiver", sites: ["Lakeside Imaging"] }] });
+    stack.stores.active.setPolicy({ delegations: [{ patient: "josh-example", grantedBy: "josh", delegate: "sam-caregiver", relationship: "caregiver", sites: ["Lakeside Imaging"] }] });
     await b.call("POST", "/api/browse/start", { user: "josh", client: "portal-app", mode: "window", count: 5 });
     const waiting = await b.settled(s => s.status === "waiting-for-you");
     const back = await submitConsent(waiting.authUrl, { user: "sam-caregiver", patient: "josh-example" });
@@ -426,7 +426,7 @@ describe("the token stays on the server", () => {
     await b.call("GET", "/api/browse/options");
     await b.call("GET", "/api/browse/session");
     await b.pick("alex-neighbor");
-    stack.imaging.setPolicy({ rules: [rule("research-donation")] });
+    stack.stores.active.setPolicy({ rules: [rule("research-donation")] });
     await b.start({ client: "research-donation", patient: "josh-example", count: 5 });
     await b.start({ client: "hand-referral-service", patient: "josh-example", count: 5 });
     for (const path of ["/browse", "/browse.js", "/styles.css", "/"]) await b.call("GET", path);

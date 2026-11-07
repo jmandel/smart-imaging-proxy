@@ -10,8 +10,8 @@ import { ath, kidOf, sha, verifyJws } from "./jws";
 import { closing, newBoundary, partFooter, partHeader, stableBoundary } from "./multipart";
 import { readFileMeta } from "./dicom";
 import { EVRLE, isStandard } from "./syntax";
-import { now } from "./clock";
-import { check, inSpan, startSpan, tfetch, traced, withSpan, type SpanHandle } from "./trace";
+import { systemClock, type Clock } from "./clock";
+import { noopObserver, type Observer, type ServerSpan, type Span } from "./observer";
 import { rawFrame, rawFrameSize, RawFrameWriter } from "./zstd-frames";
 
 const UID = /^[0-9]+(\.[0-9]+)*$/;
@@ -70,8 +70,14 @@ type KeyOption = { jwksUrl: string; jwksTtlSeconds?: number; jwksCooldownSeconds
 
 export function createProxy(opts: KeyOption & {
   publicBase: () => string; decisionUrl: string; serviceSecret: string; backend: () => Backend; maxDecisions?: number; maxEvents?: number;
+  observer?: Observer; clock?: Clock;
 }) {
-  const keySource: KeySource = opts.keys ? staticKeys(opts.keys) : jwksKeys({ url: opts.jwksUrl, ttlSeconds: opts.jwksTtlSeconds, cooldownSeconds: opts.jwksCooldownSeconds, clock: opts.jwksClock });
+  const obs = opts.observer ?? noopObserver, clock = opts.clock ?? systemClock;
+  const now = () => clock.now();
+  const check: Observer["check"] = (...a) => obs.check(...a);
+  const startSpan: Observer["span"] = (...a) => obs.span(...a);
+  const withSpan: Observer["withSpan"] = (...a) => obs.withSpan(...a);
+  const keySource: KeySource = opts.keys ? staticKeys(opts.keys) : jwksKeys({ url: opts.jwksUrl, ttlSeconds: opts.jwksTtlSeconds, cooldownSeconds: opts.jwksCooldownSeconds, clock: opts.jwksClock, fetch: (url, init) => obs.fetch("dicomweb-proxy", "fetch signing keys (JWKS)", url, init) });
   const maxDecisions = opts.maxDecisions ?? 10000, maxEvents = opts.maxEvents ?? 500;
   const cache = new Map<string, { until: number; outcome: Outcome }>();
   const events: ProxyEvent[] = [];
@@ -100,7 +106,7 @@ export function createProxy(opts: KeyOption & {
     if (check("dicomweb-proxy", "decision cache lookup", !!(hit && hit.until > now()), { hit: !!hit, fresh: !!hit && hit.until > now(), study })) return { ...hit!.outcome, via: "cached" };
     let res: Response;
     try {
-      res = await tfetch("dicomweb-proxy", "can_i (AuthZEN evaluation)", opts.decisionUrl, {
+      res = await obs.fetch("dicomweb-proxy", "can_i (AuthZEN evaluation)", opts.decisionUrl, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${opts.serviceSecret}`, "x-request-id": crypto.randomUUID() },
         body: JSON.stringify({
@@ -166,7 +172,7 @@ export function createProxy(opts: KeyOption & {
    * so the proxy holds about one backend chunk per stream, however large the study and however slow
    * the client. The server span stays open until the client has it all or has gone.
    */
-  function deliver(frames: AsyncGenerator<Uint8Array>, closeBackend: () => Promise<unknown>, progress: () => { parts: number; syntaxes: string[] }, ev: ProxyEvent, server: SpanHandle, streamSpan: SpanHandle, started: number) {
+  function deliver(frames: AsyncGenerator<Uint8Array>, closeBackend: () => Promise<unknown>, progress: () => { parts: number; syntaxes: string[] }, ev: ProxyEvent, server: ServerSpan, streamSpan: Span, started: number) {
     let sent = 0, over = false;
     const finish = (status: "ok" | "error", attrs: Record<string, unknown>) => {
       over = true;
@@ -177,7 +183,7 @@ export function createProxy(opts: KeyOption & {
       server.end(status);
     };
     return new ReadableStream<Uint8Array>({
-      pull: c => inSpan(server.ctx, async () => {
+      pull: c => server.within(async () => {
         try {
           let r = await frames.next();
           while (!r.done && !r.value.length) r = await frames.next(); // A pull must make progress.
@@ -194,7 +200,7 @@ export function createProxy(opts: KeyOption & {
           c.error(e);
         }
       }),
-      cancel: () => inSpan(server.ctx, () => {
+      cancel: () => server.within(() => {
         if (over) return;
         ev.disconnected = true;
         ev.note = `client disconnected after ${plural(progress().parts)} and ${sent} bytes, so the backend reads were cancelled`;
@@ -211,7 +217,7 @@ export function createProxy(opts: KeyOption & {
   const closer = (parts: PartStream["parts"], body: () => AsyncIterator<Uint8Array> | undefined) => () =>
     Promise.allSettled([body()?.return?.(), parts.return("complete")]);
 
-  async function retrieve(scope: Scope, plan: PlanItem[], ev: ProxyEvent, server: SpanHandle, clientTakesZstd: boolean, started: number): Promise<Response> {
+  async function retrieve(scope: Scope, plan: PlanItem[], ev: ProxyEvent, server: ServerSpan, clientTakesZstd: boolean, started: number): Promise<Response> {
     let stream: PartStream;
     const backendName = opts.backend().capabilities().name;
     try {
@@ -227,7 +233,7 @@ export function createProxy(opts: KeyOption & {
    * before anything is opened, and the whole response's length is known. A backend that then
    * delivers anything other than what it planned gets the response aborted.
    */
-  async function planned(parts: PartStream["parts"], items: PlannedPart[], scope: Scope, plan: PlanItem[], ev: ProxyEvent, server: SpanHandle, zstd: boolean, started: number, backendName: string): Promise<Response> {
+  async function planned(parts: PartStream["parts"], items: PlannedPart[], scope: Scope, plan: PlanItem[], ev: ProxyEvent, server: ServerSpan, zstd: boolean, started: number, backendName: string): Promise<Response> {
     let body: AsyncIterator<Uint8Array> | undefined;
     const closeBackend = closer(parts, () => body);
     const refuse = (res: Response) => { closeBackend().catch(() => {}); return res; };
@@ -277,7 +283,7 @@ export function createProxy(opts: KeyOption & {
     } catch (e) { check("dicomweb-proxy", "first planned part opened", false, { error: (e as Error).message }); return refuse(backendStatus(e)); }
     check("dicomweb-proxy", "first planned part opened (commit to 200)", true, { parts: items.length, content_length: total, content_encoding: zstd ? "zstd" : "identity" });
 
-    server.set({ streaming: true });
+    server.streaming();
     const streamSpan = startSpan("dicomweb-proxy", "internal", "stream multipart response", { study: scope.study, backend: backendName, content_length: total, content_encoding: zstd ? "zstd" : "identity" });
     const syntaxes = new Set<string>();
     let count = 0;
@@ -329,7 +335,7 @@ export function createProxy(opts: KeyOption & {
   }
 
   /** A backend that learns each part as it goes, so the proxy labels each from its File Meta. */
-  async function unplanned(parts: PartStream["parts"], scope: Scope, plan: PlanItem[], ev: ProxyEvent, server: SpanHandle, started: number, backendName: string): Promise<Response> {
+  async function unplanned(parts: PartStream["parts"], scope: Scope, plan: PlanItem[], ev: ProxyEvent, server: ServerSpan, started: number, backendName: string): Promise<Response> {
     let body: AsyncIterator<Uint8Array> | undefined;
     const closeBackend = closer(parts, () => body);
     // Reads the start of a part to learn its real transfer syntax, keeping what it read.
@@ -367,7 +373,7 @@ export function createProxy(opts: KeyOption & {
 
     check("dicomweb-proxy", "first part is in an accepted syntax (commit to 200)", true, { syntax: firstOpen.syntax });
     const boundary = newBoundary();
-    server.set({ streaming: true });
+    server.streaming();
     const streamSpan = startSpan("dicomweb-proxy", "internal", "stream multipart response", { study: scope.study, backend: backendName });
     const syntaxes = new Set<string>();
     let count = 0;
@@ -425,7 +431,7 @@ export function createProxy(opts: KeyOption & {
   }
 
   /** One bulk element, in the form Accept chose, for any backend. A length the backend states is held to. */
-  async function bulk(study: string, series: string, instance: string, ref: string, form: MediaForm, version: number | undefined, ev: ProxyEvent, server: SpanHandle, started: number): Promise<Response> {
+  async function bulk(study: string, series: string, instance: string, ref: string, form: MediaForm, version: number | undefined, ev: ProxyEvent, server: ServerSpan, started: number): Promise<Response> {
     let element: Awaited<ReturnType<Backend["openBulk"]>>;
     try { element = await opts.backend().openBulk(study, series, instance, ref, version); } catch (e) { return backendStatus(e); }
     const { bytes } = element;
@@ -452,7 +458,7 @@ export function createProxy(opts: KeyOption & {
         yield foot;
       } finally { await closeBackend(); }
     }
-    server.set({ streaming: true });
+    server.streaming();
     const streamSpan = startSpan("dicomweb-proxy", "internal", "stream bulk data", { study, ref, framing: form.type, ...(bytes !== undefined ? { bytes } : {}) });
     const response = deliver(frames(), closeBackend, () => ({ parts: count, syntaxes: [] }), ev, server, streamSpan, started);
     return new Response(response, { status: 200, headers: {
@@ -481,7 +487,7 @@ export function createProxy(opts: KeyOption & {
     return new Response(body, { headers: { "Content-Type": form.type, "Content-Length": String(body.length) } });
   }
 
-  const handle = async (req: Request, ev: ProxyEvent, server: SpanHandle, started: number): Promise<Response> => {
+  const handle = async (req: Request, ev: ProxyEvent, server: ServerSpan, started: number): Promise<Response> => {
     const pathname = new URL(req.url).pathname;
     // Tells this proxy to refetch the keys now, rather than wait for their TTL. Takes no input.
     if (pathname === "/internal/keys/refresh") {
@@ -537,7 +543,7 @@ export function createProxy(opts: KeyOption & {
   };
 
   return {
-    fetch: traced("dicomweb-proxy", async (req: Request, server: SpanHandle): Promise<Response> => {
+    fetch: obs.serve("dicomweb-proxy", async (req: Request, server: ServerSpan): Promise<Response> => {
       const start = performance.now();
       const ev: ProxyEvent = { id: ++seq, method: req.method, path: new URL(req.url).pathname };
       events.push(ev);

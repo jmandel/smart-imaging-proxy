@@ -1,10 +1,6 @@
 // Focused tests for details the flows rely on.
 import { describe, expect, test } from "bun:test";
-import { parseAccept } from "../src/accept";
-import { readMultipart, partHeader, partFooter, closing } from "../src/multipart";
-import { chooseOffer } from "../src/backends/archive";
-import { ath, generateEd25519, signJws, verifyJws } from "../src/jws";
-import { EVRLE, JPEG_BASELINE, JPEG_LOSSLESS, PRIVATE_DEMO, isLossy, isStandard } from "../src/syntax";
+import { ath, chooseOffer, closing, EVRLE, generateEd25519, isLossy, isStandard, JPEG_BASELINE, JPEG_LOSSLESS, parseAccept, partFooter, partHeader, PRIVATE_DEMO, readMultipart, signJws, verifyJws } from "@smart-imaging-proxy/core";
 
 const part = (s: string, q?: number) => `multipart/related; type=application/dicom; transfer-syntax=${s}${q !== undefined ? `; q=${q}` : ""}`;
 
@@ -101,7 +97,7 @@ describe("Signed context", () => {
 
 describe("A truly truncating DICOMweb upstream", () => {
   test("the Orthanc adapter reports truncation, with no closing boundary", async () => {
-    const { OrthancBackend } = await import("../src/backends/orthanc");
+    const { OrthancBackend } = await import("@smart-imaging-proxy/core");
     const boundary = "up";
     const enc2 = new TextEncoder();
     const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch() {

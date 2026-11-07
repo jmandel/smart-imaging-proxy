@@ -24,10 +24,9 @@ import { join } from "node:path";
 import { startStack } from "./stack";
 import { registerClients } from "./flows";
 import { createDemoServer } from "./demo-server";
-import { storeConfigFromEnv } from "./policy-store";
+import { storeConfigFromEnv } from "./stores";
 import { traceStoreConfigFromEnv } from "./trace-store";
-import { CONFIG, PORTS, serveOn, TAILNET } from "./config";
-import { DEFAULT_CATALOG_DB } from "./catalog";
+import { CONFIG, DEFAULT_CATALOG_DB, PORTS, serveOn, TAILNET } from "./config";
 import { ROLES, startRoles, type Role } from "./roles";
 
 const root = join(import.meta.dir, "..");

@@ -1,12 +1,9 @@
 // Copies the archive into the S3 bucket, and fills in any study Orthanc doesn't have. Run after
 // `docker compose up -d` and `bun run ingest`. Safe to repeat: only differences are written.
 import { S3Client } from "bun";
-import { fileStore, s3Store } from "../src/archive/sources";
-import { ArchiveReader } from "../src/archive/reader";
-import { chooseOffer } from "../src/backends/archive";
+import { ArchiveReader, chooseOffer, fileStore, s3Store, zstdDecompressSync } from "@smart-imaging-proxy/core";
 import { CONFIG, STORAGE } from "../src/config";
 import { existsSync } from "node:fs";
-import { zstdDecompressSync } from "../src/archive/zstd";
 
 const wait = async (url: string, init?: RequestInit) => {
   for (let i = 0; i < 60; i++) {

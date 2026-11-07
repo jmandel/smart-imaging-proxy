@@ -16,10 +16,12 @@ export function registerClients(stack: Stack): Record<string, BackendClient> {
 }
 
 export async function startFlow(stack: Stack, clients: Record<string, BackendClient>, flow: Flow): Promise<Ctx> {
-  resetDemo(stack);
+  const session = `flow-${flow.number}-${flow.id}-${randomBytes(3).toString("hex")}`;
   const c = new Ctx(stack, clients);
-  c.session = `flow-${flow.number}-${flow.id}-${randomBytes(3).toString("hex")}`;
-  await flow.setup?.(c);
+  c.session = session;
+  // The reset and setup are policy API calls, which belong to the flow's session.
+  await runInSession(session, () => withSpan("demo", "action", `${flow.number}. Start from flow scratch`, { flow: flow.title }, async () => { await resetDemo(stack); await flow.setup?.(c); }));
+  flushTraces();
   return c;
 }
 

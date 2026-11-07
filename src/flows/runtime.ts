@@ -1,11 +1,10 @@
 // Everything a flow step does goes over HTTP to the real services, and is recorded for display.
-import { boundaryOf, readMultipart } from "../multipart";
+import { boundaryOf, readMultipart, type Rule } from "@smart-imaging-proxy/core";
 import { currentContext, startSpan, tfetch, traceparentOf, withSpan, check as traceCheck } from "../trace";
 import { accountUrl, buildAuthorization, CLINICAL_FHIR, submitConsent, submitDelegation, submitRevocation, tokenRequestBody } from "./oauth";
 import { clientAssertion, PATIENT_NAMES, USERS, type BackendClient } from "../auth-server";
 import { CONFIG } from "../config";
 import { advance, resetClock } from "../clock";
-import type { Rule } from "../imaging-server";
 import type { Stack } from "../stack";
 
 export interface Input { id: string; label: string; type: "select" | "multi" | "text"; options?: { value: string; label: string }[]; default?: any; clickDefault?: any; help?: string; }
@@ -84,7 +83,7 @@ export class Ctx {
     const who = this.signedIn;
     if (error !== "access_denied" || !who) return `The launch ended in ${error ?? "an error"}, so the app has no token`;
     const name = USERS[who]?.name.split(" ")[0] ?? who;
-    const policy = this.stack.imaging.getPolicy();
+    const policy = this.stack.stores.active.getPolicy();
     const held = [...(USERS[who]?.patient ? [USERS[who]!.patient!] : []), ...policy.guardians.filter(g => g.guardian === who).map(g => g.patient), ...policy.delegations.filter(d => d.delegate === who).map(d => d.patient)];
     if (!held.length) return `No patient has shared records with ${name}, so the app has no token`;
     if (this.askedPatient && !held.includes(this.askedPatient)) return `${(PATIENT_NAMES[this.askedPatient] ?? this.askedPatient).split(" ")[0]} hasn't shared records with ${name}, so the app has no token`;
@@ -101,7 +100,7 @@ export class Ctx {
     this.accountNote = same ? undefined : `${actual ?? "No one"} signed in, and this step expected ${expected}`;
     this.check("Signed in with the account this step expects", same, this.accountNote ?? expected);
   }
-  setRules(rules: Rule[]) { this.stack.imaging.setPolicy({ rules }); }
+  async setRules(rules: Rule[]) { await this.stack.policy.setRules(rules); }
   advanceClock(seconds: number) { advance(seconds); }
   beginStep() { this.exchanges = []; this.checks = []; this.decisionStart = this.stack.imaging.decisions.length; }
   endStep(narrative?: string): StepResult {
@@ -295,4 +294,4 @@ export function summarizeBundle(b: any, siteOf: (id: string) => string | undefin
 }
 export const siteOptions = (c: Ctx, patient?: string) => c.sites(patient).map(s => ({ value: s, label: s }));
 export const studyOptions = (c: Ctx, patient?: string) => c.studies(patient).map(s => ({ value: s.id, label: `${(s.title ?? s.description ?? s.id).slice(0, 44)} (${s.site ?? "no site"})` }));
-export const resetDemo = (stack: Stack) => { stack.resetAll(); resetClock(); };
+export const resetDemo = async (stack: Stack) => { await stack.resetAll(); resetClock(); };

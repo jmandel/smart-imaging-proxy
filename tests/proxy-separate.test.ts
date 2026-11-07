@@ -5,11 +5,10 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_CATALOG_DB } from "../src/catalog";
-import { CONFIG, ONE_ORIGIN, PORTS } from "../src/config";
+import { boundaryOf, readMultipart } from "@smart-imaging-proxy/core";
+import { CONFIG, DEFAULT_CATALOG_DB, ONE_ORIGIN, PORTS } from "../src/config";
 import { scriptedLaunch } from "../src/flows/oauth";
 import { clientAssertion, DEMO_BACKEND_CLIENTS, DEMO_BACKEND_SCOPES, derivedBackendClient } from "../src/auth-server";
-import { boundaryOf, readMultipart } from "../src/multipart";
 
 const root = join(import.meta.dir, "..");
 const ACCEPT = "multipart/related; type=application/dicom; transfer-syntax=*";

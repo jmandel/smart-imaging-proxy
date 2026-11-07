@@ -4,12 +4,21 @@
   "workspaces": {
     "": {
       "name": "smart-imaging-proxy",
+      "dependencies": {
+        "@smart-imaging-proxy/core": "workspace:*",
+      },
       "devDependencies": {
         "playwright-core": "^1.65.0",
       },
     },
+    "packages/core": {
+      "name": "@smart-imaging-proxy/core",
+      "version": "0.1.0",
+    },
   },
   "packages": {
+    "@smart-imaging-proxy/core": ["@smart-imaging-proxy/core@workspace:packages/core"],
+
     "playwright-core": ["playwright-core@1.65.0", "", { "bin": { "playwright-core": "cli.js" } }, "sha512-vNSKgH6YqtN7cdT/L334zo0a+YwkrpicyrHJlWWPIm/Q+Nn2SWInil01oT0mbu96U4GgoRtCYQD9CzJQgju+lA=="],
   }
 }

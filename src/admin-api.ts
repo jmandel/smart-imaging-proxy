@@ -1,9 +1,9 @@
-// JSON endpoints behind the admin screen. The demo has no admin login: every service binds to
+// JSON endpoints behind the admin screen. Policy changes go through the Imaging Server's policy API. The demo has no admin login: every service binds to
 // 127.0.0.1 and the tailnet address, and a request naming another Host, or a write from another web
 // origin, is refused. Every write takes a fixed choice from this file or from rule-presets.ts, and
 // nothing else. A store action applies to the active store unless it names one.
 import type { BackendName, Stack } from "./stack";
-import { PolicyValidationError, type Settings } from "./policy-store";
+import { PolicyApiError, type Settings } from "@smart-imaging-proxy/core";
 import { matchRuleSet, RULE_SETS, ruleSetById } from "./rule-presets";
 import { advance, clockOffset, now, resetClock } from "./clock";
 import { ownHosts, PORTS } from "./config";
@@ -100,8 +100,8 @@ export async function adminApi(stack: Stack, req: Request, url: URL, hooks: { fo
     if (unwanted) return bad(unwanted);
     const q = (f: string) => url.searchParams.get(f)!;
     if (p === "/delegations") {
-      if (!stack.stores.active.removeDelegations({ patient: q("patient"), delegate: q("delegate") })) return json({ error: "no such delegation" }, 404);
-    } else if (!stack.stores.active.removeAppGrants({ client: q("client"), user: q("user"), patient: q("patient") })) return json({ error: "no such app grant" }, 404);
+      if (!await stack.policy.removeDelegations({ patient: q("patient"), delegate: q("delegate") })) return json({ error: "no such delegation" }, 404);
+    } else if (!await stack.policy.removeAppGrants({ client: q("client"), user: q("user"), patient: q("patient") })) return json({ error: "no such app grant" }, 404);
     return status();
   }
 
@@ -109,7 +109,7 @@ export async function adminApi(stack: Stack, req: Request, url: URL, hooks: { fo
     const unwanted = url.search ? "this action takes no input" : await unwantedBody(req);
     if (unwanted) return bad(unwanted);
     if (p === "/store/reset-scratch") {
-      stack.resetScratch();
+      await stack.resetScratch();
       hooks.forgetFlow();
       return status();
     }
@@ -141,7 +141,7 @@ export async function adminApi(stack: Stack, req: Request, url: URL, hooks: { fo
     if (p === "/store/reset-saved") {
       const extra = only("confirm"); if (extra) return extra;
       if (b.confirm !== true) return bad("resetting saved policy needs confirm: true");
-      stack.resetSaved();
+      await stack.resetSaved();
       return status();
     }
     if (p === "/rule-set") {
@@ -150,7 +150,7 @@ export async function adminApi(stack: Stack, req: Request, url: URL, hooks: { fo
       if (!set) return bad(`id must be one of ${RULE_SETS.map(s => s.id).join(", ")}`);
       const rules = set.rules(stack.catalog);
       if (!rules) return json({ error: `the catalog for ${stack.backend} doesn't hold what "${set.label}" names` }, 409);
-      stack.imaging.setPolicy({ rules });
+      await stack.policy.setRules(rules);
       return status();
     }
     if (p === "/settings") {
@@ -158,7 +158,7 @@ export async function adminApi(stack: Stack, req: Request, url: URL, hooks: { fo
       if (!Object.keys(b).length) return bad("choose at least one setting");
       const errors = Object.entries(b).flatMap(([k, v]) => { const choices = SETTING_CHOICES[k as keyof Settings]; return isChoice(choices, v) ? [] : [`${k} must be one of ${values(choices)}`]; });
       if (errors.length) return bad(errors.join("; "), errors);
-      stack.stores.active.setSettings(b);
+      await stack.policy.setSettings(b);
       return status();
     }
     if (p === "/clock") {
@@ -180,7 +180,7 @@ export async function adminApi(stack: Stack, req: Request, url: URL, hooks: { fo
       return status();
     }
   } catch (e) {
-    if (e instanceof PolicyValidationError) return bad(e.message, e.errors);
+    if (e instanceof PolicyApiError && e.status === 400) return bad(e.message, e.errors);
     throw e;
   }
   return new Response("not found", { status: 404 });

@@ -3,10 +3,8 @@
 // already running keeps the catalog it opened until it restarts.
 import { renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { CONFIG } from "../src/config";
-import { createCatalog, DEFAULT_CATALOG_DB, seedPatientLinks } from "../src/catalog";
-import { rebuildFromArchive } from "../src/catalog-archive";
-import { fileStore } from "../src/archive/sources";
+import { CONFIG, DEFAULT_CATALOG_DB } from "../src/config";
+import { createCatalog, fileStore, rebuildFromArchive, seedPatientLinks } from "@smart-imaging-proxy/core";
 
 const root = join(import.meta.dir, "..");
 const archive = process.argv[2] ?? process.env.ARCHIVE_DIR ?? CONFIG.archive.dir;

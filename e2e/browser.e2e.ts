@@ -24,7 +24,7 @@ beforeAll(async () => {
 afterAll(async () => { await browser?.close(); server?.stop(true); stack?.stop(); });
 beforeEach(async () => {
   problems.length = 0;
-  stack.resetAll();
+  await stack.resetAll();
   await fetch(`${DEMO}/api/admin/store/activate`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ store: "saved" }) });
 });
 afterEach(async () => { await context?.close(); context = undefined; });
@@ -182,7 +182,7 @@ describe("browse", () => {
 
 describe("whose records, as Sam", () => {
   const SAM = "sam-caregiver";
-  beforeEach(() => { stack.resetSaved(); });
+  beforeEach(async () => { await stack.resetSaved(); });
   const choice = (page: Page, patient: string) => page.locator(`[data-records=${SAM}] [data-whose=${patient}]`);
   const shown = (page: Page) => page.locator("article.study").evaluateAll(all => all.map(a => (a as HTMLElement).dataset.study).sort());
   const whose = (page: Page, patient: string) => page.locator(`.whose-line[data-whose-shown=${patient}]`).waitFor();

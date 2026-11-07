@@ -4,7 +4,6 @@
 // a stream of random kids can't turn into a stream of fetches.
 import type { KeyObject } from "node:crypto";
 import { importPublicJwk } from "./jws";
-import { tfetch } from "./trace";
 
 export interface KeySource {
   /** The keys usable right now, having refetched if they're stale or `kid` is unknown. */
@@ -17,10 +16,12 @@ export const staticKeys = (keys: Map<string, KeyObject>): KeySource => ({ keysFo
 
 export const DEFAULT_JWKS_TTL_SECONDS = 60;
 
-export function jwksKeys(opts: { url: string; ttlSeconds?: number; cooldownSeconds?: number; timeoutMs?: number; clock?: () => number }): KeySource {
+/** `fetch` makes the request, which by default is the platform's own. */
+export function jwksKeys(opts: { url: string; ttlSeconds?: number; cooldownSeconds?: number; timeoutMs?: number; clock?: () => number; fetch?: (url: string, init: RequestInit) => Promise<Response> }): KeySource {
   const ttl = (opts.ttlSeconds ?? DEFAULT_JWKS_TTL_SECONDS) * 1000;
   const cooldown = (opts.cooldownSeconds ?? 10) * 1000;
   const clock = opts.clock ?? Date.now;
+  const get = opts.fetch ?? ((url: string, init: RequestInit) => fetch(url, init));
   let keys = new Map<string, KeyObject>();
   let fetchedAt: number | undefined;
   let attemptedAt: number | undefined;
@@ -33,7 +34,7 @@ export function jwksKeys(opts: { url: string; ttlSeconds?: number; cooldownSecon
   async function load(): Promise<boolean> {
     attemptedAt = clock();
     try {
-      const r = await tfetch("dicomweb-proxy", "fetch signing keys (JWKS)", opts.url, { signal: AbortSignal.timeout(opts.timeoutMs ?? 2000) });
+      const r = await get(opts.url, { signal: AbortSignal.timeout(opts.timeoutMs ?? 2000) });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const body: any = await r.json();
       if (!Array.isArray(body?.keys)) throw new Error("no keys array");

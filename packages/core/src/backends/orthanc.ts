@@ -2,7 +2,7 @@
 // wrong at this boundary is corrected here or in the proxy.
 import type { PlanItem } from "../accept";
 import { boundaryOf, readMultipart } from "../multipart";
-import { tfetch } from "../trace";
+import { noopObserver, type Observer } from "../observer";
 import { BackendError, type Backend, type Capabilities, type InstancePart, type PartStream, type Scope } from "./types";
 
 export interface OrthancConfig { base: string; user: string; password: string; }
@@ -31,7 +31,8 @@ function mapError(status: number): BackendError {
 
 export class OrthancBackend implements Backend {
   private auth: string;
-  constructor(private cfg: OrthancConfig) { this.auth = "Basic " + btoa(`${cfg.user}:${cfg.password}`); }
+  private observer: Observer;
+  constructor(private cfg: OrthancConfig, opts: { observer?: Observer } = {}) { this.observer = opts.observer ?? noopObserver; this.auth = "Basic " + btoa(`${cfg.user}:${cfg.password}`); }
   capabilities(): Capabilities {
     return {
       name: "orthanc", selection: "one-per-request", hasManifest: false, enforcesHierarchy: true,
@@ -40,7 +41,7 @@ export class OrthancBackend implements Backend {
   }
   private url(path: string) { return `${this.cfg.base}/dicom-web${path}`; }
   private async get(path: string, accept: string) {
-    return tfetch("backend", `upstream GET ${path.replace(/2\.25\.[0-9.]+|[0-9]+(\.[0-9]+){4,}/g, "{uid}")}`, this.url(path), { headers: { Accept: accept, Authorization: this.auth }, redirect: "error" }, { backend: "orthanc", accept });
+    return this.observer.fetch("backend", `upstream GET ${path.replace(/2\.25\.[0-9.]+|[0-9]+(\.[0-9]+){4,}/g, "{uid}")}`, this.url(path), { headers: { Accept: accept, Authorization: this.auth }, redirect: "error" }, { backend: "orthanc", accept });
   }
   private path(s: Scope) {
     let p = `/studies/${s.study}`;

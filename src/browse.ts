@@ -8,7 +8,7 @@ import { ruleSetFor } from "./rule-presets";
 import { CONFIG } from "./config";
 import { accountUrl, submitDelegation } from "./flows/oauth";
 import { ACCEPT_ANY, browserFetch, Ctx } from "./flows/runtime";
-import { boundaryOf, readMultipart } from "./multipart";
+import { boundaryOf, readMultipart } from "@smart-imaging-proxy/core";
 import type { Stack } from "./stack";
 import { flushTraces, runInSession, tfetch, withSpan } from "./trace";
 

@@ -3,9 +3,8 @@
 // opened until it restarts. Orthanc is only read.
 import { renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { CONFIG } from "../src/config";
-import { createCatalog, DEFAULT_CATALOG_DB, orthancCatalogPath, seedPatientLinks } from "../src/catalog";
-import { catalogFromOrthanc } from "../src/catalog-orthanc";
+import { CONFIG, DEFAULT_CATALOG_DB } from "../src/config";
+import { catalogFromOrthanc, createCatalog, orthancCatalogPath, seedPatientLinks } from "@smart-imaging-proxy/core";
 
 const root = join(import.meta.dir, "..");
 const target = orthancCatalogPath(process.env.CATALOG_DB || DEFAULT_CATALOG_DB);

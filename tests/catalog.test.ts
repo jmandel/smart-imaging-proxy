@@ -4,13 +4,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { archiveKeys, type CatalogStore, type StudyDocument, type StudyHierarchy } from "../src/archive/types";
-import { ACCESSION_SYSTEM, createCatalog, DICOM_UID_SYSTEM, identifiersOf, orthancCatalogPath, patientSourceOf, publicationFor, seedPatientLinks } from "../src/catalog";
-import { rebuildFromArchive } from "../src/catalog-archive";
-import { fileStore } from "../src/archive/sources";
-import { catalogFromOrthanc } from "../src/catalog-orthanc";
-import { createImagingServer } from "../src/imaging-server";
-import { PolicyStore } from "../src/policy-store";
+import { ACCESSION_SYSTEM, archiveKeys, catalogFromOrthanc, type CatalogStore, createCatalog, createImagingServer, DICOM_UID_SYSTEM, fileStore, identifiersOf, orthancCatalogPath, patientSourceOf, PolicyStore, publicationFor, rebuildFromArchive, seedPatientLinks, type StudyDocument, type StudyHierarchy } from "@smart-imaging-proxy/core";
 import { startStack, type Stack } from "../src/stack";
 import { FLOWS, registerClients } from "../src/flows";
 import { scriptedLaunch } from "../src/flows/oauth";
@@ -635,7 +629,7 @@ describe("paged search", () => {
     const { imaging } = server(c);
     for (const scheme of ["Bearer", "bearer", "BEARER", "bEaReR"]) expect((await imaging.fetch(new Request("http://fhir/fhir/ImagingStudy?patient=p1", { headers: { Authorization: `${scheme} t` } }))).status).toBe(200);
     for (const header of ["Basic t", "bearer", "bearer ", "Bearert"]) expect((await imaging.fetch(new Request("http://fhir/fhir/ImagingStudy?patient=p1", { headers: { Authorization: header } }))).status).toBe(401);
-    for (const scheme of ["Bearer", "bearer"]) expect((await imaging.fetch(new Request("http://fhir/internal/relationships", { headers: { Authorization: `${scheme} s` } }))).status).toBe(200);
+    for (const scheme of ["Bearer", "bearer"]) expect((await imaging.fetch(new Request("http://fhir/policy/v1/relationships", { headers: { Authorization: `${scheme} s` } }))).status).toBe(200);
   });
   test("a decision and a context carry the version", async () => {
     const c = createCatalog();
@@ -650,7 +644,7 @@ describe("paged search", () => {
     expect(d.context.version).toBe(7);
   });
   test("the Imaging Server has no way to read the archive", async () => {
-    const source = await Bun.file(join(root, "src/imaging-server.ts")).text();
+    const source = (await Promise.all(["imaging-server.ts", "policy-api.ts"].map(f => Bun.file(join(root, "packages/core/src", f)).text()))).join("\n");
     expect(source).not.toContain("ObjectSource");
     expect(source).not.toContain("archiveKeys");
     expect(source).not.toMatch(/from "\.\/backends/);
@@ -664,7 +658,7 @@ describe("paged search", () => {
     expect((await get("patient=p1")).body.total).toBe(0);
   });
   test("nothing reads a manifest", async () => {
-    const glob = new Bun.Glob("{src,scripts,tests}/**/*.ts");
+    const glob = new Bun.Glob("{src,scripts,tests,packages/*/src,packages/*/tests}/**/*.ts");
     const readers: string[] = [];
     for await (const f of glob.scan({ cwd: root })) {
       if (f === "tests/catalog.test.ts") continue;
@@ -682,7 +676,7 @@ describe("the real stack", () => {
 
   test("search makes no allStudies call, and one hierarchies call, through real HTTP", async () => {
     stack.setBackend("static-files");
-    stack.resetAll();
+    await stack.resetAll();
     const c = stack.catalog;
     const token = (await scriptedLaunch("josh")).access_token;
     let all = 0, hier = 0;
@@ -704,7 +698,7 @@ describe("the real stack", () => {
       expect(c.sitesFor("josh-example").sort()).toEqual(["Lakeside Imaging", "Northside Pathology", "Riverside Hospital"]);
     }
     stack.setBackend("static-files");
-    stack.resetAll();
+    await stack.resetAll();
     const b = await searchWith((await scriptedLaunch("robin")).access_token, "patient=robin-example");
     expect(b.total).toBe(0);
     expect(b.entry).toBeUndefined();
@@ -787,7 +781,7 @@ describe("the real stack", () => {
     });
     test("search and retrieval use it when Orthanc is selected", async () => {
       stack.setBackend("orthanc");
-      stack.resetAll();
+      await stack.resetAll();
       const token = (await scriptedLaunch("josh")).access_token;
       const b = await searchWith(token, "patient=josh-example&_count=2");
       expect(b.total).toBe(6);

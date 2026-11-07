@@ -1,5 +1,5 @@
 import { tfetch } from "../trace";
-import { EVRLE, JPEG_BASELINE, JPEG_LOSSLESS, J2K_LOSSLESS, PRIVATE_DEMO, isStandard } from "../syntax";
+import { EVRLE, isStandard, J2K_LOSSLESS, JPEG_BASELINE, JPEG_LOSSLESS, PRIVATE_DEMO } from "@smart-imaging-proxy/core";
 import { ACCEPT_ANY, siteOptions, StepStopped, studyOptions, type Flow, type Ctx } from "./runtime";
 import { CONFIG } from "../config";
 
@@ -60,7 +60,7 @@ export const protocolFlows: Flow[] = [
         inputs: () => [{ id: "allowed", label: "Is this client authorized for Josh?", type: "select", options: [{ value: "yes", label: "Yes" }, { value: "no", label: "No" }], default: "yes" }],
         run: async (c, i) => {
           const s = c.found(WRIST);
-          c.setRules([{ id: "separate-viewer", description: "Policy for the separate viewer", when: { client: "separate-viewer" }, allow: i.allowed === "yes" ? { all: true } : {} }]);
+          await c.setRules([{ id: "separate-viewer", description: "Policy for the separate viewer", when: { client: "separate-viewer" }, allow: i.allowed === "yes" ? { all: true } : {} }]);
           const t = await c.launch("josh", "separate-viewer");
           const r = await c.retrieve("Separate viewer", "Same URL, the viewer's own token", c.studyUrl(s.base, s.uid), c.launched(t));
           const ok = i.allowed === "yes";
@@ -99,7 +99,7 @@ export const protocolFlows: Flow[] = [
     id: "attacks", number: 10, group: "protocol", title: "Attempts to get around the checks",
     summary: "Attempts to get around the URL and token checks.",
     shows: "Griffin's warning about treating URLs as secrets: the URL alone never grants anything.",
-    setup: c => { c.setRules([{ id: "wrist-only", description: "This app may see only the left wrist", when: { client: "portal-app", user: "josh" }, allow: { studies: [WRIST] } }]); },
+    setup: async c => { await c.setRules([{ id: "wrist-only", description: "This app may see only the left wrist", when: { client: "portal-app", user: "josh" }, allow: { studies: [WRIST] } }]); },
     steps: [
       { id: "setup", title: "Get a valid URL", actor: "App", doc: `<p>The policy here lets the app see only the left wrist study.</p>`, run: async c => {
         await loginAndSearch(c);
@@ -309,14 +309,14 @@ export const protocolFlows: Flow[] = [
           const first = await c.searchPage("Page 1, before the change", c.state.token, c.state.query);
           const onFirst = studiesOn(first.body).map(s => s.id);
           const remaining = c.studies().filter(s => s.site !== i.site);
-          c.setRules([{ id: "site-removed", description: `This app may no longer see ${i.site}`, when: { client: "portal-app", user: "josh" }, allow: { sites: c.sites().filter(s => s !== i.site) } }]);
-          if (!first.next) { c.check("Everything fit on page 1, so there's no page 2 to change", true); c.setRules([]); return; }
+          await c.setRules([{ id: "site-removed", description: `This app may no longer see ${i.site}`, when: { client: "portal-app", user: "josh" }, allow: { sites: c.sites().filter(s => s !== i.site) } }]);
+          if (!first.next) { c.check("Everything fit on page 1, so there's no page 2 to change", true); await c.setRules([]); return; }
           const second = await c.searchPage("Page 2, after the change", c.state.token, first.next);
           const onSecond = studiesOn(second.body).map(s => s.id);
           c.check(`Page 2 has nothing from ${i.site}`, second.status === 200 && onSecond.every(id => c.siteOf(id) !== i.site), onSecond.join(", ") || "no studies");
           c.check("total now counts only what this caller may see", second.body.total === remaining.length, `total ${second.body.total}`);
           c.check("Page 2 doesn't repeat page 1", onSecond.every(id => !onFirst.includes(id)));
-          c.setRules([]);
+          await c.setRules([]);
           const restored = await c.searchPage("The same next URL, with the site back", c.state.token, first.next);
           c.check("The same URL follows policy again", restored.status === 200 && restored.body.total === c.studies().length && studiesOn(restored.body).length > 0, `total ${restored.body.total}`);
         } },
