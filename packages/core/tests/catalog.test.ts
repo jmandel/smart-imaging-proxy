@@ -272,7 +272,7 @@ describe("paged search", () => {
   const TOKEN: any = { active: true, client_id: "app", sub: "pat", fhirUser: "Patient/p1", patient: "p1", scope: "patient/ImagingStudy.rs", exp: Math.floor(Date.now() / 1000) + 3600 };
   /** A service's token, for what only organization policy decides, such as withheld series. */
   const SERVICE: any = { active: true, client_id: "svc", scope: "system/ImagingStudy.rs", exp: TOKEN.exp };
-  const APPROVAL = { by: "user:pat", app: "app:app", patient: "patient:p1" };
+  const APPROVAL = { by: "user:pat", app: "app:app", patient: "patient:p1", basis: ["self"] };
   function server(catalog: CatalogStore, extra: { pageBytes?: number; token?: any } = {}) {
     const store = new PolicyStore({ mode: "memory" });
     store.putApproval(APPROVAL);

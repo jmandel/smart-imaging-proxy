@@ -6,7 +6,7 @@ import { systemClock, type Clock } from "./clock";
 import { noopObserver, type Observer } from "./observer";
 import { createPolicyApi, POLICY_API_PATH, type Access, type ExplainQuery } from "./policy-api";
 import type { PolicyStore } from "./policy-store";
-import { createModel, defaultName, idOf, ref, type Decision, type Namer, type PatientAttributes, type Snapshot } from "./policy-model";
+import { createModel, defaultName, GUARDIAN_OF, idOf, ref, SELF, type Decision, type Namer, type PatientAttributes, type Snapshot } from "./policy-model";
 import type { CatalogPosition, CatalogSearch, CatalogStore, CatalogStudy, InstantRange, StudyHierarchy, TokenFilter, TokenTerm } from "./archive/types";
 import { DICOM_UID_SYSTEM } from "./catalog";
 
@@ -465,7 +465,11 @@ export function createImagingServer(opts: ImagingServerOptions) {
       sitesFor: patient => opts.catalog().sitesFor(patient),
       sharingFor: (store, from, patient) => model.sharingFor(snapshotOf(idOf(patient, "patient")!, store), from, patient),
       guardianPolicies: (store, patient) => model.guardianPolicies(snapshotOf(idOf(patient, "patient")!, store), patient),
-      stillReaches: (s, user, patient) => model.hasRoute(s, user, patient),
+      routesHeld: (store, user, patient, fhirUser) => {
+        const s = snapshotOf(patient, store), u = ref("user", user), p = ref("patient", patient);
+        const self = fhirUser ? fhirUser === `Patient/${patient}` : opts.patientOf(user) === patient;
+        return [...(self ? [SELF] : []), ...s.relationships.filter(r => r.subject === u && r.relation === GUARDIAN_OF && r.object === p).map(r => r.id!), ...s.shares.filter(x => x.with === u && x.patient === p).map(x => x.id!)];
+      },
       isGuardian: (store, user, patient) => !!model.guardianOf(snapshotOf(patient, store), ref("user", user), ref("patient", patient)),
     },
   });

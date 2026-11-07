@@ -21,7 +21,7 @@ const UNDER_13: OrgPolicy = { id: "guardians-under-13", type: "guardian-access",
 const TEENS: OrgPolicy = { id: "guardians-13-to-17", type: "guardian-access", when: { age: { min: 13, max: 17 } }, allow: "all", except: [CONFIDENTIAL] };
 const SHARING: OrgPolicy = { id: "patients-and-guardians-share", type: "sharing", allowedFrom: ["patient", "guardian"] };
 const REFERRAL: OrgPolicy = { id: "referral", type: "service-access", service: "service:referral", patients: "patient:pat", allow: { sites: ["Site B"] } };
-const store = new PolicyStore({ mode: "memory", onFile: { relationships: ["kid", "teen", "adult"].map(guardian), policies: [UNDER_13, TEENS, SHARING] } });
+const store = new PolicyStore({ mode: "memory", onFile: { relationships: ["kid", "teen", "adult"].map(guardian), policies: [UNDER_13, TEENS, SHARING] }, patientOf: u => ({ pat: "pat" } as Record<string, string>)[u] });
 const recorder = recordingObserver();
 const clock = manualClock(Date.UTC(2026, 10, 7) / 1000);
 const TOKENS: Record<string, any> = {
@@ -91,12 +91,12 @@ describe("the API", () => {
     const rel = { subject: "user:sitter", relation: "guardian_of", object: "patient:kid" };
     const r1 = await policy.putRelationship(rel);
     expect(r1).toEqual({ policy: p0 + 2, patient: store.patientRevision("patient:kid") });
-    expect(await policy.relationships()).toContainEqual(rel);
+    expect(await policy.relationships()).toContainEqual(expect.objectContaining(rel));
     expect((await policy.removeRelationship(rel))!.patient).toBe(r1.patient! + 1);
     expect(await policy.removeRelationship(rel)).toBeUndefined();
     const shared = await policy.share({ from: "user:pat", with: "user:sitter", patient: "patient:pat", sites: ["Site A"], label: "caregiver" });
     expect(shared).toMatchObject({ ok: true, revision: { patient: store.patientRevision("patient:pat") } });
-    expect(await policy.shares()).toEqual([{ from: "user:pat", with: "user:sitter", patient: "patient:pat", sites: ["Site A"], label: "caregiver" }]);
+    expect(await policy.shares()).toMatchObject([{ from: "user:pat", with: "user:sitter", patient: "patient:pat", sites: ["Site A"], label: "caregiver", basis: "self" }]);
     expect(await policy.removeShares({ with: "user:sitter", from: "user:pat" })).toMatchObject({ patient: store.patientRevision("patient:pat") });
     expect(await policy.setSettings({ maxSeriesInContext: 3 })).toEqual({ policy: p0 + 3 });
     expect((await policy.getSettings()).maxSeriesInContext).toBe(3);
@@ -109,7 +109,7 @@ describe("the API", () => {
     await policy.reset();
     expect(await policy.approvals()).toEqual([]);
     expect((await policy.policies()).map(p => p.id)).toEqual([UNDER_13.id, TEENS.id, SHARING.id]);
-    expect(await policy.relationships()).toContainEqual(guardian("teen"));
+    expect(await policy.relationships()).toContainEqual(expect.objectContaining(guardian("teen")));
     expect(store.getToken("t", "access")).toBeDefined();
     await policy.reset({ tokens: true });
     expect(store.getToken("t", "access")).toBeUndefined();
@@ -139,7 +139,7 @@ describe("guardian-access, by age band", () => {
     ]);
     expect(hidden.why).toContain("guardians-13-to-17");
     expect(x.studies.find((s: any) => s.id === "study-6.1").because.map((b: any) => b.level)).toEqual(["fact", "policy", "choice"]);
-    expect(x.studies.find((s: any) => s.id === "study-6.1").because[2]).toEqual({ level: "choice", ref: "approval:user:parent:app:viewer:patient:teen", text: "Parent approved the Viewer for all sites" });
+    expect(x.studies.find((s: any) => s.id === "study-6.1").because[2]).toEqual({ level: "choice", ref: `approval:${store.approvals()[0]!.id}`, text: "Parent approved the Viewer for all sites", restsOn: "Parent's guardian relationship, recorded 2026-11-07" });
   });
   test("past the top of every band, a guardian sees nothing, and a choice for that patient is refused naming the policy", async () => {
     const r = await approveViewer("adult");
@@ -195,7 +195,7 @@ describe("sharing", () => {
     expect(await policy.share({ from: "user:sitter", with: "user:pat", patient: "patient:teen", sites: ["Site D"], label: "x" })).toMatchObject({ ok: false, refusal: { policy: SHARING.id } });
     expect((await raw("/shares", { method: "POST", body: JSON.stringify({ from: "user:parent", with: "user:sitter", patient: "patient:teen", sites: [], label: "sitter" }) })).status).toBe(403);
     expect(await policy.share({ from: "user:pat", with: "user:sitter", patient: "patient:pat", sites: ["Site A", "Site Z"], label: "friend" })).toMatchObject({ ok: true, share: { sites: ["Site A"] } });
-    expect(await policy.shares()).toEqual([{ from: "user:pat", with: "user:sitter", patient: "patient:pat", sites: ["Site A"], label: "friend" }]);
+    expect(await policy.shares()).toMatchObject([{ from: "user:pat", with: "user:sitter", patient: "patient:pat", sites: ["Site A"], label: "friend", basis: "self" }]);
   });
 });
 

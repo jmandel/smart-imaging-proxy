@@ -29,7 +29,7 @@ const guardian = (p: string, who = "parent"): Relationship => ({ subject: `user:
 const UNDER_13: OrgPolicy = { id: "guardians-under-13", type: "guardian-access", when: { age: { max: 12 } }, allow: "all" };
 const TEENS: OrgPolicy = { id: "guardians-13-to-17", type: "guardian-access", when: { age: { min: 13, max: 17 } }, allow: "all", except: [CONF] };
 const SHARING: OrgPolicy = { id: "share", type: "sharing", allowedFrom: ["patient", "guardian"] };
-const store = new PolicyStore({ mode: "memory", onFile: { relationships: ["teen", "future", "bad", "edge"].map(p => guardian(p)), policies: [UNDER_13, TEENS, SHARING] } });
+const store = new PolicyStore({ mode: "memory", onFile: { relationships: ["teen", "future", "bad", "edge"].map(p => guardian(p)), policies: [UNDER_13, TEENS, SHARING] }, patientOf: u => ({ teen: "teen", pat: "pat" } as Record<string, string>)[u] });
 const clock = manualClock(Date.UTC(2026, 10, 7) / 1000);
 const token = (sub: string, patient: string, fhirUser = `RelatedPerson/${sub}`) => ({ client_id: "viewer", sub, fhirUser, patient, scope: "patient/ImagingStudy.rs" });
 const TOKENS: Record<string, any> = {
@@ -92,11 +92,13 @@ describe("union of grants", () => {
       store.setDocument({ policies: order });
       // The studies with unknown labels stay hidden from every guardian grant.
       expect(await search("parent-teen", "teen")).toEqual(["study-1.1", "study-1.2", "study-1.3"]);
+      // A share gained later counts once the parent approves again, on both routes.
       share("teen", "parent", "teen", ["Site A"]);
-      const row = (await explainFor("parent", "teen")).studies.find((s: any) => s.id === "study-1.1");
-      expect(row.because.filter((b: any) => b.level !== "fact").map((b: any) => b.ref)).toEqual(["policy:guardians-15-to-17", "policy:share", "share:user:teen:user:parent:patient:teen", "approval:user:parent:app:viewer:patient:teen"]);
-      store.removeShares({ with: "user:parent", from: "user:teen" });
       approve("parent", "teen");
+      const shareId = store.shares()[0]!.id, approvalId = store.approvals()[0]!.id;
+      const row = (await explainFor("parent", "teen")).studies.find((s: any) => s.id === "study-1.1");
+      expect(row.because.filter((b: any) => b.level !== "fact").map((b: any) => b.ref)).toEqual(["policy:guardians-15-to-17", "policy:share", `share:${shareId}`, `approval:${approvalId}`]);
+      store.removeShares({ with: "user:parent", from: "user:teen" });
     }
   });
   test("overlapping service-access policies add up: modalities, and series one withholds that another releases", async () => {
@@ -113,10 +115,11 @@ describe("union of grants", () => {
     expect(row.policies).toEqual(["site-a"]);
     expect(row.because.map((b: any) => b.ref)).toEqual(["policy:site-a"]);
   });
-  test("a patient's share to their own guardian counts as well as the guardian route", async () => {
+  test("a patient's share to their own guardian counts as well as the guardian route, once the guardian approves on both", async () => {
     approve("parent", "teen");
     expect(await search("parent-teen", "teen")).not.toContain("study-1.2");
     share("teen", "parent", "teen", ["Site B"]);
+    approve("parent", "teen");
     expect(await search("parent-teen", "teen")).toContain("study-1.2");
   });
   test("an app approval still narrows: at most the user's access, at the approval's sites", async () => {
@@ -129,7 +132,7 @@ describe("union of grants", () => {
 describe("removing a grant takes what hangs off it", () => {
   test("a guardian relationship goes with that guardian's shares and app approvals for the patient, in the same write", async () => {
     share("parent", "sitter", "teen", ["Site A"]);
-    share("parent", "sitter", "pat", ["Site A"]);
+    share("pat", "sitter", "pat", ["Site A"]);
     approve("parent", "teen");
     approve("sitter", "teen");
     const r = await policy.removeRelationship({ subject: "user:parent", relation: "guardian_of", object: "patient:teen" });
@@ -245,9 +248,14 @@ describe("adding a grant never takes access away", () => {
     const allow = pick([{ all: true }, { sites: some(SITES) }, { modalities: some(MODS) }, { since: "2012-01-01" }, { studies: some(STUDIES.map(s => s.id)) }]);
     return { id: `v${i}`, type: t, service: pick(["service:s1", "service:s2"]), patients: pick(["any", ...PATIENTS.map(p => `patient:${p}`)]), allow, ...(rnd() < 0.3 ? { withholdSeries: some(STUDIES.flatMap(s => s.series.map(x => x.uid))) } : {}) };
   };
-  const randomShare = () => ({ from: `user:${pick(USERS)}`, with: `user:${pick(USERS)}`, patient: `patient:${pick(PATIENTS)}`, sites: some(SITES), label: "x" });
-  const randomApproval = () => ({ by: `user:${pick(USERS)}`, app: "app:a1", patient: `patient:${pick(PATIENTS)}`, ...(rnd() < 0.5 ? { sites: some(SITES) } : {}) });
-  const randomRelationship = () => ({ subject: `user:${pick(USERS)}`, relation: "guardian_of", object: `patient:${pick(PATIENTS)}` });
+  // Rows carry ids from a small pool, and choices rest on ids from it, as a store would record them.
+  const REL_IDS = ["r0", "r1", "r2", "r3", "r4", "r5"], SHARE_IDS = ["s0", "s1", "s2", "s3", "s4", "s5"];
+  const randomShare = () => ({ id: pick(SHARE_IDS), from: `user:${pick(USERS)}`, with: `user:${pick(USERS)}`, patient: `patient:${pick(PATIENTS)}`, sites: some(SITES), label: "x", basis: pick(["self", ...REL_IDS]) });
+  const randomApproval = () => {
+    const basis = some(["self", ...REL_IDS, ...SHARE_IDS]);
+    return { by: `user:${pick(USERS)}`, app: "app:a1", patient: `patient:${pick(PATIENTS)}`, ...(rnd() < 0.5 ? { sites: some(SITES) } : {}), basis: basis.length ? basis : ["self"] };
+  };
+  const randomRelationship = () => ({ id: pick(REL_IDS), subject: `user:${pick(USERS)}`, relation: "guardian_of", object: `patient:${pick(PATIENTS)}` });
   const randomDoc = (): Snapshot => ({
     policies: Array.from({ length: Math.floor(rnd() * 5) }, (_, i) => randomPolicy(i)),
     relationships: Array.from({ length: Math.floor(rnd() * 4) }, randomRelationship),
@@ -269,23 +277,25 @@ describe("adding a grant never takes access away", () => {
   };
   const insertAt = <T>(xs: T[], x: T) => { const i = Math.floor(rnd() * (xs.length + 1)); return [...xs.slice(0, i), x, ...xs.slice(i)]; };
   test("for random documents, adding any one policy, relationship or choice never shrinks a decision or a search", () => {
-    let checked = 0, refused = 0;
+    let checked = 0, refused = 0, userReleases = 0;
     for (let n = 0; n < 600; n++) {
       const doc = randomDoc();
       if (validateDocument(doc).length) continue;
       const kind = pick(["policies", "relationships", "shares", "approvals"] as const);
       const added: Snapshot = { ...doc, [kind]: insertAt(doc[kind] as any[], kind === "policies" ? randomPolicy(99) : kind === "relationships" ? randomRelationship() : kind === "shares" ? randomShare() : randomApproval()) };
       // A choice with the same key as one already there replaces it, which isn't adding.
-      const keys = (xs: any[]) => xs.map(x => kind === "shares" ? `${x.patient} ${x.from} ${x.with}` : kind === "approvals" ? `${x.by} ${x.app} ${x.patient}` : JSON.stringify(x));
+      const keys = (xs: any[]) => xs.map(x => kind === "shares" ? `${x.patient} ${x.from} ${x.with}` : kind === "approvals" ? `${x.by} ${x.app} ${x.patient}` : kind === "relationships" ? x.id : JSON.stringify(x));
       if (new Set(keys(added[kind] as any[])).size !== (added[kind] as any[]).length) continue;
       // A write that would leave two guardian-access bands overlapping is refused, so it adds nothing.
       if (validateDocument(added).length) { refused++; continue; }
       const before = decisions(doc), after = decisions(added);
+      for (const [k, v] of before) if (v.size && k.startsWith("a1/")) userReleases++;
       for (const [k, v] of before) for (const series of v) {
         if (!after.get(k)!.has(series)) throw new Error(`adding ${kind} took ${series} away from ${k}\n${JSON.stringify({ doc, added: added[kind] })}`);
       }
       checked++;
     }
-    expect([checked > 250, refused > 10]).toEqual([true, true]);
+    // Users' apps are released something often enough for the check to mean something.
+    expect([checked > 250, refused > 10, userReleases > 100]).toEqual([true, true, true]);
   });
 });

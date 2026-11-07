@@ -6,8 +6,8 @@
 // about one patient, and the policy revision. A choice organization policy doesn't allow gets a 403
 // naming the policy.
 import { sameSecret } from "./jws";
-import { PolicyValidationError, type PolicyStore, type Settings, type StillReaches } from "./policy-store";
-import { bandText, idOf, POLICY_TYPES, ref, type Revision, type Share, type AppApproval, type GuardianAccessPolicy, type Namer, type OrgPolicy, type PolicyDocument, type SharingPolicy } from "./policy-model";
+import { PolicyValidationError, type PolicyStore, type Settings } from "./policy-store";
+import { bandText, GUARDIAN_OF, idOf, POLICY_TYPES, ref, SELF, type Revision, type Share, type AppApproval, type GuardianAccessPolicy, type Namer, type OrgPolicy, type PolicyDocument, type SharingPolicy } from "./policy-model";
 import type { Observer } from "./observer";
 
 export const POLICY_API_PATH = "/policy/v2";
@@ -34,8 +34,8 @@ export interface PolicyModelView {
   sharingFor(store: PolicyStore, from: string, patient: string): { role?: "patient" | "guardian"; policy?: SharingPolicy };
   guardianPolicies(store: PolicyStore, patient: string): { age?: number; policies: GuardianAccessPolicy[] };
   isGuardian(store: PolicyStore, user: string, patient: string): boolean;
-  /** Whether a user still has a route to a patient, which keeps their app approvals through a revocation. */
-  stillReaches: StillReaches;
+  /** The routes a user holds to a patient now, from the rows alone, which an approval rests on: `self`, guardian relationship ids, share ids. */
+  routesHeld(store: PolicyStore, user: string, patient: string, fhirUser?: string): string[];
 }
 
 const json = (b: unknown, status = 200) => Response.json(b, { status });
@@ -75,15 +75,19 @@ export function createPolicyApi(deps: { policySecret: string; store: () => Polic
     const done = (revision: Revision | undefined, what = "nothing matched") => revision === undefined ? json({ error: what }, 404) : json({ revision });
     try {
       if (p === "/document" && m === "GET") return json(store.snapshot());
-      if (p === "/document" && m === "PUT") { const b = await body(req); return json({ revision: store.setDocument((b === undefined ? {} : b) as Partial<PolicyDocument>, model.stillReaches) }); }
+      if (p === "/document" && m === "PUT") { const b = await body(req); return json({ revision: store.setDocument((b === undefined ? {} : b) as Partial<PolicyDocument>) }); }
 
       // Level 1
       if (p === "/relationships" && m === "GET") return json({ revision: store.revision(), relationships: store.relationships() });
-      if (p === "/relationships" && m === "PUT") return json({ revision: store.putRelationship(await body(req) as any) });
+      if (p === "/relationships" && m === "PUT") {
+        const r = await body(req) as any;
+        const revision = store.putRelationship(r);
+        return json({ revision, relationship: store.relationshipOf(r) });
+      }
       if (p === "/relationships" && m === "DELETE") {
         const subject = q("subject"), relation = q("relation"), object = q("object");
         if (!subject || !relation || !object) return bad("subject, relation and object are required");
-        return done(store.removeRelationship({ subject, relation, object }, model.stillReaches), "no such relationship");
+        return done(store.removeRelationship({ subject, relation, object }), "no such relationship");
       }
 
       // Level 2
@@ -117,14 +121,17 @@ export function createPolicyApi(deps: { policySecret: string; store: () => Polic
         // A share can only narrow what the sharer may name, whatever the form submitted.
         const known = new Set(model.shareableSites(store, from, patient));
         const sites = s.sites.filter(x => known.has(x));
-        const revision = store.putShare({ from: s.from, with: s.with, patient: s.patient, sites, label: s.label });
+        // The share rests on the route the sharer shares through: being the patient, or their guardian relationship.
+        const { role } = model.sharingFor(store, s.from, s.patient);
+        const basis = role === "patient" ? SELF : store.relationshipOf({ subject: s.from, relation: GUARDIAN_OF, object: s.patient })!.id!;
+        const revision = store.putShare({ from: s.from, with: s.with, patient: s.patient, sites, label: s.label, basis });
         check("policy", "record a share", true, { from: s.from, with: s.with, label: s.label, sites: sites.join(", ") });
-        return json({ revision, share: { ...s, sites } });
+        return json({ revision, share: store.shareOf(s) });
       }
       if (p === "/shares" && m === "DELETE") {
         const by = q("from"), to = q("with"), patient = q("patient");
         if (!to || !(by || patient)) return bad("with is required, with from, patient or both");
-        const revision = store.removeShares({ with: to, from: by, patient }, model.stillReaches);
+        const revision = store.removeShares({ with: to, from: by, patient });
         check("policy", "revoke a share", true, { from: by, with: to, patient });
         return done(revision, "no such share");
       }
@@ -150,8 +157,9 @@ export function createPolicyApi(deps: { policySecret: string; store: () => Polic
           sites = narrowed.length > 0 && narrowed.length === model.sitesFor(patient).length ? undefined : narrowed;
           check("policy", "app's sites stay within what the user holds", narrowed.length === a.sites.length, { requested: a.sites.join(", "), held: held!.sites.join(", "), approved: narrowed.join(", ") });
         }
-        const approval: AppApproval = { by: a.by, app: a.app, patient: a.patient, ...(sites ? { sites } : {}) };
-        return json({ revision: store.putApproval(approval), approval });
+        const approval: AppApproval = { by: a.by, app: a.app, patient: a.patient, ...(sites ? { sites } : {}), basis: model.routesHeld(store, user, patient, a.fhirUser) };
+        const revision = store.putApproval(approval);
+        return json({ revision, approval: store.approvalOf(approval) });
       }
       if (p === "/app-approvals" && m === "DELETE") {
         const by = q("by"), app = q("app"), patient = q("patient");

@@ -19,7 +19,7 @@ const guardian = (p: string, who = "parent"): Relationship => ({ subject: `user:
 const UNDER_13: OrgPolicy = { id: "guardians-under-13", type: "guardian-access", when: { age: { max: 12 } }, allow: "all", knownLabels: [CONF] };
 const TEENS: OrgPolicy = { id: "guardians-13-to-17", type: "guardian-access", when: { age: { min: 13, max: 17 } }, allow: "all", except: [CONF] };
 const SHARING: OrgPolicy = { id: "share", type: "sharing", allowedFrom: ["patient", "guardian"] };
-const store = new PolicyStore({ mode: "memory", onFile: { relationships: [guardian("teen"), guardian("kid")], policies: [UNDER_13, TEENS, SHARING] } });
+const store = new PolicyStore({ mode: "memory", onFile: { relationships: [guardian("teen"), guardian("kid")], policies: [UNDER_13, TEENS, SHARING] }, patientOf: u => ({ pat: "pat" } as Record<string, string>)[u] });
 const clock = manualClock(Date.UTC(2026, 10, 7) / 1000);
 const token = (sub: string, patient: string, fhirUser = `RelatedPerson/${sub}`) => ({ client_id: "viewer", sub, fhirUser, patient, scope: "patient/ImagingStudy.rs" });
 const TOKENS: Record<string, any> = { "parent-teen": token("parent", "teen"), "parent-kid": token("parent", "kid"), "sitter-teen": token("sitter", "teen"), "sitter-pat": token("sitter", "pat") };
@@ -101,7 +101,7 @@ describe("a revocation", () => {
     await policy.removeShares({ with: "user:sitter", from: "user:parent", patient: "patient:teen" });
     expect(store.approvals()).toEqual([]);
   });
-  test("keeps a recipient's approval when they're a guardian with a covering grant, and not when no grant covers them", async () => {
+  test("keeps a recipient's approval made also on their own guardian relationship, whatever policy covers it", async () => {
     store.putRelationship(guardian("teen", "sitter"));
     share("parent", "sitter", "teen", ["Site A"]);
     approve("sitter", "teen");
@@ -109,8 +109,9 @@ describe("a revocation", () => {
     expect(store.approvals().map(a => a.by)).toEqual(["user:sitter"]);
     await policy.removePolicy(TEENS.id);
     share("parent", "sitter", "teen", ["Site A"]);
+    approve("sitter", "teen");
     await policy.removeShares({ with: "user:sitter", patient: "patient:teen" });
-    expect(store.approvals()).toEqual([]);
+    expect(store.approvals().map(a => a.by)).toEqual(["user:sitter"]);
   });
   test("of a guardian relationship keeps that guardian's approval while a share from the patient still reaches them", async () => {
     share("pat", "parent", "pat", ["Site A"]);

@@ -14,8 +14,11 @@ export const idOf = (r: Ref | undefined, kind: string) => r?.startsWith(`${kind}
 
 // Level 1: facts
 
-/** `subject relation object`, such as `user:sam guardian_of patient:riley`. */
-export interface Relationship { subject: Ref; relation: string; object: Ref; recordedBy?: string; }
+/**
+ * `subject relation object`, such as `user:sam guardian_of patient:riley`. The store gives each row an
+ * `id`, never reused, so a re-created relationship is a new row, and `recordedAt`, when it was recorded.
+ */
+export interface Relationship { id?: string; subject: Ref; relation: string; object: Ref; recordedBy?: string; recordedAt?: string; }
 export const GUARDIAN_OF = "guardian_of";
 /** What evaluation reads of a patient's record. */
 export interface PatientAttributes { birthDate?: string; }
@@ -47,10 +50,20 @@ export type PolicyType = typeof POLICY_TYPES[number];
 
 // Level 3: people's choices
 
-/** `from` lets `with` see `patient`'s records at `sites`, as their `label`, such as caregiver. */
-export interface Share { from: Ref; with: Ref; patient: Ref; sites: string[]; label: string; }
-/** `by` lets `app` act for them on `patient`'s records. No `sites` means everything `by` can see. */
-export interface AppApproval { by: Ref; app: Ref; patient: Ref; sites?: string[]; }
+/** What a choice rests on: being the patient, or a row, by id. */
+export const SELF = "self";
+/**
+ * `from` lets `with` see `patient`'s records at `sites`, as their `label`, such as caregiver. `basis` is
+ * the route the sharer held when sharing: `self`, or their guardian relationship's id. The share reaches
+ * only through that route, and goes when it does.
+ */
+export interface Share { id?: string; from: Ref; with: Ref; patient: Ref; sites: string[]; label: string; basis?: string; }
+/**
+ * `by` lets `app` act for them on `patient`'s records. No `sites` means everything `by` can see. `basis`
+ * is every route `by` held when approving: `self`, guardian relationship ids and share ids. The approval
+ * releases only through those routes, and goes when all of them have.
+ */
+export interface AppApproval { id?: string; by: Ref; app: Ref; patient: Ref; sites?: string[]; basis?: string[]; }
 
 /** The levels the policy store holds, as a scope seed or a whole-document write gives them. Labels are the catalog's. */
 export interface PolicyDocument { relationships: Relationship[]; policies: OrgPolicy[]; shares: Share[]; approvals: AppApproval[]; }
@@ -59,7 +72,8 @@ export interface Revision { policy: number; patient?: number; }
 
 export type Level = "fact" | "policy" | "choice";
 /** One reason behind a decision. */
-export interface Because { level: Level; ref: Ref; text: string; }
+/** One reason behind a decision. A choice's says what it rests on, `restsOn`. */
+export interface Because { level: Level; ref: Ref; text: string; restsOn?: string; }
 export type Release = "none" | "study" | { series: string[] };
 /** A decision, with the reasons from every grant that contributed, and for a service the policies that did. */
 export interface Decision { release: Release; because: Because[]; why: string; policies: ServiceAccessPolicy[]; }
@@ -76,6 +90,10 @@ function unknownKeys(o: Record<string, unknown>, allowed: string[], at: string, 
 }
 const needRef = (o: Record<string, unknown>, k: string, kind: string | undefined, at: string, errors: string[]) => { if (!isRef(o[k], kind)) errors.push(`${at}.${k} must be a reference${kind ? `, ${kind}:id` : ", kind:id"}`); };
 const sitesOk = (v: unknown, at: string, errors: string[]) => { if (!isTextList(v)) errors.push(`${at} must be a list of strings`); };
+/** A row id: letters, digits and `._:-`, as the store makes them, such as rel-12. */
+const ROW_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
+const isRowId = (v: unknown): v is string => typeof v === "string" && ROW_ID.test(v) && v !== SELF;
+const idOk = (o: Record<string, unknown>, at: string, errors: string[]) => { if (o.id !== undefined && !isRowId(o.id)) errors.push(`${at}.id must be a row id, such as rel-12`); };
 
 /** A label name: lowercase letters and digits, in words joined by hyphens, such as confidential-adolescent. */
 const LABEL = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -85,7 +103,9 @@ export const normalizeLabel = (l: string) => l.trim().toLowerCase();
 
 export function validateRelationship(r: unknown, at: string, errors: string[]) {
   if (!isObject(r)) { errors.push(`${at} must be an object`); return; }
-  unknownKeys(r, ["subject", "relation", "object", "recordedBy"], at, errors);
+  unknownKeys(r, ["id", "subject", "relation", "object", "recordedBy", "recordedAt"], at, errors);
+  idOk(r, at, errors);
+  if (r.recordedAt !== undefined && !(typeof r.recordedAt === "string" && !Number.isNaN(Date.parse(r.recordedAt)))) errors.push(`${at}.recordedAt must be a date and time`);
   needRef(r, "subject", undefined, at, errors); needRef(r, "object", undefined, at, errors);
   if (!(typeof r.relation === "string" && /^[a-z][a-z_]*$/.test(r.relation))) errors.push(`${at}.relation must be a name such as guardian_of`);
   if (r.recordedBy !== undefined && !isText(r.recordedBy)) errors.push(`${at}.recordedBy must be a non-empty string`);
@@ -128,14 +148,18 @@ export function validateOrgPolicy(p: unknown, at: string, errors: string[]) {
 }
 export function validateShare(s: unknown, at: string, errors: string[]) {
   if (!isObject(s)) { errors.push(`${at} must be an object`); return; }
-  unknownKeys(s, ["from", "with", "patient", "sites", "label"], at, errors);
+  unknownKeys(s, ["id", "from", "with", "patient", "sites", "label", "basis"], at, errors);
+  idOk(s, at, errors);
+  if (s.basis !== undefined && s.basis !== SELF && !isRowId(s.basis)) errors.push(`${at}.basis must be self or a relationship's id`);
   needRef(s, "from", "user", at, errors); needRef(s, "with", "user", at, errors); needRef(s, "patient", "patient", at, errors);
   sitesOk(s.sites, `${at}.sites`, errors);
   if (!isText(s.label)) errors.push(`${at}.label must be a non-empty string, such as caregiver`);
 }
 export function validateApproval(a: unknown, at: string, errors: string[]) {
   if (!isObject(a)) { errors.push(`${at} must be an object`); return; }
-  unknownKeys(a, ["by", "app", "patient", "sites"], at, errors);
+  unknownKeys(a, ["id", "by", "app", "patient", "sites", "basis"], at, errors);
+  idOk(a, at, errors);
+  if (a.basis !== undefined && !(Array.isArray(a.basis) && a.basis.length > 0 && a.basis.every(b => b === SELF || isRowId(b)) && new Set(a.basis).size === a.basis.length)) errors.push(`${at}.basis must list self, relationship ids or share ids, at least one, each once`);
   needRef(a, "by", "user", at, errors); needRef(a, "app", "app", at, errors); needRef(a, "patient", "patient", at, errors);
   if (a.sites !== undefined) sitesOk(a.sites, `${at}.sites`, errors);
 }
@@ -167,6 +191,8 @@ export function validateDocument(d: unknown): string[] {
   list("policies", validateOrgPolicy, p => `id ${p.id}`);
   list("shares", validateShare, shareKey);
   list("approvals", validateApproval, approvalKey);
+  const ids = ["relationships", "shares", "approvals"].flatMap(k => Array.isArray(d[k]) ? (d[k] as unknown[]).flatMap(x => isObject(x) && typeof x.id === "string" ? [x.id] : []) : []);
+  for (const id of new Set(ids.filter((x, i) => ids.indexOf(x) !== i))) errors.push(`document: id ${id} is on more than one row`);
   if (!errors.length && Array.isArray(d.policies)) errors.push(...bandOverlaps(d.policies as OrgPolicy[]));
   return errors;
 }
@@ -267,7 +293,7 @@ export function ageOn(birthDate: string | undefined, now: number, timeZone = "UT
 const inBand = (b: AgeBand, age: number) => (b.min === undefined || age >= b.min) && (b.max === undefined || age <= b.max);
 
 /** One route's outcome for one study: granted, with its reasons, or not, with why. */
-interface Route { ok: boolean; because: Because[]; why: string; policy?: OrgPolicy; role?: "patient" | "guardian"; }
+interface Route { ok: boolean; because: Because[]; why: string; policy?: OrgPolicy; role?: "patient" | "guardian"; basis?: string; }
 const no = (why: string, because: Because[] = [], policy?: OrgPolicy): Route => ({ ok: false, because, why, policy });
 const unique = <T>(xs: T[], key: (x: T) => string) => { const seen = new Set<string>(); return xs.filter(x => { const k = key(x); if (seen.has(k)) return false; seen.add(k); return true; }); };
 const reasons = (bs: Because[]) => unique(bs, b => `${b.level} ${b.ref} ${b.text}`);
@@ -285,7 +311,15 @@ export function createModel(ctx: ModelContext) {
   if (!isTimeZone(timeZone)) throw new Error(`timeZone ${timeZone} isn't a time zone this runtime knows`);
   const fact = (r: Ref, text: string): Because => ({ level: "fact", ref: r, text });
   const pol = (p: OrgPolicy): Because => ({ level: "policy", ref: `policy:${p.id}`, text: TEXT.policy(p, name) });
-  const shareChoice = (sh: Share): Because => ({ level: "choice", ref: `share:${sh.from}:${sh.with}:${sh.patient}`, text: TEXT.share(sh, name) });
+  /** What one basis entry is, in words, from the patient's rows. */
+  const basisText = (s: Snapshot, b: string, who: Ref) => {
+    if (b === SELF) return `${name(who)} being the patient`;
+    const rel = s.relationships.find(r => r.id === b);
+    if (rel) return `${possessive(name(rel.subject))} guardian relationship${rel.recordedAt ? `, recorded ${rel.recordedAt.slice(0, 10)}` : ""}`;
+    const sh = s.shares.find(x => x.id === b);
+    return sh ? `${possessive(name(sh.from))} share` : `row ${b}, no longer on file`;
+  };
+  const shareChoice = (s: Snapshot, sh: Share): Because => ({ level: "choice", ref: `share:${sh.id ?? `${sh.from}:${sh.with}:${sh.patient}`}`, text: TEXT.share(sh, name), ...(sh.basis ? { restsOn: basisText(s, sh.basis, sh.from) } : {}) });
   const guardianOf = (s: Snapshot, user: Ref, patient: Ref) => s.relationships.find(r => r.subject === user && r.relation === GUARDIAN_OF && r.object === patient);
   const ageOf = (patient: Ref) => ageOn(ctx.attributesOf(idOf(patient, "patient")!)?.birthDate, ctx.now(), timeZone);
   const isPatient = (user: Ref, patient: Ref, fhirUser?: string) => (fhirUser !== undefined ? fhirUser === `Patient/${idOf(patient, "patient")}` : ctx.patientOf(idOf(user, "user")!) === idOf(patient, "patient"));
@@ -298,21 +332,22 @@ export function createModel(ctx: ModelContext) {
   /** A user's own routes to a study, as the patient and as a guardian: what they may share. */
   function own(s: Snapshot, user: Ref, patient: Ref, study: CatalogStudy, fhirUser?: string): Route[] {
     const routes: Route[] = [];
-    if (isPatient(user, patient, fhirUser)) routes.push({ ok: true, because: [fact(patient, TEXT.self(user, patient, name))], why: `${name(user)} is the patient`, role: "patient" });
+    if (isPatient(user, patient, fhirUser)) routes.push({ ok: true, because: [fact(patient, TEXT.self(user, patient, name))], why: `${name(user)} is the patient`, role: "patient", basis: SELF });
     const rel = guardianOf(s, user, patient);
     if (!rel) return routes;
     const is = fact(rel.subject, TEXT.relationship(rel, name));
     const { age, policies } = guardianPolicies(s, patient);
-    if (!policies.length) routes.push(no(age === undefined ? `${possessive(name(patient))} birth date isn't on file as a valid past date, so no guardian-access policy applies` : `no guardian-access policy covers patients aged ${age}`, [is]));
+    const basis = rel.id;
+    if (!policies.length) routes.push({ ...no(age === undefined ? `${possessive(name(patient))} birth date isn't on file as a valid past date, so no guardian-access policy applies` : `no guardian-access policy covers patients aged ${age}`, [is]), basis });
     // The policy covering the age decides alone: a label it doesn't know, or one that isn't a label, keeps the study from guardians.
     const labels = (study.labels ?? []).map(normalizeLabel);
     for (const p of policies) {
       const known = new Set([...(p.except ?? []), ...(p.knownLabels ?? [])]);
       const unknown = labels.some(l => !isLabel(l) || !known.has(l));
       const hidden = labels.find(l => p.except?.includes(l));
-      if (unknown) routes.push(no(`an unknown label keeps it from guardians`, [is, pol(p), fact(ref("study", study.id), TEXT.unknownLabel())], p));
-      else if (hidden) routes.push(no(`${name(`label:${hidden}`)}: ${p.id} keeps it from guardians`, [is, pol(p), fact(ref("study", study.id), TEXT.label(hidden, name))], p));
-      else routes.push({ ok: true, because: [is, pol(p)], why: `${name(user)} is a guardian, and ${p.id} covers this study`, policy: p, role: "guardian" });
+      if (unknown) routes.push({ ...no(`an unknown label keeps it from guardians`, [is, pol(p), fact(ref("study", study.id), TEXT.unknownLabel())], p), basis });
+      else if (hidden) routes.push({ ...no(`${name(`label:${hidden}`)}: ${p.id} keeps it from guardians`, [is, pol(p), fact(ref("study", study.id), TEXT.label(hidden, name))], p), basis });
+      else routes.push({ ok: true, because: [is, pol(p)], why: `${name(user)} is a guardian, and ${p.id} covers this study`, policy: p, role: "guardian", basis });
     }
     return routes;
   }
@@ -327,24 +362,30 @@ export function createModel(ctx: ModelContext) {
     return { role, policy: policies[0], policies, roles };
   }
 
-  /** Each share with this user, as a route. A share reaches the sharer's own access now, in the roles a sharing policy lets them share in. */
+  /**
+   * Each share with this user, as a route, which an approval names by the share's id. A share reaches
+   * what the sharer sees now through the one route it rests on, in a role a sharing policy lets them
+   * share in.
+   */
   function shared(s: Snapshot, user: Ref, patient: Ref, study: CatalogStudy): Route[] {
     return s.shares.filter(x => x.with === user && x.patient === patient).map(sh => {
-      const choice = shareChoice(sh);
+      const choice = shareChoice(s, sh), basis = sh.id;
       const { policies } = sharingFor(s, sh.from, patient);
-      if (!policies.length) return no(`no sharing policy lets ${name(sh.from)} share`, [choice]);
+      if (!policies.length) return { ...no(`no sharing policy lets ${name(sh.from)} share`, [choice]), basis };
       const allowed = new Set(policies.flatMap(p => p.allowedFrom));
-      const theirs = own(s, sh.from, patient, study).filter(r => r.ok && r.role && allowed.has(r.role));
+      const theirs = own(s, sh.from, patient, study).filter(r => r.ok && r.role && allowed.has(r.role) && r.basis === sh.basis);
       // To the recipient, why the sharer can't see a study stays unsaid: it may be a label.
-      if (!theirs.length) return no(`${possessive(name(sh.from))} share doesn't reach this study`, [choice]);
-      if (!sh.sites.includes(study.site ?? "")) return no(`the share with ${name(user)} doesn't include ${study.site ?? "a study with no site"}`, [choice]);
-      return { ok: true, because: [...theirs.flatMap(r => r.because), ...policies.map(pol), choice], why: `${name(sh.from)} shared it with ${name(user)}` };
+      if (!theirs.length) return { ...no(`${possessive(name(sh.from))} share doesn't reach this study`, [choice]), basis };
+      if (!sh.sites.includes(study.site ?? "")) return { ...no(`the share with ${name(user)} doesn't include ${study.site ?? "a study with no site"}`, [choice]), basis };
+      return { ok: true, because: [...theirs.flatMap(r => r.because), ...policies.map(pol), choice], why: `${name(sh.from)} shared it with ${name(user)}`, basis };
     });
   }
 
-  /** Every route a user has to a study, before any app approval. */
-  const userRoute = (s: Snapshot, user: Ref, patient: Ref, study: CatalogStudy, fhirUser?: string) =>
-    combine([...own(s, user, patient, study, fhirUser), ...shared(s, user, patient, study)], () => no(`${name(user)} has no share of ${possessive(name(patient))} records`));
+  /** Every route a user has to a study, before any app approval, or only those an approval rests on. */
+  const userRoute = (s: Snapshot, user: Ref, patient: Ref, study: CatalogStudy, fhirUser?: string, basis?: string[]) => {
+    const all = [...own(s, user, patient, study, fhirUser), ...shared(s, user, patient, study)];
+    return combine(basis ? all.filter(r => r.basis !== undefined && basis.includes(r.basis)) : all, () => no(`${name(user)} has no share of ${possessive(name(patient))} records`));
+  };
 
   /** Every service-access policy for this service and patient. Any one lets it search. */
   const preAuthorized = (s: Snapshot, client: string, patient: string) =>
@@ -372,11 +413,15 @@ export function createModel(ctx: ModelContext) {
       if (!t.patient) return { release: "none", because: [], why: "a user's token has no patient context", policies: [] };
       if (t.patient !== study.patient) return { release: "none", because: [], why: "token's patient context is a different patient", policies: [] };
       const user = ref("user", t.sub);
-      const r = userRoute(s, user, patient, study, t.fhirUser);
-      if (!r.ok) return { release: "none", because: r.because, why: r.why, policies: [] };
       const approval = s.approvals.find(a => a.by === user && a.app === ref("app", t.client_id) && a.patient === patient);
-      if (!approval) return { release: "none", because: r.because, why: `${name(user)} hasn't approved ${name(ref("app", t.client_id))}`, policies: [] };
-      const because = [...r.because, { level: "choice" as const, ref: `approval:${approval.by}:${approval.app}:${approval.patient}`, text: TEXT.approval(approval, name) }];
+      if (!approval) {
+        const r = userRoute(s, user, patient, study, t.fhirUser);
+        return { release: "none", because: r.because, why: r.ok ? `${name(user)} hasn't approved ${name(ref("app", t.client_id))}` : r.why, policies: [] };
+      }
+      // The approval releases only through the routes it rests on: a route gained later needs a new approval.
+      const r = userRoute(s, user, patient, study, t.fhirUser, approval.basis ?? []);
+      if (!r.ok) return { release: "none", because: r.because, why: r.why, policies: [] };
+      const because = [...r.because, { level: "choice" as const, ref: `approval:${approval.id ?? `${approval.by}:${approval.app}:${approval.patient}`}`, text: TEXT.approval(approval, name), ...(approval.basis ? { restsOn: approval.basis.map(b => basisText(s, b, user)).join(" and ") } : {}) }];
       if (approval.sites && !approval.sites.includes(study.site ?? "")) return { release: "none", because, why: `${possessive(name(user))} approval of ${name(approval.app)} doesn't include ${study.site ?? "a study with no site"}`, policies: [] };
       return { release: "study", because, why: r.why, policies: [] };
     }
@@ -392,16 +437,9 @@ export function createModel(ctx: ModelContext) {
     return { release, because: granted.map(r => pol(r.p)), why: release === "study" && granted.every(r => r.release !== "study") ? `${why}; together they release every series` : why, policies: granted.map(r => r.p) };
   }
 
-  /**
-   * Whether a user still has a route to a patient: as the patient, a guardian a guardian-access policy
-   * covers, or a share's recipient. Revocation keeps an app approval while one remains.
-   */
-  const hasRoute = (s: Snapshot, user: Ref, patient: Ref) =>
-    isPatient(user, patient) || (!!guardianOf(s, user, patient) && guardianPolicies(s, patient).policies.length > 0) || s.shares.some(x => x.with === user && x.patient === patient);
-
   /** The studies of a patient's that a user sees before any app approval, by the same routes evaluation takes. */
   const visible = (s: Snapshot, user: Ref, patient: Ref, studies: CatalogStudy[], fhirUser?: string) => studies.filter(st => userRoute(s, user, patient, st, fhirUser).ok);
 
-  return { evaluate, baseline, userRoute, sharingFor, guardianOf, guardianPolicies, preAuthorized, visible, hasRoute, ageOf, pol, fact };
+  return { evaluate, baseline, userRoute, sharingFor, guardianOf, guardianPolicies, preAuthorized, visible, ageOf, pol, fact };
 }
 export type Model = ReturnType<typeof createModel>;

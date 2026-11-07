@@ -1,7 +1,9 @@
 // Durable state: Imaging Server policy in its three levels, its signing key, and the Authorization
 // Server's token records. One SQLite database holds all of it, which keeps the configuration in one
 // place you can inspect and reset. A write about one patient raises that patient's revision, and an
-// organization policy write raises the policy revision. Reads for decisions take one patient's rows,
+// organization policy write raises the policy revision. Every relationship, share and approval has an
+// id, never reused, and each choice records the rows it rests on: deleting a row deletes, in the same
+// write, every choice resting only on deleted rows, by id alone. Reads for decisions take one patient's rows,
 // by index, and organization policy from memory. Revisions count writes to the store only: a patient's
 // age and a study's labels decide access too, so a cache of decisions can't be keyed by revision alone.
 import { Database } from "bun:sqlite";
@@ -9,7 +11,7 @@ import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { createPrivateKey, createPublicKey, randomBytes, type KeyObject } from "node:crypto";
 import { generateEd25519, sha, type KeyPair } from "./jws";
-import { bandOverlaps, GUARDIAN_OF, type Ref, validateApproval, validateDocument, validateOrgPolicy, validateRelationship, validateShare, type AppApproval, type OrgPolicy, type PolicyDocument, type Relationship, type Revision, type Share, type Snapshot } from "./policy-model";
+import { bandOverlaps, GUARDIAN_OF, idOf, SELF, type Ref, validateApproval, validateDocument, validateOrgPolicy, validateRelationship, validateShare, type AppApproval, type OrgPolicy, type PolicyDocument, type Relationship, type Revision, type Share, type Snapshot } from "./policy-model";
 
 export interface Settings { contextLifetimeSeconds: number; maxSeriesInContext: number; tokenLifetimeSeconds: number; refreshTokenLifetimeSeconds: number; }
 const REFRESH_DEFAULT = 30 * 86400;
@@ -20,15 +22,18 @@ export type TokenKind = "access" | "refresh";
 /** `family` is shared by every token descended from one refresh token. It isn't derived from any token. */
 export interface TokenRecord { client_id: string; scope: string; patient?: string; sub?: string; fhirUser?: string; family?: string; exp?: number; revoked: boolean; }
 
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 export type Durability = "off" | "normal" | "full";
 const SYNCHRONOUS: Record<Durability, number> = { off: 0, normal: 1, full: 2 };
 export const DURABILITIES = Object.keys(SYNCHRONOUS) as Durability[];
 
 /** What's on file: the facts and organization policy a new database starts with, and a reset puts back. No one chose these. */
 export interface OnFile { relationships?: Relationship[]; policies?: OrgPolicy[]; }
-/** A file store needs `path`. */
-export interface StoreConfig { mode: "file" | "memory"; path?: string; durability?: Durability; onFile?: OnFile; }
+/**
+ * A file store needs `path`. `patientOf` says which patient a user account is, so a choice made as the
+ * patient can rest on that, and `now`, in seconds, stamps relationships when they're recorded.
+ */
+export interface StoreConfig { mode: "file" | "memory"; path?: string; durability?: Durability; onFile?: OnFile; patientOf?: (user: string) => string | undefined; now?: () => number; }
 
 export class PolicyValidationError extends Error {
   constructor(public errors: string[]) { super(errors.join("; ")); this.name = "PolicyValidationError"; }
@@ -41,15 +46,17 @@ export function validateSetting(name: keyof Settings, v: unknown, errors: string
 }
 
 const SCHEMA = `
-  CREATE TABLE IF NOT EXISTS relationships (subject TEXT NOT NULL, relation TEXT NOT NULL, object TEXT NOT NULL, recorded_by TEXT, PRIMARY KEY (subject, relation, object));
+  CREATE TABLE IF NOT EXISTS relationships (id TEXT PRIMARY KEY, subject TEXT NOT NULL, relation TEXT NOT NULL, object TEXT NOT NULL, recorded_by TEXT, recorded_at TEXT NOT NULL, UNIQUE (subject, relation, object));
   CREATE INDEX IF NOT EXISTS relationships_by_object ON relationships (object);
+  CREATE INDEX IF NOT EXISTS relationships_by_subject ON relationships (subject);
   CREATE TABLE IF NOT EXISTS policies (id TEXT PRIMARY KEY, position INTEGER NOT NULL, body TEXT NOT NULL);
-  CREATE TABLE IF NOT EXISTS shares (patient TEXT NOT NULL, with_user TEXT NOT NULL, from_user TEXT NOT NULL, sites TEXT NOT NULL, label TEXT NOT NULL, PRIMARY KEY (patient, from_user, with_user));
+  CREATE TABLE IF NOT EXISTS shares (id TEXT PRIMARY KEY, patient TEXT NOT NULL, with_user TEXT NOT NULL, from_user TEXT NOT NULL, sites TEXT NOT NULL, label TEXT NOT NULL, basis TEXT NOT NULL, UNIQUE (patient, from_user, with_user));
   CREATE INDEX IF NOT EXISTS shares_by_with ON shares (with_user);
   CREATE INDEX IF NOT EXISTS shares_by_from ON shares (from_user);
-  CREATE TABLE IF NOT EXISTS approvals (app TEXT NOT NULL, by_user TEXT NOT NULL, patient TEXT NOT NULL, sites TEXT, PRIMARY KEY (app, by_user, patient));
+  CREATE TABLE IF NOT EXISTS approvals (id TEXT PRIMARY KEY, app TEXT NOT NULL, by_user TEXT NOT NULL, patient TEXT NOT NULL, sites TEXT, basis TEXT NOT NULL, UNIQUE (app, by_user, patient));
   CREATE INDEX IF NOT EXISTS approvals_by_patient ON approvals (patient);
   CREATE INDEX IF NOT EXISTS approvals_by_user ON approvals (by_user);
+  CREATE TABLE IF NOT EXISTS used_ids (id TEXT PRIMARY KEY);
   CREATE TABLE IF NOT EXISTS patient_revisions (patient TEXT PRIMARY KEY, revision INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -57,14 +64,6 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS tokens (
     hash TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK (kind IN ('access', 'refresh')), record TEXT NOT NULL, exp INTEGER, revoked INTEGER NOT NULL DEFAULT 0);`;
 const POLICY_TABLES = ["relationships", "policies", "shares", "approvals", "settings"];
-
-/**
- * Whether a user still has a route to a patient after a revocation, from the patient's rows after it.
- * The policy API passes the Imaging Server's, which knows ages and who each patient is. Without one,
- * another share with them or a guardian relationship counts.
- */
-export type StillReaches = (s: Snapshot, user: Ref, patient: Ref) => boolean;
-const anyRoute: StillReaches = (s, user, patient) => s.shares.some(x => x.with === user && x.patient === patient) || s.relationships.some(r => r.subject === user && r.relation === GUARDIAN_OF && r.object === patient);
 
 /** Throws PolicyValidationError if any of `items` fails `check`. */
 function checked<T>(items: unknown[], at: string, check: (x: unknown, at: string, errors: string[]) => void): T[] {
@@ -81,6 +80,8 @@ export class PolicyStore {
   readonly path: string;
   readonly durability: Durability;
   private readonly onFile: Required<OnFile>;
+  private readonly patientOf?: (user: string) => string | undefined;
+  private readonly now: () => number;
 
   constructor(config: StoreConfig) {
     if (config.mode === "file" && !config.path) throw new Error("a file policy store needs a path");
@@ -90,6 +91,8 @@ export class PolicyStore {
     if (errors.length) throw new PolicyValidationError(errors);
     this.onFile = structuredClone({ relationships: config.onFile?.relationships ?? [], policies: config.onFile?.policies ?? [] });
     this.durability = config.durability ?? "normal";
+    this.patientOf = config.patientOf;
+    this.now = config.now ?? (() => Date.now() / 1000);
     if (config.mode === "file") mkdirSync(dirname(this.path), { recursive: true });
     this.db = new Database(this.path, { create: true });
     // The file holds a private key, so only this user reads it. WAL and SHM files inherit the mode.
@@ -141,8 +144,29 @@ export class PolicyStore {
   /** The patient a relationship is about: its object, or failing that its subject. */
   private static patientOfRelationship(r: Pick<Relationship, "subject" | "object">) { return r.object.startsWith("patient:") ? r.object : r.subject.startsWith("patient:") ? r.subject : r.object; }
 
+  // Ids: every relationship, share and approval has one, made here or given in a document, and no id is
+  // ever used twice, even after its row is deleted or the policy reset.
+
+  private used(id: string) { return !!this.db.query("SELECT 1 FROM used_ids WHERE id = ?").get(id); }
+  private claimId(id: string) {
+    if (this.used(id)) throw new PolicyValidationError([`id ${id} was used before, and ids aren't reused: leave id out for a new row`]);
+    this.db.run("INSERT INTO used_ids (id) VALUES (?)", [id]);
+  }
+  private newId(kind: "rel" | "share" | "approval"): string {
+    for (let n = this.meta("next_id") + 1; ; n++) {
+      if (this.used(`${kind}-${n}`)) continue;
+      this.db.run("INSERT OR REPLACE INTO meta (key, value) VALUES ('next_id', ?)", [String(n)]);
+      this.db.run("INSERT INTO used_ids (id) VALUES (?)", [`${kind}-${n}`]);
+      return `${kind}-${n}`;
+    }
+  }
+
   private seedOnFile() {
-    for (const r of this.onFile.relationships) this.putRelationshipRow(r);
+    // What's on file is the same rows each time, so a given id comes back after a reset, which clears every choice.
+    for (const r of this.onFile.relationships) {
+      if (r.id) this.db.run("INSERT OR IGNORE INTO used_ids (id) VALUES (?)", [r.id]);
+      this.insertRelationship(r, r.id ?? this.newId("rel"));
+    }
     for (const p of this.onFile.policies) this.putPolicyRow(p);
     this.policies.cache = undefined;
   }
@@ -150,36 +174,51 @@ export class PolicyStore {
   // Level 1
 
   private relationshipRows(where = "1", ...args: string[]): Relationship[] {
-    return (this.db.query(`SELECT subject, relation, object, recorded_by FROM relationships WHERE ${where} ORDER BY rowid`).all(...args) as any[]).map(r => ({ subject: r.subject, relation: r.relation, object: r.object, ...(r.recorded_by ? { recordedBy: r.recorded_by } : {}) }));
+    return (this.db.query(`SELECT id, subject, relation, object, recorded_by, recorded_at FROM relationships WHERE ${where} ORDER BY rowid`).all(...args) as any[])
+      .map(r => ({ id: r.id, subject: r.subject, relation: r.relation, object: r.object, ...(r.recorded_by ? { recordedBy: r.recorded_by } : {}), recordedAt: r.recorded_at }));
   }
   relationships(): Relationship[] { return this.relationshipRows(); }
-  private putRelationshipRow(r: Relationship) { this.db.run("INSERT OR REPLACE INTO relationships (subject, relation, object, recorded_by) VALUES (?, ?, ?, ?)", [r.subject, r.relation, r.object, r.recordedBy ?? null]); }
-  putRelationship(r: Relationship): Revision { checked([r], "relationship", validateRelationship); return this.patientWrite(PolicyStore.patientOfRelationship(r), () => this.putRelationshipRow(r))!; }
+  private insertRelationship(r: Relationship, id: string) {
+    this.db.run("INSERT INTO relationships (id, subject, relation, object, recorded_by, recorded_at) VALUES (?, ?, ?, ?, ?, ?)", [id, r.subject, r.relation, r.object, r.recordedBy ?? null, r.recordedAt ?? new Date(this.now() * 1000).toISOString()]);
+  }
+  /** The row for a relationship: the one with its id, the one already there for its subject, relation and object, or a new one. */
+  private upsertRelationship(r: Relationship): string {
+    const same = this.relationshipRows("subject = ?1 AND relation = ?2 AND object = ?3", r.subject, r.relation, r.object)[0];
+    const byId = r.id ? this.relationshipRows("id = ?", r.id)[0] : undefined;
+    if (r.id && byId && (byId.subject !== r.subject || byId.relation !== r.relation || byId.object !== r.object)) throw new PolicyValidationError([`id ${r.id} is a different relationship`]);
+    if (same) {
+      if (r.id && same.id !== r.id) throw new PolicyValidationError([`${r.subject} ${r.relation} ${r.object} is on file as ${same.id}`]);
+      if (r.recordedBy !== undefined) this.db.run("UPDATE relationships SET recorded_by = ? WHERE id = ?", [r.recordedBy, same.id]);
+      return same.id!;
+    }
+    const id = r.id ? (this.claimId(r.id), r.id) : this.newId("rel");
+    this.insertRelationship(r, id);
+    return id;
+  }
+  /** Adds a relationship, or keeps the one already there. */
+  putRelationship(r: Relationship): Revision { checked([r], "relationship", validateRelationship); return this.patientWrite(PolicyStore.patientOfRelationship(r), () => { this.upsertRelationship(r); })!; }
+  /** The relationship with this subject, relation and object, if on file. */
+  relationshipOf(r: Pick<Relationship, "subject" | "relation" | "object">): Relationship | undefined { return this.relationshipRows("subject = ?1 AND relation = ?2 AND object = ?3", r.subject, r.relation, r.object)[0]; }
   /**
-   * Removes a relationship, and returns the revisions, or undefined if there was none. Removing a guardian
-   * relationship removes, in the same write, that guardian's shares for the patient, and what removing
-   * those shares removes, and the guardian's own app approvals for the patient unless a route remains.
+   * Removes a relationship, and every choice resting only on it, and returns the revisions, or undefined
+   * if there was none. Putting it back makes a new row, which brings none of them back.
    */
-  removeRelationship(r: Pick<Relationship, "subject" | "relation" | "object">, stillReaches: StillReaches = anyRoute): Revision | undefined {
-    return this.patientWrite(PolicyStore.patientOfRelationship(r), () => {
+  removeRelationship(r: Pick<Relationship, "subject" | "relation" | "object">): Revision | undefined {
+    const patient = PolicyStore.patientOfRelationship(r);
+    return this.patientWrite(patient, () => {
       if (this.db.run("DELETE FROM relationships WHERE subject = ? AND relation = ? AND object = ?", [r.subject, r.relation, r.object]).changes === 0) return false;
-      if (r.relation === GUARDIAN_OF) this.cascade([r], [], stillReaches);
+      this.prune(patient);
     });
   }
   /**
-   * What removing grants takes with it: each removed guardian relationship, that guardian's shares for the
-   * patient; and for each removed share's recipient, and each removed guardian, their app approvals on
-   * the patient, unless they still have a route to it.
+   * Deletes, for one patient, every share whose basis is gone, then every approval none of whose basis
+   * remains. It compares ids only: policies, ages and the clock don't enter into it.
    */
-  private cascade(guardians: Pick<Relationship, "subject" | "object">[], shares: Pick<Share, "patient" | "with">[], stillReaches: StillReaches) {
-    const affected: [Ref, Ref][] = [...guardians.map(g => [g.subject, g.object] as [Ref, Ref]), ...shares.map(x => [x.with, x.patient] as [Ref, Ref])];
-    for (const g of guardians) for (const x of this.shareRows("patient = ?1 AND from_user = ?2", g.object, g.subject)) {
-      this.db.run("DELETE FROM shares WHERE patient = ? AND from_user = ? AND with_user = ?", [x.patient, x.from, x.with]);
-      affected.push([x.with, x.patient]);
-    }
-    for (const [user, patient] of affected) {
-      if (!stillReaches(this.patientRows(patient), user, patient)) this.db.run("DELETE FROM approvals WHERE patient = ? AND by_user = ?", [patient, user]);
-    }
+  private prune(patient: string) {
+    const rels = new Set(this.relationshipRows("object = ?", patient).map(r => r.id));
+    for (const x of this.shareRows("patient = ?", patient)) if (x.basis !== SELF && !rels.has(x.basis)) this.db.run("DELETE FROM shares WHERE id = ?", [x.id!]);
+    const shares = new Set(this.shareRows("patient = ?", patient).map(x => x.id));
+    for (const a of this.approvalRows("patient = ?", patient)) if (!a.basis!.some(b => b === SELF || rels.has(b) || shares.has(b))) this.db.run("DELETE FROM approvals WHERE id = ?", [a.id!]);
   }
 
   // Level 2
@@ -230,43 +269,109 @@ export class PolicyStore {
   // Level 3
 
   private shareRows(where = "1", ...args: string[]): Share[] {
-    return (this.db.query(`SELECT patient, with_user, from_user, sites, label FROM shares WHERE ${where} ORDER BY rowid`).all(...args) as any[]).map(s => ({ from: s.from_user, with: s.with_user, patient: s.patient, sites: JSON.parse(s.sites), label: s.label }));
+    return (this.db.query(`SELECT id, patient, with_user, from_user, sites, label, basis FROM shares WHERE ${where} ORDER BY rowid`).all(...args) as any[])
+      .map(s => ({ id: s.id, from: s.from_user, with: s.with_user, patient: s.patient, sites: JSON.parse(s.sites), label: s.label, basis: s.basis }));
   }
   shares(): Share[] { return this.shareRows(); }
-  private putShareRow(s: Share) {
-    this.db.run("INSERT OR REPLACE INTO shares (patient, with_user, from_user, sites, label) VALUES (?, ?, ?, ?, ?)", [s.patient, s.with, s.from, JSON.stringify(s.sites), s.label]);
+  private isSelf(user: Ref, patient: Ref) { return !!this.patientOf && this.patientOf(idOf(user, "user") ?? "") === idOf(patient, "patient"); }
+  /** The route a sharer holds now, from the rows alone: being the patient, or their guardian relationship. */
+  private shareBasis(s: Share): string {
+    if (this.isSelf(s.from, s.patient)) return SELF;
+    const rel = this.relationshipOf({ subject: s.from, relation: GUARDIAN_OF, object: s.patient });
+    if (rel) return rel.id!;
+    throw new PolicyValidationError([`${s.from} holds no route to ${s.patient} to share: they aren't the patient, and have no guardian relationship on file`]);
   }
-  /** Puts a share as given, one per patient, sharer and recipient. The policy API checks it against organization policy first. */
-  putShare(s: Share): Revision { checked([s], "share", validateShare); return this.patientWrite(s.patient, () => this.putShareRow(s))!; }
+  private checkShareBasis(s: Share, basis: string) {
+    if (basis === SELF ? this.patientOf && !this.isSelf(s.from, s.patient) : !this.relationshipRows("id = ?1 AND subject = ?2 AND relation = ?3 AND object = ?4", basis, s.from, GUARDIAN_OF, s.patient).length)
+      throw new PolicyValidationError([`share from ${s.from}: basis ${basis} isn't a route they hold to ${s.patient}`]);
+  }
   /**
-   * Removes shares matching every field given, and returns the revisions, or undefined if there were none.
-   * A recipient's app approvals on a patient go too, unless another route to the patient remains, so
-   * sharing again never brings an app back.
+   * The row for a share: the one with its id, or the one for its patient, sharer and recipient, updated,
+   * or a new one. A share keeps the basis it was made on unless one is given; a new one records the
+   * sharer's route now. A kept share's basis isn't checked: if it's gone, the prune that follows removes it.
    */
-  removeShares(m: { with: string; from?: string; patient?: string }, stillReaches: StillReaches = anyRoute): Revision | undefined {
+  private upsertShare(s: Share) {
+    const byKey = this.shareRows("patient = ?1 AND from_user = ?2 AND with_user = ?3", s.patient, s.from, s.with)[0];
+    const byId = s.id ? this.shareRows("id = ?", s.id)[0] : undefined;
+    if (s.id && byId && (byId.patient !== s.patient || byId.from !== s.from || byId.with !== s.with)) throw new PolicyValidationError([`id ${s.id} is a different share`]);
+    if (s.id && byKey && byKey.id !== s.id) throw new PolicyValidationError([`the share from ${s.from} with ${s.with} of ${s.patient} is on file as ${byKey.id}`]);
+    const held = byId ?? byKey;
+    if (held) {
+      if (s.basis !== undefined && s.basis !== held.basis) this.checkShareBasis(s, s.basis);
+      this.db.run("UPDATE shares SET sites = ?, label = ?, basis = ? WHERE id = ?", [JSON.stringify(s.sites), s.label, s.basis ?? held.basis!, held.id!]);
+      return;
+    }
+    const basis = s.basis ?? this.shareBasis(s);
+    if (s.basis !== undefined) this.checkShareBasis(s, basis);
+    const id = s.id ? (this.claimId(s.id), s.id) : this.newId("share");
+    this.db.run("INSERT INTO shares (id, patient, with_user, from_user, sites, label, basis) VALUES (?, ?, ?, ?, ?, ?, ?)", [id, s.patient, s.with, s.from, JSON.stringify(s.sites), s.label, basis]);
+  }
+  /** Puts a share, one per patient, sharer and recipient. The policy API checks it against organization policy first. */
+  putShare(s: Share): Revision { checked([s], "share", validateShare); return this.patientWrite(s.patient, () => { this.upsertShare(s); })!; }
+  /** The share from one person with another of a patient's records, if on file. */
+  shareOf(s: Pick<Share, "patient" | "from" | "with">): Share | undefined { return this.shareRows("patient = ?1 AND from_user = ?2 AND with_user = ?3", s.patient, s.from, s.with)[0]; }
+  /**
+   * Removes shares matching every field given, and every approval resting only on deleted rows, and
+   * returns the revisions, or undefined if there were none.
+   */
+  removeShares(m: { with: string; from?: string; patient?: string }): Revision | undefined {
     const hit = this.shareRows("with_user = ?1 AND (?2 IS NULL OR from_user = ?2) AND (?3 IS NULL OR patient = ?3)", m.with, m.from ?? null as any, m.patient ?? null as any);
     if (!hit.length) return undefined;
     return this.tx(() => {
-      for (const s of hit) this.db.run("DELETE FROM shares WHERE patient = ? AND from_user = ? AND with_user = ?", [s.patient, s.from, s.with]);
-      this.cascade([], hit, stillReaches);
-      for (const p of new Set(hit.map(s => s.patient))) this.bumpPatient(p);
+      for (const s of hit) this.db.run("DELETE FROM shares WHERE id = ?", [s.id!]);
+      for (const p of new Set(hit.map(s => s.patient))) { this.prune(p); this.bumpPatient(p); }
       return this.revision(hit.length === 1 ? hit[0]!.patient : undefined);
     });
   }
   private approvalRows(where = "1", ...args: string[]): AppApproval[] {
-    return (this.db.query(`SELECT app, by_user, patient, sites FROM approvals WHERE ${where} ORDER BY rowid`).all(...args) as any[]).map(a => ({ by: a.by_user, app: a.app, patient: a.patient, ...(a.sites === null ? {} : { sites: JSON.parse(a.sites) }) }));
+    return (this.db.query(`SELECT id, app, by_user, patient, sites, basis FROM approvals WHERE ${where} ORDER BY rowid`).all(...args) as any[])
+      .map(a => ({ id: a.id, by: a.by_user, app: a.app, patient: a.patient, ...(a.sites === null ? {} : { sites: JSON.parse(a.sites) }), basis: JSON.parse(a.basis) }));
   }
   approvals(): AppApproval[] { return this.approvalRows(); }
-  private putApprovalRow(a: AppApproval) {
-    this.db.run("DELETE FROM approvals WHERE app = ? AND by_user = ? AND patient = ?", [a.app, a.by, a.patient]);
-    this.db.run("INSERT INTO approvals (app, by_user, patient, sites) VALUES (?, ?, ?, ?)", [a.app, a.by, a.patient, a.sites ? JSON.stringify(a.sites) : null]);
+  /** Every route a user holds to a patient now, from the rows alone: being the patient, guardian relationships, and shares with them. */
+  private routesOf(user: Ref, patient: Ref): string[] {
+    return [
+      ...(this.isSelf(user, patient) ? [SELF] : []),
+      ...this.relationshipRows("subject = ?1 AND relation = ?2 AND object = ?3", user, GUARDIAN_OF, patient).map(r => r.id!),
+      ...this.shareRows("patient = ?1 AND with_user = ?2", patient, user).map(x => x.id!),
+    ];
   }
-  putApproval(a: AppApproval): Revision { checked([a], "approval", validateApproval); return this.patientWrite(a.patient, () => this.putApprovalRow(a))!; }
+  private approvalBasis(a: AppApproval): string[] {
+    const basis = this.routesOf(a.by, a.patient);
+    if (!basis.length) throw new PolicyValidationError([`${a.by} holds no route to ${a.patient} to approve an app for: they aren't the patient, a guardian, or anyone's share's recipient`]);
+    return basis;
+  }
+  private checkApprovalBasis(a: AppApproval, basis: string[]) {
+    const held = new Set(this.routesOf(a.by, a.patient));
+    for (const b of basis) if (!held.has(b) && !(b === SELF && !this.patientOf)) throw new PolicyValidationError([`approval by ${a.by}: basis ${b} isn't a route they hold to ${a.patient}`]);
+  }
+  /**
+   * The row for an approval: the one with its id, or the one for its user, app and patient, or a new one.
+   * Each approval rests on every route its user holds when making it, or the basis given, so a route
+   * gained later counts only once they approve again. A kept approval's basis isn't checked: the prune
+   * that follows removes it if nothing in it remains.
+   */
+  private upsertApproval(a: AppApproval, keeping = false) {
+    const byKey = this.approvalRows("app = ?1 AND by_user = ?2 AND patient = ?3", a.app, a.by, a.patient)[0];
+    const byId = a.id ? this.approvalRows("id = ?", a.id)[0] : undefined;
+    if (a.id && byId && (byId.app !== a.app || byId.by !== a.by || byId.patient !== a.patient)) throw new PolicyValidationError([`id ${a.id} is a different approval`]);
+    if (a.id && byKey && byKey.id !== a.id) throw new PolicyValidationError([`the approval by ${a.by} of ${a.app} for ${a.patient} is on file as ${byKey.id}`]);
+    const held = byId ?? byKey;
+    const basis = a.basis ?? this.approvalBasis(a);
+    if (a.basis !== undefined && !(keeping && held && JSON.stringify(held.basis) === JSON.stringify(a.basis))) this.checkApprovalBasis(a, basis);
+    if (held) { this.db.run("UPDATE approvals SET sites = ?, basis = ? WHERE id = ?", [a.sites ? JSON.stringify(a.sites) : null, JSON.stringify(basis), held.id!]); return; }
+    const id = a.id ? (this.claimId(a.id), a.id) : this.newId("approval");
+    this.db.run("INSERT INTO approvals (id, app, by_user, patient, sites, basis) VALUES (?, ?, ?, ?, ?, ?)", [id, a.app, a.by, a.patient, a.sites ? JSON.stringify(a.sites) : null, JSON.stringify(basis)]);
+  }
+  /** Puts an app approval, resting on every route its user holds now unless a basis is given. */
+  putApproval(a: AppApproval): Revision { checked([a], "approval", validateApproval); return this.patientWrite(a.patient, () => { this.upsertApproval(a); })!; }
+  /** The approval by a user of an app for a patient, if on file. */
+  approvalOf(a: Pick<AppApproval, "by" | "app" | "patient">): AppApproval | undefined { return this.approvalRows("app = ?1 AND by_user = ?2 AND patient = ?3", a.app, a.by, a.patient)[0]; }
   removeApprovals(m: { by: string; app: string; patient?: string }): Revision | undefined {
     const hit = this.approvalRows("app = ?1 AND by_user = ?2 AND (?3 IS NULL OR patient = ?3)", m.app, m.by, m.patient ?? null as any);
     if (!hit.length) return undefined;
     return this.tx(() => {
-      for (const a of hit) { this.db.run("DELETE FROM approvals WHERE app = ? AND by_user = ? AND patient = ?", [a.app, a.by, a.patient]); this.bumpPatient(a.patient); }
+      for (const a of hit) { this.db.run("DELETE FROM approvals WHERE id = ?", [a.id!]); this.bumpPatient(a.patient); }
       return this.revision(hit.length === 1 ? hit[0]!.patient : undefined);
     });
   }
@@ -296,24 +401,25 @@ export class PolicyStore {
     return this.tx(() => ({ relationships: this.relationships(), policies: this.policies(), shares: this.shares(), approvals: this.approvals(), revision: this.revision() }));
   }
   /**
-   * Replaces the parts given, all or none. Throws PolicyValidationError, changing nothing, if any part is
-   * invalid. What it removes takes what hangs off it, as the single removals do: a removed guardian
-   * relationship, that guardian's shares and approvals for the patient, and a removed share, its
-   * recipient's approvals there, each unless a route remains. The cascade applies after the parts given.
+   * Replaces the parts given, all or none, matching rows by id. A row whose id the document keeps is the
+   * same row, and its dependents stay; a row without an id is new; a row the document leaves out is
+   * deleted, with every choice resting only on deleted rows. A row naming an id used before, and since
+   * deleted, is refused. Throws PolicyValidationError, changing nothing, if anything is invalid.
    */
-  setDocument(d: Partial<PolicyDocument>, stillReaches: StillReaches = anyRoute): Revision {
+  setDocument(d: Partial<PolicyDocument>): Revision {
     const errors = validateDocument(d);
     if (errors.length) throw new PolicyValidationError(errors);
     return this.policyWrite(() => {
-      const key = (x: { subject: string; relation: string; object: string }) => `${x.subject} ${x.relation} ${x.object}`, shareKey = (x: Share) => `${x.patient} ${x.from} ${x.with}`;
-      const guardiansBefore = this.relationshipRows("relation = ?", GUARDIAN_OF), sharesBefore = this.shares();
-      if (d.relationships) { this.db.run("DELETE FROM relationships"); for (const r of d.relationships) this.putRelationshipRow(r); }
-      if (d.policies) { this.db.run("DELETE FROM policies"); for (const p of d.policies) this.putPolicyRow(p); }
-      if (d.shares) { this.db.run("DELETE FROM shares"); for (const s of d.shares) this.putShareRow(s); }
-      if (d.approvals) { this.db.run("DELETE FROM approvals"); for (const a of d.approvals) this.putApprovalRow(a); }
-      this.policies.cache = undefined;
-      const guardiansAfter = new Set(this.relationshipRows("relation = ?", GUARDIAN_OF).map(key)), sharesAfter = new Set(this.shares().map(shareKey));
-      this.cascade(guardiansBefore.filter(r => !guardiansAfter.has(key(r))), sharesBefore.filter(s => !sharesAfter.has(shareKey(s))), stillReaches);
+      const before = this.patientsWithRows();
+      const drop = (table: string, rows: { id?: string }[]) => {
+        const keep = new Set(rows.flatMap(r => r.id ? [r.id] : []));
+        for (const { id } of this.db.query(`SELECT id FROM ${table}`).all() as any[]) if (!keep.has(id)) this.db.run(`DELETE FROM ${table} WHERE id = ?`, [id]);
+      };
+      if (d.relationships) { drop("relationships", d.relationships); for (const r of d.relationships) this.upsertRelationship(r); }
+      if (d.policies) { this.db.run("DELETE FROM policies"); for (const p of d.policies) this.putPolicyRow(p); this.policies.cache = undefined; }
+      if (d.shares) { drop("shares", d.shares); for (const x of d.shares) this.upsertShare(x); }
+      if (d.approvals) { drop("approvals", d.approvals); for (const a of d.approvals) this.upsertApproval(a, true); }
+      for (const p of new Set([...before, ...this.patientsWithRows()])) this.prune(p);
     }, () => this.patientsWithRows());
   }
 

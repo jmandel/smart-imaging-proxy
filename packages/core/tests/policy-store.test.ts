@@ -19,11 +19,12 @@ const GUARDIAN: Relationship = { subject: "user:sam", relation: "guardian_of", o
 const SHARE: Share = { from: "user:josh", with: "user:sam", patient: "patient:josh-example", sites: ["Lakeside Imaging"], label: "caregiver" };
 const APPROVAL: AppApproval = { by: "user:josh", app: "app:portal-app", patient: "patient:josh-example", sites: ["Riverside Hospital"] };
 const ON_FILE = { relationships: [GUARDIAN], policies: [GUARDIANS, SHARING] };
+const JOSH_ACCOUNT = (u: string) => (u === "josh" ? "josh-example" : undefined);
 
 describe("durability", () => {
   test("facts, policies, choices, settings, revisions, the signing key, and token records survive close and reopen", () => {
     const path = tempPath();
-    const a = new PolicyStore({ mode: "file", path, durability: "full", onFile: ON_FILE });
+    const a = new PolicyStore({ mode: "file", path, durability: "full", onFile: ON_FILE, patientOf: JOSH_ACCOUNT });
     a.setDocument({ policies: [GUARDIANS, SHARING, SERVICE, SERVICE2], shares: [SHARE], approvals: [APPROVAL, { by: "user:josh", app: "app:viewer", patient: "patient:josh-example" }] });
     a.setSettings({ tokenLifetimeSeconds: 1234, contextLifetimeSeconds: 77, maxSeriesInContext: 5 });
     const revision = a.revision("patient:josh-example");
@@ -35,12 +36,12 @@ describe("durability", () => {
     a.putToken("raw-refresh-token-value", "refresh", { client_id: "portal-app", scope: "s", sub: "josh" });
     a.close();
 
-    const b = new PolicyStore({ mode: "file", path, durability: "full", onFile: ON_FILE });
+    const b = new PolicyStore({ mode: "file", path, durability: "full", onFile: ON_FILE, patientOf: JOSH_ACCOUNT });
     const p = b.snapshot();
-    expect(p.relationships).toEqual([GUARDIAN]);
+    expect(p.relationships).toMatchObject([GUARDIAN]);
     expect(p.policies).toEqual([GUARDIANS, SHARING, SERVICE, SERVICE2]);
-    expect(p.shares).toEqual([SHARE]);
-    expect(p.approvals).toEqual([APPROVAL, { by: "user:josh", app: "app:viewer", patient: "patient:josh-example" }]);
+    expect(p.shares).toMatchObject([SHARE]);
+    expect(p.approvals).toMatchObject([{ ...APPROVAL, basis: ["self"] }, { by: "user:josh", app: "app:viewer", patient: "patient:josh-example", basis: ["self"] }]);
     expect(b.getSettings()).toMatchObject({ tokenLifetimeSeconds: 1234, contextLifetimeSeconds: 77, maxSeriesInContext: 5 });
     expect(b.revision("patient:josh-example")).toEqual(revision);
     const again = b.currentSigningKey();
@@ -96,7 +97,7 @@ describe("durability", () => {
 });
 
 describe("writes", () => {
-  const store = () => new PolicyStore({ mode: "memory", onFile: ON_FILE });
+  const store = () => new PolicyStore({ mode: "memory", onFile: ON_FILE, patientOf: JOSH_ACCOUNT });
 
   test("a failure partway through a write changes nothing, and raises no revision", () => {
     const s = store();
@@ -106,7 +107,7 @@ describe("writes", () => {
     expect(() => s.setDocument({ policies: [SERVICE2], shares: [], approvals: [APPROVAL] })).toThrow("simulated failure");
     const p = s.snapshot();
     expect(p.policies).toEqual([GUARDIANS, SHARING, SERVICE]);
-    expect(p.shares).toEqual([SHARE]);
+    expect(p.shares).toMatchObject([SHARE]);
     expect(p.approvals).toEqual([]);
     expect(s.revision("patient:josh-example")).toEqual(before);
     s.close();
@@ -185,7 +186,7 @@ describe("writes", () => {
     s.putToken("t", "access", { client_id: "c", scope: "s" });
     s.resetPolicy();
     const { revision, ...after } = s.snapshot();
-    expect(after).toEqual({ relationships: [GUARDIAN], policies: [GUARDIANS, SHARING], shares: [], approvals: [] });
+    expect(after).toMatchObject({ relationships: [GUARDIAN], policies: [GUARDIANS, SHARING], shares: [], approvals: [] });
     expect(s.getSettings().maxSeriesInContext).toBe(12);
     expect(s.getToken("t", "access")).toBeDefined();
     s.resetAll();
@@ -195,7 +196,7 @@ describe("writes", () => {
 });
 
 describe("revisions", () => {
-  const store = () => new PolicyStore({ mode: "memory", onFile: ON_FILE });
+  const store = () => new PolicyStore({ mode: "memory", onFile: ON_FILE, patientOf: JOSH_ACCOUNT });
   test("a write about one patient raises that patient's revision, and nobody else's", () => {
     const s = store();
     const josh = () => s.patientRevision("patient:josh-example"), riley = () => s.patientRevision("patient:riley");
@@ -229,15 +230,15 @@ describe("revisions", () => {
     const s = store();
     s.setDocument({ shares: [SHARE, { ...SHARE, patient: "patient:riley", from: "user:sam", with: "user:alex" }], approvals: [APPROVAL] });
     const snap = s.patientSnapshot("patient:josh-example");
-    expect(snap.shares).toEqual([SHARE]);
-    expect(snap.approvals).toEqual([APPROVAL]);
+    expect(snap.shares).toMatchObject([SHARE]);
+    expect(snap.approvals).toMatchObject([APPROVAL]);
     expect(snap.relationships).toEqual([]);
     expect(snap.revision).toEqual(s.revision("patient:josh-example"));
-    expect(s.patientSnapshot("patient:riley").relationships).toEqual([GUARDIAN]);
+    expect(s.patientSnapshot("patient:riley").relationships).toMatchObject([GUARDIAN]);
   });
   test("organization policy is held in memory, and read again after any write to it, by this store or another", () => {
     const path = tempPath();
-    const a = new PolicyStore({ mode: "file", path, onFile: ON_FILE }), b = new PolicyStore({ mode: "file", path, onFile: ON_FILE });
+    const a = new PolicyStore({ mode: "file", path, onFile: ON_FILE, patientOf: JOSH_ACCOUNT }), b = new PolicyStore({ mode: "file", path, onFile: ON_FILE, patientOf: JOSH_ACCOUNT });
     const first = a.policies();
     expect(a.policies()).toBe(first);
     b.putPolicy(SERVICE);

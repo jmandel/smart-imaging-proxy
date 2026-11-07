@@ -150,12 +150,14 @@ Policy has three levels, and references are written `kind:id`, such as `user:sam
 Access is the union of every grant that applies. Policies and choices only grant: adding a policy, relationship or choice never takes access away, and their order doesn't matter. Policies may overlap, and their result is the union. Restriction lives only inside a grant's own reach:
 
 - A user's routes to a patient's study are being the patient; being a guardian, once for each `guardian-access` policy whose band holds the patient's age, reaching every study but those with a label it excepts; and each share with them, reaching what the sharer sees now as the patient or a guardian, in a role a `sharing` policy lets them share in, at the sites shared. A share's reach is computed from the sharer's own grants, never from shares they received.
-- An app approval narrows: the app gets the user's access, at the approval's sites.
+- An app approval narrows: the app gets the user's access through the routes the approval rests on, at its sites.
 - A backend service gets the union of every `service-access` policy for it and the patient, with no choices. A series one policy withholds and another reaches is released.
 
-Revoking is deleting the grant, by a single removal or by a document write that leaves it out. Removing a guardian relationship removes, in the same write, that guardian's shares for the patient. Removing a share removes the app approvals its recipient made on that patient, so sharing again never brings an app's access back. A guardian whose relationship goes loses their own approvals for the patient too. An approval stays while its maker still has a route to the patient: as the patient, as a guardian a `guardian-access` policy covers, or through another share.
+Choices rest on rows, by id. Every relationship, share and approval has an `id`, which is never used again, even after its row is deleted, so a re-created row is a new one. A relationship records `recordedAt`. A share records `basis`, the route its sharer held when sharing: `self` for the patient, or their guardian relationship's id. An approval records `basis`, every route its user held on the patient when approving: `self`, guardian relationship ids, and share ids. The store records these from rows alone. A share reaches only through its basis, and an approval releases only through the routes in its basis, so a route gained later counts once the user approves again.
 
-Some grants go quiet rather than being deleted, and come back when their cause does: shares and approvals while no `sharing` policy allows the sharer's role, or no `guardian-access` policy covers the patient's age, including when a patient ages out of a band or their birth date changes.
+Revoking is deleting the row, by a single removal or by a document write that leaves it out. In the same write, every share whose basis is deleted is deleted, and every approval none of whose basis remains. That's decided by ids alone: policies, ages, birth dates and the clock never enter into it, so the same removal deletes the same rows whatever policies are present. Putting a relationship back makes a new row, which brings none of the old shares or approvals back.
+
+Policy, age and birth-date changes delete nothing. A share or approval goes quiet while no `sharing` policy allows the sharer's role, or no `guardian-access` policy covers the patient's age, and comes back when one does again.
 
 Labels are facts a grant's reach checks. A study's labels are trimmed and lowercased before matching. A label name is lowercase letters and digits in hyphenated words, and policies' `except` and `knownLabels` take only those. The `guardian-access` policy covering the patient's age decides alone: a study label it neither excepts nor knows, or one that isn't a label name, keeps the study from guardians. Other policies' labels never count. This fails closed at check time, and ingest doesn't refuse the study. A patient's own access, shares from the patient, and services aren't affected.
 
@@ -173,7 +175,7 @@ Search and decisions read one patient's rows, through indexes by patient, and a 
 
 ## The policy store
 
-`new PolicyStore({ mode, path, durability, onFile })` holds policy (relationships, organization policies, shares, app approvals, revisions, settings), the signing keys, and the Authorization Server's token records, all in one SQLite file, or in memory. `durability` is `off`, `normal` or `full`, SQLite's `synchronous`. A file store is WAL and mode `0600`. `onFile` is `{ relationships, policies }`, what's on file: a new database starts with them, and a reset puts them back. The schema is versioned, at `SCHEMA_VERSION`. A store in any other format isn't read or changed: opening it throws, saying to reset saved policy by deleting the file or using a new one. Every write is validated, and all or none: `PolicyValidationError` lists each problem.
+`new PolicyStore({ mode, path, durability, onFile, patientOf, now })` holds policy (relationships, organization policies, shares, app approvals, revisions, settings), the signing keys, and the Authorization Server's token records, all in one SQLite file, or in memory. `durability` is `off`, `normal` or `full`, SQLite's `synchronous`. A file store is WAL and mode `0600`. `onFile` is `{ relationships, policies }`, what's on file: a new database starts with them, and a reset puts them back, with the ids given there, since a reset also clears every choice. `patientOf(user)` is the patient a user account is, so a choice can rest on `self`, and `now()`, in seconds, stamps relationships. A share or approval written with no route under it is refused. The schema is versioned, at `SCHEMA_VERSION`. A store in any other format isn't read or changed: opening it throws, saying to reset saved policy by deleting the file or using a new one. Every write is validated, and all or none: `PolicyValidationError` lists each problem.
 
 `patientSnapshot(patient)` reads what one decision needs, organization policy and that patient's rows, and `personSnapshot(user)` what a user's account needs. `snapshot()` reads every level, for administration.
 
@@ -184,19 +186,19 @@ Version 2, at `/policy/v2` on the Imaging Server. JSON in and out. Every call ca
 | Call | Body or query | Answer |
 |---|---|---|
 | `GET /document` | | `{ relationships, policies, shares, approvals, revision }` |
-| `PUT /document` | Any of those parts | Replaces the parts given. What it leaves out takes what hangs off it, as the single removals do |
-| `GET /relationships` | | `{ relationships, revision }` |
-| `PUT /relationships` | `{ subject, relation, object, recordedBy? }` | Adds one |
-| `DELETE /relationships` | `subject`, `relation`, `object` | Removes one. For `guardian_of`, also that guardian's shares and app approvals for the patient |
+| `PUT /document` | Any of those parts, with ids | Replaces the parts given, matching rows by id: a kept id keeps its row and what rests on it, a row without an id is new, and a row left out is deleted with what rests only on it. A row naming an id that was deleted is refused. A document from `GET` round-trips |
+| `GET /relationships` | | `{ relationships, revision }`, each with its `id` and `recordedAt` |
+| `PUT /relationships` | `{ subject, relation, object, recordedBy? }` | `{ revision, relationship }`: a new row, or the one already on file |
+| `DELETE /relationships` | `subject`, `relation`, `object` | Removes one, and every choice resting only on it |
 | `GET /policies` | `type`, optionally | `{ policies, revision }` |
 | `PUT /policies?type={type}` | A list of policies of that type | Replaces every policy of that type |
 | `PUT /policies/{id}` | A policy with that id | Adds or replaces one. Its type can't change |
 | `DELETE /policies/{id}` | | Removes one |
-| `GET /shares` | | `{ shares, revision }` |
-| `POST /shares` | `{ from, with, patient, sites, label }`, with `sites` a list of strings | `{ revision, share }`, replacing that sharer's earlier share with that person, with sites narrowed to those the sharer can see. `403` with `{ error, policy }` when no `sharing` policy lets the sharer's role share, or no `guardian-access` policy covers the patient for a guardian |
-| `DELETE /shares` | `with`, with `from`, `patient` or both | Removes those, and the recipient's app approvals on those patients |
-| `GET /app-approvals` | | `{ approvals, revision }` |
-| `POST /app-approvals` | `{ by, app, patient, sites?, fhirUser? }`, with `sites` a list of strings | `{ revision, approval }`, with sites narrowed to what `by` can see, and all of the patient's sites as no limit. With no `sites`, an earlier choice stays. `403` with `{ error, policy }` when `by` holds no record of the patient |
+| `GET /shares` | | `{ shares, revision }`, each with its `id` and `basis` |
+| `POST /shares` | `{ from, with, patient, sites, label }`, with `sites` a list of strings | `{ revision, share }`, with its `id` and `basis`, the route the sharer shares through. It replaces that sharer's earlier share with that person, keeping its id, with sites narrowed to those the sharer can see. `403` with `{ error, policy }` when no `sharing` policy lets the sharer's role share, or no `guardian-access` policy covers the patient for a guardian |
+| `DELETE /shares` | `with`, with `from`, `patient` or both | Removes those, and every approval resting only on them |
+| `GET /app-approvals` | | `{ approvals, revision }`, each with its `id` and `basis` |
+| `POST /app-approvals` | `{ by, app, patient, sites?, fhirUser? }`, with `sites` a list of strings | `{ revision, approval }`, with its `id` and `basis`, every route `by` holds now, with sites narrowed to what `by` can see, and all of the patient's sites as no limit. With no `sites`, an earlier choice stays. `403` with `{ error, policy }` when `by` holds no record of the patient |
 | `DELETE /app-approvals` | `by`, `app`, and optionally `patient` | Removes those |
 | `GET /access` | `user`, `fhirUser` | `{ records, shares, approvals }`: the records the user holds and how (`self`, `guardian` or `share`), with the sites they can choose among, and the choices they've made |
 | `GET /explain` | `client`, `patient`, and for a launch `user` and `fhirUser` | `{ revision, searchAllowed, policies, studies }`, each study with its `release`, `why`, `because` and `policies`, as search decides it. For a backend service, `policies` are the service-access policies that let it search, and each study's, those that released it |

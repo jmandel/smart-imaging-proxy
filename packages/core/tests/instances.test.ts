@@ -41,7 +41,7 @@ describe("two deployments side by side", () => {
     await a.policy.setSettings({ contextLifetimeSeconds: 60 });
     expect((await a.policy.approveApp({ by: "user:pat", app: "app:app", fhirUser: "Patient/p1", patient: "patient:p1" })).ok).toBe(true);
     expect((await a.policy.policies()).map(r => r.id)).toEqual(["only-a"]);
-    expect(await a.policy.approvals()).toEqual([{ by: "user:pat", app: "app:app", patient: "patient:p1" }]);
+    expect(await a.policy.approvals()).toMatchObject([{ by: "user:pat", app: "app:app", patient: "patient:p1", basis: ["self"] }]);
     expect(await b.policy.policies()).toEqual([]);
     expect(await b.policy.approvals()).toEqual([]);
     expect((await b.policy.getSettings()).contextLifetimeSeconds).toBe(300);
