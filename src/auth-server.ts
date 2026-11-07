@@ -182,6 +182,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     if (!check("authorization-server", "aud is a FHIR server this deployment authorizes", q.get("aud") === `${opts.issuer}/fhir` || q.get("aud") === opts.imagingFhirBase, { aud: q.get("aud") })) return back("invalid_scope");
     const scope = q.get("scope") ?? "";
     if (!check("authorization-server", "scope is requested", scope.length > 0, { scope })) return back("invalid_scope");
+    if (!check("authorization-server", "scope has no system-level access, which only Backend Services clients get", !scope.split(" ").some(s => s.startsWith("system/")), { scope })) return back("invalid_scope");
     const id = randomBytes(16).toString("base64url");
     txns.set(id, { client_id: q.get("client_id")!, redirect_uri: q.get("redirect_uri")!, state: q.get("state")!, scope, code_challenge: q.get("code_challenge")!, exp: now() + 600, login_hint: q.get("login_hint") ?? undefined });
     return page("Sign in", `<h1>Sign in to continue to ${esc(client!.name)}</h1><p class="who">This page belongs to the Authorization Server, not the app.</p>${await signInForm(`/authorize/signin?txn=${id}${demoQuery(url)}`, q.get("login_hint") ?? "")}`);

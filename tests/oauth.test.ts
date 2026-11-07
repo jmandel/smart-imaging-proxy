@@ -47,6 +47,19 @@ describe("Authorization request", () => {
       expect(new URL(r.headers.get("location")!).searchParams.get("error")).toBeTruthy();
     });
   }
+  test("a public client can't request system-level access", async () => {
+    const r = await statusOf(mutate(auth().url, q => q.set("scope", "launch/patient system/ImagingStudy.rs")));
+    expect(r.status).toBe(302);
+    expect(new URL(r.headers.get("location")!).searchParams.get("error")).toBe("invalid_scope");
+  });
+  test("a user's token with a system scope and no patient gets nothing, even where a rule names its client", async () => {
+    const store = stack.stores.active;
+    stack.imaging.setPolicy({ rules: [{ id: "names-client", when: { client: "separate-viewer" }, allow: { all: true } }] });
+    store.putToken("user-system-token", "access", { client_id: "separate-viewer", scope: "system/ImagingStudy.rs", sub: "robin", fhirUser: "RelatedPerson/robin" }, Math.floor(Date.now() / 1000) + 300);
+    const r = await fetch(`${CONFIG.imagingUrl}/fhir/ImagingStudy?patient=josh-example`, { headers: { Authorization: "Bearer user-system-token" } });
+    expect(r.status).toBe(403);
+    stack.resetAll();
+  });
   test("a request for the Imaging FHIR Server as aud is accepted", async () => {
     const r = await statusOf(mutate(auth().url, q => q.set("aud", conf.associated_endpoints[0].url)));
     expect(r.status).toBe(200);

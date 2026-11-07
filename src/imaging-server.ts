@@ -21,6 +21,11 @@ export function hasImagingScope(scope: string, level: "patient" | "system"): boo
   return scope.split(" ").some(s => s === `${level}/ImagingStudy.rs` || s === `${level}/ImagingStudy.read` || s === `${level}/*.rs` || s === `${level}/*.read`);
 }
 
+/** System-level access is for Backend Services tokens, which no user authorized. A user's token needs a patient. */
+export function accessLevel(t: { patient?: string; sub?: string }): "patient" | "system" | undefined {
+  return t.patient ? "patient" : t.sub ? undefined : "system";
+}
+
 /**
  * The Imaging Server reads the catalog and has no way to read an archive object. `cursorKey` signs
  * paging cursors: several processes behind one address have to share it. Without one, a key is made
@@ -119,7 +124,8 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
   }
   function evaluateAfterChain(t: any, study: CatalogStudy, policy: PolicyRows): Evaluation {
     const patient = study.patient;
-    const level: "patient" | "system" = t.patient ? "patient" : "system";
+    const level = accessLevel(t);
+    if (!level) return { release: "none", why: "a user's token has no patient context" };
     if (level === "patient" && t.patient !== patient) return { release: "none", why: "token's patient context is a different patient" };
     const rule = matchRule(t, patient, policy);
     if (!rule) {
@@ -228,8 +234,8 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
     if (!bearer) return new Response(null, { status: 401, headers: { "WWW-Authenticate": "Bearer" } });
     const t = await opts.introspect(bearer);
     if (!check("imaging-fhir", "token is active", t.active, { client: t.client_id, scope: t.scope, patient_context: t.patient, user: t.sub })) return new Response(null, { status: 401, headers: { "WWW-Authenticate": 'Bearer error="invalid_token"' } });
-    const level = t.patient ? "patient" : "system";
-    if (!hasImagingScope(t.scope, level)) return Response.json(outcome("forbidden", "scope does not cover ImagingStudy"), { status: 403 });
+    const level = accessLevel(t);
+    if (!level || !hasImagingScope(t.scope, level)) return Response.json(outcome("forbidden", "scope does not cover ImagingStudy"), { status: 403 });
     const patient = url.searchParams.get("patient")?.replace(/^.*Patient\//, "");
     if (!patient) return Response.json(outcome("required", "the patient parameter is required"), { status: 400 });
     if (level === "patient" && patient !== t.patient) return Response.json(outcome("forbidden", "patient does not match the token's patient context"), { status: 403 });
@@ -335,8 +341,8 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
     const token = body.subject?.properties?.access_token;
     const t = token ? await opts.introspect(token) : { active: false };
     if (!t.active) return respond(false, { denial: "invalid_token", max_age_seconds: 0 }, "token is not active");
-    const level = t.patient ? "patient" : "system";
-    if (!hasImagingScope(t.scope, level)) return respond(false, { denial: "insufficient_scope", max_age_seconds: 30 }, "scope does not cover imaging");
+    const level = accessLevel(t);
+    if (!level || !hasImagingScope(t.scope, level)) return respond(false, { denial: "insufficient_scope", max_age_seconds: 30 }, "scope does not cover imaging");
     const signed = body.context?.signed_context;
     if (signed) {
       // A retired key ends the instant path, not access: this answer comes from current policy.
