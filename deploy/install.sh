@@ -50,6 +50,7 @@ cd "$APP"
 "$BUN" scripts/fetch-data.ts
 "$BUN" scripts/ingest.ts
 "$BUN" scripts/backends.ts fetch
+"$BUN" scripts/viewer-kit.ts
 
 echo "== Services"
 unit() { # name, description, command, extra [Unit] lines

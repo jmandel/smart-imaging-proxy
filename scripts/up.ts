@@ -25,6 +25,7 @@ await step("Install the browser test driver, and link the core package", ["bun",
 await step("Download the sample data, verifying checksums", ["bun", "scripts/fetch-data.ts"]);
 await step("Generate the synthetic studies, and build the archive", ["bun", "scripts/ingest.ts"]);
 await step("Download the S3 store and Orthanc, checking each against its pinned SHA-256", ["bun", "scripts/backends.ts", "fetch"]);
+await step("Download viewer-kit, the browser DICOM decoder, checking its pinned SHA-256 and every file", ["bun", "scripts/viewer-kit.ts"]);
 await step("Start the S3 store and Orthanc", ["bun", "scripts/backends.ts", "start"]);
 await step("Copy the archive to the S3 bucket, and add any study Orthanc lacks", ["bun", "scripts/load-backends.ts"]);
 
@@ -37,7 +38,7 @@ await Bun.write(PID_FILE, `${demo.pid}\n`);
 // The first start builds the catalogs, which takes a little while.
 for (let i = 0; i < 240; i++) {
   if (demo.exitCode !== null) fail(`The demo exited. Its log is ${LOG_FILE}:\n\n${await Bun.file(LOG_FILE).text()}`);
-  try { if ((await fetch(`${CONFIG.demoUrl}/browse`, { signal: AbortSignal.timeout(2000) })).ok) break; } catch {}
+  try { if ((await fetch(`${CONFIG.demoUrl}/`, { signal: AbortSignal.timeout(2000) })).ok) break; } catch {}
   await Bun.sleep(500);
 }
 if (!(await demoPortAnswers())) fail(`The demo didn't answer within two minutes. Its log is ${LOG_FILE}.`);

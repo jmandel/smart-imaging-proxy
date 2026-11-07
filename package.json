@@ -15,6 +15,7 @@
     "load": "bun scripts/load-backends.ts",
     "build-catalog": "bun scripts/build-catalog.ts",
     "catalog-from-orthanc": "bun scripts/catalog-from-orthanc.ts",
+    "viewer-kit": "bun scripts/viewer-kit.ts",
     "start": "bun src/main.ts",
     "test": "bun test",
     "test:ui": "DEMO_PORT_OFFSET=3000 bun test ./e2e/browser.e2e.ts"
