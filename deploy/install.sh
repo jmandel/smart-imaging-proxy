@@ -58,7 +58,7 @@ unit() { # name, description, command, extra [Unit] lines
 Description=$2
 After=network-online.target
 Wants=network-online.target
-$4
+${4:-}
 
 [Service]
 User=$USER_NAME
