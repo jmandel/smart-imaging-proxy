@@ -1,7 +1,7 @@
 // JSON endpoints behind the admin screen. The demo has no admin login: every service binds to
-// 127.0.0.1 and the tailnet address, and writes naming another Host or web origin are refused. Every
-// write takes a fixed choice from this file or from rule-presets.ts, and nothing else. A store action
-// applies to the active store unless it names one.
+// 127.0.0.1 and the tailnet address, and a request naming another Host, or a write from another web
+// origin, is refused. Every write takes a fixed choice from this file or from rule-presets.ts, and
+// nothing else. A store action applies to the active store unless it names one.
 import type { BackendName, Stack } from "./stack";
 import { PolicyValidationError, type Settings } from "./policy-store";
 import { matchRuleSet, RULE_SETS, ruleSetById } from "./rule-presets";
@@ -32,14 +32,19 @@ export const extraField = (b: Record<string, unknown>, allowed: string[]) =>
   Object.keys(b).some(k => !allowed.includes(k)) ? `this request accepts only ${allowed.join(", ")}` : undefined;
 /** The message for a request with a body, when it takes none. */
 const unwantedBody = async (req: Request) => ["", "{}"].includes((await req.text()).trim()) ? undefined : "this action takes no input";
-const OWN_HOSTS = [`127.0.0.1:${PORTS.demo}`, `localhost:${PORTS.demo}`, ...(TAILNET ? [`${TAILNET.name}:${PORTS.demo}`, `${TAILNET.ip}:${PORTS.demo}`] : [])];
+export const ownHosts = (port: number, tailnet = TAILNET) => [`127.0.0.1:${port}`, `localhost:${port}`, ...(tailnet ? [`${tailnet.name}:${port}`, `${tailnet.ip}:${port}`] : [])];
 /**
- * Why a write must be refused, if it must. A DNS rebinding page reaches this server under its own
- * host name, so the Host header has to be this server's. A browser names the page's origin on a
- * write, and tools that send no Origin are fine.
+ * A DNS rebinding page reaches a service under its own host name, so a Host header has to be the
+ * service's. A browser always sends Host, so a request with none isn't such a page.
  */
-export function refuseWrite(req: Request, url: URL): Response | undefined {
-  if (!OWN_HOSTS.includes(req.headers.get("host") ?? "")) return json({ error: "this server answers writes only at its own addresses and port" }, 403);
+export function refuseHost(req: Request, port: number = PORTS.demo): Response | undefined {
+  const host = req.headers.get("host");
+  return host && !ownHosts(port).includes(host) ? json({ error: "this server answers only at its own addresses and port" }, 403) : undefined;
+}
+/** Why a write must be refused, if it must. A browser names the page's origin on a write, and tools that send no Origin are fine. */
+export function refuseWrite(req: Request, url: URL, port: number = PORTS.demo): Response | undefined {
+  const foreign = refuseHost(req, port);
+  if (foreign) return foreign;
   const origin = req.headers.get("origin");
   if (origin && origin !== url.origin) return json({ error: "cross-origin request refused" }, 403);
   return undefined;
@@ -81,7 +86,8 @@ export async function adminApi(stack: Stack, req: Request, url: URL, hooks: { fo
   const p = url.pathname.slice("/api/admin".length);
   const m = req.method;
   const status = () => json(adminStatus(stack));
-  if (m !== "GET") { const refused = refuseWrite(req, url); if (refused) return refused; }
+  const refused = m === "GET" ? refuseHost(req) : refuseWrite(req, url);
+  if (refused) return refused;
 
   if (p === "/status" && m === "GET") return status();
   if (p === "/backends" && m === "GET") return json({ current: stack.backend, backends: await Promise.all(BACKEND_NAMES.map(n => stack.selfTest(n))) });

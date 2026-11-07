@@ -149,8 +149,8 @@ export class Ctx {
     const r = await this.json(clientId, "SMART Backend Services token request", conf.body.token_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "client_credentials", scope, client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: assertion }).toString() });
     return r.body;
   }
-  async refresh(refreshToken: string) {
-    const r = await this.json("App", "Refresh the access token", this.stack.auth.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken }).toString() });
+  async refresh(refreshToken: string, client = "portal-app") {
+    const r = await this.json("App", "Refresh the access token", this.stack.auth.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: client }).toString() });
     return r.body;
   }
   async search(token: string, query = "patient=josh-example&_include=ImagingStudy:endpoint", actor = "App") {

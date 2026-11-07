@@ -5,6 +5,7 @@ import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { CONFIG, PORTS } from "../src/config";
 import { scriptedLaunch } from "../src/flows/oauth";
+import { clientAssertion, DEMO_BACKEND_CLIENTS, DEMO_BACKEND_SCOPES, derivedBackendClient } from "../src/auth-server";
 import { boundaryOf, readMultipart } from "../src/multipart";
 
 const root = join(import.meta.dir, "..");
@@ -80,6 +81,25 @@ for (const others of [["imaging,auth,trace"], ["imaging", "auth", "trace"]]) {
     }, 60000);
   });
 }
+
+describe("an auth process on its own", () => {
+  test("registers the demo's Backend Services clients, whose keys its service credential derives", async () => {
+    const secret = randomBytes(24).toString("base64url");
+    const p = start("auth", secret);
+    await waitFor([SERVICE_URLS[0]!]);
+    const conf: any = await (await fetch(SERVICE_URLS[0]!)).json();
+    const ask = (key: ReturnType<typeof derivedBackendClient>) => fetch(conf.token_endpoint, { method: "POST", body: new URLSearchParams({ grant_type: "client_credentials", scope: DEMO_BACKEND_SCOPES[0]!, client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: clientAssertion(key, conf.token_endpoint) }) });
+    for (const id of DEMO_BACKEND_CLIENTS) {
+      const r = await ask(derivedBackendClient(id, secret));
+      expect(r.status).toBe(200);
+      expect(((await r.json()) as any).scope).toBe(DEMO_BACKEND_SCOPES[0]);
+    }
+    const wrongSecret = await ask(derivedBackendClient(DEMO_BACKEND_CLIENTS[0]!, "another-secret"));
+    expect(wrongSecret.status).toBe(401);
+    expect(await wrongSecret.json()).toEqual({ error: "invalid_client" });
+    await stop(p);
+  }, 30000);
+});
 
 describe("starting a role", () => {
   test("without SERVICE_SECRET, or with an unknown role, it stops with a clear message", async () => {

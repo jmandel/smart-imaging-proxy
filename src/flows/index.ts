@@ -2,7 +2,7 @@ import { policyFlows } from "./policy-flows";
 import { protocolFlows } from "./protocol-flows";
 import { Ctx, resetDemo, type Flow, type StepResult } from "./runtime";
 import type { Stack } from "../stack";
-import type { BackendClient } from "../auth-server";
+import { DEMO_BACKEND_CLIENTS, DEMO_BACKEND_SCOPES, type BackendClient } from "../auth-server";
 import { randomBytes } from "node:crypto";
 import { flushTraces, runInSession, withSpan } from "../trace";
 
@@ -11,7 +11,7 @@ export const flowById = (id: string) => FLOWS.find(f => f.id === id);
 
 export function registerClients(stack: Stack): Record<string, BackendClient> {
   const clients: Record<string, BackendClient> = {};
-  for (const id of ["hand-referral-service", "outside-release-service", "research-donation"]) clients[id] = stack.auth.registerBackendClient(id, ["system/ImagingStudy.rs"]);
+  for (const id of DEMO_BACKEND_CLIENTS) clients[id] = stack.auth.registerBackendClient(id, DEMO_BACKEND_SCOPES);
   return clients;
 }
 

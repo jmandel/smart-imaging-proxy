@@ -47,7 +47,7 @@ function studyIn(bundle: any) {
   return { uid, url: `${base}/studies/${uid}` };
 }
 const refreshed = async (refreshToken: string) => {
-  const r = await fetch(stack.auth.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken }).toString() });
+  const r = await fetch(stack.auth.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: "portal-app" }).toString() });
   return { status: r.status, body: await r.json() as any };
 };
 const search = (token: string) => fetch(`${CONFIG.imagingUrl}/fhir/ImagingStudy?patient=josh-example&_include=ImagingStudy:endpoint`, { headers: { Authorization: `Bearer ${token}` } });

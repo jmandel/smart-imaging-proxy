@@ -169,6 +169,13 @@ describe("over HTTP", () => {
     expect(js).toContain('row("Path", x => x.path)');
     expect(js).not.toMatch(/call\("(POST|PUT|DELETE)"[^)]*\bpath\b/);
   });
+  test("the status is refused under another Host, before it shows anything", async () => {
+    const status = (host: string) => demo.fetch(new Request(`${CONFIG.demoUrl}/api/admin/status`, { headers: { host } }));
+    const r = await status("evil.example");
+    expect(r.status).toBe(403);
+    expect(await r.text()).not.toContain("store");
+    expect((await status(new URL(CONFIG.demoUrl).host)).status).toBe(200);
+  });
   test("/api/backend takes a backend name, and nothing else", async () => {
     for (const body of [{ backend: canary }, { backend: "'; DROP TABLE rules; --" }, { backend: "minio", path: bait }, "[]"]) expect((await send("POST", "/api/backend", body)).status).toBe(400);
     expect(stack.backend).toBe("static-files");

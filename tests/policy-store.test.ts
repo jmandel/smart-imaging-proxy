@@ -323,7 +323,7 @@ describe("a restart", () => {
       expect(complete).toBe(true);
       expect(second.proxy.events[second.proxy.events.length - 1]!.authz).toBe("instant");
 
-      const refreshed = await fetch(second.auth.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: token.refresh_token }).toString() });
+      const refreshed = await fetch(second.auth.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: token.refresh_token, client_id: "portal-app" }).toString() });
       expect(refreshed.status).toBe(200);
       expect(((await refreshed.json()) as any).patient).toBe("josh-example");
     } finally { second.stop(); }
@@ -331,7 +331,7 @@ describe("a restart", () => {
 });
 
 describe("token lifecycle", () => {
-  const refresh = (url: string, token: string) => fetch(url, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: token }).toString() });
+  const refresh = (url: string, token: string) => fetch(url, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: token, client_id: "portal-app" }).toString() });
 
   test("refresh tokens last 30 days by default, and an expired one gets invalid_grant", async () => {
     const stack = await startStack(root);

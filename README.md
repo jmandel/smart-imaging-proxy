@@ -31,7 +31,7 @@ Every service listens on `127.0.0.1`. If Tailscale is running, each one also lis
 | 4600 | Demo | `/` flow player, `/browse` Browse, `/admin` admin screen |
 | 4601 | WADO-RS proxy | `/wado/{signed-context}/studies/...`, opaque to clients |
 | 4602 | Imaging Server | `/fhir/ImagingStudy`, `/fhir/metadata`, `/access/v1/evaluation`, `/.well-known/jwks.json`, `/.well-known/authzen-configuration` |
-| 4603 | Authorization Server | `/fhir/.well-known/smart-configuration`, `/authorize`, `/token`, `/introspect`, `/revoke`, `/account`, `/fhir/Patient/{id}` |
+| 4603 | Authorization Server | `/fhir/.well-known/smart-configuration`, `/authorize`, `/token`, `/introspect`, `/revoke`, `/account`, `/fhir/Patient/{id}` (with a token for that patient) |
 | 4604 | Live trace | `/` viewer, `/span.html` full exchange, `/log.html` HTTP log, `/api/sessions/{id}/export` |
 | 4610 | MinIO | Loopback only |
 | 4611 | Orthanc | Loopback only |
@@ -156,7 +156,7 @@ PROXY_BACKEND=minio bun src/main.ts --role proxy
 | `PROXY_BACKEND` | `static-files` | `static-files`, `minio`, or `orthanc`. Set `orthanc` on `imaging` too, to use Orthanc's catalog |
 | `JWKS_TTL_SECONDS` | `60` | How long a split proxy trusts its copy of the keys |
 
-Split services have no flow player, Browse, or admin screen, and no Backend Services clients are registered.
+Split services have no flow player, Browse, or admin screen. `auth` registers the demo's Backend Services clients with keys derived from `SERVICE_SECRET` (`derivedBackendClient` in `src/auth-server.ts`), so anyone holding that secret can act as them.
 
 ## Real and simulated
 
