@@ -29,7 +29,9 @@ const INTERNAL = /^\/imaging\/policy(\/|$)|^\/internal\/|^\/trace\/v1\//;
 
 export async function gatewayFetch(req: Request): Promise<Response> {
   const url = new URL(req.url);
-  const { scope, rest } = splitScope(url.pathname);
+  const { scope, rest: asSent } = splitScope(url.pathname);
+  // Collapsed before the checks, since a client's fetch collapses it on the way to the service anyway.
+  const rest = asSent.replace(/\/{2,}/g, "/");
   const prefix = scope ? `/s/${scope}` : "";
   if (INTERNAL.test(rest)) return new Response(null, { status: 404 });
   // The trace's pages use relative links, so its root needs the slash.
