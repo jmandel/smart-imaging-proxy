@@ -7,6 +7,7 @@ import { BackendError, type Backend, type Capabilities, type InstancePart, type 
 
 export interface OrthancConfig { base: string; user: string; password: string; }
 const asIterable = (s: ReadableStream<Uint8Array>) => s as unknown as AsyncIterable<Uint8Array>;
+const knownLength = (header: string | null | undefined): { bytes?: number } => /^\d+$/.test(header ?? "") ? { bytes: Number(header) } : {};
 
 function mapError(status: number): BackendError {
   if (status === 404) return new BackendError("NotFound");
@@ -116,7 +117,23 @@ export class OrthancBackend implements Backend {
   async openBulk(study: string, series: string, instance: string, ref: string) {
     const r = await this.get(`/studies/${study}/series/${series}/instances/${instance}/bulk/${ref.toLowerCase()}`, "*/*");
     if (!r.ok) throw mapError(r.status);
-    return { contentType: r.headers.get("content-type") ?? "application/octet-stream", body: asIterable(r.body!) };
+    const boundary = boundaryOf(r.headers.get("content-type"));
+    if (!boundary) return { ...knownLength(r.headers.get("content-length")), body: asIterable(r.body!) };
+    // Orthanc wraps an element in one multipart part, which comes off here.
+    const events = readMultipart(asIterable(r.body!), boundary);
+    const start = await events.next();
+    if (start.done || start.value.type !== "start") { await events.return(undefined); throw new BackendError("Unknown", "upstream bulk response has no part"); }
+    const body = (async function* () {
+      try {
+        for await (const e of events) {
+          if (e.type === "data") yield e.bytes;
+          else if (e.type === "end") return;
+          else break;
+        }
+        throw new Error("upstream ended before the bulk element was complete");
+      } finally { await events.return(undefined); }
+    })();
+    return { ...knownLength(start.value.headers["content-length"]), body };
   }
   async rawProbe(path: string, accept: string) {
     const r = await this.get(path, accept);

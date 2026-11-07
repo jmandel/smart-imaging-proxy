@@ -107,7 +107,7 @@ class FakeBackend implements Backend {
     return { parts: parts(), ...(plan ? { plan } : {}) };
   }
   async getMetadata(scope: Scope) { this.scope = scope; return [{ __path: { series: "9", instance: "8" } }]; }
-  async openBulk(_s: string, _se: string, _i: string, _r: string, version?: number) { this.bulkVersion = version; return { contentType: "application/octet-stream", body: (async function* () { yield new Uint8Array(1); })() }; }
+  async openBulk(_s: string, _se: string, _i: string, _r: string, version?: number) { this.bulkVersion = version; return { body: (async function* () { yield new Uint8Array(1); })() }; }
 }
 
 const key = generateEd25519("k1");
@@ -811,6 +811,62 @@ describe("study version", () => {
     const signed = await proxy.fetch(request({}, context(key, { ver: -1 })));
     expect(signed.status).toBe(503);
     expect(proxy.events.at(-1)!.authz).toBe("asked");
+  });
+});
+
+describe("bulk data", () => {
+  const PATH = "/series/9/instances/8/bulk/7FE00010";
+  const chunks = [new Uint8Array([1, 2, 3]), new Uint8Array([4, 5])];
+  /** A backend whose bulk element states `bytes`, and yields `chunks`. */
+  const bulkProxy = (bytes: number | undefined, tail?: () => void) => {
+    const b = new FakeBackend([], { plan: true });
+    b.openBulk = async () => ({ ...(bytes !== undefined ? { bytes } : {}), body: (async function* () { try { yield* chunks; } finally { tail?.(); } })() });
+    return proxyOver(b);
+  };
+  const ask = (proxy: ReturnType<typeof bulkProxy>, accept: string) => proxy.fetch(request({ Accept: accept }, context(), PATH));
+  test("multipart by default, with exact lengths at both levels", async () => {
+    const r = await ask(bulkProxy(5), "*/*");
+    const raw = new Uint8Array(await r.arrayBuffer());
+    const boundary = boundaryOf(r.headers.get("content-type"))!;
+    expect(r.headers.get("content-type")).toBe(`multipart/related; type="application/octet-stream"; boundary=${boundary}`);
+    expect(r.headers.get("content-length")).toBe(String(raw.length));
+    expect(new TextDecoder("latin1").decode(raw)).toBe(`--${boundary}\r\nContent-Type: application/octet-stream\r\nContent-Length: 5\r\n\r\n\x01\x02\x03\x04\x05\r\n--${boundary}--\r\n`);
+  });
+  test("single part when asked, with just the bytes", async () => {
+    const r = await ask(bulkProxy(5), "application/octet-stream");
+    expect(r.headers.get("content-type")).toBe("application/octet-stream");
+    expect(r.headers.get("content-length")).toBe("5");
+    expect([...new Uint8Array(await r.arrayBuffer())]).toEqual([1, 2, 3, 4, 5]);
+  });
+  test("a length nobody knows isn't stated", async () => {
+    for (const accept of ["*/*", "application/octet-stream"]) {
+      const r = await ask(bulkProxy(undefined), accept);
+      expect(r.headers.get("content-length")).toBeNull();
+      expect((await r.arrayBuffer()).byteLength).toBeGreaterThanOrEqual(5);
+    }
+  });
+  test("an element that doesn't match its stated length aborts, and a multipart one never closes", async () => {
+    for (const bytes of [4, 6]) for (const accept of ["*/*", "application/octet-stream"]) {
+      const r = await ask(bulkProxy(bytes), accept);
+      expect(r.status).toBe(200);
+      expect(r.arrayBuffer()).rejects.toThrow("stated");
+    }
+  });
+  test("nothing acceptable is 406, before the backend opens anything", async () => {
+    const b = new FakeBackend([], { plan: true });
+    let opened = false;
+    b.openBulk = async () => { opened = true; throw new Error("must not open"); };
+    for (const accept of ["image/png", "application/dicom", "application/octet-stream;q=0"]) expect((await proxyOver(b).fetch(request({ Accept: accept }, context(), PATH))).status).toBe(406);
+    expect(opened).toBe(false);
+  });
+  test("a client that hangs up closes the element", async () => {
+    let closed = false;
+    const r = await ask(bulkProxy(5, () => { closed = true; }), "application/octet-stream");
+    const reader = r.body!.getReader();
+    await reader.read(); // The empty head is skipped, so this is the first chunk.
+    await reader.cancel();
+    await Bun.sleep(5);
+    expect(closed).toBe(true);
   });
 });
 

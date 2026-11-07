@@ -5,7 +5,7 @@ import { ath, publicJwk, signJws, verifyJws } from "./jws";
 import { now } from "./clock";
 import { check, traced } from "./trace";
 import type { Policy, PolicyStore, Rule } from "./policy-store";
-import type { CatalogPosition, CatalogSearch, CatalogStore, CatalogStudy, StudyHierarchy } from "./archive/types";
+import type { CatalogPosition, CatalogSearch, CatalogStore, CatalogStudy, InstantRange, StudyHierarchy, TokenFilter, TokenTerm } from "./archive/types";
 import { ACCESSION_SYSTEM, DICOM_UID_SYSTEM } from "./catalog";
 
 export type { AppGrant, Delegation, Policy, Rule } from "./policy-store";
@@ -16,6 +16,69 @@ const PAGE_BYTES = 5 * 1024 * 1024;
 const CANDIDATE_BATCH = 200;
 const ACSN = { coding: [{ system: "http://terminology.hl7.org/CodeSystem/v2-0203", code: "ACSN" }] };
 const b64 = (v: Buffer | string) => Buffer.from(v).toString("base64url");
+const DCM = "http://dicom.nema.org/resources/ontology/DCM";
+/** The date this server's CapabilityStatement was last changed by hand. */
+const CAPABILITY_DATE = "2026-11-06";
+/** Values in one search's filters. More is a request to refuse, not a query to build. */
+const MAX_FILTER_VALUES = 100;
+const FHIR_ID = /^[A-Za-z0-9\-.]{1,64}$/;
+const FHIR_DATE = /^(\d{4})(?:-(\d{2})(?:-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(Z|[+-](?:(?:0\d|1[0-3]):[0-5]\d|14:00))?)?)?)?$/;
+
+/** RFC 7235: the scheme is case-insensitive. */
+const bearerOf = (req: Request) => req.headers.get("authorization")?.match(/^bearer +(.+)$/i)?.[1];
+
+/** Splits on a character that a FHIR `\\` doesn't escape, leaving the escapes in place. */
+function splitEscaped(text: string, on: string): string[] {
+  const out = [""];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "\\" && i + 1 < text.length) out[out.length - 1] += text[i]! + text[++i]!;
+    else if (text[i] === on) out.push("");
+    else out[out.length - 1] += text[i]!;
+  }
+  return out;
+}
+const unescapeFhir = (text: string) => text.replace(/\\(.)/g, "$1");
+
+/** `value`, `system|value`, `|value` or `system|`, per FHIR R4 search. */
+function parseToken(text: string): TokenTerm | undefined {
+  const pieces = splitEscaped(text, "|").map(unescapeFhir);
+  if (pieces.length === 1) return pieces[0] ? { value: pieces[0] } : undefined;
+  const [system, value] = pieces;
+  if (pieces.length > 2 || (!system && !value)) return undefined;
+  return { system: system || null, ...(value ? { value } : {}) };
+}
+
+/** The range a FHIR date covers at its stated precision. Offsetless values are UTC, this server's time zone. */
+function implicitRange(text: string): { from: number; before: number } | undefined {
+  const m = FHIR_DATE.exec(text);
+  if (!m) return undefined;
+  const [y, mo, d, h, mi, s] = [m[1]!, m[2] ?? "1", m[3] ?? "1", m[4] ?? "0", m[5] ?? "0", m[6] ?? "0"].map(Number) as [number, number, number, number, number, number];
+  const fraction = m[7] ?? "";
+  const local = Date.UTC(y, mo - 1, d, h, mi, s);
+  const t = new Date(local);
+  if (t.getUTCFullYear() !== y || t.getUTCMonth() !== mo - 1 || t.getUTCDate() !== d || t.getUTCHours() !== h || t.getUTCMinutes() !== mi || t.getUTCSeconds() !== s) return undefined;
+  const start = local + Number(fraction.slice(0, 3).padEnd(3, "0"));
+  if (m[2] === undefined) return { from: start, before: Date.UTC(y + 1, 0, 1) };
+  if (m[3] === undefined) return { from: start, before: Date.UTC(y, mo, 1) };
+  const span = m[4] === undefined ? 86400000 : m[6] === undefined ? 60000 : fraction ? 10 ** Math.max(0, 3 - fraction.length) : 1000;
+  const zone = m[8] && m[8] !== "Z" ? (m[8][0] === "-" ? 1 : -1) * (Number(m[8].slice(1, 3)) * 3600000 + Number(m[8].slice(4)) * 60000) : 0;
+  return { from: start + zone, before: start + zone + span };
+}
+
+/** A `_lastUpdated` value, as the instants that satisfy it. A target is one instant, so `sa` is `gt` and `eb` is `lt`. */
+function parseLastUpdated(text: string): InstantRange | undefined {
+  const prefix = text.match(/^(eq|ne|gt|lt|ge|le|sa|eb)/)?.[1];
+  const range = implicitRange(prefix ? text.slice(2) : text);
+  if (!range) return undefined;
+  switch (prefix) {
+    case "gt": case "sa": return { from: range.before };
+    case "lt": case "eb": return { before: range.from };
+    case "ge": return { from: range.from };
+    case "le": return { before: range.before };
+    case "ne": return { ...range, not: true };
+    default: return range;
+  }
+}
 
 export function hasImagingScope(scope: string, level: "patient" | "system"): boolean {
   return scope.split(" ").some(s => s === `${level}/ImagingStudy.rs` || s === `${level}/ImagingStudy.read` || s === `${level}/*.rs` || s === `${level}/*.read`);
@@ -50,6 +113,8 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
       (r.when.client === undefined || r.when.client === t.client_id) &&
       (r.when.user === undefined || r.when.user === t.sub) &&
       (r.when.patient === undefined || r.when.patient === patient));
+  /** A withdrawn rule is no pre-authorization at all. */
+  const preAuthorizing = (rule: Rule | undefined) => rule && !rule.withdrawn ? rule : undefined;
 
   /** The single policy decision used by both search and retrieval. It works on catalog rows. */
   function evaluate(t: any, study: CatalogStudy, policy: PolicyRows = policyRows()): Evaluation {
@@ -106,7 +171,7 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
     });
     return Response.json({
       client, user: user ?? undefined, fhirUser: fhirUser ?? undefined, patient, level: user ? "patient" : "system",
-      searchAllowed: !!user || !!rule, rule,
+      searchAllowed: !!user || !!preAuthorizing(rule), rule: user ? rule : preAuthorizing(rule),
       delegation: user ? policy.delegations.find(d => d.delegate === user && d.patient === patient) : undefined,
       appGrant: user ? policy.appGrants.find(g => g.client === client && g.user === user && g.patient === patient) : undefined,
       studies,
@@ -158,7 +223,10 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
     return signJws(key, claims);
   }
 
-  /** A study with nothing to retrieve, such as a `registered` one, has no endpoint and no series list. */
+  /**
+   * A study with nothing to retrieve, such as a `registered` one, has no endpoint and no series list.
+   * The profile requires a modality on every study, so one with no series known yet says `OT`.
+   */
   function imagingStudy(study: CatalogStudy, hierarchy: StudyHierarchy | undefined, ev: Evaluation, endpointRef: string | undefined) {
     const date = study.date;
     const started = date ? `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}` : undefined;
@@ -171,38 +239,57 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
       ...(accession ? { basedOn: [{ type: "ServiceRequest", identifier: accession }] } : {}),
       ...(started ? { started } : {}),
     };
-    if (!endpointRef) return { ...common, description: study.description };
     const released = typeof ev.release === "object" ? new Set(ev.release.series) : undefined;
-    const series = (hierarchy?.series ?? []).filter(s => !released || released.has(s.uid));
+    const isReleased = (s: { uid: string }) => !released || released.has(s.uid);
+    const modality = (known: { modality: string }[]) => [...new Set(known.map(s => s.modality))].map(code => ({ system: DCM, code }));
+    if (!endpointRef) {
+      const known = modality(study.series.filter(isReleased));
+      return { ...common, modality: known.length ? known : [{ system: DCM, code: "OT" }], description: study.description };
+    }
+    const series = (hierarchy?.series ?? []).filter(isReleased);
     return {
       ...common,
-      modality: [...new Set(series.map(s => s.modality))].map(code => ({ system: "http://dicom.nema.org/resources/ontology/DCM", code })),
+      modality: modality(series),
       description: study.description,
       numberOfSeries: series.length,
       numberOfInstances: series.reduce((n, s) => n + s.instances.length, 0),
       endpoint: [{ reference: endpointRef }],
       series: series.map(s => ({
-        uid: s.uid, number: s.number, modality: { system: "http://dicom.nema.org/resources/ontology/DCM", code: s.modality }, description: s.description, numberOfInstances: s.instances.length,
+        uid: s.uid, number: s.number, modality: { system: DCM, code: s.modality }, description: s.description, numberOfInstances: s.instances.length,
         instance: s.instances.map(i => ({ uid: i.uid, number: i.number, sopClass: { system: "urn:ietf:rfc:3986", code: `urn:oid:${i.sopClass}` } })),
       })),
     };
   }
 
-  /** `system|value` or `value`. */
-  const parseToken = (param: string | null) => {
-    if (!param) return undefined;
-    const [system, value] = param.includes("|") ? param.split("|") : [undefined, param];
-    return { ...(system === undefined ? {} : { system }), value: value! };
-  };
-  function searchFilters(url: URL, patient: string): CatalogSearch {
-    const lastUpdated = url.searchParams.get("_lastUpdated");
-    const identifier = parseToken(url.searchParams.get("identifier")), basedOn = parseToken(url.searchParams.get("based-on:identifier"));
-    return { patient, ...(identifier ? { identifier } : {}), ...(basedOn ? { basedOn } : {}), ...(lastUpdated?.startsWith("gt") ? { lastUpdatedAfter: lastUpdated.slice(2) } : {}) };
+  /** `id`, `Patient/id`, or that reference on this deployment's clinical FHIR base. */
+  function patientOf(param: string): { id: string } | { status: 400 | 403; code: string; text: string } {
+    const clinical = `${opts.clinicalFhirBase.replace(/\/$/, "")}/Patient/`;
+    if (!param.startsWith(clinical) && /^[A-Za-z][A-Za-z0-9+.-]*:/.test(param)) return { status: 403, code: "forbidden", text: "patient is not on this deployment's clinical FHIR server" };
+    const id = param.startsWith(clinical) ? param.slice(clinical.length) : param.replace(/^Patient\//, "");
+    return FHIR_ID.test(id) ? { id } : { status: 400, code: "invalid", text: "patient must be a logical id or a reference to a Patient on this deployment's clinical FHIR server" };
+  }
+  function searchFilters(url: URL, patient: string): CatalogSearch | { error: string } {
+    const tokens = (name: string): TokenFilter | string => {
+      const filter: TokenFilter = [];
+      for (const repeat of url.searchParams.getAll(name)) {
+        const terms = splitEscaped(repeat, ",").map(parseToken);
+        if (terms.some(t => !t)) return `${name} needs a value, as value, system|value, |value or system|`;
+        filter.push(terms as TokenTerm[]);
+      }
+      return filter;
+    };
+    const identifier = tokens("identifier"), basedOn = tokens("based-on:identifier");
+    if (typeof identifier === "string") return { error: identifier };
+    if (typeof basedOn === "string") return { error: basedOn };
+    const lastUpdated = url.searchParams.getAll("_lastUpdated").map(parseLastUpdated);
+    if (lastUpdated.some(r => !r)) return { error: "_lastUpdated must be a FHIR date, with one of the prefixes eq, ne, gt, lt, ge, le, sa or eb, or none. Repeat the parameter to require more than one." };
+    if ([...identifier, ...basedOn].flat().length + lastUpdated.length > MAX_FILTER_VALUES) return { error: `a search can have at most ${MAX_FILTER_VALUES} filter values` };
+    return { patient, ...(identifier.length ? { identifier } : {}), ...(basedOn.length ? { basedOn } : {}), ...(lastUpdated.length ? { lastUpdated: lastUpdated as InstantRange[] } : {}) };
   }
 
   // A cursor is a position and a hash of the query's filters, signed so a client can't aim it
   // anywhere. It grants nothing: authentication, scope and policy all run again on every page.
-  const filterHash = (q: CatalogSearch) => createHash("sha256").update(JSON.stringify([q.patient, q.identifier?.system ?? null, q.identifier?.value ?? null, q.basedOn?.system ?? null, q.basedOn?.value ?? null, q.lastUpdatedAfter ?? null])).digest("base64url");
+  const filterHash = (q: CatalogSearch) => createHash("sha256").update(JSON.stringify([q.patient, q.identifier ?? null, q.basedOn ?? null, q.lastUpdated ?? null])).digest("base64url");
   const cursorMac = (payload: string) => createHmac("sha256", cursorKey).update(payload).digest();
   const signCursor = (position: CatalogPosition, q: CatalogSearch) => {
     const payload = b64(JSON.stringify({ d: position.date, p: position.pk, f: filterHash(q) }));
@@ -230,22 +317,27 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
   }
 
   async function search(req: Request, url: URL): Promise<Response> {
-    const bearer = req.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1];
+    const bearer = bearerOf(req);
     if (!bearer) return new Response(null, { status: 401, headers: { "WWW-Authenticate": "Bearer" } });
     const t = await opts.introspect(bearer);
     if (!check("imaging-fhir", "token is active", t.active, { client: t.client_id, scope: t.scope, patient_context: t.patient, user: t.sub })) return new Response(null, { status: 401, headers: { "WWW-Authenticate": 'Bearer error="invalid_token"' } });
     const level = accessLevel(t);
     if (!level || !hasImagingScope(t.scope, level)) return Response.json(outcome("forbidden", "scope does not cover ImagingStudy"), { status: 403 });
-    const patient = url.searchParams.get("patient")?.replace(/^.*Patient\//, "");
-    if (!patient) return Response.json(outcome("required", "the patient parameter is required"), { status: 400 });
+    const patientParams = url.searchParams.getAll("patient");
+    if (!patientParams[0]) return Response.json(outcome("required", "the patient parameter is required"), { status: 400 });
+    if (patientParams.length > 1) return Response.json(outcome("invalid", "a search covers one patient"), { status: 400 });
+    const parsed = patientOf(patientParams[0]);
+    if (!("id" in parsed)) return Response.json(outcome(parsed.code, parsed.text), { status: parsed.status });
+    const patient = parsed.id;
     if (level === "patient" && patient !== t.patient) return Response.json(outcome("forbidden", "patient does not match the token's patient context"), { status: 403 });
     const policy = policyRows();
-    if (level === "system" && !matchRule(t, patient, policy)) return Response.json(outcome("forbidden", "this patient is outside the client's authorized access"), { status: 403 });
+    if (level === "system" && !preAuthorizing(matchRule(t, patient, policy))) return Response.json(outcome("forbidden", "this patient is outside the client's authorized access"), { status: 403 });
 
     const countParam = url.searchParams.get("_count");
     if (countParam !== null && !/^\d+$/.test(countParam)) return Response.json(outcome("invalid", "_count must be a whole number"), { status: 400 });
     const count = countParam === null ? DEFAULT_COUNT : Math.min(Number(countParam), MAX_COUNT);
     const filters = searchFilters(url, patient);
+    if ("error" in filters) return Response.json(outcome("invalid", filters.error), { status: 400 });
     const cursorParam = url.searchParams.get("_cursor");
     let after: CatalogPosition | undefined;
     if (cursorParam !== null) {
@@ -324,7 +416,7 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
   async function evaluation(req: Request): Promise<Response> {
     const requestId = req.headers.get("x-request-id");
     const echo: Record<string, string> = requestId ? { "X-Request-ID": requestId } : {};
-    if (!check("policy", "caller is the authenticated proxy", req.headers.get("authorization") === `Bearer ${opts.serviceSecret}`)) return Response.json({ error: "authentication required" }, { status: 401, headers: { "WWW-Authenticate": "Bearer", ...echo } });
+    if (!check("policy", "caller is the authenticated proxy", bearerOf(req) === opts.serviceSecret)) return Response.json({ error: "authentication required" }, { status: 401, headers: { "WWW-Authenticate": "Bearer", ...echo } });
     if (outage) check("policy", "decision service is available", false, { injected: "outage" });
     if (outage) return Response.json({ error: "decision service unavailable" }, { status: 500, headers: echo });
     const body: any = await req.json().catch(() => undefined);
@@ -365,7 +457,7 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
       const p = url.pathname;
       if (p === "/access/v1/evaluation" || p.startsWith("/internal/")) server.record.service = "policy";
       if (p.startsWith("/internal/")) {
-        if (req.headers.get("authorization") !== `Bearer ${opts.serviceSecret}`) return new Response(null, { status: 401 });
+        if (bearerOf(req) !== opts.serviceSecret) return new Response(null, { status: 401 });
         if (p === "/internal/relationships") return Response.json(opts.store().delegations().map(d => ({ patient: d.patient, delegate: d.delegate, relationship: d.relationship })));
         if (p === "/internal/access") return Response.json(accessFor(url.searchParams.get("user") ?? "", url.searchParams.get("fhirUser") ?? ""));
         if (p === "/internal/explain") return explain(url);
@@ -410,7 +502,7 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
         return new Response("not found", { status: 404 });
       }
       if (p === "/fhir/ImagingStudy" && req.method === "GET") return search(req, url);
-      if (p === "/fhir/metadata") return Response.json({ resourceType: "CapabilityStatement", status: "active", kind: "instance", fhirVersion: "4.0.1", format: ["json"], instantiates: ["http://fhir.org/argonaut/smart-imaging/CapabilityStatement/smart-imaging-server"], rest: [{ mode: "server", resource: [{ type: "ImagingStudy", interaction: [{ code: "search-type" }], searchInclude: ["ImagingStudy:endpoint"], searchParam: [{ name: "patient", type: "reference" }, { name: "identifier", type: "token" }, { name: "based-on", type: "reference" }, { name: "_lastUpdated", type: "date", documentation: "The catalog's stored value for each study. The gt prefix is supported." }, { name: "_count", type: "number", documentation: `Studies per page: ${DEFAULT_COUNT} by default, and larger values than ${MAX_COUNT} are treated as ${MAX_COUNT}. A page can hold fewer, to stay within its size limit. 0 returns only the total.` }, { name: "_cursor", type: "string", documentation: "Opaque, and supplied by a Bundle's next link. Use it with the same filters. It grants nothing, and policy applies again on every page." }] }] }] });
+      if (p === "/fhir/metadata") return Response.json({ resourceType: "CapabilityStatement", status: "active", date: CAPABILITY_DATE, kind: "instance", implementation: { description: "SMART Imaging proxy demo: Imaging FHIR Server", url: opts.base }, fhirVersion: "4.0.1", format: ["json"], instantiates: ["http://fhir.org/argonaut/smart-imaging/CapabilityStatement/smart-imaging-server"], rest: [{ mode: "server", resource: [{ type: "ImagingStudy", interaction: [{ code: "search-type" }], searchInclude: ["ImagingStudy:endpoint"], searchParam: [{ name: "patient", type: "reference" }, { name: "identifier", type: "token", documentation: "value, system|value, |value or system|. A comma means any of the values, and a repeated parameter means all of them." }, { name: "based-on", type: "reference", documentation: "Searched by order identifier, as based-on:identifier, which takes the same forms as identifier." }, { name: "_lastUpdated", type: "date", documentation: "The value each study's published version states, or otherwise midnight UTC on its study date. Only publishing a study with a different value changes it: in-place DICOM edits, deletions, reassignments and policy changes don't. Takes the prefixes eq, ne, gt, lt, ge, le, sa and eb, or none, and a repeated parameter means all of them. A value with no offset is in UTC, and a partial one covers its whole range." }, { name: "_count", type: "number", documentation: `Studies per page: ${DEFAULT_COUNT} by default, and larger values than ${MAX_COUNT} are treated as ${MAX_COUNT}. A page can hold fewer, to stay within its size limit. 0 returns only the total.` }, { name: "_cursor", type: "string", documentation: "Opaque, and supplied by a Bundle's next link. Use it with the same filters. It grants nothing, and policy applies again on every page." }] }] }] });
       if (p === "/access/v1/evaluation" && req.method === "POST") return evaluation(req);
       if (p === "/.well-known/authzen-configuration") return Response.json({ policy_decision_point: url.origin, access_evaluation_endpoint: `${url.origin}/access/v1/evaluation` });
       if (p === "/.well-known/jwks.json") return Response.json({ keys: [publicJwk(key)] });

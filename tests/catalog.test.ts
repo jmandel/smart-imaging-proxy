@@ -82,8 +82,8 @@ describe("publish", () => {
     expect(after.description).toBe("changed");
     expect(after.series).toEqual([{ uid: "1.9", number: 9, modality: "MR", instanceCount: 1 }]);
     expect(c.hierarchies([after.pk]).get(after.pk)!.series[0]!.uid).toBe("1.9");
-    expect(c.candidates({ patient: "p1", identifier: { value: "OLD" } })).toEqual([]);
-    expect(uidsOf(c.candidates({ patient: "p1", identifier: { value: "NEW" } }))).toEqual(["1"]);
+    expect(c.candidates({ patient: "p1", identifier: [[{ value: "OLD" }]] })).toEqual([]);
+    expect(uidsOf(c.candidates({ patient: "p1", identifier: [[{ value: "NEW" }]] }))).toEqual(["1"]);
     expect(c.stats().studies).toBe(2);
     c.close();
   });
@@ -95,8 +95,8 @@ describe("publish", () => {
     bad.identifiers = [{ kind: "identifier", value: "fine" }, { kind: "not-a-kind" as any, value: "breaks the constraint" }];
     expect(() => c.publish(bad)).toThrow();
     expect(c.studyByUid("1")).toEqual(before);
-    expect(uidsOf(c.candidates({ patient: "p1", identifier: { value: "fine" } }))).toEqual([]);
-    expect(uidsOf(c.candidates({ patient: "p1", identifier: { value: "ACC1" } }))).toEqual(["1"]);
+    expect(uidsOf(c.candidates({ patient: "p1", identifier: [[{ value: "fine" }]] }))).toEqual([]);
+    expect(uidsOf(c.candidates({ patient: "p1", identifier: [[{ value: "ACC1" }]] }))).toEqual(["1"]);
     expect(c.hierarchies([before.pk]).size).toBe(1);
     const firstNew = publicationFor(documentOf("2"), "p1", hierarchyOf("2"));
     firstNew.identifiers = [{ kind: "not-a-kind" as any, value: "x" }];
@@ -146,33 +146,35 @@ describe("candidates", () => {
   });
   test("patients are isolated, whatever the filter", () => {
     expect(uidsOf(c.candidates({ patient: "p2" }))).toEqual(["other"]);
-    expect(c.candidates({ patient: "p1", identifier: { value: "SHARED" } })).toEqual([]);
-    expect(c.candidates({ patient: "p1", identifier: { system: DICOM_UID_SYSTEM, value: "urn:oid:other" } })).toEqual([]);
-    expect(c.candidates({ patient: "p1", basedOn: { value: "SHARED" } })).toEqual([]);
+    expect(c.candidates({ patient: "p1", identifier: [[{ value: "SHARED" }]] })).toEqual([]);
+    expect(c.candidates({ patient: "p1", identifier: [[{ system: DICOM_UID_SYSTEM, value: "urn:oid:other" }]] })).toEqual([]);
+    expect(c.candidates({ patient: "p1", basedOn: [[{ value: "SHARED" }]] })).toEqual([]);
     expect(c.candidates({ patient: "nobody" })).toEqual([]);
   });
   test("identifiers match with and without a system", () => {
-    expect(uidsOf(c.candidates({ patient: "p1", identifier: { value: "urn:oid:old" } }))).toEqual(["old"]);
-    expect(uidsOf(c.candidates({ patient: "p1", identifier: { system: DICOM_UID_SYSTEM, value: "urn:oid:old" } }))).toEqual(["old"]);
-    expect(c.candidates({ patient: "p1", identifier: { system: "urn:other", value: "urn:oid:old" } })).toEqual([]);
-    expect(uidsOf(c.candidates({ patient: "p1", identifier: { value: "ACCold" } }))).toEqual(["old"]);
-    expect(uidsOf(c.candidates({ patient: "p1", identifier: { system: ACCESSION_SYSTEM, value: "ACCold" } }))).toEqual(["old"]);
-    expect(c.candidates({ patient: "p1", identifier: { system: "", value: "ACCold" } })).toEqual([]);
+    expect(uidsOf(c.candidates({ patient: "p1", identifier: [[{ value: "urn:oid:old" }]] }))).toEqual(["old"]);
+    expect(uidsOf(c.candidates({ patient: "p1", identifier: [[{ system: DICOM_UID_SYSTEM, value: "urn:oid:old" }]] }))).toEqual(["old"]);
+    expect(c.candidates({ patient: "p1", identifier: [[{ system: "urn:other", value: "urn:oid:old" }]] })).toEqual([]);
+    expect(uidsOf(c.candidates({ patient: "p1", identifier: [[{ value: "ACCold" }]] }))).toEqual(["old"]);
+    expect(uidsOf(c.candidates({ patient: "p1", identifier: [[{ system: ACCESSION_SYSTEM, value: "ACCold" }]] }))).toEqual(["old"]);
+    expect(c.candidates({ patient: "p1", identifier: [[{ system: "", value: "ACCold" }]] })).toEqual([]);
   });
   test("based-on matches only order identifiers", () => {
-    expect(uidsOf(c.candidates({ patient: "p1", basedOn: { value: "ACCold" } }))).toEqual(["old"]);
-    expect(uidsOf(c.candidates({ patient: "p1", basedOn: { system: ACCESSION_SYSTEM, value: "ACCold" } }))).toEqual(["old"]);
-    expect(c.candidates({ patient: "p1", basedOn: { system: "urn:other", value: "ACCold" } })).toEqual([]);
-    expect(c.candidates({ patient: "p1", basedOn: { value: "urn:oid:old" } })).toEqual([]);
+    expect(uidsOf(c.candidates({ patient: "p1", basedOn: [[{ value: "ACCold" }]] }))).toEqual(["old"]);
+    expect(uidsOf(c.candidates({ patient: "p1", basedOn: [[{ system: ACCESSION_SYSTEM, value: "ACCold" }]] }))).toEqual(["old"]);
+    expect(c.candidates({ patient: "p1", basedOn: [[{ system: "urn:other", value: "ACCold" }]] })).toEqual([]);
+    expect(c.candidates({ patient: "p1", basedOn: [[{ value: "urn:oid:old" }]] })).toEqual([]);
     expect(identifiersOf({ uid: "1" })).toEqual([{ kind: "identifier", system: DICOM_UID_SYSTEM, value: "urn:oid:1" }]);
   });
-  test("_lastUpdated is strictly after a stored value, which defaults from the study date", () => {
+  test("_lastUpdated is compared as an instant to a stored value, which defaults from the study date", () => {
     expect(c.studyByUid("old")!.lastUpdated).toBe("2010-01-01T00:00:00Z");
     expect(c.studyByUid("nodate1")!.lastUpdated).toBe("2020-01-01T00:00:00Z");
-    expect(uidsOf(c.candidates({ patient: "p1", lastUpdatedAfter: "2015-01-01T00:00:00Z" }))).toEqual(["new", "nodate2", "nodate1"]);
-    expect(uidsOf(c.candidates({ patient: "p1", lastUpdatedAfter: "2023-01-01T00:00:00Z" }))).toEqual([]);
+    expect(uidsOf(c.candidates({ patient: "p1", lastUpdated: [{ from: Date.parse("2015-01-01T00:00:00Z") + 1 }] }))).toEqual(["new", "nodate2", "nodate1"]);
+    expect(uidsOf(c.candidates({ patient: "p1", lastUpdated: [{ from: Date.parse("2023-01-01T00:00:00Z") + 1 }] }))).toEqual([]);
     c.publish(publicationFor(documentOf("stamped", { date: "19990101", lastUpdated: "2024-06-01T00:00:00Z" }), "p3", hierarchyOf("stamped")));
-    expect(uidsOf(c.candidates({ patient: "p3", lastUpdatedAfter: "2024-01-01T00:00:00Z" }))).toEqual(["stamped"]);
+    expect(uidsOf(c.candidates({ patient: "p3", lastUpdated: [{ from: Date.parse("2024-01-01T00:00:00Z") + 1 }] }))).toEqual(["stamped"]);
+    c.publish(publicationFor(documentOf("offset", { date: "19990101", lastUpdated: "2024-06-01T02:00:00+02:00" }), "p3", hierarchyOf("offset")));
+    expect(uidsOf(c.candidates({ patient: "p3", lastUpdated: [{ before: Date.parse("2024-06-01T00:00:00.001Z") }, { from: Date.parse("2024-06-01T00:00:00Z") }] })).sort()).toEqual(["offset", "stamped"]);
   });
   test("sites are per patient", () => {
     put(c, "b1", { site: "Site B" }, "p4");
@@ -470,6 +472,171 @@ describe("paged search", () => {
     const res = await imaging.fetch(new Request("http://fhir/access/v1/evaluation", { method: "POST", headers: { Authorization: "Bearer s" }, body: JSON.stringify({ subject: { type: "token", id: "x", properties: { access_token: "t" } }, resource: { type: "study", id: "3.1" }, action: { name: "can_i" } }) }));
     expect(((await res.json()) as any).decision).toBe(false);
   });
+  test("every study has a modality, from what's released of it, even with nothing to retrieve", async () => {
+    const c = createCatalog();
+    const series = [{ uid: "3.3.1", number: 1, modality: "CT", instanceCount: 1 }, { uid: "3.3.2", number: 2, modality: "SR", instanceCount: 1 }];
+    c.publish(publicationFor(documentOf("3.3", { status: "registered", series }), "p1", { series: [] }));
+    c.publish(publicationFor(documentOf("3.4", { date: "20100101", status: "cancelled", series }), "p1", { series: [] }));
+    c.publish(publicationFor(documentOf("3.5", { date: "20000101", status: "registered", series: [] }), "p1", { series: [] }));
+    const { get, store } = server(c);
+    const codes = async () => Object.fromEntries(studiesOf((await get("patient=p1")).body).map((s: any) => [s.id, s.modality.map((m: any) => m.code)]));
+    expect(await codes()).toEqual({ "study-3.3": ["CT", "SR"], "study-3.4": ["CT", "SR"], "study-3.5": ["OT"] });
+    const withheld = { id: "r", when: { client: "app" }, allow: { all: true }, withholdSeries: ["3.3.2", "3.4.1"] };
+    store.setPolicy({ rules: [withheld] });
+    expect((await codes())["study-3.3"]).toEqual(["CT"]);
+    store.setPolicy({ rules: [{ id: "r", when: { client: "app" }, allow: { studies: ["study-3.3"] } }] });
+    expect(Object.keys(await codes())).toEqual(["study-3.3"]);
+  });
+  describe("token search", () => {
+    const fixture = () => {
+      const c = createCatalog();
+      put(c, "7.1", { date: "20210101", accession: "A1" });
+      put(c, "7.2", { date: "20200101", accession: "A2" });
+      put(c, "7.3", { date: "20190101", accession: "A,B" });
+      put(c, "7.9", { accession: "A1" }, "p2");
+      const local = documentOf("7.4", { date: "20180101", accession: undefined });
+      c.publish({ ...publicationFor(local, "p1", hierarchyOf("7.4")), identifiers: [{ kind: "identifier", value: "LOCAL" }, { kind: "based-on", value: "LOCAL" }] });
+      return server(c);
+    };
+    const ids = async (get: ReturnType<typeof fixture>["get"], q: string) => { const r = await get(`patient=p1&${q}`); expect(r.status).toBe(200); return studiesOf(r.body).map((s: any) => s.id.replace("study-", "")); };
+    const e = encodeURIComponent;
+    for (const param of ["identifier", "based-on:identifier"]) {
+      test(`${param}: empty and malformed values are 400s with an OperationOutcome`, async () => {
+        const { get } = fixture();
+        for (const bad of ["", ",", "A1,", ",A1", "|", "a|b|c"]) {
+          const r = await get(`patient=p1&${param}=${e(bad)}`);
+          expect(r.status).toBe(400);
+          expect(r.body.resourceType).toBe("OperationOutcome");
+          expect(r.body.issue[0].code).toBe("invalid");
+        }
+        expect((await get(`patient=p1&${param}=A1&${param}=`)).status).toBe(400);
+        expect((await get(`patient=p1&${param}=${Array(101).fill("A1").join(",")}`)).status).toBe(400);
+      });
+      test(`${param}: a comma is OR and a repeat is AND, within the patient`, async () => {
+        const { get } = fixture();
+        expect(await ids(get, `${param}=A1`)).toEqual(["7.1"]);
+        expect(await ids(get, `${param}=A1,A2`)).toEqual(["7.1", "7.2"]);
+        expect(await ids(get, `${param}=A1&${param}=A2`)).toEqual([]);
+        expect(await ids(get, `${param}=A1&${param}=A1,A2`)).toEqual(["7.1"]);
+        expect(await ids(get, `${param}=${e("A\\,B")}`)).toEqual(["7.3"]);
+        expect(await ids(get, `${param}=A,B`)).toEqual([]);
+      });
+      test(`${param}: system|value, |value, value and system|`, async () => {
+        const { get } = fixture();
+        expect(await ids(get, `${param}=${e(`${ACCESSION_SYSTEM}|A1`)}`)).toEqual(["7.1"]);
+        expect(await ids(get, `${param}=${e("urn:other|A1")}`)).toEqual([]);
+        expect(await ids(get, `${param}=${e("|A1")}`)).toEqual([]);
+        expect(await ids(get, `${param}=${e("|LOCAL")}`)).toEqual(["7.4"]);
+        expect(await ids(get, `${param}=LOCAL`)).toEqual(["7.4"]);
+        expect(await ids(get, `${param}=${e(`${ACCESSION_SYSTEM}|LOCAL`)}`)).toEqual([]);
+        expect(await ids(get, `${param}=${e(`${ACCESSION_SYSTEM}|`)}`)).toEqual(["7.1", "7.2", "7.3"]);
+        expect(await ids(get, `${param}=${e("urn:other|")}`)).toEqual([]);
+      });
+    }
+    test("identifier and based-on:identifier filter together, and only their own kinds", async () => {
+      const { get } = fixture();
+      expect(await ids(get, `identifier=A1&based-on:identifier=A1,A2`)).toEqual(["7.1"]);
+      expect(await ids(get, `identifier=A1&based-on:identifier=A2`)).toEqual([]);
+      expect(await ids(get, "identifier=urn:oid:7.1")).toEqual(["7.1"]);
+      expect(await ids(get, "based-on:identifier=urn:oid:7.1")).toEqual([]);
+    });
+    test("a cursor binds to the whole filter, and next keeps every repeat", async () => {
+      const { get } = fixture();
+      const q = "patient=p1&identifier=A1,A2,LOCAL&identifier=A1,A2&_count=1";
+      const first = (await get(q)).body;
+      expect(first.total).toBe(2);
+      const next = nextOf(first)!;
+      expect(new URL(next).searchParams.getAll("identifier")).toEqual(["A1,A2,LOCAL", "A1,A2"]);
+      expect(studiesOf((await get(internal(next))).body).map((s: any) => s.id)).toEqual(["study-7.2"]);
+      const cursor = e(new URL(next).searchParams.get("_cursor")!);
+      for (const changed of ["identifier=A1,A2,LOCAL", "identifier=A1,A2,LOCAL&identifier=A1", "identifier=A1,A2,LOCAL&identifier=A1,A2,LOCAL", "identifier=A1,A2&identifier=A1,A2,LOCAL"]) {
+        const r = await get(`patient=p1&${changed}&_count=1&_cursor=${cursor}`);
+        expect(r.status).toBe(400);
+        expect(r.body.issue[0].diagnostics).toContain("different filters");
+      }
+    });
+  });
+  describe("_lastUpdated", () => {
+    const fixture = () => {
+      const c = createCatalog();
+      for (const [uid, date, lastUpdated] of [["a", "20240101", "2019-12-31T23:59:59Z"], ["b", "20230101", "2020-01-01T00:00:00Z"], ["c", "20220101", "2020-06-15T12:00:00.250Z"], ["d", "20210101", "2020-12-31T23:59:59.999Z"], ["e", "20200101", "2021-01-01T02:00:00+02:00"], ["f", "20190101", "2021-06-01T00:00:00Z"]] as const) put(c, uid, { date, lastUpdated });
+      return server(c);
+    };
+    const ALL = ["a", "b", "c", "d", "e", "f"];
+    const e = encodeURIComponent;
+    test("each prefix, compared as instants, over the range a value's precision implies", async () => {
+      const { get } = fixture();
+      const cases: [string, string[]][] = [
+        ["2020", ["b", "c", "d"]], ["eq2020", ["b", "c", "d"]], ["ne2020", ["a", "e", "f"]],
+        ["gt2020", ["e", "f"]], ["sa2020", ["e", "f"]], ["ge2020", ["b", "c", "d", "e", "f"]],
+        ["lt2020", ["a"]], ["eb2020", ["a"]], ["le2020", ["a", "b", "c", "d"]],
+        ["lt2000-01-01T00:00:00Z", []], ["gt2030-01-01T00:00:00Z", []], ["ge2000", ALL], ["le2030", ALL],
+        ["2020-06", ["c"]], ["gt2020-06", ["d", "e", "f"]], ["le2020-06", ["a", "b", "c"]],
+        ["2020-06-15", ["c"]], ["lt2020-06-15", ["a", "b"]], ["gt2020-06-15", ["d", "e", "f"]],
+        ["2020-06-15T12:00", ["c"]], ["2020-06-15T12:00:00Z", ["c"]], ["gt2020-06-15T12:00:00Z", ["d", "e", "f"]], ["2020-06-15T12:00:00.25Z", ["c"]], ["2020-06-15T12:00:00.26Z", []], ["2020-06-15T12:00:00.2Z", ["c"]], ["2020-06-15T12:00:00.250Z", ["c"]], ["gt2020-06-15T12:00:00.250Z", ["d", "e", "f"]], ["ge2020-06-15T12:00:00.250Z", ["c", "d", "e", "f"]], ["lt2020-06-15T12:00:00.250Z", ["a", "b"]], ["le2020-06-15T12:00:00.250Z", ["a", "b", "c"]],
+        // The same instant, spelled three ways, on either side.
+        ["eq2020-01-01T00:00:00Z", ["b"]], ["eq2020-01-01T00:00:00+00:00", ["b"]], ["eq2019-12-31T19:00:00-05:00", ["b"]], ["gt2020-01-01T00:00:00+00:00", ["c", "d", "e", "f"]], ["gt2020-01-01T02:00:00+02:00", ["c", "d", "e", "f"]],
+        ["eq2021-01-01T00:00:00Z", ["e"]], ["lt2021-01-01T00:00:00Z", ["a", "b", "c", "d"]],
+      ];
+      for (const [value, expected] of cases) {
+        const r = await get(`patient=p1&_lastUpdated=${e(value)}`);
+        expect([value, r.status]).toEqual([value, 200]);
+        expect([value, studiesOf(r.body).map((s: any) => s.id.replace("study-", "")).sort()]).toEqual([value, expected]);
+        expect(r.body.total).toBe(expected.length);
+      }
+    });
+    test("a repeat is AND", async () => {
+      const { get } = fixture();
+      const r = await get("patient=p1&_lastUpdated=ge2020-01-01&_lastUpdated=lt2020-07");
+      expect(studiesOf(r.body).map((s: any) => s.id.replace("study-", "")).sort()).toEqual(["b", "c"]);
+    });
+    test("anything unsupported or unreadable is a 400, never ignored", async () => {
+      const { get } = fixture();
+      for (const bad of ["", "gt", "nonsense", "gtnonsense", "ap2020", "GT2020", "ge2020,lt2021", "2020-13", "2020-02-30", "2020-00", "20200101", "gt2020-01-01T25:00:00Z", "2020-01-01T00:60:00Z", "2020-01-01T00:00:00+15:00", "2020-01-01T00", "0000", "gt2020-01-01 00:00:00"]) {
+        const r = await get(`patient=p1&_lastUpdated=${e(bad)}`);
+        expect([bad, r.status]).toEqual([bad, 400]);
+        expect(r.body.resourceType).toBe("OperationOutcome");
+      }
+      expect((await get("patient=p1&_lastUpdated=ge2020&_lastUpdated=nonsense")).status).toBe(400);
+    });
+    test("a cursor binds to the range the value means, and pages stay filtered", async () => {
+      const { get } = fixture();
+      const first = (await get("patient=p1&_lastUpdated=ge2020&_count=2")).body;
+      expect(first.total).toBe(5);
+      const next = nextOf(first)!;
+      expect(studiesOf((await get(internal(next))).body).map((s: any) => s.id)).toEqual(["study-d", "study-e"]);
+      const cursor = e(new URL(next).searchParams.get("_cursor")!);
+      const r = await get(`patient=p1&_lastUpdated=gt2020&_count=2&_cursor=${cursor}`);
+      expect(r.status).toBe(400);
+      expect(r.body.issue[0].diagnostics).toContain("different filters");
+    });
+  });
+  test("patient is an id, a relative reference, or a reference on the clinical FHIR base", async () => {
+    const c = createCatalog();
+    put(c, "8.1");
+    const { get } = server(c);
+    for (const ok of ["p1", "Patient/p1", "http://clinical/Patient/p1"]) expect((await get(`patient=${encodeURIComponent(ok)}`)).body.total).toBe(1);
+    for (const foreign of ["https://evil.example/fhir/Patient/p1", "http://clinical.evil/Patient/p1", "http://evil/http://clinical/Patient/p1", "urn:uuid:p1"]) {
+      const r = await get(`patient=${encodeURIComponent(foreign)}`);
+      expect([foreign, r.status]).toEqual([foreign, 403]);
+      expect(r.body.resourceType).toBe("OperationOutcome");
+    }
+    for (const bad of ["Group/p1", "x/Patient/p1", "http://clinical/Patient/p1/_history/1", "Patient/../Patient/p1", "p1,p2", "Patient/", "a b"]) {
+      const r = await get(`patient=${encodeURIComponent(bad)}`);
+      expect([bad, r.status]).toEqual([bad, 400]);
+      expect(r.body.resourceType).toBe("OperationOutcome");
+    }
+    expect((await get("patient=p1&patient=p2")).status).toBe(400);
+    expect((await get("patient=")).status).toBe(400);
+  });
+  test("the Bearer scheme is case-insensitive", async () => {
+    const c = createCatalog();
+    put(c, "8.2");
+    const { imaging } = server(c);
+    for (const scheme of ["Bearer", "bearer", "BEARER", "bEaReR"]) expect((await imaging.fetch(new Request("http://fhir/fhir/ImagingStudy?patient=p1", { headers: { Authorization: `${scheme} t` } }))).status).toBe(200);
+    for (const header of ["Basic t", "bearer", "bearer ", "Bearert"]) expect((await imaging.fetch(new Request("http://fhir/fhir/ImagingStudy?patient=p1", { headers: { Authorization: header } }))).status).toBe(401);
+    for (const scheme of ["Bearer", "bearer"]) expect((await imaging.fetch(new Request("http://fhir/internal/relationships", { headers: { Authorization: `${scheme} s` } }))).status).toBe(200);
+  });
   test("a decision and a context carry the version", async () => {
     const c = createCatalog();
     c.publish(publicationFor(documentOf("2.1", { version: 7 }), "p1", hierarchyOf("2.1")));
@@ -546,6 +713,14 @@ describe("the real stack", () => {
     const m: any = await (await fetch(`${CONFIG.imagingUrl}/fhir/metadata`)).json();
     const names = m.rest[0].resource[0].searchParam.map((p: any) => p.name);
     expect(names).toEqual(expect.arrayContaining(["_count", "_cursor", "_lastUpdated"]));
+  });
+  test("the capability statement meets cpb-2 and cpb-14, and says which changes update _lastUpdated", async () => {
+    const m: any = await (await fetch(`${CONFIG.imagingUrl}/fhir/metadata`)).json();
+    expect(m.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(m.kind).toBe("instance");
+    expect(m.implementation.description).toBeTruthy();
+    expect(m.implementation.url).toBe(`${CONFIG.imagingUrl}/fhir`);
+    expect(m.rest[0].resource[0].searchParam.find((p: any) => p.name === "_lastUpdated").documentation).toContain("changes it");
   });
   test("the flow list has the paged-search flow, numbered after the others, with no two the same", () => {
     const f = FLOWS.find(x => x.id === "paged-search")!;

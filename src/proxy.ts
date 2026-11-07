@@ -9,7 +9,7 @@ import { jwksKeys, staticKeys, type KeySource } from "./jwks";
 import { ath, kidOf, sha, verifyJws } from "./jws";
 import { closing, newBoundary, partFooter, partHeader, stableBoundary } from "./multipart";
 import { readFileMeta } from "./dicom";
-import { isStandard } from "./syntax";
+import { EVRLE, isStandard } from "./syntax";
 import { now } from "./clock";
 import { check, inSpan, startSpan, tfetch, traced, withSpan, type SpanHandle } from "./trace";
 import { rawFrame, rawFrameSize, RawFrameWriter } from "./zstd-frames";
@@ -17,8 +17,43 @@ import { rawFrame, rawFrameSize, RawFrameWriter } from "./zstd-frames";
 const UID = /^[0-9]+(\.[0-9]+)*$/;
 const CTX = /^[A-Za-z0-9_\-.]+$|^-$/;
 const validUid = (u: string) => UID.test(u) && u.length <= 64;
+/** RFC 7235: the scheme is case-insensitive. */
+const bearerOf = (req: Request) => req.headers.get("authorization")?.match(/^bearer +([A-Za-z0-9._~+/=-]+)$/i)?.[1];
 const ROUTE = /^\/wado\/([^/]+)\/studies\/([^/]+)(?:\/series\/([^/]+))?(?:\/instances\/([^/]+))?(?:\/(metadata|bulk\/[0-9a-fA-F/]+|frames\/.+|rendered|thumbnail))?\/?$/;
 const enc = new TextEncoder();
+/** A form a response can take. `payload` is the `type` parameter of a multipart form. The first is the default. */
+interface MediaForm { type: string; payload?: string; }
+const METADATA_FORMS: MediaForm[] = [{ type: "application/dicom+json" }, { type: "application/json" }];
+const BULK_FORMS: MediaForm[] = [{ type: "multipart/related", payload: "application/octet-stream" }, { type: "application/octet-stream" }];
+
+/**
+ * The form an Accept header wants most, or none if it rules them all out. A form takes its weight
+ * from the most specific range that covers it. With no header, anything goes. Bulk data has no
+ * re-encoding here, so a range naming a transfer syntax other than `*` or the default covers nothing.
+ */
+function negotiate(header: string | null, forms: MediaForm[]): MediaForm | undefined {
+  if (!header?.trim()) return forms[0];
+  const ranges = header.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(raw => {
+    const [type = "", ...params] = raw.split(";").map(s => s.trim().toLowerCase());
+    const p = Object.fromEntries(params.map(x => { const i = x.indexOf("="); return [x.slice(0, i).trim(), x.slice(i + 1).trim().replace(/^"|"$/g, "")]; }));
+    return { type, payload: p.type as string | undefined, syntax: p["transfer-syntax"] as string | undefined, q: p.q === undefined ? 1 : Number(p.q) };
+  });
+  const fit = (r: (typeof ranges)[number], f: MediaForm) => {
+    if (r.syntax !== undefined && r.syntax !== "*" && r.syntax !== EVRLE) return 0;
+    if (r.type === "*/*") return 1;
+    if (r.type === `${f.type.split("/")[0]}/*`) return 2;
+    if (r.type !== f.type) return 0;
+    if (r.payload === undefined) return 3;
+    return r.payload === f.payload ? 4 : 0;
+  };
+  let best: MediaForm | undefined, bestQ = 0;
+  for (const form of forms) {
+    let closest = 0, q = 0;
+    for (const r of ranges) { const n = fit(r, form); if (n > closest) { closest = n; q = r.q; } }
+    if (q > bestQ) { best = form; bestQ = q; }
+  }
+  return best;
+}
 
 type Release = "study" | { series: string[] };
 interface Outcome { allowed: boolean; release?: Release; denial?: string; via: "instant" | "cached" | "asked"; why?: string; unavailable?: boolean; version?: number; }
@@ -389,7 +424,44 @@ export function createProxy(opts: KeyOption & {
     return n;
   }
 
-  async function metadata(scope: Scope, ctxSegment: string, ev: ProxyEvent): Promise<Response> {
+  /** One bulk element, in the form Accept chose, for any backend. A length the backend states is held to. */
+  async function bulk(study: string, series: string, instance: string, ref: string, form: MediaForm, version: number | undefined, ev: ProxyEvent, server: SpanHandle, started: number): Promise<Response> {
+    let element: Awaited<ReturnType<Backend["openBulk"]>>;
+    try { element = await opts.backend().openBulk(study, series, instance, ref, version); } catch (e) { return backendStatus(e); }
+    const { bytes } = element;
+    const boundary = form.payload ? newBoundary() : undefined;
+    const head = boundary ? partHeader(boundary, { "Content-Type": "application/octet-stream", ...(bytes !== undefined ? { "Content-Length": String(bytes) } : {}) }) : new Uint8Array(0);
+    const ending = boundary ? closing(boundary) : new Uint8Array(0);
+    const foot = boundary ? new Uint8Array([...partFooter, ...ending]) : ending;
+    const body = element.body[Symbol.asyncIterator]();
+    const closeBackend = async () => body.return?.();
+    let count = 0;
+    async function* frames(): AsyncGenerator<Uint8Array> {
+      try {
+        yield head;
+        let seen = 0;
+        while (true) {
+          const r = await body.next();
+          if (r.done) break;
+          seen += r.value.length;
+          if (bytes !== undefined && seen > bytes) throw new Error(`bulk element ran past its stated ${bytes} bytes`);
+          yield r.value;
+        }
+        if (bytes !== undefined && seen !== bytes) throw new Error(`bulk element ended at ${seen} of its stated ${bytes} bytes`);
+        count = 1;
+        yield foot;
+      } finally { await closeBackend(); }
+    }
+    server.set({ streaming: true });
+    const streamSpan = startSpan("dicomweb-proxy", "internal", "stream bulk data", { study, ref, framing: form.type, ...(bytes !== undefined ? { bytes } : {}) });
+    const response = deliver(frames(), closeBackend, () => ({ parts: count, syntaxes: [] }), ev, server, streamSpan, started);
+    return new Response(response, { status: 200, headers: {
+      "Content-Type": boundary ? `multipart/related; type="application/octet-stream"; boundary=${boundary}` : form.type,
+      ...(bytes !== undefined ? { "Content-Length": String(head.length + bytes + foot.length) } : {}),
+    } });
+  }
+
+  async function metadata(scope: Scope, ctxSegment: string, form: MediaForm, ev: ProxyEvent): Promise<Response> {
     let items: any[];
     try { items = await withSpan("backend", "client", `read metadata (${opts.backend().capabilities().name})`, { study: scope.study }, () => opts.backend().getMetadata(scope)); } catch (e) { return backendStatus(e); }
     if (!items.length) return new Response(null, { status: 404 });
@@ -405,7 +477,8 @@ export function createProxy(opts: KeyOption & {
     ev.rewritten = rewritten;
     check("dicomweb-proxy", "metadata rewritten: no upstream URLs remain", true, { instances: items.length, bulk_links_rewritten: rewritten, upstream_urls_hidden: raw.length });
     if (raw.length) ev.note = `hid upstream URLs such as ${raw[0]}`;
-    return Response.json(items, { headers: { "Content-Type": "application/dicom+json" } });
+    const body = enc.encode(JSON.stringify(items));
+    return new Response(body, { headers: { "Content-Type": form.type, "Content-Length": String(body.length) } });
   }
 
   const handle = async (req: Request, ev: ProxyEvent, server: SpanHandle, started: number): Promise<Response> => {
@@ -413,7 +486,7 @@ export function createProxy(opts: KeyOption & {
     // Tells this proxy to refetch the keys now, rather than wait for their TTL. Takes no input.
     if (pathname === "/internal/keys/refresh") {
       if (req.method !== "POST") return new Response(null, { status: 405, headers: { Allow: "POST" } });
-      if (!check("dicomweb-proxy", "caller holds the service credential", req.headers.get("authorization") === `Bearer ${opts.serviceSecret}`)) return new Response(null, { status: 401, headers: { "WWW-Authenticate": "Bearer" } });
+      if (!check("dicomweb-proxy", "caller holds the service credential", bearerOf(req) === opts.serviceSecret)) return new Response(null, { status: 401, headers: { "WWW-Authenticate": "Bearer" } });
       const refreshed = await keySource.refresh();
       check("dicomweb-proxy", "signing keys refetched", refreshed);
       return new Response(null, { status: refreshed ? 204 : 503 });
@@ -426,7 +499,7 @@ export function createProxy(opts: KeyOption & {
     if (!check("dicomweb-proxy", "UIDs and context are well formed", CTX.test(ctxSeg) && validUid(study) && (!series || validUid(series)) && (!instance || validUid(instance)), { study, series, instance })) return new Response(null, { status: 400 });
     if (instance && !series) return new Response(null, { status: 404 });
 
-    const token = req.headers.get("authorization")?.match(/^Bearer ([A-Za-z0-9._~+/=-]+)$/)?.[1];
+    const token = bearerOf(req);
     if (!check("dicomweb-proxy", "request has a bearer token", !!token, token ? { token_hash: ath(token).slice(0, 10) } : {})) { ev.authz = "no token"; return new Response(null, { status: 401, headers: { "WWW-Authenticate": "Bearer" } }); }
     const ctx = ctxSeg === "-" ? undefined : ctxSeg;
     const operation = tail === "metadata" ? "metadata" : "retrieve";
@@ -440,13 +513,19 @@ export function createProxy(opts: KeyOption & {
     if (decision.version !== undefined) scope.version = decision.version;
     if (!series && typeof released === "object") scope.onlySeries = released.series;
 
-    if (tail === "metadata") return metadata(scope, ctxSeg, ev);
+    const acceptable = (forms: MediaForm[]) => {
+      const form = negotiate(req.headers.get("accept"), forms);
+      if (!check("dicomweb-proxy", "Accept allows a form of this resource", !!form, { accept: req.headers.get("accept") })) ev.note = "no acceptable media type in Accept";
+      return form;
+    };
+    if (tail === "metadata") {
+      const form = acceptable(METADATA_FORMS);
+      return form ? metadata(scope, ctxSeg, form, ev) : new Response(null, { status: 406 });
+    }
     if (tail?.startsWith("bulk/")) {
       if (!series || !instance) return new Response(null, { status: 404 });
-      try {
-        const b = await opts.backend().openBulk(study, series, instance, tail.slice(5), decision.version);
-        return new Response(b.body as any, { status: 200, headers: { "Content-Type": b.contentType } });
-      } catch (e) { return backendStatus(e); }
+      const form = acceptable(BULK_FORMS);
+      return form ? bulk(study, series, instance, tail.slice(5), form, decision.version, ev, server, started) : new Response(null, { status: 406 });
     }
     if (tail) { ev.note = `${tail.split("/")[0]} is a SHOULD this demo proxy does not implement`; return new Response(null, { status: 501 }); }
 

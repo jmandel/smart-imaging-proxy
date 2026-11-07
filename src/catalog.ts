@@ -4,7 +4,7 @@
 import { Database } from "bun:sqlite";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { CatalogPosition, CatalogSearch, CatalogStore, CatalogStudy, StudyDocument, StudyHierarchy, StudyPublication } from "./archive/types";
+import type { CatalogPosition, CatalogSearch, CatalogStore, CatalogStudy, StudyDocument, StudyHierarchy, StudyPublication, TokenFilter } from "./archive/types";
 
 export const DEFAULT_CATALOG_DB = "/tmp/smart-imaging-demo/catalog.sqlite";
 export const CATALOG_SCHEMA_VERSION = 1;
@@ -66,6 +66,7 @@ export function publicationFor(document: StudyDocument, patient: string, hierarc
   return { document, patient, hierarchy, status: document.status ?? "available", lastUpdated: document.lastUpdated ?? defaultLastUpdated(document.date), identifiers: identifiersOf(document) };
 }
 
+const LAST_UPDATED_SECONDS = "unixepoch(s.last_updated, 'subsec')";
 const STUDY_COLUMNS = "s.pk, s.uid, s.id, s.patient, s.status, s.date, s.time, s.description, s.title, s.accession, s.site, s.last_updated, s.version, s.series_count, s.instance_count, s.hierarchy_bytes";
 
 export function createCatalog(path: string = ":memory:"): CatalogStore {
@@ -114,13 +115,28 @@ export function createCatalog(path: string = ":memory:"): CatalogStore {
     publish(p) { publish(p); },
     candidates(q: CatalogSearch, after?: CatalogPosition, batch = DEFAULT_BATCH) {
       const where = ["s.patient = ?"], args: (string | number)[] = [q.patient];
-      const matching = (kind: string, t: { system?: string; value: string }) => {
-        where.push(`s.pk IN (SELECT i.study_pk FROM study_identifiers i WHERE i.patient = ? AND i.kind = ? AND i.value = ?${t.system === undefined ? "" : " AND i.system = ?"})`);
-        args.push(q.patient, kind, t.value, ...(t.system === undefined ? [] : [t.system]));
+      const matching = (kind: string, filter: TokenFilter = []) => {
+        for (const anyOf of filter) {
+          args.push(q.patient, kind);
+          const terms = anyOf.map(t => {
+            const term: string[] = [];
+            if (t.value !== undefined) { term.push("i.value = ?"); args.push(t.value); }
+            if (t.system === null) term.push("i.system IS NULL");
+            else if (t.system !== undefined) { term.push("i.system = ?"); args.push(t.system); }
+            return `(${term.join(" AND ")})`;
+          });
+          where.push(`s.pk IN (SELECT i.study_pk FROM study_identifiers i WHERE i.patient = ? AND i.kind = ? AND (${terms.join(" OR ")}))`);
+        }
       };
-      if (q.identifier) matching("identifier", q.identifier);
-      if (q.basedOn) matching("based-on", q.basedOn);
-      if (q.lastUpdatedAfter !== undefined) { where.push("s.last_updated > ?"); args.push(q.lastUpdatedAfter); }
+      matching("identifier", q.identifier);
+      matching("based-on", q.basedOn);
+      // Stored values are compared as instants, however each one spells its offset.
+      for (const r of q.lastUpdated ?? []) {
+        const bounds: string[] = [];
+        if (r.from !== undefined) { bounds.push(`${LAST_UPDATED_SECONDS} >= ?`); args.push(r.from / 1000); }
+        if (r.before !== undefined) { bounds.push(`${LAST_UPDATED_SECONDS} < ?`); args.push(r.before / 1000); }
+        where.push(`${r.not ? "NOT " : ""}(${bounds.join(" AND ")})`);
+      }
       if (after) { where.push("(s.date, s.pk) < (?, ?)"); args.push(after.date, after.pk); }
       return withSeries(db.query(`SELECT ${STUDY_COLUMNS} FROM studies s WHERE ${where.join(" AND ")} ORDER BY s.patient, s.date DESC, s.pk DESC LIMIT ?`).all(...args, batch) as any[]);
     },
