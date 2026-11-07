@@ -178,7 +178,7 @@ describe("people", () => {
     const b = browser();
     await b.pick("josh");
     const shared = await b.post("/share", { from: "josh", with: "alex-neighbor", patient: "josh-example", sites: ["Lakeside Imaging"], relationship: "neighbor" });
-    expect(stack.store.shares()).toEqual([{ from: "user:josh", with: "user:alex-neighbor", patient: "patient:josh-example", sites: ["Lakeside Imaging"], label: "neighbor" }]);
+    expect(stack.store.shares()).toEqual([{ id: expect.any(String), from: "user:josh", with: "user:alex-neighbor", patient: "patient:josh-example", sites: ["Lakeside Imaging"], label: "neighbor", basis: "self" }]);
     expect(shared.actions.map((a: any) => a.label)).toContain("Stop sharing with Alex");
     const alex = browser();
     expect(alex.released(await alex.pick("alex-neighbor"))).toEqual(["mri-brain-2020"]);
