@@ -1,12 +1,13 @@
 // The catalog: one SQLite file the Imaging Server queries for search. It holds no policy and can
 // always be rebuilt from its source, so it's a separate file from the policy store, which can't.
 // The SQL stays simple enough to move to another database without changing anything around it.
+import { STORAGE } from "./config";
 import { Database } from "bun:sqlite";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { CatalogPosition, CatalogSearch, CatalogStore, CatalogStudy, StudyDocument, StudyHierarchy, StudyPublication, TokenFilter } from "./archive/types";
 
-export const DEFAULT_CATALOG_DB = "/tmp/smart-imaging-demo/catalog.sqlite";
+export const DEFAULT_CATALOG_DB = `${STORAGE}/catalog.sqlite`;
 export const CATALOG_SCHEMA_VERSION = 1;
 export const ACCESSION_SYSTEM = "http://hospital.example.org/accession";
 export const DICOM_UID_SYSTEM = "urn:dicom:uid";

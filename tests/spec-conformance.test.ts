@@ -15,9 +15,13 @@ import { generateEd25519, signJws, ath } from "../src/jws";
 import { now } from "../src/clock";
 import { EVRLE, JPEG_BASELINE, JPEG_LOSSLESS, isStandard } from "../src/syntax";
 
-const SPEC_REPO = process.env.SPEC_REPO ?? "/home/jmandel/work/smart-imaging-focused-access";
-const SPEC_REF = process.env.SPEC_REF ?? "origin/focused-access-updates";
-const specText = new TextDecoder().decode(Bun.spawnSync(["git", "-C", SPEC_REPO, "show", `${SPEC_REF}:input/pagecontent/specification.md`]).stdout);
+// The guide's text comes from a local clone when SPEC_REPO names one, and otherwise from GitHub.
+const SPEC_REPO = process.env.SPEC_REPO;
+const SPEC_REF = process.env.SPEC_REF ?? (SPEC_REPO ? "origin/focused-access-updates" : "focused-access-updates");
+const SPEC_PATH = "input/pagecontent/specification.md";
+const specText = SPEC_REPO
+  ? new TextDecoder().decode(Bun.spawnSync(["git", "-C", SPEC_REPO, "show", `${SPEC_REF}:${SPEC_PATH}`]).stdout)
+  : await (await fetch(`https://raw.githubusercontent.com/argonautproject/smart-imaging/${SPEC_REF}/${SPEC_PATH}`)).text();
 const says = (quote: string) => { if (!specText.includes(quote)) throw new Error(`Not in ${SPEC_REF}: ${quote}`); };
 
 const part = (s: string, q?: number) => `multipart/related; type=application/dicom; transfer-syntax=${s}${q !== undefined ? `; q=${q}` : ""}`;

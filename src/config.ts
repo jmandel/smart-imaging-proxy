@@ -1,6 +1,8 @@
 // DEMO_PORT_OFFSET lets a second copy of the stack run beside the first. MinIO and Orthanc are shared,
 // unless MINIO_PORT and ORTHANC_PORT point it at its own.
 const offset = Number(process.env.DEMO_PORT_OFFSET ?? 0);
+/** Where everything the demo writes lives by default: archive, SQLite files, backend volumes, and `bun run up`'s log. */
+export const STORAGE = process.env.DEMO_STORAGE || "/tmp/smart-imaging-demo";
 export const PORTS = { demo: 4600 + offset, proxy: 4601 + offset, imaging: 4602 + offset, auth: 4603 + offset, trace: 4604 + offset };
 
 /** This machine on its tailnet, if Tailscale is running. Tests and `DEMO_TAILNET=0` stay on loopback. */
@@ -43,6 +45,6 @@ export const CONFIG = {
   authUrl: `${host}:${PORTS.auth}`,
   traceUrl: `${host}:${PORTS.trace}`,
   minio: { endpoint: `http://127.0.0.1:${process.env.MINIO_PORT ?? 4610}`, accessKey: "demo-minio", secretKey: "demo-minio-secret" },
-  archive: { dir: process.env.ARCHIVE_DIR ?? "/tmp/smart-imaging-demo/archive", bucket: "smart-imaging-archive" },
+  archive: { dir: process.env.ARCHIVE_DIR ?? `${STORAGE}/archive`, bucket: "smart-imaging-archive" },
   orthanc: { base: `http://127.0.0.1:${process.env.ORTHANC_PORT ?? 4611}`, user: "demo-proxy", password: "demo-orthanc-secret" },
 };

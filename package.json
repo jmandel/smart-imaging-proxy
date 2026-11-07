@@ -1,8 +1,10 @@
 {
-  "name": "smart-imaging-proxy-demo",
+  "name": "smart-imaging-sandbox",
   "private": true,
   "type": "module",
   "scripts": {
+    "up": "bun scripts/up.ts",
+    "down": "bun scripts/down.ts",
     "fetch-data": "bun scripts/fetch-data.ts",
     "generate-synthetic": "bun scripts/generate-synthetic.ts",
     "ingest": "bun scripts/ingest.ts",

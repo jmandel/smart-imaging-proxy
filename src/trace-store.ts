@@ -1,12 +1,13 @@
 // Where the live trace keeps its spans: a SQLite file of its own, apart from policy. Writes are
 // batched, and anything that goes wrong here stays here: the services being traced never see it.
 // Records arrive already redacted by src/trace.ts, so nothing secret reaches this file.
+import { STORAGE } from "./config";
 import { Database, SQLiteError } from "bun:sqlite";
 import { chmodSync, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { SpanRecord } from "./trace";
 
-export const DEFAULT_TRACE_DB = "/tmp/smart-imaging-demo/traces.sqlite";
+export const DEFAULT_TRACE_DB = `${STORAGE}/traces.sqlite`;
 export const TRACE_LIMITS = { maxSessions: 100, maxSpansPerSession: 20000, maxBytes: 512 * 1024 * 1024 };
 
 export interface TraceStoreConfig { mode: "file" | "memory"; path?: string; maxSessions?: number; maxSpansPerSession?: number; maxBytes?: number; flushMs?: number; }

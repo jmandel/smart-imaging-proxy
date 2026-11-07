@@ -1,6 +1,7 @@
 // Durable state for the demo: Imaging Server policy, its signing key, and the Authorization
 // Server's token records. One SQLite database holds all of it, which a deployment wouldn't do:
 // here it keeps the configuration in one place you can inspect and reset.
+import { STORAGE } from "./config";
 import { Database } from "bun:sqlite";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -41,7 +42,7 @@ export interface TokenRecord { client_id: string; scope: string; patient?: strin
 export const SCHEMA_VERSION = 4;
 export type Durability = "off" | "normal" | "full";
 const SYNCHRONOUS: Record<Durability, number> = { off: 0, normal: 1, full: 2 };
-export const DEFAULT_POLICY_DB = "/tmp/smart-imaging-demo/policy.sqlite";
+export const DEFAULT_POLICY_DB = `${STORAGE}/policy.sqlite`;
 
 export interface StoreConfig { mode: "file" | "memory"; path?: string; durability?: Durability; }
 

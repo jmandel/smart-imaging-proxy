@@ -1,20 +1,31 @@
-# SMART Imaging Proxy Demo
+# SMART Imaging Sandbox
 
 A working prototype of a SMART Imaging deployment: an Authorization Server, an Imaging Server holding policy and a study catalog, and a WADO-RS proxy that enforces study-level policy without holding any of it. It runs on ten studies across three patients. It implements the `focused-access-updates` branch of the [SMART Imaging Access guide](https://github.com/argonautproject/smart-imaging). It isn't production code.
 
 ## Get running
 
-You need Bun (developed on 1.4.3), Docker with Compose, DCMTK (`dcmconv`, `dcmcjpeg`, `dcmodify`), `curl`, and `tar`. Run `bun install` for the browser test driver. Allow roughly 3 GB of disk, an estimate from one machine's copy.
+You need Bun (developed on 1.4.3), Docker with Compose, DCMTK (`dcmconv`, `dcmcjpeg`, `dcmodify`), `curl`, and `tar`. Allow roughly 3 GB of disk, an estimate from one machine's copy.
 
 ```sh
+git clone https://github.com/jmandel/smart-imaging-sandbox && cd smart-imaging-sandbox
+bun run up      # sets everything up, starts it in the background, and prints the URLs
+bun run down    # stops the demo, MinIO, and Orthanc, keeping their data
+```
+
+`bun run up` checks for the tools above, then runs each step below. The first run downloads about 750 MB of sample data. Later runs skip finished work, and restart a running demo so it serves the current code. Its log is `/tmp/smart-imaging-demo/demo.log`.
+
+The same steps, one at a time:
+
+```sh
+bun install             # the browser test driver
 bun run fetch-data      # downloads the sample data, verifying checksums
 bun run ingest          # generates the synthetic studies, and builds the archive
 docker compose up -d    # MinIO and Orthanc
 bun run load            # copies the archive to MinIO, and adds any study Orthanc lacks
-bun run start           # builds any empty catalog, then prints the URLs
+bun run start           # builds any empty catalog, then prints the URLs, in the foreground
 ```
 
-Each step is safe to repeat. Everything except the downloads lives under `/tmp/smart-imaging-demo` by default, so after a reboot, run the steps again.
+Each step is safe to repeat. Everything except the downloads lives under `/tmp/smart-imaging-demo` by default, so after a reboot, run `bun run up` again.
 
 Then open http://127.0.0.1:4600/browse and try these:
 
@@ -144,7 +155,7 @@ Everything has a working default.
 |---|---|---|
 | `DEMO_TAILNET` | Detected | `0` stays on loopback |
 | `DEMO_PORT_OFFSET` | `0` | Added to ports 4600-4604, to run a second copy |
-| `DEMO_STORAGE` | `/tmp/smart-imaging-demo` | Compose volumes for MinIO and Orthanc only |
+| `DEMO_STORAGE` | `/tmp/smart-imaging-demo` | The default home of everything below, the Compose volumes, and `bun run up`'s log |
 | `MINIO_PORT`, `ORTHANC_PORT` | `4610`, `4611` | Where Compose publishes MinIO and Orthanc, and where the demo reaches them |
 | `ARCHIVE_DIR` | `/tmp/smart-imaging-demo/archive` | The local archive |
 | `INGEST_WORK` | The OS temp directory | Ingest's working files |
@@ -245,4 +256,4 @@ BACKENDS=static-files bun test   # flows, Browse, rotation, and conformance on o
 `bun run test:ui` drives the pages in real Chromium: focus, overflow, contrast, popups, and what the pages draw from real responses. It runs its own stack in memory, and takes the browser from `CHROMIUM`, or `/usr/bin/chromium`.
 
 
-The tests use the same ports as the demo, so stop `bun run start` first, or give the test run its own `DEMO_PORT_OFFSET`. The suite also creates and deletes a temporary bucket in the MinIO it points at. They need the setup steps above, including Docker, even with `BACKENDS` set. Spec checks read the guide's text from a local clone, set with `SPEC_REPO` and `SPEC_REF`.
+The tests use the same ports as the demo, so stop the demo first, with `bun run down` or by ending `bun run start`, or give the test run its own `DEMO_PORT_OFFSET`. The suite also creates and deletes a temporary bucket in the MinIO it points at. They need the setup steps above, including Docker, even with `BACKENDS` set. Spec checks read the guide's text from the `focused-access-updates` branch on GitHub, or from a local clone named by `SPEC_REPO`, at `SPEC_REF`.

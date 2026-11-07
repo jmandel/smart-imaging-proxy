@@ -123,11 +123,11 @@ describe("the Authorization Server's forms", () => {
     expect(noHost.status).toBe(303);
   });
   test("the tailnet address and name count as the service's own, on the port in use", () => {
-    const hosts = ownHosts(PORTS.auth, { name: "box.example.ts.net", ip: "100.79.84.61" });
-    expect(hosts).toContain(`100.79.84.61:${PORTS.auth}`);
+    const hosts = ownHosts(PORTS.auth, { name: "box.example.ts.net", ip: "100.64.0.7" });
+    expect(hosts).toContain(`100.64.0.7:${PORTS.auth}`);
     expect(hosts).toContain(`box.example.ts.net:${PORTS.auth}`);
-    expect(hosts).not.toContain(`100.79.84.61:${PORTS.auth + 1}`);
-    expect(ownHosts(PORTS.auth)).not.toContain("100.79.84.61:4603");
+    expect(hosts).not.toContain(`100.64.0.7:${PORTS.auth + 1}`);
+    expect(ownHosts(PORTS.auth)).not.toContain("100.64.0.7:4603");
   });
 });
 
