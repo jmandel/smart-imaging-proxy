@@ -7,7 +7,7 @@ import { registerClients } from "../src/flows";
 import { createDemoServer } from "../src/demo-server";
 import { accountUrl, buildAuthorization, scriptedLaunch, submitDelegation } from "../src/flows/oauth";
 import { CONFIG, PORTS } from "../src/config";
-import { ownHosts } from "../src/admin-api";
+import { ownHosts } from "../src/settings-api";
 import { createCollector } from "../src/trace-collector";
 
 let stack: Stack; let server: ReturnType<typeof Bun.serve>;
@@ -152,7 +152,7 @@ test("a refused scope mint makes no scope", async () => {
 
 test("the demo's pages and read APIs answer only at its own addresses", async () => {
   const demo = (path: string, headers: Record<string, string> = {}) => fetch(`http://127.0.0.1:${PORTS.demo}${path}`, { headers });
-  for (const path of ["/", "/browse", "/api/policy", "/api/backends", "/api/flows"]) {
+  for (const path of ["/", "/tours", "/activity", "/api/policy", "/api/backends", "/api/flows", "/api/explore/options", "/api/settings/status"]) {
     expect((await demo(path, { host: "evil.example" })).status).toBe(403);
     expect((await demo(path)).status).toBe(200);
   }

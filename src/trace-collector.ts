@@ -60,7 +60,10 @@ function eventProblem(r: unknown) {
 /** The filters `/api/events` takes. */
 export function eventQueryOf(url: URL): EventQuery {
   const q: EventQuery = {};
-  for (const k of ["session", "kind", "outcome", "who", "trace", "link", "scope"] as const) { const v = url.searchParams.get(k); if (v !== null) q[k] = v; }
+  for (const k of ["session", "kind", "outcome", "who", "trace", "link"] as const) { const v = url.searchParams.get(k); if (v) q[k] = v; }
+  // `-` is the root's alone.
+  const scope = url.searchParams.get("scope");
+  if (scope) q.scope = scope === "-" ? "" : scope;
   for (const k of ["after", "limit"] as const) { const v = Number(url.searchParams.get(k)); if (url.searchParams.has(k) && Number.isInteger(v)) q[k] = v; }
   return q;
 }

@@ -40,4 +40,4 @@ git archive --format=tar HEAD | ssh "$DEST" "mkdir -p ~/$REL && tar -x -C ~/$REL
 
 ssh "$DEST" "cd ~/smart-imaging-proxy/current && DEMO_PUBLIC_URL=$(printf %q "$URL") DEMO_APP_CLIENTS=$(printf %q "${DEMO_APP_CLIENTS:-}") bash deploy/install.sh"
 ssh exe.dev share port "$VM" 4605 >/dev/null
-echo "== Done: $URL/browse (private until: ssh exe.dev share set-public $VM)"
+echo "== Done: $URL/ (private until: ssh exe.dev share set-public $VM)"

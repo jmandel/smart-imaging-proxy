@@ -3,7 +3,7 @@
 //   bun src/main.ts [--role all|demo|proxy|imaging|auth|trace]
 //
 // A role can be a comma-separated list, as in `--role imaging,auth,trace`. `all` is the default, and
-// runs every service in this process. `demo` is the same: the flow player and admin screen change
+// runs every service in this process. `demo` is the same: Explore, Tours and the settings menu change
 // policy through the policy API, mint scopes, and work directly on the decision log, the proxy's
 // event log and the clocks, so they run with the services they drive. Split roles serve the root only.
 //
@@ -50,7 +50,7 @@ if (whole) {
   stopping = () => { demoServers.forEach(s => s.stop(true)); stack.stop(); };
   const info = stack.store.info();
   console.log(`SMART Imaging Proxy: ${CONFIG.demoUrl}${TAILNET ? " (tailnet)" : ""}`);
-  console.log(`Admin: ${CONFIG.demoUrl}/admin`);
+  console.log(`Tours: ${CONFIG.demoUrl}/tours`);
   console.log(`Live trace: ${CONFIG.traceUrl}`);
   console.log(`Traces: ${stack.collector.store.path ?? "in memory"}`);
   console.log(`Catalog: ${stack.catalogs.archive.stats().path}, and ${stack.catalogs.orthanc.stats().path} for Orthanc`);

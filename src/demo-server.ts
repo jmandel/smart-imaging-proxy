@@ -1,15 +1,19 @@
-// The demo's own web server: the flow player, Browse and the admin screen, backed by the real services.
-// `/s/{scope}/...` is that scope's own: its flow run, its Browse, and its redirects. The admin screen is
-// the root's. Starting a flow mints a scope for that run.
+// The demo's own web server: Explore, Tours and the activity view, backed by the real services, and the
+// flow API the checks and tests run flows through. `/s/{scope}/...` is that scope's own: its Explore,
+// its tour, its activity, its settings and its redirects. Starting a tour or a flow mints a scope for it.
 import { join } from "node:path";
 import { PolicyApiError } from "@smart-imaging-proxy/core";
 import { traced } from "./trace";
 import type { BackendName, Stack } from "./stack";
 import { FLOWS, flowById, runStep, startFlowIn, BadStepInput } from "./flows";
 import { StepStopped, type Ctx } from "./flows/runtime";
-import { adminApi, extraField, readJson, refuseHost, refuseWrite, BACKEND_NAMES } from "./admin-api";
+import { extraField, readJson, refuseHost, refuseWrite, settingsApi, BACKEND_NAMES } from "./settings-api";
 import type { BackendClient } from "./auth-server";
-import { createBrowse } from "./browse";
+import { createExplore } from "./explore";
+import { createTours } from "./tours";
+import { eventQueryOf } from "./trace-collector";
+import { scopeOfSession } from "./trace";
+import { VIEWER_KIT_DIR, VIEWER_KIT_FILES } from "./vendor";
 import { panelOf, splitPanel } from "./stores";
 import type { World } from "./world";
 
@@ -37,12 +41,13 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
 
     // The redirect URI the demo app registered. Whoever is waiting takes only its own redirect, by `state`.
     // The redirect is a real protocol message with no trace fields, so its span joins the flow waiting on it.
-    const browse = createBrowse(world, clients, stack);
+    const explore = createExplore(world, clients, stack);
+    const tours = createTours(world, clients, stack);
     const callback = traced("app", async req => {
       const back = new URL(req.url);
-      if (!browse.receiveCallback(back) && !session?.ctx.receiveCallback(back)) return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Not expected</title></head><body style="font:15px system-ui;padding:2rem"><p>This redirect doesn't match a sign-in the app is waiting for, so the app ignored it.</p></body></html>`, { status: 400, headers: { "content-type": "text/html" } });
+      if (!explore.receiveCallback(back) && !tours.receiveCallback(back) && !session?.ctx.receiveCallback(back)) return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Not expected</title></head><body style="font:15px system-ui;padding:2rem"><p>This redirect doesn't match a sign-in the app is waiting for, so the app ignored it.</p></body></html>`, { status: 400, headers: { "content-type": "text/html" } });
       return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Back in the app</title></head><body style="font:15px system-ui;padding:2rem"><p>Back in the app. You can close this window.</p><script>window.close()</script></body></html>`, { headers: { "content-type": "text/html" } });
-    }, (_req, url) => `Redirect back to the app: ${url.pathname}`, (_req, url) => browse.callbackContext(url) ?? session?.ctx.callbackContext ?? (session ? { session: session.ctx.session } : undefined));
+    }, (_req, url) => `Redirect back to the app: ${url.pathname}`, (_req, url) => explore.callbackContext(url) ?? tours.callbackContext() ?? session?.ctx.callbackContext ?? (session ? { session: session.ctx.session } : undefined));
 
     const stepInfo = (flow: any, c: Ctx) => flow.steps.map((s: any) => {
       let inputs: unknown[] = [];
@@ -61,10 +66,27 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       const url = new URL(req.url);
       const p = url.pathname;
       if (p === "/" || p === "/index.html") return file("index.html");
-      if (p === "/browse") return file("browse.html");
-      if (p.startsWith("/api/browse/")) return browse.fetch(req, url);
+      if (p === "/tours") return file("tours.html");
+      if (p === "/activity") return file("activity.html");
+      if (p.startsWith("/api/explore/")) return explore.fetch(req, url);
+      if (p === "/api/tours" || p.startsWith("/api/tours/") || p.startsWith("/api/checks/")) {
+        if (req.method === "POST") { const refused = refuseWrite(req, url); if (refused) return refused; }
+        return tours.fetch(req, url);
+      }
+      if (p.startsWith("/api/settings/")) return settingsApi(stack, world, req, url);
+      if (p === "/api/activity" && req.method === "GET") {
+        // A scope's activity is its own. The root's covers every world, and filters by scope.
+        const q = eventQueryOf(url);
+        if (world.scope) q.scope = world.scope;
+        return json({ events: stack.collector.store.events(q), facets: stack.collector.store.eventFacets(world.scope), traceUrl: world.urls.trace });
+      }
+      if (p === "/api/activity/span" && req.method === "GET") {
+        const session = url.searchParams.get("session") ?? "", span = url.searchParams.get("span") ?? "";
+        if (world.scope && scopeOfSession(session) !== world.scope) return json({ error: "not found" }, 404);
+        const r = stack.collector.store.span(session, span);
+        return r ? json(r) : json({ error: "not found" }, 404);
+      }
       if (p === "/oauth/callback") return callback(req);
-      if (p.startsWith("/api/admin/")) return world.scope ? json({ error: "the admin screen is the root's" }, 404) : adminApi(stack, req, url);
       if (p === "/api/pending-authorization") return json({ url: session?.ctx.pendingAuthUrl ?? null });
       if (p === "/api/pending-authorization/cancel" && req.method === "POST") {
         const refused = refuseWrite(req, url);
@@ -151,13 +173,22 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
   }
 
   // The same files in every world: the pages work out their scope from their own URL.
-  const STATIC: Record<string, string> = { "/app.js": "app.js", "/styles.css": "styles.css", "/fonts/atkinson-next.woff2": "fonts/atkinson-next.woff2", "/fonts/atkinson-mono.woff2": "fonts/atkinson-mono.woff2", "/admin": "admin.html", "/admin.js": "admin.js", "/browse.js": "browse.js" };
+  const STATIC: Record<string, string> = Object.fromEntries(["styles.css", "page.js", "cards.js", "explore.js", "tours.js", "activity.js", "thumbs.js", "fonts/atkinson-next.woff2", "fonts/atkinson-mono.woff2"].map(f => [`/${f}`, f]));
+  /** viewer-kit's files, from the pinned download, never from the repository. */
+  const vendor = async (name: string) => {
+    if (!VIEWER_KIT_FILES.includes(name)) return new Response("not found", { status: 404 });
+    const f = Bun.file(join(VIEWER_KIT_DIR, name));
+    const type = name.endsWith(".wasm") ? "application/wasm" : name.endsWith(".js") ? "text/javascript; charset=utf-8" : "text/plain; charset=utf-8";
+    return await f.exists() ? new Response(f, { headers: { "content-type": type, "cache-control": "public, max-age=86400" } }) : new Response("viewer-kit isn't downloaded: run bun run viewer-kit", { status: 404 });
+  };
   const routed = stack.route(w => req => serverOf(w).fetch(req));
   async function fetch(req: Request): Promise<Response> {
     const foreign = refuseHost(req);
     if (foreign) return foreign;
     const p = new URL(req.url).pathname;
     if (STATIC[p]) return file(STATIC[p]!);
+    const kit = p.match(/^\/vendor\/viewer-kit\/([^/]+)$/);
+    if (kit) return vendor(kit[1]!);
     return routed(req);
   }
   return { fetch };

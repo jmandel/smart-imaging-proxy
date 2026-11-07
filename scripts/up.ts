@@ -46,9 +46,8 @@ if (!(await demoPortAnswers())) fail(`The demo didn't answer within two minutes.
 console.log(`
 Running.
 
-  Browse      ${CONFIG.demoUrl}/browse
-  Flows       ${CONFIG.demoUrl}/
-  Admin       ${CONFIG.demoUrl}/admin
+  Explore     ${CONFIG.demoUrl}/
+  Tours       ${CONFIG.demoUrl}/tours
   Live trace  ${CONFIG.traceUrl}
   FHIR base   ${CONFIG.authUrl}/fhir, for apps
 

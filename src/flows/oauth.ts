@@ -81,6 +81,11 @@ export async function submitRevocation(url: string, d: { user: string; delegate:
   return post(doFetch, `${authOf(url)}/account/delegations/revoke${query}`, new URLSearchParams({ delegate: d.delegate, ...(d.patient ? { patient: d.patient } : {}) }), { cookie });
 }
 
+export async function submitAppRevocation(url: string, d: { user: string; client: string; patient?: string }, doFetch: typeof fetch = fetch) {
+  const { cookie, query } = await accountSignIn(url, d.user, doFetch);
+  return post(doFetch, `${authOf(url)}/account/apps/revoke${query}`, new URLSearchParams({ client: d.client, ...(d.patient ? { patient: d.patient } : {}) }), { cookie });
+}
+
 /** A complete scripted launch. */
 export async function scriptedLaunch(user: string, client = "portal-app", opts: { scope?: string; sites?: string[]; patient?: string; at?: At } = {}) {
   const at = opts.at ?? ROOT_URLS;

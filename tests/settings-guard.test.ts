@@ -1,4 +1,4 @@
-// The admin screen can only choose between fixed options. These tests read the source, and send every
+// The settings menu can only choose between fixed options. These tests read the source, and send every
 // write route the kinds of input it must never act on.
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -10,7 +10,7 @@ import { createDemoServer } from "../src/demo-server";
 import { createCollector } from "../src/trace-collector";
 import { resetClock } from "../src/clock";
 import { CONFIG } from "../src/config";
-import { CLOCK_CHOICES, SETTING_CHOICES } from "../src/admin-api";
+import { CLOCK_CHOICES } from "../src/settings-api";
 
 const root = join(import.meta.dir, "..");
 
@@ -32,13 +32,13 @@ const violations = (source: string) => FORBIDDEN.filter(([, pattern]) => pattern
 const IMPORTS = /^\s*(?:(?:import|export)\s[^;]*?from\s+|import\s+)["']([^"']+)["']/gm;
 const importsOf = (source: string) => [...source.matchAll(IMPORTS)].map(m => m[1]!);
 
-describe("the admin API's source", () => {
-  for (const file of ["src/admin-api.ts", "src/rule-presets.ts"]) {
+describe("the settings API's source", () => {
+  for (const file of ["src/settings-api.ts", "src/rule-presets.ts"]) {
     const source = readFileSync(join(root, file), "utf8");
     test(`${file} has no file, process, or code-running access`, () => { expect(violations(source)).toEqual([]); });
     test(`${file} imports only a short list of the demo's own modules`, () => {
       expect(importsOf(source).length).toBeGreaterThan(0);
-      for (const name of importsOf(source)) expect(["./stack", "@smart-imaging-proxy/core", "./clock", "./config", "./rule-presets"]).toContain(name);
+      for (const name of importsOf(source)) expect(["./stack", "./world", "@smart-imaging-proxy/core", "./clock", "./config", "./rule-presets"]).toContain(name);
       // From core, only the policy API's error and types.
       const fromCore = [...source.matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+"@smart-imaging-proxy\/core"/g)].flatMap(m => m[1]!.split(",").map(n => n.trim().replace(/^type\s+/, "")).filter(Boolean));
       for (const name of fromCore) expect(["PolicyApiError", "Settings", "CatalogStore", "ServiceAccessPolicy"]).toContain(name);
@@ -62,7 +62,7 @@ describe("over HTTP", () => {
   const RULE = { id: "keep", type: "service-access" as const, service: "service:c", patients: "any" as const, allow: { all: true } };
   const SHARE = { from: "user:josh", with: "user:sam-caregiver", patient: "patient:josh-example", sites: ["Lakeside Imaging"], label: "caregiver" };
   const APPROVAL = { by: "user:josh", app: "app:portal-app", patient: "patient:josh-example" };
-  const fingerprint = () => JSON.stringify({ saved: stack.store.snapshot(), settings: stack.store.getSettings(), scopes: stack.scopes.size, backend: stack.backend, outage: stack.imaging.outage, kid: stack.imaging.signingKid });
+  const fingerprint = () => JSON.stringify({ saved: stack.store.snapshot(), settings: stack.store.getSettings(), scopes: stack.scopes.size, backend: stack.backend, kid: stack.imaging.signingKid });
 
   beforeAll(async () => {
     stack = await startStack(root);
@@ -78,7 +78,6 @@ describe("over HTTP", () => {
     await stack.resetSaved();
     stack.store.replacePolicies("service-access", [RULE]);
     stack.store.setDocument({ shares: [SHARE], approvals: [APPROVAL] });
-    stack.imaging.setOutage(false);
     resetClock();
     stack.setBackend("static-files");
   });
@@ -94,15 +93,12 @@ describe("over HTTP", () => {
 
   /** Every write route that takes a field: where it lives, the field, and a value that's a real choice. */
   const FIELDS: [string, string, string, unknown][] = [
-    ["POST", "/api/admin/store/reset-saved", "confirm", undefined],
-    ["POST", "/api/admin/rule-set", "id", "no-extra-rules"],
-    ...Object.entries(SETTING_CHOICES).map(([k, v]) => ["PUT", "/api/admin/settings", k, v[0]!.value] as [string, string, string, unknown]),
-    ["POST", "/api/admin/clock", "advanceSeconds", CLOCK_CHOICES[0]!.value],
-    ["POST", "/api/admin/backend", "backend", "static-files"],
-    ["POST", "/api/admin/outage", "on", false],
+    ["POST", "/api/settings/reset", "confirm", undefined],
+    ["POST", "/api/settings/clock", "advanceSeconds", CLOCK_CHOICES[0]!.value],
+    ["POST", "/api/settings/backend", "backend", "static-files"],
   ];
   // These fields have some values that are real choices, which the list of hostile values holds too.
-  const allowedHostile: Record<string, unknown[]> = { on: [true], confirm: [true] };
+  const allowedHostile: Record<string, unknown[]> = { confirm: [true] };
 
   for (const [method, path, field, good] of FIELDS) {
     test(`${method} ${path} (${field}) rejects anything outside its choices`, async () => {
@@ -125,58 +121,50 @@ describe("over HTTP", () => {
   }
   test("reset saved takes only confirm: true", async () => {
     const before = fingerprint();
-    expect((await send("POST", "/api/admin/store/reset-saved", { confirm: true, path: bait })).status).toBe(400);
-    expect((await send("POST", `/api/admin/store/reset-saved?path=${encodeURIComponent(bait)}`, { confirm: true })).status).toBe(400);
+    expect((await send("POST", "/api/settings/reset", { confirm: true, path: bait })).status).toBe(400);
+    expect((await send("POST", `/api/settings/reset?path=${encodeURIComponent(bait)}`, { confirm: true })).status).toBe(400);
     expect(fingerprint()).toBe(before);
   });
   test("the clock takes only one named action", async () => {
-    for (const body of [{ reset: true, advanceSeconds: 60 }, { reset: true, path: bait }, { advanceSeconds: 61 }, {}]) expect((await send("POST", "/api/admin/clock", body)).status).toBe(400);
-    expect((await (await send("GET", "/api/admin/status")).json() as any).clock.offsetSeconds).toBe(0);
+    for (const body of [{ reset: true, advanceSeconds: 60 }, { reset: true, path: bait }, { advanceSeconds: 61 }, {}]) expect((await send("POST", "/api/settings/clock", body)).status).toBe(400);
+    expect((await (await send("GET", "/api/settings/status")).json() as any).clock.offsetSeconds).toBe(0);
   });
   for (const path of ["/tokens/revoke-all", "/proxy/flush", "/signing-key/rotate"]) {
-    test(`POST /api/admin${path} takes no input at all`, async () => {
+    test(`POST /api/settings${path} takes no input at all`, async () => {
       const before = fingerprint();
-      for (const body of [{ path: bait }, { file: canary }, { store: "'; DROP TABLE rules; --" }, "../../etc/passwd", "[1]"]) expect((await send("POST", `/api/admin${path}`, body)).status).toBe(400);
-      expect((await send("POST", `/api/admin${path}?path=${encodeURIComponent(bait)}`)).status).toBe(400);
+      for (const body of [{ path: bait }, { file: canary }, { store: "'; DROP TABLE rules; --" }, "../../etc/passwd", "[1]"]) expect((await send("POST", `/api/settings${path}`, body)).status).toBe(400);
+      expect((await send("POST", `/api/settings${path}?path=${encodeURIComponent(bait)}`)).status).toBe(400);
       expect(fingerprint()).toBe(before);
       stillIntact();
     });
   }
-  test("a delete identifies an existing row, and nothing else", async () => {
-    const before = fingerprint();
-    const d = "/api/admin/shares", g = "/api/admin/app-approvals";
-    const q = (o: Record<string, string>) => `?${new URLSearchParams(o)}`;
-    for (const sql of ["'; DROP TABLE shares; --", "x' OR '1'='1", "%", "../../etc/passwd", canary]) {
-      expect((await send("DELETE", d + q({ patient: sql, with: sql }))).status).toBe(404);
-      expect((await send("DELETE", g + q({ app: sql, by: sql, patient: sql }))).status).toBe(404);
-    }
-    expect((await send("DELETE", d + q({ patient: SHARE.patient, with: SHARE.with, path: bait }))).status).toBe(400);
-    expect((await send("DELETE", g + q({ ...APPROVAL, file: canary }))).status).toBe(400);
-    expect((await send("DELETE", `${d}${q({ patient: SHARE.patient, with: SHARE.with })}&with=other`)).status).toBe(400);
-    expect((await send("DELETE", d + q({ patient: SHARE.patient, with: SHARE.with }), { path: bait })).status).toBe(400);
-    expect(fingerprint()).toBe(before);
-    stillIntact();
-  });
   test("no route accepts a path, and the replaced routes are gone", async () => {
-    for (const [method, path] of [["PUT", "/api/admin/rules"], ["POST", "/api/admin/rules"], ["PUT", "/api/admin/rule-set"], ["POST", "/api/admin/settings"], ["PUT", "/api/admin/clock"], ["POST", "/api/admin/store/path"], ["PUT", "/api/admin/store"], ["POST", "/api/admin/store/open"], ["POST", "/api/admin/store/activate"], ["POST", "/api/admin/store/reset-scratch"], ["POST", "/api/admin/catalog"], ["POST", "/api/admin/export"], ["POST", "/api/admin/import"], ["DELETE", "/api/admin/delegations"], ["DELETE", "/api/admin/app-grants"], ["POST", "/api/admin/../../etc/passwd"]] as const) {
+    for (const [method, path] of [["POST", "/api/settings/rule-set"], ["PUT", "/api/settings/settings"], ["POST", "/api/settings/outage"], ["DELETE", "/api/settings/shares"], ["POST", "/api/admin/store/reset-saved"], ["GET", "/api/admin/status"], ["PUT", "/api/admin/rules"], ["POST", "/api/admin/rules"], ["PUT", "/api/admin/rule-set"], ["POST", "/api/admin/settings"], ["PUT", "/api/admin/clock"], ["POST", "/api/admin/store/path"], ["PUT", "/api/admin/store"], ["POST", "/api/admin/store/open"], ["POST", "/api/admin/store/activate"], ["POST", "/api/admin/store/reset-scratch"], ["POST", "/api/admin/catalog"], ["POST", "/api/admin/export"], ["POST", "/api/admin/import"], ["DELETE", "/api/admin/delegations"], ["DELETE", "/api/admin/app-grants"], ["POST", "/api/admin/../../etc/passwd"]] as const) {
       expect((await send(method, path, { path: bait, rules: [] })).status).toBe(404);
     }
     stillIntact();
   });
   test("the status shows store and catalog paths, read-only", async () => {
-    const s: any = await (await send("GET", "/api/admin/status")).json();
+    const s: any = await (await send("GET", "/api/settings/status")).json();
     expect(s.store.path).toBe(":memory:");
     expect(s.catalog.path).toBe(":memory:");
-    const js = await (await send("GET", "/admin.js")).text();
-    expect(js).toContain('row("Path", x => x.path)');
-    expect(js).not.toMatch(/call\("(POST|PUT|DELETE)"[^)]*\bpath\b/);
+    const js = await (await send("GET", "/page.js")).text();
+    expect(js).not.toMatch(/api\("(POST|PUT|DELETE)"[^)]*\bpath\b/);
   });
   test("the status is refused under another Host, before it shows anything", async () => {
-    const status = (host: string) => demo.fetch(new Request(`${CONFIG.demoUrl}/api/admin/status`, { headers: { host } }));
+    const status = (host: string) => demo.fetch(new Request(`${CONFIG.demoUrl}/api/settings/status`, { headers: { host } }));
     const r = await status("evil.example");
     expect(r.status).toBe(403);
     expect(await r.text()).not.toContain("store");
     expect((await status(new URL(CONFIG.demoUrl).host)).status).toBe(200);
+  });
+  test("Explore's writes act only for a session, and take only the choices it offers", async () => {
+    const before = fingerprint();
+    for (const [path, body] of [["/api/explore/share", { from: "josh", with: "sam-caregiver", patient: "josh-example", sites: [bait], relationship: canary }], ["/api/explore/apply-policy", { ruleSet: bait }], ["/api/explore/start", { user: bait }], ["/api/explore/start", { client: "../../etc/passwd" }], ["/api/explore/start", { user: "josh", patient: canary }], ["/api/explore/start", "[]"]] as const) {
+      expect([path, (await send("POST", path, body)).status]).toEqual([path, path === "/api/explore/start" ? 400 : 404]);
+    }
+    expect(fingerprint()).toBe(before);
+    stillIntact();
   });
   test("/api/backend takes a backend name, and nothing else", async () => {
     for (const body of [{ backend: canary }, { backend: "'; DROP TABLE rules; --" }, { backend: "s3", path: bait }, "[]"]) expect((await send("POST", "/api/backend", body)).status).toBe(400);

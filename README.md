@@ -2,7 +2,7 @@
 
 A working prototype of a SMART Imaging deployment: an Authorization Server, an Imaging Server holding policy and a study catalog, and a WADO-RS proxy that enforces study-level policy without holding any of it. It runs on ten studies across three patients. It implements the `focused-access-updates` branch of the [SMART Imaging Access guide](https://github.com/argonautproject/smart-imaging). It isn't production code.
 
-The proxy, its backends, the archive, and the Imaging Server are a package of their own, [`packages/core`](packages/core/README.md), which knows nothing of the demo. The demo around it supplies the sign-in, the pages, the flows, the live trace, and the configuration.
+The proxy, its backends, the archive, and the Imaging Server are a package of their own, [`packages/core`](packages/core/README.md), which knows nothing of the demo. The demo around it supplies the sign-in, the pages, the tours, the activity view and live trace, and the configuration.
 
 ## Get running
 
@@ -23,6 +23,7 @@ bun install             # links the core package, and installs the browser test 
 bun run fetch-data      # downloads the sample data, verifying checksums
 bun run ingest          # generates the synthetic studies, and builds the archive
 bun scripts/backends.ts fetch   # downloads RustFS and Orthanc, checking their hashes
+bun run viewer-kit      # downloads viewer-kit, checking its hash and every file's
 bun scripts/backends.ts start   # runs both in the background, on loopback
 bun run load            # copies the archive to the S3 bucket, and adds any study Orthanc lacks
 bun run start           # builds any empty catalog, then prints the URLs, in the foreground
@@ -30,11 +31,12 @@ bun run start           # builds any empty catalog, then prints the URLs, in the
 
 Each step is safe to repeat. Everything except the downloads lives under `/tmp/smart-imaging-demo` by default, so after a reboot, run `bun run up` again.
 
-Then open http://127.0.0.1:4605/browse and try these:
+Then open http://127.0.0.1:4605/ and try these:
 
-1. **Josh, the patient:** shows all six of his studies. Retrieve one through the proxy, and follow its link to the live trace.
-2. **Sam, a patient and a caregiver:** right under Sam, choose Sam's own records or Riley's as guardian. Each choice is a real new sign-in and search. Josh's aren't Sam's until Josh shares: choose "Josh Example hasn't shared with Sam", and the page offers to share, and then Josh is a third choice, showing only the shared sites.
-3. **A backend client:** gets a `403` until you apply a rule set of service-access policies at `/admin`.
+1. **Josh, the patient:** Explore shows all six of his studies, each with a thumbnail decoded in the page. Open one, retrieve it through the proxy, and read what happened.
+2. **Sam, a patient and a caregiver:** "Whose records" switches between Sam's own and Riley's, as guardian. Each choice is a real new sign-in and search. Josh's aren't Sam's until Josh shares: choose "Josh, not shared", and the page offers Josh's share.
+3. **A service:** picks a referral to work from, and gets a `403` until the page applies the service-access policy the referral needs.
+4. **Tours:** four stories, each in a scope of its own, checked step by step against a reference model, and Run checks for the protocol flows.
 
 ## What's at each URL
 
@@ -44,7 +46,7 @@ Everything is at one origin, port 4605: the demo's pages, the live trace at `/tr
 
 | Port | Service | Paths |
 |---|---|---|
-| 4600 | Demo | `/` flow player, `/browse` Browse, `/admin` admin screen |
+| 4600 | Demo | `/` Explore, `/tours` Tours, `/activity` the activity view, `/api/flows/...` the flows |
 | 4601 | WADO-RS proxy | `/wado/{signed-context}/studies/...`, opaque to clients |
 | 4602 | Imaging Server | `/fhir/ImagingStudy`, `/fhir/metadata`, `/access/v1/evaluation`, `/policy/v2/...`, `/.well-known/jwks.json`, `/.well-known/authzen-configuration` |
 | 4603 | Authorization Server | `/fhir/.well-known/smart-configuration`, `/authorize`, `/token`, `/introspect`, `/revoke`, `/account`, `/fhir/Patient/{id}` (with a token for that patient) |
@@ -55,17 +57,27 @@ Everything is at one origin, port 4605: the demo's pages, the live trace at `/tr
 
 `/s/{scope}` in front of any of these paths, on any of these ports, reaches a [policy scope](#policy-scopes) instead.
 
-- **Flow player:** 15 flows, each a series of steps showing real requests and responses, on any backend. Every run mints a scope of its own, starting from what's on file, and the page moves to that scope's URL, so a reload comes back to the run.
-- **Browse:** pick an account or a backend client, and, for a person holding more than one record, whose records. The demo server runs a real launch or token request, then a real paged search, holding the token itself. At `/browse`, it works on saved policy, and at `/s/{scope}/browse`, on that scope's. A panel shows the Imaging Server's reason for each study, which a real app would never see.
-- **Admin:** saved policy in its three levels, with the relationships and policies on file, shares and app approvals, rule sets of service-access policies, settings, demo clock, backend, decision outage, token revocation, decision flush, and key rotation.
+- **Explore:** pick a person or a service, and for a person holding more than one record, whose records. The demo server runs a real launch, or for a service the work it starts from, then a real search, holding the token itself. The headline says what they can see, and chips give the Imaging Server's reasons, one for each level of policy. Studies are film sheets, with thumbnails decoded in the browser. A study a route reaches and the app doesn't shows as withheld, with its reason, and one no route reaches never shows. An empty view offers the action its reason calls for: a share, an approval, or a service-access policy. Opening a study retrieves it on request, and shows what happened, from the recorded events. At `/` it works on saved policy, and at `/s/{scope}/`, on that scope's.
+- **Services work from referrals:** the demo makes a consult referral for each sample study with an accession number: a `ServiceRequest` whose `subject` is the patient on the clinical FHIR server, as an absolute reference, and whose `supportingInfo` cites the imaging report, which carries the order's accession number with its system. The service checks the reference is on the FHIR base it's authorized for, searches `ImagingStudy?patient={reference}&identifier={system}|{accession}`, and retrieves. Its service-access policy decides what it sees.
+- **Tours:** four stories, caregiver share, app consent, revoking, and a service working from a referral, each in a scope minted for it. A step is an action. What it should come to is computed by a reference model, `src/reference-model.ts`, written apart from core's evaluation, from the scope's policy and catalog at that moment, and the step passes when the system's real answer matches. Run checks runs the protocol flows, each in a scope of its own with its usual choices, as one pass or fail list. A person can sign in in a real window, and an automated run never opens one.
+- **Settings menu:** in the header of every page, for the world the page is in: where images come from, the demo clock, resetting policy, and ending access (revoking tokens, flushing decisions, rotating the key).
+- **Activity:** every typed event the services recorded, as one card per kind, filtered by scope, person, kind and outcome. A card links through the values events share, such as a token's hash, and opens the raw exchange, with JWTs and signed links decoded, bundles laid out, multipart responses as parts, and tokens only as hashes.
+- **Flows:** 15 flows in `src/flows`, run through `/api/flows`, which Run checks and the tests use. Every run mints a scope of its own.
 - **Account page:** at `/account`, a patient or guardian picks whose records to share, shares sites with a related person, and revokes people and apps.
 - **Live trace:** spans from every service, with inline previews. They're kept in SQLite and survive a restart.
+
+## Thumbnails
+
+Film sheets show thumbnails decoded in the browser by [viewer-kit](https://github.com/jmandel/shlink-dicom), from jmandel/shlink-dicom, under the Apache License 2.0. The release is pinned in `src/vendor.ts`, by its tag and the tarball's SHA-256. `bun run viewer-kit`, which `bun run up` and the installer run, downloads it once into `$DEMO_STORAGE/vendor/`, checks the tarball and every file against its `SHA256SUMS`, and fails on any mismatch. The demo serves it at `/vendor/viewer-kit/`. It isn't in this repository.
+
+- **Which instance:** the middle instance, by number, of the study's first image series, from the search result alone. For a slide, the series metadata is read once, for the image whose Image Type is `THUMBNAIL`, or failing that a one-frame `VOLUME` level, and never `OVERVIEW`. A server that doesn't offer metadata, or a slide with neither, shows the placeholder.
+- **How:** Explore retrieves that one instance through the proxy, in its stored form, with the session's token, as any app would, so each appears in the activity. The page decodes it with one decoder pool, at a reduced scale, and draws it with the CPU renderer. A withheld study fetches nothing.
 
 ## Policy scopes
 
 With no prefix, every service uses saved policy, the one real policy database. `/s/{scope}/` in front of any path gives a scratch world: its own Authorization Server, Imaging Server and proxy, with their own policy store in memory, signing key, credentials, tokens, decision cache, and demo clock. Their URLs carry the prefix, so discovery, redirects, `Endpoint.address`, signed contexts, `next` links and bulk data links all stay in the scope. Only the catalog, the backends and the trace collector are shared. A token, code or signed URL from one world fails in every other, and a policy change in one is invisible in the rest.
 
-Each service's listener sends a scoped path to that scope's own instance of the same service, with the prefix taken off, and the one origin forwards the prefix through, so scopes work the same with `DEMO_ONE_ORIGIN=0`. A scope's pages are the flow player, Browse, its account page, and its live trace at `/s/{scope}/trace/`, which lists only its own sessions.
+Each service's listener sends a scoped path to that scope's own instance of the same service, with the prefix taken off, and the one origin forwards the prefix through, so scopes work the same with `DEMO_ONE_ORIGIN=0`. A scope's pages are Explore, its tour, its activity, its account page, and its live trace at `/s/{scope}/trace/`, which lists only its own sessions.
 
 - **A minted id:** `POST /api/scopes` returns `{ scope, base, urls }`, with a random 22-character id, seeded from what's on file. So does starting a flow.
 - **An inline seed:** `/s/~{seed}/`, where the seed is deflate-raw compressed JSON, base64url encoded: the policy API's document in all three levels, `{ relationships, policies, shares, approvals }`, with `contextLifetimeSeconds` and `maxSeriesInContext`, any part of it. The relationships and policies it names are that world's on file, and a reset there puts them back. Where it names none, they're the ones on file. Labels are the catalog's, and birth dates the patient records'. The first request builds the world from it, and later ones reuse it, along with any changes made there. A seed is at most 4,096 characters, and 64 KiB of JSON. One that doesn't validate gets a `400` saying why. `encodeSeed` in `src/scopes.ts` makes one.
@@ -99,7 +111,7 @@ The one origin is what a host in front of the machine forwards to: give it the p
 - **Any Linux machine with systemd:** `DEMO_PUBLIC_URL=https://imaging.example.org deploy/install.sh` from a checkout. It installs DCMTK and a pinned Bun if they're missing, builds the data under `/var/lib/smart-imaging-proxy`, and runs the app, the S3 store, and Orthanc as the `smart-imaging-proxy`, `smart-imaging-proxy-s3`, and `smart-imaging-proxy-orthanc` services. Its settings go to `/etc/smart-imaging-proxy.env`. Repeating it updates the machine.
 - **An exe.dev VM:** `scripts/deploy-exe.sh <vm-name>` creates the VM if it doesn't exist, copies this checkout's committed code, runs the installer with the VM's HTTPS URL from exe.dev's own listing, and points the VM's web proxy at port 4605. The proxy stays private, behind exe.dev's login, until you run `ssh exe.dev share set-public <vm-name>`. `DEMO_APP_CLIENTS` set when you run it goes to the VM.
 
-The demo's pages, live trace, and admin screen have no login of their own. Anyone who can reach the origin can read traces and change saved policy, so choose who can reach it at the host.
+The demo's pages, settings menu, and live trace have no login of their own. Anyone who can reach the origin can read traces and change saved policy, so choose who can reach it at the host.
 
 ## How it works
 
@@ -110,7 +122,7 @@ The demo's pages, live trace, and admin screen have no login of their own. Anyon
 - **Backend Services:** ES256 client assertions, with each check traced separately: registered key, algorithm, `iss` and `sub`, `aud`, expiry, `jti`, signature, and scope.
 - **Three levels of policy:** facts (relationships, labels on studies, birth dates), organization policy (guardian access by age, who may share, and backend services' access), and people's choices within it (shares and app approvals). No fact grants anything alone, and no choice exceeds the chooser's own access. Policies and choices only grant: access is the union of every grant that applies, so adding one never takes access away, and revoking is deleting it. Guardian-access age bands never overlap. The model is in [packages/core/README.md](packages/core/README.md#policy).
 - **Sharing:** a patient or guardian shares with a related person, who can give an app part of it. What a patient shares stops there, since the sharing policy lets only patients and guardians share: a share someone else makes gets a `403` naming that policy. A share follows what the sharer can see now, through the route it was made on. Each share and app approval records the rows it rests on, and revoking a row deletes what rests only on it, by id, so sharing again, or putting a guardian relationship back, brings nothing back. An approval covers the routes its user held when approving: one gained later needs a new approval.
-- **Policy API:** the account page, consent, Browse, the flows, and the admin screen change policy only through the Imaging Server's policy API, at `/policy/v2`, with its own credential, which the proxy doesn't hold. The one origin doesn't forward it: callers use the Imaging Server's loopback port. Its calls are in [packages/core/README.md](packages/core/README.md#the-policy-api).
+- **Policy API:** the account page, consent, Explore, the tours, and the settings menu change policy only through the Imaging Server's policy API, at `/policy/v2`, with its own credential, which the proxy doesn't hold. The one origin doesn't forward it: callers use the Imaging Server's loopback port. Its calls are in [packages/core/README.md](packages/core/README.md#the-policy-api).
 - **Guardians:** a `guardian_of` relationship from registration, in `data/patient.json`, which grants what the guardian-access policy for the patient's age allows. Guardians of patients under 13 see every study, the confidential label being one their policy knows, and guardians of 13- to 17-year-olds see all but those labeled `confidential-adolescent`. Riley is 15, and Riley's skin biopsy carries that label in `data/studies.source.json`, so search omits it for Sam, retrieval refuses it, and Sam's shares and apps can't include it. At 18 no guardian-access policy applies, and Sam holds nothing of Riley's. Age comes from the birth date and the world's clock at each check, counted in UTC. Removing a guardian relationship also removes the shares made on it, and the app approvals resting only on what was removed. A share or approval goes quiet, not deleted, while no sharing or guardian-access policy covers it, such as after an 18th birthday, and comes back if one does again. A policy reset clears what people chose and puts what's on file back.
 - **One patient to a token:** whoever holds several records picks one at each launch, which makes its own token and its own app approval. Searching for another patient gets `403`, and retrieving another patient's study gets `404`.
 - **Search:** reads only the catalog, never a bucket. `_count` defaults to 20, with a maximum of 100. Each page's `next` link holds a signed cursor that grants nothing, because policy runs again on every page.
@@ -128,12 +140,12 @@ After a token is revoked:
 | Plain or asked URL, already decided | `200`, cached, for the same time |
 | Plain URL, not cached | `401` at once |
 
-The window is `min(now + context lifetime, token exp)`, set when the context or decision is issued. Context lifetime is 300 seconds by default, and the admin screen offers up to 1,800.
+The window is `min(now + context lifetime, token exp)`, set when the context or decision is issued. Context lifetime is 300 seconds by default.
 
 - **Flush decisions** ends the cached window only, not signed URLs.
 - **Rotate the key,** with the proxy told, ends the signed-URL window at once. A revoked token then gets `401`, and a valid token still works by asking.
 - **Revoking a share or an app** on the account page works the same way: search reflects it at once, and an uncached plain URL gets `404`, while a signed URL or cached decision already issued keeps working until it expires.
-- **Ending access at once** takes all three on `/admin`: revoke tokens, flush decisions, and rotate the key.
+- **Ending access at once** takes all three, in the settings menu: revoke tokens, flush decisions, and rotate the key.
 
 ## The archive
 
@@ -188,10 +200,13 @@ Then restart `bun run start`.
 | `src/gateway.ts`, `src/cors.ts` | The one origin apps are given, and the services' CORS |
 | `src/auth-server.ts` | SMART launch and Backend Services, sign-in, consent, account page, introspection |
 | `src/flows/` | The flows, shared by the web page and tests, and the launch client |
-| `src/browse.ts` | The Browse page's sessions and API |
-| `src/admin-api.ts`, `src/rule-presets.ts` | The admin API, and its named rule sets of service-access policies |
+| `src/explore.ts` | Explore's sessions and API: sign-in, search, withheld studies, actions, thumbnails, and what happened |
+| `src/tours.ts`, `src/reference-model.ts` | The tours and checks, and the reference model the tours are checked against |
+| `src/referrals.ts` | The referrals and reports the services work from |
+| `src/settings-api.ts`, `src/rule-presets.ts` | The settings menu's API and the write guards, and named rule sets of service-access policies |
+| `src/vendor.ts`, `scripts/viewer-kit.ts` | viewer-kit's pin, and its download |
 | `src/trace.ts`, `src/trace-collector.ts`, `src/trace-store.ts` | Spans and redaction, the observer core reports to, the live stream, and SQLite storage |
-| `src/clock.ts` | Demo clocks: the root's, which the admin screen moves, and one for each scope |
+| `src/clock.ts` | Demo clocks: the root's, and one for each scope, which the settings menu moves |
 | `scripts/` | Fetch, synthetic study generation, ingest, load, catalog builds, the backends, and deploying |
 | `deploy/` | The installer for a Linux machine with systemd |
 | `data/` | Source list with checksums, patient links, and Orthanc's per-study settings |
@@ -245,7 +260,7 @@ PROXY_BACKEND=s3 bun src/main.ts --role proxy
 | `PROXY_BACKEND` | `static-files` | `static-files`, `s3`, or `orthanc`. Set `orthanc` on `imaging` too, to use Orthanc's catalog |
 | `JWKS_TTL_SECONDS` | `60` | How long a split proxy trusts its copy of the keys |
 
-Split services serve saved policy only, with no scopes, flow player, Browse, or admin screen. `auth` registers the demo's Backend Services clients with keys derived from `SERVICE_SECRET` (`derivedBackendClient` in `src/auth-server.ts`), so anyone holding that secret can act as them.
+Split services serve saved policy only, with no scopes, pages, or settings menu. `auth` registers the demo's Backend Services clients with keys derived from `SERVICE_SECRET` (`derivedBackendClient` in `src/auth-server.ts`), so anyone holding that secret can act as them.
 
 ## Real and simulated
 
@@ -273,7 +288,7 @@ Sam Example's and Riley Example's are invented people, and they're the only ones
 
 ## Known limits
 
-**Open access:** nothing here has a login. Anyone who can reach these ports can sign in as any account, use `/admin`, and read every trace, including its response bodies. Over a tailnet, that's anyone on it. Traffic is plain HTTP. `/admin` writes take named choices or identify an existing row, and nothing there reaches the filesystem. The flow player's policy panel accepts any valid policy JSON, for the scratch store only.
+**Open access:** nothing here has a login. Anyone who can reach these ports can sign in as any account, change saved policy from the settings menu and Explore, and read every trace and event, including response bodies. Over a tailnet, that's anyone on it. Traffic is plain HTTP. Settings writes take named choices, and nothing there reaches the filesystem. `/api/policy` accepts any valid policy JSON, for a scope only.
 
 **Not tried:** other devices on the tailnet, AWS S3 (only RustFS), any cloud deployment, and real patient matching.
 
@@ -301,17 +316,17 @@ Sam Example's and Riley Example's are invented people, and they're the only ones
 **Tradeoffs and restarts:**
 
 - A revoked token keeps working on signed URLs and cached decisions for the windows under [Ending access](#ending-access).
-- A restart loses sign-ins in progress, Browse and account sessions, the proxy's cached decisions, and every scope.
+- A restart loses sign-ins in progress, Explore, tour and account sessions, the proxy's cached decisions, and every scope.
 - A restart also changes the paging key, so older `next` links get a `400`.
 
 ## Tests
 
 ```sh
 bun test                         # every flow on every backend, core's tests, and the rest
-BACKENDS=static-files bun test   # flows, Browse, rotation, and conformance on one backend
+BACKENDS=static-files bun test   # flows, Explore, rotation, and conformance on one backend
 cd packages/core && bun test     # core alone, with no demo
 ```
-`bun run test:ui` drives the pages in real Chromium: focus, overflow, contrast, popups, and what the pages draw from real responses. It runs its own stack in memory, and takes the browser from `CHROMIUM`, or `/usr/bin/chromium`.
+`bun run test:ui` drives the pages in real Chromium: focus, overflow, contrast, popups, thumbnails decoded in the page, each tour run end to end, and what the pages draw from real responses. It runs its own stack in memory, and takes the browser from `CHROMIUM`, or `/usr/bin/chromium`.
 
 
 The tests use the same ports as the demo, so stop the demo first, with `bun run down` or by ending `bun run start`, or give the test run its own `DEMO_PORT_OFFSET`. The suite also creates and deletes a temporary bucket in the S3 store it points at. They need the setup steps above, with the S3 store and Orthanc running, even with `BACKENDS` set. Spec checks read the guide's text from the `focused-access-updates` branch on GitHub, or from a local clone named by `SPEC_REPO`, at `SPEC_REF`.

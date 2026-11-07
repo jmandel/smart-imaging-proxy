@@ -115,12 +115,13 @@ describe("the guardian", () => {
   test("survives every reset, and is in every new scope, and a reset still clears what people chose", async () => {
     await shareFromJosh(["Lakeside Imaging"]);
     await launchFor("riley-example");
-    const res = await demo.fetch(new Request(`${CONFIG.demoUrl}/api/admin/store/reset-saved`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host, "content-type": "application/json" }, body: JSON.stringify({ confirm: true }) }));
+    const res = await demo.fetch(new Request(`${CONFIG.demoUrl}/api/settings/reset`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host, "content-type": "application/json" }, body: JSON.stringify({ confirm: true }) }));
     const status: any = await res.json();
-    expect(status.policy.relationships).toMatchObject([riley]);
-    expect(status.policy.policies).toEqual(ON_FILE.policies);
-    expect(status.policy.shares).toEqual([]);
-    expect(status.policy.approvals).toEqual([]);
+    const after = stack.store.snapshot();
+    expect(after.relationships).toMatchObject([riley]);
+    expect(after.policies).toEqual(ON_FILE.policies);
+    expect(after.shares).toEqual([]);
+    expect(after.approvals).toEqual([]);
     expect(status.store.counts).toMatchObject({ relationships: 1, policies: 3, shares: 0, approvals: 0 });
     expect((await search((await launchFor("riley-example")).access_token, "riley-example")).ids).toEqual(RILEY);
     await stack.resetSaved();
@@ -269,13 +270,12 @@ describe("the guardian", () => {
     expect(() => s.setDocument({ relationships: [riley, riley] })).toThrow("duplicate");
     s.close();
   });
-  test("shows on the account page and the admin screen, and on the sign-in picker", async () => {
+  test("shows on the account page and in Explore", async () => {
     const { html } = await accountPage(SAM_ACCOUNT);
     expect(html).toContain("Riley Example</b>: you're their guardian, on file with the Imaging Server");
     expect(html).toContain("Sam Example</b>: your own records");
-    const admin: any = await (await demo.fetch(new Request(`${CONFIG.demoUrl}/api/admin/status`, { headers: { host: new URL(CONFIG.demoUrl).host } }))).json();
-    expect(admin.policy.relationships).toMatchObject([riley]);
-    expect(await Bun.file(join(root, "web/admin.js")).text()).toContain("Facts: relationships on file");
+    const o: any = await (await demo.fetch(new Request(`${CONFIG.demoUrl}/api/explore/options`, { headers: { host: new URL(CONFIG.demoUrl).host } }))).json();
+    expect(o.people.find((p: any) => p.id === SAM_ACCOUNT).role).toBe("Patient, and guardian for Riley Example");
   });
   test("its chain reads plainly, in the Imaging Server's view", async () => {
     const x = await stack.explain({ client: "portal-app", user: SAM_ACCOUNT, fhirUser: "Patient/sam-example", patient: "riley-example" });
@@ -371,7 +371,7 @@ describe("choosing on the Authorization Server's pages", () => {
   });
 });
 
-describe("Browse", () => {
+describe("Explore", () => {
   const browser = () => {
     let cookie = "";
     const call = async (method: string, path: string, body?: unknown) => {
@@ -380,58 +380,64 @@ describe("Browse", () => {
       if (set) cookie = set.split(";")[0]!;
       return r.json() as Promise<any>;
     };
-    const pick = async (user: string, extra: any = {}) => {
-      await call("POST", "/api/browse/start", { user, client: "portal-app", mode: "scripted", count: 20, ...extra });
-      for (let i = 0; i < 2400; i++) { const s = (await call("GET", "/api/browse/session")).session; if (!s.running) return s; await Bun.sleep(25); }
-      throw new Error("never settled");
-    };
-    return { call, pick };
+    const settle = async () => { for (let i = 0; i < 2400; i++) { const s = (await call("GET", "/api/explore/session")).session; if (!s.running) return s; await Bun.sleep(25); } throw new Error("never settled"); };
+    const pick = async (user: string, extra: any = {}) => { await call("POST", "/api/explore/start", { user, mode: "scripted", ...extra }); return settle(); };
+    return { call, pick, settle };
   };
-  const ids = (s: any) => s.page.studies.map((x: any) => x.id).sort();
+  const ids = (s: any) => s.sheets.filter((x: any) => x.released).map((x: any) => x.id).sort();
   beforeEach(async () => { await stack.resetSaved(); });
   test("Sam's choices are who Sam holds, and Josh joins them once he shares", async () => {
     const b = browser();
-    const sam = async () => (await b.call("GET", "/api/browse/options")).people.find((p: any) => p.id === SAM_ACCOUNT);
+    const sam = async () => (await b.call("GET", "/api/explore/options")).people.find((p: any) => p.id === SAM_ACCOUNT);
     expect((await sam()).records.map((r: any) => [r.patient, r.via])).toEqual([["sam-example", "self"], ["riley-example", "guardian"]]);
-    expect((await sam()).unshared.patient).toBe("josh-example");
-    await b.pick(SAM_ACCOUNT, { share: { delegate: SAM_ACCOUNT, sites: ["Lakeside Imaging"] } });
+    expect((await sam()).others.map((o: any) => o.patient)).toEqual(["josh-example"]);
+    await b.pick(SAM_ACCOUNT, { patient: "josh-example" });
+    await b.call("POST", "/api/explore/share", { from: "josh", with: SAM_ACCOUNT, patient: "josh-example", sites: ["Lakeside Imaging"], relationship: "caregiver" });
+    await b.settle();
     expect((await sam()).records.map((r: any) => [r.patient, r.via])).toEqual([["sam-example", "self"], ["riley-example", "guardian"], ["josh-example", "share"]]);
-    expect((await sam()).unshared).toBeUndefined();
+    expect((await sam()).others).toEqual([]);
   }, 60000);
-  test("switching whose records is a real new sign-in and search, and results say whose they are", async () => {
+  test("switching whose records is a real new sign-in and search, and the headline says whose they are", async () => {
     const b = browser();
     const own = await b.pick(SAM_ACCOUNT);
-    expect(own.whose).toMatchObject({ patient: "sam-example", plain: "Sam Example's own records" });
+    expect(own.patient).toBe("sam-example");
+    expect(own.headline).toBe("Sam can see all 2 of their own studies");
     expect(ids(own)).toEqual(SAM);
-    expect(own.explain.chain).toBe("Sam is the patient; Sam approved the Health Records App for all sites");
+    expect(own.why).toEqual([{ level: "fact", text: "Sam is the patient" }, { level: "choice", text: "Sam approved the Health Records App for all sites" }]);
     const riley = await b.pick(SAM_ACCOUNT, { patient: "riley-example" });
-    expect(riley.name).not.toBe(own.name);
-    expect(riley.whose).toMatchObject({ patient: "riley-example", plain: "Riley Example's records, which Sam holds as guardian" });
+    expect(riley.session).not.toBe(own.session);
+    expect(riley.headline).toBe("Sam can see Riley's only study");
     expect(ids(riley)).toEqual(RILEY);
-    expect(riley.explain.chain).toBe("Sam is Riley's guardian; Guardians of patients 13 to 17 see all studies, except those labeled confidential adolescent care; Sam approved the Health Records App for all sites");
-    expect(riley.steps.map((x: any) => x.title)).toEqual(expect.arrayContaining(["Exchange the code, with the PKCE verifier", "Search ImagingStudy"]));
+    expect(riley.why.map((c: any) => c.level)).toEqual(["fact", "policy", "choice"]);
+    expect(riley.why[1].text).toBe("Guardians of patients 13 to 17 see all studies, except those labeled confidential adolescent care");
     const denied = await b.pick(SAM_ACCOUNT, { patient: "josh-example" });
-    expect(denied.status).toBe("denied");
-    expect(denied.detail).toContain("Sam doesn't hold Josh Example's records");
-    expect(denied.whose.plain).toBe("Josh Example's records, which Sam doesn't hold");
-    expect(denied.share.offers.map((o: any) => o.label)).toEqual(["Have Josh share with Sam"]);
-    const shared = await b.pick(SAM_ACCOUNT, { share: { delegate: SAM_ACCOUNT, sites: ["Lakeside Imaging"] } });
-    expect(shared.whose.plain).toBe("Josh Example's records, shared with Sam as caregiver");
+    expect(denied.status).toBe("no-access");
+    expect(denied.headline).toBe("Sam can't see Josh's studies");
+    expect(denied.empty.text).toContain("Sam has no share of Josh's records");
+    expect(denied.empty.actions.map((o: any) => o.label)).toEqual(["Have Josh share with Sam"]);
+    await b.call("POST", "/api/explore/share", { from: "josh", with: SAM_ACCOUNT, patient: "josh-example", sites: ["Lakeside Imaging"], relationship: "caregiver" });
+    const shared = await b.settle();
+    expect(shared.patient).toBe("josh-example");
     expect(ids(shared)).toEqual(["mri-brain-2020"]);
+    expect(shared.why.find((c: any) => c.level === "choice").text).toContain("Josh shared Lakeside Imaging with Sam, as caregiver");
   }, 60000);
-  test("Sam's own results don't offer Josh's share, and Robin's empty result still doesn't", async () => {
+  test("Sam's own results offer no share from Josh, and Robin's empty result offers nothing to do", async () => {
     const b = browser();
-    expect((await b.pick(SAM_ACCOUNT)).share).toBeUndefined();
-    expect((await b.pick("robin")).share).toBeUndefined();
+    expect((await b.pick(SAM_ACCOUNT)).empty).toBeUndefined();
+    const robin = await b.pick("robin");
+    expect(robin.headline).toBe("Robin has no studies on file");
+    expect(robin.empty.actions).toEqual([]);
+    expect(robin.actions.map((a: any) => a.kind)).toEqual(["revoke-app"]);
   }, 60000);
-  test("a backend client can search for any linked patient, and rule sets still name only Josh", async () => {
+  test("a service reaches a patient only through its referrals, and rule sets still name only Josh", async () => {
     const b = browser();
-    const o = await b.call("GET", "/api/browse/options");
-    expect(o.patients.map((p: any) => p.name)).toEqual(["Josh Example", "Riley Example", "Robin Example", "Sam Example"]);
-    await b.call("POST", "/api/browse/start", { client: "research-donation", patient: "riley-example", count: 5 });
-    let s: any; do { s = (await b.call("GET", "/api/browse/session")).session; await Bun.sleep(25); } while (s.running);
+    const o = await b.call("GET", "/api/explore/options");
+    expect(o.services.map((x: any) => x.id)).toEqual(["hand-referral-service", "outside-release-service", "research-donation"]);
+    expect(o.referrals.length).toBe(10);
+    await b.call("POST", "/api/explore/start", { client: "research-donation", referral: "referral-syn-riley-knee-mr-2022" });
+    const s = await b.settle();
     expect(s.status).toBe("forbidden");
-    expect(s.ruleHelp.text).toContain("No named rule set pre-authorizes this client");
+    expect(s.empty.actions).toEqual([]);
     const { RULE_SETS } = await import("../src/rule-presets");
     for (const set of RULE_SETS) for (const rule of set.rules(stack.catalog) ?? []) expect(rule.patients).toBe("patient:josh-example");
   }, 60000);
@@ -447,10 +453,9 @@ describe("flow 15, and flow 2's choice", () => {
     return all;
   };
   const failures = (r: Record<string, any[]>) => Object.values(r).flat().filter(k => !k.ok);
-  test("is in the first group, and its defaults pass, covering every step asked for", async () => {
+  test("is a policy flow, and its defaults pass, covering every step asked for", async () => {
     expect(whose.title).toBe("Caregiver picks whose records");
     expect(whose.group).toBe("policy");
-    expect(await Bun.file(join(root, "web/app.js")).text()).toContain('["Who can see what", [1, 2, 15, 3, 4, 6]]');
     const r = await run(whose);
     expect(failures(r)).toEqual([]);
     expect(r.own!.map(k => k.label)).toContain("The token is for Sam's own record");

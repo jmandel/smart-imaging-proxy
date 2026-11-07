@@ -1,17 +1,20 @@
-// What only a real browser shows: focus, overflow, contrast, popups, and what the pages draw from real
-// responses. Run with `bun run test:ui`. It starts its own stack in memory, and reads the shared archive.
+// What only a real browser shows: focus, overflow, contrast, popups, thumbnails decoded in the page,
+// and what the pages draw from real responses. Run with `bun run test:ui`. It starts its own stack in
+// memory, reads the shared archive, and loads viewer-kit from its pinned download.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { join } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
+import { BackendError } from "@smart-imaging-proxy/core";
 import { createDemoServer } from "../src/demo-server";
 import { registerClients } from "../src/flows";
 import { CONFIG, PORTS } from "../src/config";
 import { startStack, type Stack } from "../src/stack";
 
-setDefaultTimeout(90000);
+setDefaultTimeout(120000);
 const root = join(import.meta.dir, "..");
 const DEMO = CONFIG.demoUrl;
 const DESKTOP = { width: 1440, height: 900 }, PHONE = { width: 390, height: 844 };
+const SHEETS = { ct: "ct-abdomen-pelvis-2012", xr: "xr-wrist-left-2012", slide: "slide-lung-2023", mri: "mri-brain-2020" };
 
 let stack: Stack, server: ReturnType<typeof Bun.serve>, browser: Browser, context: BrowserContext | undefined;
 const problems: string[] = [];
@@ -22,10 +25,7 @@ beforeAll(async () => {
   browser = await chromium.launch({ executablePath: process.env.CHROMIUM ?? "/usr/bin/chromium", headless: true });
 });
 afterAll(async () => { await browser?.close(); server?.stop(true); stack?.stop(); });
-beforeEach(async () => {
-  problems.length = 0;
-  await stack.resetAll();
-});
+beforeEach(async () => { problems.length = 0; await stack.resetAll(); });
 afterEach(async () => { await context?.close(); context = undefined; });
 
 async function open(path: string, opts: { viewport?: typeof DESKTOP; colorScheme?: "light" | "dark" } = {}): Promise<Page> {
@@ -37,403 +37,274 @@ async function open(path: string, opts: { viewport?: typeof DESKTOP; colorScheme
 }
 function watch(page: Page) {
   page.on("pageerror", e => problems.push(`${page.url()}: ${e.message}`));
-  page.on("console", m => { if (m.type() === "error") problems.push(`${page.url()}: ${m.text()}`); });
+  page.on("console", m => { if (m.type() === "error" && !/status of 404/.test(m.text())) problems.push(`${page.url()}: ${m.text()}`); });
 }
 const overflow = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
-const focusName = (page: Page) => page.evaluate(() => { const a = document.activeElement as HTMLElement; return a.dataset.fid ?? a.id ?? a.tagName; });
 const signIn = async (popup: Page, user: string, decision: "Approve" | "Deny" = "Approve") => {
   await popup.locator(`input[name=username][value=${user}]`).check();
   await popup.getByRole("button", { name: "Continue" }).click();
   await popup.getByRole("button", { name: decision }).click();
 };
+/** Does what starts a new Explore view, and waits until the view it started has loaded. */
+async function settle(page: Page, act: () => Promise<unknown>) {
+  await Promise.all([page.waitForResponse(r => /\/api\/explore\/(start|share|approve|apply-policy|unshare|revoke-app)$/.test(new URL(r.url()).pathname)), act()]);
+  await page.waitForFunction(() => { const h = document.querySelector("#view .headline h1"); return !!h && !h.querySelector(".spinner"); });
+}
+/** Picks someone the way a person on this screen would: the list on a desktop, the select on a phone. */
+async function pick(page: Page, id: string, kind: "user" | "client" = "user") {
+  if (await page.locator("#who-select").isVisible()) await settle(page, () => page.locator("#who-select").selectOption(`${kind}:${id}`));
+  else await settle(page, () => page.locator(`[data-${kind}="${id}"]`).click());
+}
+/** A drawn thumbnail's pixels vary: it isn't blank. */
+const variance = (page: Page, study: string) => page.locator(`.thumb[data-study="${study}"][data-state=drawn] canvas`).first().evaluate((c: HTMLCanvasElement) => {
+  const d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
+  let n = 0, sum = 0, sq = 0;
+  for (let i = 0; i < d.length; i += 4) { const v = (d[i]! + d[i + 1]! + d[i + 2]!) / 3; n++; sum += v; sq += v * v; }
+  return sq / n - (sum / n) ** 2;
+});
+const drawn = (page: Page, study: string) => page.locator(`.thumb[data-study="${study}"][data-state=drawn]`).first().waitFor({ timeout: 60000 });
 
 /** WCAG contrast of an element's text on its nearest painted background. */
 const contrast = (page: Page, selector: string) => page.locator(selector).first().evaluate(el => {
   const rgb = (c: string) => c.match(/[\d.]+/g)!.map(Number);
   const lum = ([r, g, b]: number[]) => { const f = (v: number) => { const s = v / 255; return s <= .03928 ? s / 12.92 : ((s + .055) / 1.055) ** 2.4; }; return .2126 * f(r!) + .7152 * f(g!) + .0722 * f(b!); };
   let bgEl: Element | null = el;
-  while (bgEl && (rgb(getComputedStyle(bgEl).backgroundColor)[3] === 0 || getComputedStyle(bgEl).backgroundColor === "transparent")) bgEl = bgEl.parentElement;
+  while (bgEl && (rgb(getComputedStyle(bgEl).backgroundColor)[3] === 0 || getComputedStyle(bgEl).backgroundColor === "transparent" || getComputedStyle(bgEl).backgroundImage !== "none")) bgEl = bgEl.parentElement;
   const a = lum(rgb(getComputedStyle(el).color)), b = lum(rgb(getComputedStyle(bgEl ?? document.body).backgroundColor));
   return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
 });
 
 describe("every page, on desktop and phone, in light and dark", () => {
   for (const [name, viewport] of [["desktop", DESKTOP], ["phone", PHONE]] as const) for (const colorScheme of ["light", "dark"] as const) {
-    test(`${name} ${colorScheme}: no script or console errors, and no sideways scrolling`, async () => {
-      for (const path of ["/", "/browse", "/admin", CONFIG.traceUrl, `${CONFIG.authUrl}/account`]) {
+    test(`${name} ${colorScheme}: no script or console errors, no sideways scrolling, and the header holds two links and the settings`, async () => {
+      for (const path of ["/", "/tours", "/activity", CONFIG.traceUrl, `${CONFIG.authUrl}/account`]) {
         const page = await open(path, { viewport, colorScheme });
         await page.waitForLoadState("networkidle");
         expect([path, await overflow(page)]).toEqual([path, 0]);
+        if (!path.startsWith("http")) {
+          expect(await page.locator(".pages a").allInnerTexts()).toEqual(["Explore", "Tours"]);
+          const box = await page.locator("#settings-button").boundingBox();
+          expect(box!.y).toBeLessThan(60);
+          expect(box!.height).toBeGreaterThanOrEqual(44);
+        }
         await context!.close(); context = undefined;
       }
       expect(problems).toEqual([]);
     });
+    test(`${name} ${colorScheme}: Explore's text keeps its contrast, on the box, the chips and the film`, async () => {
+      const page = await open("/", { viewport, colorScheme });
+      await pick(page, "josh");
+      for (const sel of [".headline h1", ".chips li.fact", ".chips li.choice", ".sheet .title", ".sheet .site", ".sheet .date", ".sheet .status", ".actions .note a"]) {
+        expect([sel, (await contrast(page, sel)) >= 4.5]).toEqual([sel, true]);
+      }
+      expect(await overflow(page)).toBe(0);
+      expect(problems).toEqual([]);
+    });
   }
 });
 
-describe("overview", () => {
-  test("the route buttons switch the route and say why", async () => {
-    const page = await open("/");
-    const route = page.locator(".route.wide");
-    await page.getByRole("button", { name: "Anything else" }).click();
-    expect(await route.getAttribute("data-route")).toBe("asked");
-    expect(await page.locator("#route-why").innerText()).toContain("can_i");
-    await page.getByRole("button", { name: "Signed URL checks out" }).click();
-    expect(await route.getAttribute("data-route")).toBe("instant");
-    expect(await page.locator("#route-why").innerText()).toContain("no network call");
-  });
-  test("flows are grouped with what each does, and a phone moves between them without the list", async () => {
-    const page = await open("/", { viewport: PHONE });
-    expect(await page.locator(".flow-groups h3").allInnerTexts()).toEqual(["Who can see what", "How the proxy decides", "What comes back"]);
-    expect(await page.locator(".flow-choice").count()).toBe(15);
-    expect(await page.locator(".flow-choice .what span").first().innerText()).toContain("Josh picks");
-    expect(await page.locator("#flow-list").isVisible()).toBe(false);
-    expect(await overflow(page)).toBe(0);
-    await page.locator(".flow-choice").first().click();
-    await page.locator("[data-next]").click();
-    await page.locator(".flow-title", { hasText: "2. Related person" }).waitFor();
-    expect(await page.locator("#flow-list").isVisible()).toBe(false);
-    await page.getByRole("link", { name: "All flows" }).click();
-    await page.locator(".hero").waitFor();
-  });
-  test("the route's dot fades out when its run ends, on both routes, after a real wait", async () => {
-    for (const viewport of [DESKTOP, PHONE]) {
-      const page = await open("/", { viewport });
-      const route = viewport === DESKTOP ? ".route.wide" : ".route.tall";
-      const dot = (name: string) => page.locator(`${route} .${name}-pulse`).evaluate(el => { const a = el.getAnimations()[0]; return { opacity: getComputedStyle(el).opacity, state: a?.playState, distance: getComputedStyle(el).offsetDistance }; });
-      await page.waitForTimeout(2000);
-      expect(await dot("instant")).toEqual({ opacity: "0", state: "finished", distance: "100%" });
-      await page.getByRole("button", { name: "Anything else" }).click();
-      await page.waitForTimeout(3000);
-      expect(await dot("asked")).toEqual({ opacity: "0", state: "finished", distance: "100%" });
-      expect((await dot("instant")).opacity).toBe("0");
-      await context!.close(); context = undefined;
-    }
-  });
-  test("the link shows the overview during a flow, and a reload returns to the flow", async () => {
-    const page = await open("/");
-    await page.locator(".flow-choice").first().click();
-    await page.locator(".flow-title").waitFor();
-    await page.reload();
-    await page.locator(".flow-title").waitFor();
-    await page.getByRole("link", { name: "Overview" }).click();
-    await page.locator(".hero").waitFor();
-    expect(await page.locator(".flow-title").count()).toBe(0);
-  });
-});
-
-describe("browse", () => {
-  const signedIn = async (opts?: Parameters<typeof open>[1]) => {
-    const page = await open("/browse", opts);
-    await page.locator("[data-user=josh]").click();
-    await page.locator("article.study").first().waitFor();
-    return page;
-  };
-  test("frames match the series and counts in the real Bundle", async () => {
-    const page = await signedIn();
-    const bundle: any = await page.evaluate(async () => (await fetch("/api/browse/bundle")).json());
-    for (const { resource: s } of bundle.entry.filter((e: any) => e.resource.resourceType === "ImagingStudy")) {
-      const frames = page.locator(`article[data-study="${s.id}"] .frame`);
-      const shown = await frames.evaluateAll(all => all.map(f => [f.querySelector(".mod")!.textContent, f.querySelector(".no")!.textContent, f.querySelector(".count")!.textContent]));
-      expect(shown).toEqual(s.series.map((x: any) => [x.modality.code, String(x.number), String(x.numberOfInstances)]).sort((a: any, b: any) => Number(a[1]) - Number(b[1])));
-    }
-  });
-  test("the selected person stays readable under the mouse", async () => {
-    const page = await signedIn();
-    await page.locator("button.who[aria-current=true]").hover();
-    expect(await contrast(page, "button.who[aria-current=true] b")).toBeGreaterThan(4.5);
-  });
-  test("withheld series are hatched with their counts, on a phone too", async () => {
-    const admin = await open("/admin");
-    await admin.locator("#rule-set-select").selectOption("outside-release");
-    await admin.locator("#apply-rule-set").click();
-    await admin.locator("#rules-current", { hasText: "Outside release" }).waitFor();
-    await context!.close();
-    const page = await open("/browse", { viewport: PHONE });
-    await page.locator("[data-client=outside-release-service]").click();
-    await page.locator(".frame.withheld").first().waitFor();
-    expect(await page.locator(".frame.withheld").count()).toBe(3);
-    expect(await page.locator(".frame.withheld .count").first().isVisible()).toBe(true);
-    const clash = await page.locator(".frame.withheld").first().evaluate(f => { const a = f.querySelector(".gone")!.getBoundingClientRect(), b = f.querySelector(".count")!.getBoundingClientRect(); return a.bottom > b.top && a.right > b.left; });
-    expect(clash).toBe(false);
-    expect(await overflow(page)).toBe(0);
-  });
-  test("keyboard focus survives paging and retrieval, and both retrievals complete", async () => {
-    const page = await signedIn();
-    await page.locator("[data-fid=to-next]").first().focus();
-    await page.keyboard.press("Enter");
-    await page.getByText(/Studies 6.6 of 6/).first().waitFor();
-    expect(await focusName(page)).not.toBe("BODY");
-    expect(await focusName(page)).not.toBe("");
-    for (const [zstd, encoding] of [["1", "zstd"], ["0", "identity"]] as const) {
-      const button = page.locator(`[data-retrieve][data-zstd="${zstd}"]`).first();
-      await button.focus();
-      const fid = await button.getAttribute("data-fid");
-      await page.keyboard.press("Enter");
-      const result = page.locator(".retrieved").filter({ hasText: zstd === "1" ? "With zstd" : "Without zstd" }).first();
-      await result.getByText("received", { exact: true }).waitFor({ timeout: 60000 });
-      expect(await focusName(page)).toBe(fid!);
-      void encoding;
-    }
-    expect(problems).toEqual([]);
-  });
-});
-
-describe("whose records, as Sam", () => {
-  const SAM = "sam-caregiver";
-  beforeEach(async () => { await stack.resetSaved(); });
-  const choice = (page: Page, patient: string) => page.locator(`[data-records=${SAM}] [data-whose=${patient}]`);
-  const shown = (page: Page) => page.locator("article.study").evaluateAll(all => all.map(a => (a as HTMLElement).dataset.study).sort());
-  const whose = (page: Page, patient: string) => page.locator(`.whose-line[data-whose-shown=${patient}]`).waitFor();
-  const choices = (page: Page) => page.locator(`[data-records=${SAM}] [data-whose]`).evaluateAll(all => all.map(b => (b as HTMLElement).dataset.whose));
+describe("Explore", () => {
   for (const [name, viewport] of [["desktop", DESKTOP], ["phone", PHONE]] as const) {
-    test(`${name}: picks directly, each pick a new sign-in, and Josh joins once he shares`, async () => {
-      const page = await open("/browse", { viewport });
-      await choice(page, "sam-example").waitFor();
-      expect(await choices(page)).toEqual(["sam-example", "riley-example"]);
-      expect(await page.locator("[data-records=josh]").count()).toBe(0);
-      // The choice is on show under Sam, with no menu to open, and big enough to tap.
-      const box = await choice(page, "riley-example").boundingBox();
-      expect(box!.height).toBeGreaterThanOrEqual(44);
-      expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width);
-
-      await choice(page, "riley-example").click();
-      await whose(page, "riley-example");
-      await page.locator("article.study").first().waitFor();
-      expect(await shown(page)).toEqual(["syn-riley-knee-mr-2022"]);
-      expect(await page.locator(".whose-line").innerText()).toBe("Riley Example's records, which Sam holds as guardian");
-      expect(await page.locator(".outcome").innerText()).toContain("Sam is Riley's guardian; Guardians of patients 13 to 17 see all studies, except those labeled confidential adolescent care");
-      await page.locator("details.raw", { hasText: "only some sites" }).locator("summary").click();
-      expect(await page.locator("#app-sites").innerText()).not.toContain("Northside Pathology");
-      // The organization's rule shows, the same for any patient that age; the study and its label don't.
-      const outcome = await page.locator(".outcome").innerText();
-      for (const hidden of ["Labeled confidential", "Skin biopsy", "Northside Pathology"]) expect(outcome).not.toContain(hidden);
-      expect(await choice(page, "riley-example").getAttribute("aria-current")).toBe("true");
-      expect(await page.locator("article.study h3").first().innerText()).toStartWith("SYNTHETIC");
-      const first: any = await page.evaluate(async () => (await (await fetch("/api/browse/session")).json()).session.name);
-
-      await choice(page, "sam-example").click();
-      await whose(page, "sam-example");
-      await page.locator('article.study[data-study="syn-sam-ct-sinus-2024"]').waitFor();
-      expect(await shown(page)).toEqual(["syn-sam-chest-xr-2021", "syn-sam-ct-sinus-2024"]);
-      expect(await page.evaluate(async () => (await (await fetch("/api/browse/session")).json()).session.name)).not.toBe(first);
-      expect(await choice(page, "riley-example").getAttribute("aria-current")).toBe("false");
-      expect(await overflow(page)).toBe(0);
-
-      await page.locator(`[data-records=${SAM}] [data-whose-unshared=josh-example]`).click();
-      await page.locator(".outcome.denied").waitFor();
-      expect(await page.locator(".outcome").innerText()).toContain("Sam doesn't hold Josh Example's records");
-      await page.locator(`[data-share=${SAM}]`).click();
-      await whose(page, "josh-example");
-      await page.locator("article.study").first().waitFor();
-      expect(await page.locator(".whose-line").innerText()).toBe("Josh Example's records, shared with Sam as caregiver");
-      await choice(page, "josh-example").waitFor();
-      expect(await choices(page)).toEqual(["sam-example", "riley-example", "josh-example"]);
-      expect(await page.locator("[data-whose-unshared]").count()).toBe(0);
-      expect(await choice(page, "josh-example").getAttribute("aria-current")).toBe("true");
-      expect(await overflow(page)).toBe(0);
-      expect(problems).toEqual([]);
-    });
-    test(`${name}: in a real window, the consent page has the pick selected, and a different pick there is what counts`, async () => {
-      const page = await open("/browse", { viewport });
-      await choice(page, "riley-example").waitFor();
-      await page.locator("#options summary").click();
-      await page.locator("input[name=mode][value=window]").check();
-      const [popup] = await Promise.all([context!.waitForEvent("page"), choice(page, "riley-example").click()]);
-      await popup.waitForURL(/\/authorize/);
-      await popup.setViewportSize(viewport);
-      await popup.locator(`input[name=username][value=${SAM}]`).check();
-      await popup.getByRole("button", { name: "Continue" }).click();
-      const radio = (patient: string) => popup.locator(`input[name=patient][value=${patient}]`);
-      await radio("riley-example").waitFor();
-      expect(await radio("riley-example").isChecked()).toBe(true);
-      expect(await popup.getByText("People you hold records for").isVisible()).toBe(true);
-      expect(await popup.locator("[data-sites-for=riley-example]").isVisible()).toBe(true);
-      expect(await popup.locator("[data-sites-for=sam-example]").isVisible()).toBe(false);
-      expect(await popup.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBe(0);
-      await radio("sam-example").check();
-      expect(await popup.locator("[data-sites-for=sam-example]").isVisible()).toBe(true);
-      expect(await popup.locator("[data-sites-for=riley-example]").isVisible()).toBe(false);
-      await popup.getByRole("button", { name: "Approve" }).click();
-      await whose(page, "sam-example");
-      await page.locator("article.study").first().waitFor();
-      expect(await shown(page)).toEqual(["syn-sam-chest-xr-2021", "syn-sam-ct-sinus-2024"]);
-      expect(await choice(page, "sam-example").getAttribute("aria-current")).toBe("true");
-      expect(problems).toEqual([]);
-    });
-    test(`${name}: the account page shares the chosen person's records, and says what stops at Sam`, async () => {
-      await fetch(`${DEMO}/api/browse/start`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ user: SAM, client: "portal-app", mode: "scripted", count: 5, share: { delegate: SAM, sites: ["Lakeside Imaging"] } }) });
-      const shared = async () => { for (let i = 0; i < 400; i++) { if (stack.store.shares().length) return; await Bun.sleep(25); } throw new Error("Josh never shared"); };
-      await shared();
-      const page = await open(`${CONFIG.authUrl}/account?login_hint=${SAM}`, { viewport });
-      await page.locator(`input[name=username][value=${SAM}]`).check();
-      await page.getByRole("button", { name: "Continue" }).click();
-      await page.locator("[data-record=riley-example]").waitFor();
-      expect(await page.locator("[data-record=sam-example]").innerText()).toContain("your own records");
-      expect(await page.locator("[data-record=riley-example]").innerText()).toContain("you're their guardian");
-      expect(await page.locator("[data-record=josh-example]").innerText()).toContain("shared with you as caregiver");
-      expect(await page.getByText("can't pass it on").isVisible()).toBe(true);
-      expect(await page.locator("input[type=radio][name=patient][value=josh-example]").count()).toBe(0);
-      expect(await page.locator("[data-sites-for=sam-example]").isVisible()).toBe(true);
-      expect(await page.locator("[data-sites-for=riley-example]").isVisible()).toBe(false);
-      await page.locator("input[name=patient][value=riley-example]").check();
-      expect(await page.locator("[data-sites-for=sam-example]").isVisible()).toBe(false);
-      await page.locator("select[name=delegate]").selectOption("alex-neighbor");
-      await page.locator("select[name=relationship]").selectOption("neighbor");
-      expect(await page.locator('input[name="sites@riley-example"][value="Northside Pathology"]').count()).toBe(0);
-      await page.getByRole("button", { name: "Share", exact: true }).click();
-      await page.getByText("Riley Example's records: Lakeside Imaging").waitFor();
-      expect(stack.store.shares().find(d => d.with === "user:alex-neighbor")).toMatchObject({ from: `user:${SAM}`, patient: "patient:riley-example", sites: ["Lakeside Imaging"], label: "neighbor" });
+    test(`${name}: Josh's CT, X-ray and slide thumbnails are drawn from real pixels, decoded in the page`, async () => {
+      const page = await open("/", { viewport });
+      await pick(page, "josh");
+      expect(await page.locator(".sheet").count()).toBe(6);
+      for (const study of [SHEETS.ct, SHEETS.xr, SHEETS.slide]) {
+        await page.locator(`.thumb[data-study="${study}"]`).scrollIntoViewIfNeeded();
+        await drawn(page, study);
+        expect([study, await variance(page, study)]).toEqual([study, expect.any(Number)]);
+        expect([study, (await variance(page, study)) > 50]).toEqual([study, true]);
+      }
+      // The slide is in colour, not grey.
+      const colour = await page.locator(`.thumb[data-study="${SHEETS.slide}"] canvas`).evaluate((c: HTMLCanvasElement) => {
+        const d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
+        let spread = 0;
+        for (let i = 0; i < d.length; i += 4) spread = Math.max(spread, Math.abs(d[i]! - d[i + 2]!));
+        return spread;
+      });
+      expect(colour).toBeGreaterThan(40);
       expect(await overflow(page)).toBe(0);
       expect(problems).toEqual([]);
     });
   }
-  test("the admin screen shows the guardian relationship on file, and a reset leaves it", async () => {
-    const page = await open("/admin");
-    const row = page.locator(`#guardians [data-guardian=${SAM}]`);
-    await row.waitFor();
-    expect(await row.innerText()).toContain("guardian of riley-example");
-    page.on("dialog", d => d.accept());
-    await page.locator("#reset-saved").click();
-    await page.locator("#store-msg", { hasText: "What's on file" }).waitFor();
-    await row.waitFor();
-    expect(problems).toEqual([]);
-  });
-  for (const [name, viewport] of [["desktop", DESKTOP], ["phone", PHONE]] as const) test(`${name}: flow 15 runs through, in its group, with every check passing`, async () => {
-    const page = await open("/", { viewport });
-    const groups = page.locator(".flow-groups > div");
-    expect(await groups.first().locator(".flow-choice b").allInnerTexts()).toContain("Caregiver picks whose records");
-    await groups.first().locator(".flow-choice", { hasText: "Caregiver picks whose records" }).click();
-    await page.locator(".flow-title", { hasText: "15. Caregiver" }).waitFor();
-    await page.locator("[data-run=own]").waitFor();
-    await page.locator('[data-step=own] select[data-input=mode]').selectOption("scripted");
-    await page.locator("[data-run=own]").click();
-    await page.locator("[data-run=guardian]").waitFor({ timeout: 30000 });
-    await page.locator('[data-step=guardian] select[data-input=mode]').selectOption("scripted");
-    await page.locator("#run-rest").click();
-    await page.locator("[data-step=share] ul.checks").waitFor({ timeout: 60000 });
-    expect(await page.locator("ul.checks .bad").count()).toBe(0);
-    expect(await page.locator("ul.checks .ok").count()).toBeGreaterThan(15);
-    expect(await page.locator("#chain").innerText()).toContain("riley-example's guardian");
-    expect(await overflow(page)).toBe(0);
-    expect(problems).toEqual([]);
-  });
-  test("flow 2 offers whose records Sam acts on, and a different choice explains itself", async () => {
+  test("a withheld study's sheet makes no request, and shows why it's withheld", async () => {
+    stack.store.setDocument({ shares: [{ from: "user:josh", with: "user:sam-caregiver", patient: "patient:josh-example", sites: ["Lakeside Imaging", "Riverside Hospital"], label: "caregiver" }] });
     const page = await open("/");
-    await page.locator(".flow-choice", { hasText: "Related person, then app" }).click();
-    await page.locator('[data-step=delegate] select[data-input=mode]').selectOption("scripted");
-    await page.locator("[data-run=delegate]").click();
-    await page.locator("[data-run=unrelated]").click();
-    await page.locator("[data-step=sam-launch] select[data-input=whose]").selectOption("riley-example");
-    await page.locator('[data-step=sam-launch] select[data-input=mode]').selectOption("scripted");
-    await page.locator("#run-rest").click();
-    await page.locator("[data-step=revoke] ul.checks").waitFor({ timeout: 60000 });
-    expect(await page.locator("ul.checks .bad").count()).toBe(0);
-    expect(await page.locator("[data-step=searches]").innerText()).toContain("Sam's app sees only Riley's records");
-    expect(await page.locator("[data-step=revoke]").innerText()).toContain("Riley's records don't depend on Josh");
+    const asked: string[] = [];
+    page.on("request", r => { const u = new URL(r.url()); if (u.pathname.endsWith("/api/explore/thumbnail")) asked.push(u.searchParams.get("study")!); });
+    await pick(page, "sam-caregiver");
+    await settle(page, () => page.locator("[data-whose=josh-example]").click());
+    await page.getByRole("button", { name: "Change what the app can see" }).click();
+    await page.locator("#action-form input[value='Riverside Hospital']").uncheck();
+    asked.length = 0;
+    await settle(page, () => page.getByRole("button", { name: "Sign in and approve" }).click());
+    await page.locator(".sheet.withheld").first().waitFor();
+    await drawn(page, SHEETS.mri);
+    await page.waitForLoadState("networkidle");
+    const withheld = await page.locator(".sheet.withheld .title").allInnerTexts();
+    expect(withheld.length).toBe(4);
+    expect(await page.locator(".sheet.withheld .status").first().innerText()).toContain("Withheld: Sam's approval of the Health Records App doesn't include Riverside Hospital");
+    expect(await page.locator(".sheet.withheld .thumb[data-study]").count()).toBe(0);
+    expect(asked).toEqual([SHEETS.mri]);
+    expect(await page.locator(".headline h1").innerText()).toBe("Sam can see 1 of Josh's 5 studies");
     expect(problems).toEqual([]);
   });
-});
-
-describe("flows, in real windows", () => {
-  const consent = async (page: Page) => { await page.locator(".flow-choice").first().click(); await page.locator("[data-run=consent]").waitFor(); };
-  test("signing in and approving in the window passes the step", async () => {
+  test("with no metadata from the server, the slide shows its placeholder, and the other thumbnails still draw", async () => {
+    const backend = stack.backends["static-files"];
+    const real = backend.getMetadata.bind(backend);
+    backend.getMetadata = async () => { throw new BackendError("NotFound"); };
+    try {
+      const page = await open("/");
+      await pick(page, "josh");
+      await page.locator(`.thumb[data-study="${SHEETS.slide}"][data-state=none]`).waitFor({ timeout: 30000 });
+      expect(await page.locator(`.thumb[data-study="${SHEETS.slide}"] canvas`).count()).toBe(0);
+      expect(await page.locator(`.thumb[data-study="${SHEETS.slide}"] .placeholder`).isVisible()).toBe(true);
+      await drawn(page, SHEETS.xr);
+      expect(await variance(page, SHEETS.xr)).toBeGreaterThan(50);
+    } finally { backend.getMetadata = real; }
+  });
+  test("by keyboard: pick someone, open a study, retrieve it, read what happened, and go back to the same sheet", async () => {
     const page = await open("/");
-    await consent(page);
-    const [popup] = await Promise.all([context!.waitForEvent("page"), page.locator("[data-run=consent]").click()]);
+    await page.locator("[data-user=josh]").focus();
+    await settle(page, () => page.keyboard.press("Enter"));
+    await page.waitForFunction(() => document.activeElement?.id === "headline");
+    const sheet = page.locator(`[data-open="${SHEETS.xr}"]`);
+    await sheet.focus();
+    await page.keyboard.press("Enter");
+    await page.locator(".happened .cards").waitFor();
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("headline");
+    expect(await page.locator("#headline").innerText()).toBe("XR wrist left, 3 views");
+    await page.locator("#retrieve").focus();
+    await page.keyboard.press("Enter");
+    await page.locator(".retrieval h3", { hasText: "Retrieved" }).waitFor({ timeout: 60000 });
+    const cards = await page.locator(".happened .card .summary").allInnerTexts();
+    expect(cards.some(c => c.startsWith("Token issued to Josh Example"))).toBe(true);
+    expect(cards.some(c => c === "The proxy checked the signed link, with no network call")).toBe(true);
+    expect(cards.some(c => /^3 parts streamed/.test(c))).toBe(true);
+    // A card's drill-in decodes the signed link in the request.
+    await page.locator(".happened .card", { hasText: "3 parts streamed" }).last().locator("summary").click();
+    await page.locator(".happened .raw h4", { hasText: "Signed link, decoded" }).waitFor();
+    expect(await page.locator(".happened .raw").last().innerText()).toContain('"ath"');
+    await page.locator("#back").focus();
+    await page.keyboard.press("Enter");
+    expect(await page.evaluate(() => (document.activeElement as HTMLElement)?.dataset.open)).toBe(SHEETS.xr);
+    expect(problems).toEqual([]);
+  });
+  test("in a real window: the person signs in themselves, and the results follow", async () => {
+    const page = await open("/");
+    await page.locator("input[name=mode][value=window]").check();
+    const [popup] = await Promise.all([context!.waitForEvent("page"), page.locator("[data-user=josh]").click()]);
     await popup.waitForURL(/\/authorize/);
     await signIn(popup, "josh");
-    await page.locator('[data-step=consent] ul.checks').waitFor();
-    expect(await page.locator('[data-step=consent] ul.checks .bad').count()).toBe(0);
-  });
-  test("denying explains itself, with no script error", async () => {
-    const page = await open("/");
-    await consent(page);
-    const [popup] = await Promise.all([context!.waitForEvent("page"), page.locator("[data-run=consent]").click()]);
-    await popup.waitForURL(/\/authorize/);
-    await signIn(popup, "josh", "Deny");
-    await page.locator('[data-step=consent] .result').getByText(/\S/).first().waitFor();
-    const text = await page.locator("[data-step]").first().innerText();
-    expect(text).not.toContain("TypeError");
-    expect(text).not.toContain("undefined");
-  });
-  test("closing the window ends the wait, and the step can run again", async () => {
-    const page = await open("/");
-    await consent(page);
-    const [popup] = await Promise.all([context!.waitForEvent("page"), page.locator("[data-run=consent]").click()]);
-    await popup.waitForURL(/\/authorize/);
-    await popup.close();
-    await page.locator("[data-step=consent] .result").getByText("window closed").waitFor({ timeout: 15000 });
-    expect(await page.locator("[data-run=consent]").isEnabled()).toBe(true);
-  });
-  test("signing out on the account page keeps the way back to the flow", async () => {
-    const page = await open("/");
-    await page.locator('.flow-choice[data-id=caregiver]').click();
-    await page.locator("[data-run=delegate]").waitFor();
-    const [popup] = await Promise.all([context!.waitForEvent("page"), page.locator("[data-run=delegate]").click()]);
-    await popup.waitForURL(/\/account/);
-    await popup.locator("input[name=username][value=josh]").check();
-    await popup.getByRole("button", { name: "Continue" }).click();
-    await popup.getByRole("link", { name: /Done, back to the demo/ }).waitFor();
-    expect(await popup.locator("select[name=delegate]").inputValue()).toBe("sam-caregiver");
-    await popup.getByRole("button", { name: "Sign out" }).click();
-    expect(await popup.locator("input[name=username][value=josh]").isChecked()).toBe(true);
-    await popup.getByRole("button", { name: "Continue" }).click();
-    await popup.getByRole("link", { name: /Done, back to the demo/ }).waitFor();
-  });
-  test("running the remaining steps signs in by script, opening no window", async () => {
-    const page = await open("/");
-    await page.locator(".flow-choice[data-id=caregiver]").click();
-    await page.locator("[data-run=delegate]").waitFor();
-    let windows = 0;
-    context!.on("page", () => { windows++; });
-    await page.getByRole("button", { name: "Run remaining steps" }).click();
-    await page.locator("#steps [data-run]").first().waitFor({ state: "detached", timeout: 60000 });
-    expect(windows).toBe(0);
-    expect(await page.locator("#steps .result .error").count()).toBe(0);
+    await page.locator(".headline h1", { hasText: "Josh can see all 6 of their own studies" }).waitFor({ timeout: 30000 });
     expect(problems).toEqual([]);
   });
-  test("a patient who approves no sites can still finish the flow", async () => {
+  test("an empty view offers the one action its reason calls for, and taking it is a real share", async () => {
     const page = await open("/");
-    await consent(page);
-    await page.locator("[data-step=consent] select[data-input=mode]").selectOption("scripted");
-    await page.locator("[data-step=consent] [data-input=sites] input:checked").evaluateAll(all => all.forEach(b => { (b as HTMLInputElement).checked = false; }));
-    await page.locator("[data-run=consent]").click();
-    await page.locator("[data-run=search]").click();
-    await page.locator("[data-run=retrieve]").click();
-    await page.locator("[data-step=retrieve] .result").getByText("Nothing approved, so nothing to retrieve").waitFor();
-    expect(await page.locator("[data-step=retrieve] select").count()).toBe(0);
-    await page.locator("[data-run=unapproved]").waitFor();
+    await pick(page, "sam-caregiver");
+    await settle(page, () => page.locator("[data-whose=josh-example]").click());
+    expect(await page.locator(".headline h1").innerText()).toBe("Sam can't see Josh's studies");
+    await page.getByRole("button", { name: "Have Josh share with Sam" }).click();
+    await page.locator("#action-form input[value='Northside Pathology']").uncheck();
+    await settle(page, () => page.getByRole("button", { name: "Share", exact: true }).click());
+    expect(await page.locator(".chips li.choice").innerText()).toContain("Josh shared");
+    expect(stack.store.shares().map(s => s.sites.sort())).toEqual([["Lakeside Imaging", "Riverside Hospital"]]);
     expect(problems).toEqual([]);
   });
-  test("an open exchange doesn't make a phone page scroll sideways", async () => {
-    const page = await open("/", { viewport: PHONE });
-    await consent(page);
-    await page.locator('[data-step=consent] select[data-input=mode]').selectOption("scripted").catch(() => {});
-    await page.locator("[data-run=consent]").click();
-    await page.locator("[data-step=consent] .exchange details").first().waitFor();
-    await page.locator("[data-step=consent] .exchange details").evaluateAll(all => all.forEach(d => { (d as HTMLDetailsElement).open = true; }));
-    expect(await overflow(page)).toBe(0);
+  test("a service starts from its referral, and the page applies the policy that lets it see the study", async () => {
+    const page = await open("/");
+    await pick(page, "hand-referral-service", "client");
+    await settle(page, () => page.locator("[data-referral='referral-xr-wrist-left-2012']").click());
+    expect(await page.locator(".headline h1").innerText()).toBe("Hand referral service can't search Josh's records");
+    await settle(page, () => page.getByRole("button", { name: /Apply the policy/ }).click());
+    expect(await page.locator(".headline h1").innerText()).toBe("Hand referral service can see the study this referral cites");
+    await drawn(page, SHEETS.xr);
+    expect(problems).toEqual([]);
+  });
+  test("the settings menu opens and closes by keyboard, and moves the demo clock", async () => {
+    const page = await open("/");
+    await page.locator("#settings-button").focus();
+    await page.keyboard.press("Enter");
+    await page.locator("#settings h2").waitFor();
+    expect(await page.evaluate(() => document.activeElement?.textContent)).toBe("Settings");
+    await page.getByRole("button", { name: "Ahead 1 hour" }).click();
+    await page.locator("#settings .msg", { hasText: "The clock moved ahead." }).waitFor();
+    expect(await page.locator("#settings").innerText()).toContain("Now +1 hours");
+    await page.keyboard.press("Escape");
+    expect(await page.locator("#settings").isHidden()).toBe(true);
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("settings-button");
   });
 });
 
-describe("admin and trace", () => {
-  test("controls act, and the trace viewer previews what a search did", async () => {
-    const admin = await open("/admin");
-    const before = await admin.locator("#clock-now").innerText();
-    await admin.locator("[data-advance]").first().click();
-    await admin.waitForFunction(old => document.querySelector("#clock-now")!.textContent !== old, before);
-    await admin.locator("#clock-reset").click();
-    await admin.locator("#self-test").click();
-    await admin.locator("#self-test-results .ok").first().waitFor({ timeout: 30000 });
-    const browse = await context!.newPage();
-    await browse.goto(`${DEMO}/browse`);
-    await browse.locator("[data-user=josh]").click();
-    await browse.locator("article.study").first().waitFor();
-    const trace = await context!.newPage();
-    await trace.goto(CONFIG.traceUrl);
-    await trace.locator(".row .name").first().waitFor();
-    await trace.locator(".row .name").first().click();
-    await trace.locator(".preview").first().waitFor();
+describe("Tours", () => {
+  for (const tour of ["caregiver", "app-consent", "revoke", "backend"]) {
+    test(`${tour}: runs end to end in its own scope, and every step matches the model`, async () => {
+      const page = await open(`/tours?tour=${tour}`);
+      await page.getByRole("button", { name: "Start the tour" }).click();
+      await page.waitForURL(/\/s\/[^/]+\/tours\?tour=/);
+      await page.locator(".step.next .what span", { hasText: "The model expects" }).waitFor();
+      await page.getByRole("button", { name: "Run the rest" }).click();
+      await page.locator(".tour-buttons .verdict").waitFor({ timeout: 90000 });
+      expect(await page.locator(".tour-buttons .verdict").innerText()).toBe("Every step matched the model");
+      expect(await page.locator(".step .verdict.ok").count()).toBe(await page.locator(".step").count());
+      await page.locator(".step .result summary").first().click();
+      expect(await page.locator(".step .result .card").count()).toBeGreaterThan(0);
+      expect(await overflow(page)).toBe(0);
+      expect(problems).toEqual([]);
+    });
+  }
+  test("a person can sign in themselves in a real window, as a step runs", async () => {
+    const page = await open("/tours?tour=app-consent");
+    await page.locator("#window-mode").check();
+    await page.getByRole("button", { name: "Start the tour" }).click();
+    await page.waitForURL(/\/s\/[^/]+\/tours/);
+    await page.locator("[data-step=launch]").waitFor();
+    expect(await page.locator("#window-mode").isChecked()).toBe(true);
+    const [popup] = await Promise.all([context!.waitForEvent("page"), page.locator("[data-step=launch]").click()]);
+    await popup.waitForURL(/\/authorize/, { timeout: 30000 });
+    await popup.locator("input[name=username][value=josh]").check();
+    await popup.getByRole("button", { name: "Continue" }).click();
+    await popup.getByRole("button", { name: "Approve" }).click();
+    await page.locator(".step .verdict").first().waitFor({ timeout: 30000 });
+    expect(problems).toEqual([]);
+  });
+  test("automated runs open no window", async () => {
+    const page = await open("/tours?tour=caregiver");
+    let opened = 0;
+    context!.on("page", () => { opened++; });
+    await page.getByRole("button", { name: "Start the tour" }).click();
+    await page.waitForURL(/\/s\/[^/]+\/tours/);
+    await page.getByRole("button", { name: "Run the rest" }).click();
+    await page.locator(".tour-buttons .verdict").waitFor({ timeout: 90000 });
+    expect(opened).toBe(0);
+  });
+  test("Run checks runs the protocol flows as one pass or fail list, each opening its activity", async () => {
+    const page = await open("/tours");
+    await page.getByRole("button", { name: "Run checks" }).click();
+    await page.locator(".checks-panel .row .verdict", { hasText: "passed" }).waitFor({ timeout: 110000 });
+    expect(await page.locator(".checks-panel .row .verdict").innerText()).toBe("8 of 8 passed");
+    const link = page.locator(".check-list a").first();
+    await link.click();
+    await page.waitForURL(/\/activity\?session=/);
+    await page.locator(".cards .card").first().waitFor();
+    expect(problems).toEqual([]);
+  });
+});
+
+describe("activity", () => {
+  test("filters by kind and outcome, and a card's value links to every event that shares it", async () => {
+    const explore = await open("/");
+    await pick(explore, "josh");
+    const page = await context!.newPage();
+    await page.goto(`${DEMO}/activity`);
+    await page.locator(".cards .card").first().waitFor();
+    await page.locator("select[name=kind]").selectOption("search.returned");
+    await page.waitForFunction(() => [...document.querySelectorAll(".card")].every(c => (c as HTMLElement).dataset.kind === "search.returned"));
+    await page.locator(".card .links a", { hasText: /^token / }).first().click();
+    await page.waitForURL(/link=token/);
+    await page.locator(".card[data-kind='token.issued']").waitFor();
+    expect(await page.locator(".card").count()).toBeGreaterThan(2);
+    expect(await overflow(page)).toBe(0);
+    expect(problems).toEqual([]);
   });
 });

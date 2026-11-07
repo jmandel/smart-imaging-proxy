@@ -4,7 +4,7 @@
 import { createECDH, createHash, createPrivateKey, createPublicKey, generateKeyPairSync, hkdfSync, randomBytes, sign, verify, type KeyObject } from "node:crypto";
 import { ath, b64url, sameSecret, type Clock, type PolicyStore } from "@smart-imaging-proxy/core";
 import { demoClock } from "./clock";
-import { refuseWrite } from "./admin-api";
+import { refuseWrite } from "./settings-api";
 import { PORTS } from "./config";
 import { check, recordEvent, traced } from "./trace";
 
