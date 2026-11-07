@@ -69,7 +69,8 @@ Each service's listener sends a scoped path to that scope's own instance of the 
 
 - **A minted id:** `POST /api/scopes` returns `{ scope, base, urls }`, with a random 22-character id, seeded from the guardians on file. So does starting a flow.
 - **An inline seed:** `/s/~{seed}/`, where the seed is deflate-raw compressed JSON, base64url encoded: the policy API's policy document, `{ rules, delegations, guardians, appGrants, contextLifetimeSeconds, maxSeriesInContext }`, any part of it, with the guardians on file when it names none. The first request builds the world from it, and later ones reuse it, along with any changes made there. A seed is at most 4,096 characters, and 64 KiB of JSON. One that doesn't validate gets a `400` saying why. `encodeSeed` in `src/scopes.ts` makes one.
-- **Lifetimes:** a scope sits idle for 30 minutes at most, and at most 64 are live, the least recently used going first. An unknown or dropped minted id gets a `404` saying so. A dropped seed builds again from its document. A restart drops every scope.
+- **Lifetimes:** a scope sits idle for 30 minutes at most. Minted scopes and seeds are separate pools, at most 64 of each, the least recently used going first, so seeds never push out a minted scope. An unknown or dropped minted id gets a `404` saying so. A dropped seed builds again from its document. A restart drops every scope.
+- **A seed world is shared** by everyone who uses the same seed: its policy changes, its tokens' effects, its live trace, and the response bodies the trace holds. Use a minted id for anything one person shouldn't see of another's.
 
 ## Connecting a browser app
 
@@ -236,7 +237,7 @@ PROXY_BACKEND=s3 bun src/main.ts --role proxy
 | Setting | Default | Purpose |
 |---|---|---|
 | `--role` | `all` | `all`, `demo` (the same as `all`), or a comma-separated list of `proxy`, `imaging`, `auth`, `trace`, `gateway` |
-| `SERVICE_SECRET` | None | Required for `proxy`, `imaging`, and `auth`, and the same in each. With `all`, it's generated |
+| `SERVICE_SECRET` | None | Required for `proxy`, `imaging`, and `auth`, and the same in each. With `all`, it's generated. `trace` takes spans only with a credential derived from it, so give it the same one too |
 | `POLICY_SECRET` | None | The policy API's credential. Required for `imaging` and `auth`, the same in both, and never given to `proxy`. With `all`, it's generated |
 | `PROXY_BACKEND` | `static-files` | `static-files`, `s3`, or `orthanc`. Set `orthanc` on `imaging` too, to use Orthanc's catalog |
 | `JWKS_TTL_SECONDS` | `60` | How long a split proxy trusts its copy of the keys |

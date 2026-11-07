@@ -258,7 +258,7 @@ describe("scope lifetimes", () => {
   const catalog = createCatalog();
   const shared = { catalogs: { archive: catalog, orthanc: catalog }, backends: {} as any, clientKeys: new Map(), initialBackend: () => "static-files" as const };
   test("past the cap, the least recently used go first; an evicted id is gone, and an evicted seed builds again", () => {
-    const scopes = createScopes(shared, { max: 2 });
+    const scopes = createScopes(shared, { max: 2, maxSeeds: 1 });
     const a = scopes.mint(), b = scopes.mint();
     expect(scopes.resolve(a.scope!)).toMatchObject({ world: a });
     const c = scopes.mint();
@@ -269,12 +269,33 @@ describe("scope lifetimes", () => {
     const seed = encodeSeed({ rules: [RULE] });
     const s1 = (scopes.resolve(seed) as { world: World }).world;
     s1.store.setPolicy({ rules: [] });
-    scopes.mint(); scopes.mint();
+    scopes.resolve(encodeSeed({ rules: [] }));
     const s2 = (scopes.resolve(seed) as { world: World }).world;
     expect(s2).not.toBe(s1);
     expect(s2.store.rules()).toEqual([RULE]);
     scopes.close();
   });
+  test("seeds have a pool of their own, so any number of them never evicts a minted scope", () => {
+    const scopes = createScopes(shared, { max: 2, maxSeeds: 2 });
+    const a = scopes.mint(), b = scopes.mint();
+    for (let i = 0; i < 10; i++) expect("world" in scopes.resolve(encodeSeed({ contextLifetimeSeconds: 60 + i }))).toBe(true);
+    expect(scopes.resolve(a.scope!)).toMatchObject({ world: a });
+    expect(scopes.resolve(b.scope!)).toMatchObject({ world: b });
+    expect(scopes.size).toBe(4);
+    // The seeds' own cap still holds, least recently used first, and a dropped one builds again.
+    const kept = encodeSeed({ contextLifetimeSeconds: 69 });
+    const w = (scopes.resolve(kept) as { world: World }).world;
+    expect((scopes.resolve(kept) as { world: World }).world).toBe(w);
+    scopes.resolve(encodeSeed({ contextLifetimeSeconds: 1 })); scopes.resolve(encodeSeed({ contextLifetimeSeconds: 2 }));
+    expect((scopes.resolve(kept) as { world: World }).world).not.toBe(w);
+    scopes.close();
+  });
+  test("a flow run survives a page full of seeds", async () => {
+    const r = await get(`${CONFIG.demoUrl}/api/flows/patient-sites/start`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    const { scope } = (await r.json()) as any;
+    for (let i = 0; i < 70; i++) expect(await get(`${urlsFor(`/s/${encodeSeed({ contextLifetimeSeconds: 100 + i })}`).clinicalFhir}/.well-known/smart-configuration`).then(x => x.status)).toBe(200);
+    expect(((await (await get(`${CONFIG.demoUrl}${scope.base}/api/flow-state`)).json()) as any).flow).toBe("patient-sites");
+  }, 60000);
   test("an idle scope is dropped", async () => {
     const scopes = createScopes(shared, { idleMs: 40 });
     const a = scopes.mint(), b = scopes.mint();
