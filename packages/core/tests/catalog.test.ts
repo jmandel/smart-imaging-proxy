@@ -270,10 +270,14 @@ describe("rebuilding from the archive", () => {
 // Search, driven directly against an Imaging Server over a small catalog.
 describe("paged search", () => {
   const TOKEN: any = { active: true, client_id: "app", sub: "pat", fhirUser: "Patient/p1", patient: "p1", scope: "patient/ImagingStudy.rs", exp: Math.floor(Date.now() / 1000) + 3600 };
-  function server(catalog: CatalogStore, extra: { pageBytes?: number } = {}) {
+  /** A service's token, for what only organization policy decides, such as withheld series. */
+  const SERVICE: any = { active: true, client_id: "svc", scope: "system/ImagingStudy.rs", exp: TOKEN.exp };
+  const APPROVAL = { by: "user:pat", app: "app:app", patient: "patient:p1" };
+  function server(catalog: CatalogStore, extra: { pageBytes?: number; token?: any } = {}) {
     const store = new PolicyStore({ mode: "memory" });
-    store.putAppGrant({ client: "app", user: "pat", patient: "p1" });
-    const imaging = createImagingServer({ patientOf: () => undefined, base: "http://fhir", clinicalFhirBase: "http://clinical", proxyBase: () => "http://proxy", introspect: async () => TOKEN, serviceSecret: "s", policySecret: "ps", catalog: () => catalog, keyStore: store, store: () => store, ...extra });
+    store.putApproval(APPROVAL);
+    const { token = TOKEN, ...rest } = extra;
+    const imaging = createImagingServer({ patientOf: () => undefined, base: "http://fhir", clinicalFhirBase: "http://clinical", proxyBase: () => "http://proxy", introspect: async () => token, serviceSecret: "s", policySecret: "ps", catalog: () => catalog, keyStore: store, store: () => store, ...rest });
     const get = async (q: string) => {
       const r = await imaging.fetch(new Request(q.startsWith("http") ? q : `http://fhir/fhir/ImagingStudy?${q}`, { headers: { Authorization: "Bearer t" } }));
       return { status: r.status, body: await r.json() as any };
@@ -392,16 +396,16 @@ describe("paged search", () => {
     const { get, store } = server(six());
     const first = (await get("patient=p1&_count=2")).body;
     expect(first.total).toBe(6);
-    store.setPolicy({ rules: [{ id: "r", when: { client: "app" }, allow: { sites: ["Site A"] } }] });
+    store.putApproval({ ...APPROVAL, sites: ["Site A"] });
     const second = (await get(internal(nextOf(first)!))).body;
     expect(studiesOf(second).map((s: any) => s.id)).toEqual(["study-9.3", "study-9.2"]);
     expect(second.total).toBe(3);
-    store.setPolicy({ rules: [{ id: "r", when: { client: "app" }, withdrawn: true, allow: { all: true } }] });
+    store.removeApprovals(APPROVAL);
     const none = (await get(internal(nextOf(first)!))).body;
     expect(none.entry).toBeUndefined();
     expect(none.total).toBe(0);
     expect(nextOf(none)).toBeUndefined();
-    store.setPolicy({ rules: [] });
+    store.putApproval(APPROVAL);
     expect(studiesOf((await get(internal(nextOf(first)!))).body).length).toBe(2);
   });
   test("a page loads its hierarchies with exactly one call, for that page only, and never calls allStudies", async () => {
@@ -426,7 +430,7 @@ describe("paged search", () => {
     const hierarchies = c.hierarchies;
     c.hierarchies = pks => { asked.push(...pks); return hierarchies.call(c, pks); };
     const { get, store } = server(c);
-    store.setPolicy({ rules: [{ id: "r", when: { client: "app" }, allow: { sites: ["Site B"] } }] });
+    store.putApproval({ ...APPROVAL, sites: ["Site B"] });
     await get("patient=p1");
     expect(asked.length).toBe(3);
     const siteB = new Set(c.allStudies().filter(s => s.site === "Site B").map(s => s.pk));
@@ -467,13 +471,14 @@ describe("paged search", () => {
     c.publish(publicationFor(documentOf("3.3", { status: "registered", series }), "p1", { series: [] }));
     c.publish(publicationFor(documentOf("3.4", { date: "20100101", status: "cancelled", series }), "p1", { series: [] }));
     c.publish(publicationFor(documentOf("3.5", { date: "20000101", status: "registered", series: [] }), "p1", { series: [] }));
-    const { get, store } = server(c);
+    const { get, store } = server(c, { token: SERVICE });
     const codes = async () => Object.fromEntries(studiesOf((await get("patient=p1")).body).map((s: any) => [s.id, s.modality.map((m: any) => m.code)]));
+    const access = (o: object) => ({ id: "r", type: "service-access" as const, service: "service:svc", patients: "patient:p1", allow: { all: true }, ...o });
+    store.putPolicy(access({}));
     expect(await codes()).toEqual({ "study-3.3": ["CT", "SR"], "study-3.4": ["CT", "SR"], "study-3.5": ["OT"] });
-    const withheld = { id: "r", when: { client: "app" }, allow: { all: true }, withholdSeries: ["3.3.2", "3.4.1"] };
-    store.setPolicy({ rules: [withheld] });
+    store.putPolicy(access({ withholdSeries: ["3.3.2", "3.4.1"] }));
     expect((await codes())["study-3.3"]).toEqual(["CT"]);
-    store.setPolicy({ rules: [{ id: "r", when: { client: "app" }, allow: { studies: ["study-3.3"] } }] });
+    store.putPolicy(access({ allow: { studies: ["study-3.3"] } }));
     expect(Object.keys(await codes())).toEqual(["study-3.3"]);
   });
   describe("token search", () => {
@@ -624,7 +629,7 @@ describe("paged search", () => {
     const { imaging } = server(c);
     for (const scheme of ["Bearer", "bearer", "BEARER", "bEaReR"]) expect((await imaging.fetch(new Request("http://fhir/fhir/ImagingStudy?patient=p1", { headers: { Authorization: `${scheme} t` } }))).status).toBe(200);
     for (const header of ["Basic t", "bearer", "bearer ", "Bearert"]) expect((await imaging.fetch(new Request("http://fhir/fhir/ImagingStudy?patient=p1", { headers: { Authorization: header } }))).status).toBe(401);
-    for (const scheme of ["Bearer", "bearer"]) expect((await imaging.fetch(new Request("http://fhir/policy/v1/relationships", { headers: { Authorization: `${scheme} ps` } }))).status).toBe(200);
+    for (const scheme of ["Bearer", "bearer"]) expect((await imaging.fetch(new Request("http://fhir/policy/v2/relationships", { headers: { Authorization: `${scheme} ps` } }))).status).toBe(200);
   });
   test("a decision and a context carry the version", async () => {
     const c = createCatalog(":memory:", ACC);
@@ -649,7 +654,7 @@ describe("paged search", () => {
     put(c, "1.1", { site: undefined });
     const { get, store } = server(c);
     expect((await get("patient=p1")).body.total).toBe(1);
-    store.putAppGrant({ client: "app", user: "pat", patient: "p1", sites: ["Site A"] });
+    store.putApproval({ ...APPROVAL, sites: ["Site A"] });
     expect((await get("patient=p1")).body.total).toBe(0);
   });
 });

@@ -32,6 +32,7 @@ export * from "./imaging-server";
 export * from "./catalog";
 export * from "./catalog-archive";
 export * from "./catalog-orthanc";
+export * from "./policy-model";
 export * from "./policy-store";
 export * from "./policy-api";
 export * from "./policy-client";

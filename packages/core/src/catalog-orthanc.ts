@@ -4,11 +4,11 @@ import type { CatalogStore, StudyDocument, StudyHierarchy } from "./archive/type
 import { patientSourceOf, publicationFor } from "./catalog";
 
 /**
- * What DICOM doesn't state: the FHIR id, a display title, and the site, by accession. It stands in
+ * What DICOM doesn't state: the FHIR id, a display title, the site, and labels, by accession. It stands in
  * for an operator's configuration. A study it doesn't name
  * uses its Study UID as its id and has no site, so site-limited access never reaches it.
  */
-export interface OperatorStudyConfig { id?: string; title?: string; site?: string; }
+export interface OperatorStudyConfig { id?: string; title?: string; site?: string; labels?: string[]; }
 export interface OrthancCatalogConfig { studies: Record<string, OperatorStudyConfig>; }
 
 const TAG = { studyDate: "00080020", studyTime: "00080030", accession: "00080050", modality: "00080060", sopClass: "00080016", sopInstance: "00080018", studyDescription: "00081030", seriesDescription: "0008103E", patientId: "00100020", patientIssuer: "00100021", bodyPart: "00180015", studyUid: "0020000D", seriesUid: "0020000E", seriesNumber: "00200011", instanceNumber: "00200013" };
@@ -59,7 +59,7 @@ export async function catalogFromOrthanc(catalog: CatalogStore, orthanc: { base:
     // Orthanc doesn't version a study, so this catalog's version stays 1.
     const document: StudyDocument = {
       format: 1, uid, id: operator.id ?? uid, version: 1,
-      ...(operator.title !== undefined ? { title: operator.title } : {}), ...(operator.site !== undefined ? { site: operator.site } : {}),
+      ...(operator.title !== undefined ? { title: operator.title } : {}), ...(operator.site !== undefined ? { site: operator.site } : {}), ...(operator.labels?.length ? { labels: operator.labels } : {}),
       ...(text(st, TAG.studyDescription) !== undefined ? { description: text(st, TAG.studyDescription) } : {}),
       ...(accession ? { accession } : {}), ...(text(st, TAG.studyDate) ? { date: text(st, TAG.studyDate) } : {}), ...(text(st, TAG.studyTime) ? { time: text(st, TAG.studyTime) } : {}),
       sourcePatientId, ...(sourcePatientIssuer !== undefined ? { sourcePatientIssuer } : {}),

@@ -6,7 +6,7 @@ import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { CatalogPosition, CatalogSearch, CatalogStore, CatalogStudy, StudyDocument, StudyHierarchy, StudyPublication, TokenFilter } from "./archive/types";
 
-export const CATALOG_SCHEMA_VERSION = 1;
+export const CATALOG_SCHEMA_VERSION = 2;
 export const DICOM_UID_SYSTEM = "urn:dicom:uid";
 /** Where a Patient ID with no stated issuer comes from, in `patient_links`. */
 export const UNQUALIFIED_PATIENT_IDS = "dicom-patient-id";
@@ -18,7 +18,7 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS studies (
     pk INTEGER PRIMARY KEY, uid TEXT NOT NULL UNIQUE, id TEXT NOT NULL UNIQUE, patient TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('registered', 'available', 'cancelled')),
-    date TEXT NOT NULL, time TEXT, description TEXT, title TEXT, accession TEXT, site TEXT,
+    date TEXT NOT NULL, time TEXT, description TEXT, title TEXT, accession TEXT, site TEXT, labels TEXT,
     last_updated TEXT NOT NULL, version INTEGER NOT NULL, series_count INTEGER NOT NULL, instance_count INTEGER NOT NULL, hierarchy_bytes INTEGER NOT NULL);
   CREATE INDEX IF NOT EXISTS studies_by_date ON studies (patient, date DESC, pk DESC);
   CREATE INDEX IF NOT EXISTS studies_by_last_updated ON studies (patient, last_updated, pk);
@@ -67,7 +67,7 @@ export function publicationFor(document: StudyDocument, patient: string, hierarc
 }
 
 const LAST_UPDATED_SECONDS = "unixepoch(s.last_updated, 'subsec')";
-const STUDY_COLUMNS = "s.pk, s.uid, s.id, s.patient, s.status, s.date, s.time, s.description, s.title, s.accession, s.site, s.last_updated, s.version, s.series_count, s.instance_count, s.hierarchy_bytes";
+const STUDY_COLUMNS = "s.pk, s.uid, s.id, s.patient, s.status, s.date, s.time, s.description, s.title, s.accession, s.site, s.labels, s.last_updated, s.version, s.series_count, s.instance_count, s.hierarchy_bytes";
 
 /** `accessionSystem` is the identifier system of the studies' accession numbers. Without it, they have none. */
 export function createCatalog(path: string = ":memory:", opts: { accessionSystem?: string } = {}): CatalogStore {
@@ -80,11 +80,12 @@ export function createCatalog(path: string = ":memory:", opts: { accessionSystem
   db.exec("PRAGMA foreign_keys = ON");
   const found = (db.query("PRAGMA user_version").get() as any).user_version as number;
   if (found > CATALOG_SCHEMA_VERSION) { db.close(); throw new Error(`${path} has schema version ${found}, and this code knows only up to ${CATALOG_SCHEMA_VERSION}. The catalog is rebuildable: delete it and build it again.`); }
-  if (found < CATALOG_SCHEMA_VERSION) db.transaction(() => { db.exec(SCHEMA); db.exec(`PRAGMA user_version = ${CATALOG_SCHEMA_VERSION}`); })();
+  // A catalog is derived, so one from an earlier schema starts empty and is built again from its source.
+  if (found < CATALOG_SCHEMA_VERSION) db.transaction(() => { if (found) for (const t of ["study_hierarchy", "series", "study_identifiers", "studies"]) db.exec(`DROP TABLE IF EXISTS ${t}`); db.exec(SCHEMA); db.exec(`PRAGMA user_version = ${CATALOG_SCHEMA_VERSION}`); })();
 
   const toStudy = (r: any, series: CatalogStudy["series"]): CatalogStudy => ({
     pk: r.pk, uid: r.uid, id: r.id, patient: r.patient, status: r.status,
-    ...(r.date ? { date: r.date } : {}), ...(r.time ? { time: r.time } : {}), ...(r.description !== null ? { description: r.description } : {}), ...(r.title !== null ? { title: r.title } : {}), ...(r.accession ? { accession: r.accession } : {}), ...(r.site ? { site: r.site } : {}),
+    ...(r.date ? { date: r.date } : {}), ...(r.time ? { time: r.time } : {}), ...(r.description !== null ? { description: r.description } : {}), ...(r.title !== null ? { title: r.title } : {}), ...(r.accession ? { accession: r.accession } : {}), ...(r.site ? { site: r.site } : {}), ...(r.labels ? { labels: JSON.parse(r.labels) } : {}),
     lastUpdated: r.last_updated, version: r.version, seriesCount: r.series_count, instanceCount: r.instance_count, hierarchyBytes: r.hierarchy_bytes, series,
   });
   /** Attaches series rows to study rows, with one query for the whole batch. */
@@ -101,10 +102,10 @@ export function createCatalog(path: string = ":memory:", opts: { accessionSystem
     const raw = encoder.encode(JSON.stringify(p.hierarchy));
     const instanceCount = d.series.reduce((n, s) => n + s.instanceCount, 0);
     const row = db.query(`
-      INSERT INTO studies (uid, id, patient, status, date, time, description, title, accession, site, last_updated, version, series_count, instance_count, hierarchy_bytes)
-      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
-      ON CONFLICT (uid) DO UPDATE SET id = ?2, patient = ?3, status = ?4, date = ?5, time = ?6, description = ?7, title = ?8, accession = ?9, site = ?10, last_updated = ?11, version = ?12, series_count = ?13, instance_count = ?14, hierarchy_bytes = ?15
-      RETURNING pk`).get(d.uid, d.id, p.patient, p.status, d.date ?? "", d.time ?? null, d.description ?? null, d.title ?? null, d.accession ?? null, d.site ?? null, p.lastUpdated, d.version, d.series.length, instanceCount, raw.length) as any;
+      INSERT INTO studies (uid, id, patient, status, date, time, description, title, accession, site, last_updated, version, series_count, instance_count, hierarchy_bytes, labels)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+      ON CONFLICT (uid) DO UPDATE SET id = ?2, patient = ?3, status = ?4, date = ?5, time = ?6, description = ?7, title = ?8, accession = ?9, site = ?10, last_updated = ?11, version = ?12, series_count = ?13, instance_count = ?14, hierarchy_bytes = ?15, labels = ?16
+      RETURNING pk`).get(d.uid, d.id, p.patient, p.status, d.date ?? "", d.time ?? null, d.description ?? null, d.title ?? null, d.accession ?? null, d.site ?? null, p.lastUpdated, d.version, d.series.length, instanceCount, raw.length, d.labels?.length ? JSON.stringify(d.labels) : null) as any;
     const pk: number = row.pk;
     for (const table of ["study_identifiers", "series", "study_hierarchy"]) db.run(`DELETE FROM ${table} WHERE study_pk = ?`, [pk]);
     p.identifiers.forEach(i => db.run("INSERT INTO study_identifiers (study_pk, patient, kind, system, value) VALUES (?, ?, ?, ?, ?)", [pk, p.patient, i.kind, i.system ?? null, i.value]));

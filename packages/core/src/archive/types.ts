@@ -78,6 +78,8 @@ export interface StudyDocument {
   sourcePatientId?: string;
   sourcePatientIssuer?: string;
   site?: string;
+  /** Labels on the record, such as `confidential-adolescent`, which organization policy can hide by. */
+  labels?: string[];
   /** ISO 8601. Absent means the catalog derives it from `date`. */
   lastUpdated?: string;
   /** Absent means `available`. */
@@ -107,6 +109,8 @@ export interface CatalogStudy {
   title?: string;
   accession?: string;
   site?: string;
+  /** The study's labels, from its document. */
+  labels?: string[];
   /** ISO 8601. */
   lastUpdated: string;
   version: number;

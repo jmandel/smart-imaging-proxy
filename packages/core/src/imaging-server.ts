@@ -5,7 +5,8 @@ import { ath, publicJwk, signJws, verifyJws, sameSecret } from "./jws";
 import { systemClock, type Clock } from "./clock";
 import { noopObserver, type Observer } from "./observer";
 import { createPolicyApi, POLICY_API_PATH, type Access, type ExplainQuery } from "./policy-api";
-import type { Guardian, Policy, PolicyStore, Rule } from "./policy-store";
+import type { PolicyStore } from "./policy-store";
+import { createModel, defaultName, idOf, ref, type Decision, type Namer, type PatientAttributes, type Snapshot } from "./policy-model";
 import type { CatalogPosition, CatalogSearch, CatalogStore, CatalogStudy, InstantRange, StudyHierarchy, TokenFilter, TokenTerm } from "./archive/types";
 import { DICOM_UID_SYSTEM } from "./catalog";
 
@@ -99,6 +100,10 @@ export interface ImagingServerOptions {
   introspect: (token: string) => Promise<any>;
   /** The patient a user account is, if any. */
   patientOf: (user: string) => string | undefined;
+  /** What the patient record says, such as a birth date, for organization policy by age. */
+  patientAttributes?: (patient: string) => PatientAttributes | undefined;
+  /** A reference's display name, such as `user:sam` to Sam, for the reasons decisions give. */
+  name?: Namer;
   /** The credential the proxy presents to the decision API. */
   serviceSecret: string;
   /** The credential the policy API's callers present: the Authorization Server and the deployment's administration, never the proxy. */
@@ -134,143 +139,82 @@ export function createImagingServer(opts: ImagingServerOptions) {
   const cursorKey = opts.cursorKey ?? randomBytes(32);
   const pageBytes = opts.pageBytes ?? PAGE_BYTES;
 
-  type PolicyRows = Pick<Policy, "rules" | "delegations" | "guardians" | "appGrants">;
-  type Evaluation = { release: "none" | "study" | { series: string[] }; rule?: Rule; why: string; chain?: string[] };
-  /** One search evaluates every candidate against the same policy, read once. */
-  const policyRows = (s: PolicyStore = opts.store()): PolicyRows => { return { rules: s.rules(), delegations: s.delegations(), guardians: s.guardians(), appGrants: s.appGrants() }; };
+  type Evaluation = Decision;
+  const name = opts.name ?? defaultName;
+  const model = createModel({ patientOf: opts.patientOf, attributesOf: p => opts.patientAttributes?.(p), now, name });
+  /** Organization policy and one patient's rows, read once for a whole search or decision. Never another patient's. */
+  const snapshotOf = (patient: string, s: PolicyStore = opts.store()): Snapshot => s.patientSnapshot(ref("patient", patient));
 
-  const matchRule = (t: any, patient: string, policy: PolicyRows): Rule | undefined =>
-    policy.rules.find(r =>
-      (r.when.client === undefined || r.when.client === t.client_id) &&
-      (r.when.user === undefined || r.when.user === t.sub) &&
-      (r.when.patient === undefined || r.when.patient === patient));
-  const isGuardian = (policy: Pick<PolicyRows, "guardians">, user: string, patient: string) => policy.guardians.some(g => g.guardian === user && g.patient === patient);
-  /** A withdrawn rule is no pre-authorization at all. */
-  const preAuthorizing = (rule: Rule | undefined) => rule && !rule.withdrawn ? rule : undefined;
-
-  /** The single policy decision used by both search and retrieval. It works on catalog rows. */
-  function evaluate(t: any, study: CatalogStudy, policy: PolicyRows = policyRows()): Evaluation {
-    const r = evaluateRule(t, study, policy);
-    check("policy", `policy evaluation: ${study.id}`, r.release !== "none", { client: t.client_id, user: t.sub, patient_context: t.patient, study: study.id, site: study.site, chain: r.chain?.join(" → "), rule: r.rule?.id ?? "(none)", release: typeof r.release === "object" ? `${r.release.series.length} series` : r.release, why: r.why });
+  /** The single policy decision used by search, retrieval, and explain. It works on catalog rows. */
+  function evaluate(t: any, study: CatalogStudy, snap: Snapshot = snapshotOf(study.patient)): Evaluation {
+    const r = model.evaluate(snap, t, study);
+    check("policy", `policy evaluation: ${study.id}`, r.release !== "none", { client: t.client_id, user: t.sub, patient_context: t.patient, study: study.id, site: study.site, because: r.because.map(b => `${b.level}: ${b.text}`).join(" → "), policy: r.policy?.id ?? "(none)", release: typeof r.release === "object" ? `${r.release.series.length} series` : r.release, why: r.why });
     return r;
   }
-  /** Only the patient or a guardian can share a record, however a row came to be written. So a delegation can't be passed on. */
-  const mayGrant = (policy: Pick<PolicyRows, "guardians">, d: { grantedBy: string; patient: string }) => opts.patientOf(d.grantedBy) === d.patient || isGuardian(policy, d.grantedBy, d.patient);
-  /** The patient, or a guardian on file, to related person to app. Each link can only narrow what the one before it allows. */
-  function accessChain(t: any, patient: string, site: string, policy: PolicyRows, studyId: string): { ok: boolean; why?: string; chain: string[] } {
-    const chain: string[] = [];
-    const guardian = policy.guardians.find(x => x.guardian === t.sub && x.patient === patient);
-    if (t.fhirUser === `Patient/${patient}`) chain.push(`${t.sub} is the patient`);
-    else if (guardian) {
-      chain.push(`${t.sub} is ${patient}'s ${guardian.relationship}, on file, ${guardian.excludedStudies?.length ? "apart from what's confidential from them" : "for the whole record"}`);
-      if (guardian.excludedStudies?.includes(studyId)) return { ok: false, why: `this study is confidential from ${t.sub}, so ${patient}'s guardian doesn't get it`, chain };
-    }
-    else {
-      const d = policy.delegations.find(x => x.delegate === t.sub && x.patient === patient);
-      if (!d) return { ok: false, why: `${t.sub} has no delegation from the patient`, chain };
-      if (!mayGrant(policy, d)) return { ok: false, why: `${d.grantedBy} is neither ${patient} nor their guardian, so they can't grant this`, chain };
-      if (d.asGuardian && !isGuardian(policy, d.grantedBy, patient)) return { ok: false, why: `${d.grantedBy} is no longer ${patient}'s guardian, so what they shared has ended`, chain };
-      chain.push(`${d.grantedBy} delegated to ${t.sub} (${d.relationship}): ${d.sites.join(", ")}`);
-      if (policy.guardians.find(x => x.guardian === d.grantedBy && x.patient === patient)?.excludedStudies?.includes(studyId)) return { ok: false, why: `this study is confidential from ${d.grantedBy}, so what they shared can't include it`, chain };
-      if (!d.sites.includes(site)) return { ok: false, why: `the delegation to ${t.sub} doesn't include ${site}`, chain };
-    }
-    const g = policy.appGrants.find(x => x.client === t.client_id && x.user === t.sub && x.patient === patient);
-    if (!g) return { ok: false, why: `${t.sub} hasn't authorized ${t.client_id}`, chain };
-    chain.push(`${t.sub} authorized ${t.client_id}: ${g.sites?.join(", ") ?? "everything they can see"}`);
-    if (g.sites && !g.sites.includes(site)) return { ok: false, why: `${t.sub}'s authorization of ${t.client_id} doesn't include ${site}`, chain };
-    return { ok: true, chain };
-  }
 
-  /** The sites a guardian can choose among, so that a confidential study's site doesn't give it away. */
-  const guardianSites = (g: Guardian) => [...new Set([...candidates(opts.catalog(), { patient: g.patient })].filter(s => !g.excludedStudies?.includes(s.id)).flatMap(s => s.site ? [s.site] : []))];
-  /** Sites a page may name to anyone but the patient: never one that only a study confidential from a guardian is at. */
-  const withinGuardian = (policy: Pick<PolicyRows, "guardians">, user: string, patient: string, sites: string[]) => {
-    const guardians = policy.guardians.filter(x => x.patient === patient && x.excludedStudies?.length);
-    if (!guardians.length || opts.patientOf(user) === patient) return sites;
-    const open = new Set(guardians.flatMap(guardianSites));
-    return sites.filter(s => open.has(s));
-  };
+  /** The sites among these studies, without a study that only a hidden one is at giving that site away. */
+  const sitesOf = (studies: CatalogStudy[]) => [...new Set(studies.flatMap(s => s.site ? [s.site] : []))];
+  const studiesOf = (patient: string) => [...candidates(opts.catalog(), { patient })];
+  /** The sites a user sees of a patient's, by any route, before any app approval. */
+  const visibleSites = (snap: Snapshot, user: string, patient: string, fhirUser?: string) => sitesOf(model.visible(snap, ref("user", user), ref("patient", patient), studiesOf(patient), fhirUser));
+  /** The sites a person may name to anyone else: never one that only a study hidden from them is at. */
+  const ownSites = (snap: Snapshot, user: string, patient: string) => sitesOf(studiesOf(patient).filter(st => model.baseline(snap, ref("user", user), ref("patient", patient), st).ok));
+
   /** What one signed-in user can see and has shared, for the Authorization Server's pages. Their own record is first, then the people they're guardian for, then what's shared with them. */
   function accessFor(store: PolicyStore, user: string, fhirUser: string): Access {
+    // Which patients: from this person's own rows. What they see of each: from that patient's.
+    const mine = store.personSnapshot(ref("user", user)), me = ref("user", user);
+    const of = (patient: string) => snapshotOf(patient, store);
     const records: Access["records"] = [];
     const self = fhirUser.match(/^Patient\/(.+)$/)?.[1];
     if (self) records.push({ patient: self, via: "self", sites: opts.catalog().sitesFor(self) });
-    const policy = store.getPolicy();
-    for (const g of policy.guardians) if (g.guardian === user && g.patient !== self) records.push({ patient: g.patient, via: "guardian", relationship: g.relationship, sites: guardianSites(g) });
-    for (const d of policy.delegations) if (d.delegate === user && !records.some(r => r.patient === d.patient) && mayGrant(policy, d)) records.push({ patient: d.patient, via: "delegation", relationship: d.relationship, sites: withinGuardian(policy, d.grantedBy, d.patient, d.sites) });
+    for (const r of mine.relationships) {
+      const patient = idOf(r.object, "patient");
+      if (r.subject === me && r.relation === "guardian_of" && patient && patient !== self && !records.some(x => x.patient === patient) && model.guardianPolicy(of(patient), r.object).policy) records.push({ patient, via: "guardian", relationship: "guardian", sites: visibleSites(of(patient), user, patient) });
+    }
+    for (const sh of mine.shares) {
+      const patient = idOf(sh.patient, "patient")!;
+      if (sh.with === me && !records.some(r => r.patient === patient) && model.sharingFor(of(patient), sh.from, sh.patient).policy) records.push({ patient, via: "share", relationship: sh.label, sites: visibleSites(of(patient), user, patient) });
+    }
     return {
       records,
-      delegations: policy.delegations.filter(d => d.grantedBy === user).map(d => ({ ...d, sites: withinGuardian(policy, user, d.patient, d.sites) })),
-      apps: policy.appGrants.filter(g => g.user === user).map(g => g.sites ? { ...g, sites: withinGuardian(policy, user, g.patient, g.sites) } : g),
+      shares: mine.shares.filter(sh => sh.from === me).map(sh => ({ ...sh, sites: sh.sites.filter(x => ownSites(of(idOf(sh.patient, "patient")!), user, idOf(sh.patient, "patient")!).includes(x)) })),
+      approvals: mine.approvals.map(a => a.sites ? { ...a, sites: a.sites.filter(x => visibleSites(of(idOf(a.patient, "patient")!), user, idOf(a.patient, "patient")!).includes(x)) } : a),
     };
   }
 
   /**
-   * What the same `evaluate` that search uses decides for each of a patient's studies, for one client
-   * and, for a launch, one user. It's for showing why a list looks as it does, which a real app never sees.
+   * What the same evaluation that search uses decides for each of a patient's studies, for one client
+   * and, for a launch, one user, with each reason's level. It's for showing why a list looks as it does,
+   * which a real app never sees.
    */
   function explain(store: PolicyStore, { client, user, fhirUser, patient }: Partial<ExplainQuery>) {
     if (!client || !patient || (user && !fhirUser)) return { error: "client and patient are required, and a user needs a fhirUser" };
     const t = user ? { client_id: client, sub: user, fhirUser, patient } : { client_id: client };
-    const policy = policyRows(store);
-    const rule = matchRule(t, patient, policy);
-    const studies = [...candidates(opts.catalog(), { patient })].map(study => {
-      const ev = evaluate(t, study, policy);
+    const snap = snapshotOf(patient, store);
+    // The policy that pre-authorizes this service, which a withdrawn one doesn't.
+    const service = user ? undefined : model.preAuthorized(snap, client, patient);
+    const studies = studiesOf(patient).map(study => {
+      const ev = evaluate(t, study, snap);
       const released = typeof ev.release === "object" ? new Set(ev.release.series) : undefined;
       return {
         id: study.id, title: study.title, description: study.description, date: study.date, site: study.site, status: study.status,
         modalities: [...new Set(study.series.map(s => s.modality))], seriesCount: study.seriesCount, instanceCount: study.instanceCount,
-        release: ev.release, reason: ev.why, chain: ev.chain ?? [], rule: ev.rule?.id,
+        release: ev.release, why: ev.why, because: ev.because, policy: ev.policy?.id,
         withheldSeries: released ? study.series.filter(s => !released.has(s.uid)).map(s => ({ uid: s.uid, number: s.number, modality: s.modality, instanceCount: s.instanceCount })) : [],
       };
     });
     return {
-      client, user: user ?? undefined, fhirUser: fhirUser ?? undefined, patient, level: user ? "patient" : "system",
-      searchAllowed: !!user || !!preAuthorizing(rule), rule: user ? rule : preAuthorizing(rule),
-      guardian: user ? policy.guardians.find(g => g.guardian === user && g.patient === patient) : undefined,
-      delegation: user ? [policy.delegations.find(d => d.delegate === user && d.patient === patient)].flatMap(d => d && mayGrant(policy, d) ? [{ ...d, sites: withinGuardian(policy, d.grantedBy, patient, d.sites) }] : [])[0] : undefined,
-      appGrant: user ? [policy.appGrants.find(g => g.client === client && g.user === user && g.patient === patient)].flatMap(g => g ? [g.sites ? { ...g, sites: withinGuardian(policy, user, patient, g.sites) } : g] : [])[0] : undefined,
-      studies,
+      client, user: user ?? undefined, fhirUser: fhirUser ?? undefined, patient, level: user ? "patient" : "system", revision: snap.revision,
+      searchAllowed: !!user || !!service,
+      policy: service, studies,
     };
-  }
-
-  function evaluateRule(t: any, study: CatalogStudy, policy: PolicyRows): Evaluation {
-    if (t.patient && t.patient === study.patient) {
-      // A study with no site is outside every list of sites.
-      const a = accessChain(t, t.patient, study.site ?? "", policy, study.id);
-      if (!a.ok) return { release: "none", why: a.why!, chain: a.chain };
-      return { ...evaluateAfterChain(t, study, policy), chain: a.chain };
-    }
-    return evaluateAfterChain(t, study, policy);
-  }
-  function evaluateAfterChain(t: any, study: CatalogStudy, policy: PolicyRows): Evaluation {
-    const patient = study.patient;
-    const level = accessLevel(t);
-    if (!level) return { release: "none", why: "a user's token has no patient context" };
-    if (level === "patient" && t.patient !== patient) return { release: "none", why: "token's patient context is a different patient" };
-    const rule = matchRule(t, patient, policy);
-    if (!rule) {
-      return level === "patient" ? { release: "study", why: "patient context matches, and no restricting policy applies" } : { release: "none", why: "no pre-authorized access for this client" };
-    }
-    if (rule.withdrawn) return { release: "none", rule, why: `rule ${rule.id}: access withdrawn` };
-    const a = rule.allow;
-    const siteOk = !a.sites || a.sites.includes(study.site ?? "");
-    const studyOk = !a.studies || a.studies.includes(study.id);
-    const modOk = !a.modalities || study.series.some(s => a.modalities!.includes(s.modality));
-    const dateOk = !a.since || (study.date ?? "") >= a.since.replaceAll("-", "");
-    if (!(a.all || a.sites || a.studies || a.modalities || a.since) || !siteOk || !studyOk || !modOk || !dateOk) return { release: "none", rule, why: `rule ${rule.id}: study is outside what it allows` };
-    if (rule.withholdSeries?.length) {
-      const series = study.series.map(s => s.uid).filter(u => !rule.withholdSeries!.includes(u));
-      if (!series.length) return { release: "none", rule, why: `rule ${rule.id}: every series is withheld` };
-      if (series.length < study.series.length) return { release: { series }, rule, why: `rule ${rule.id}: ${study.series.length - series.length} series withheld` };
-    }
-    return { release: "study", rule, why: `rule ${rule.id} allows this study` };
   }
 
   function contextFor(accessToken: string, t: any, study: CatalogStudy, ev: Evaluation): string {
     const policy = opts.store().getSettings();
     const claims: any = { v: 1, iss: "imaging-server", study: study.uid, ver: study.version, ath: ath(accessToken), exp: Math.min(now() + policy.contextLifetimeSeconds, t.exp) };
-    if (ev.rule?.contextForm === "restricted") claims.restricted = true;
+    if (ev.policy?.contextForm === "restricted") claims.restricted = true;
     else if (typeof ev.release === "object") {
       if (ev.release.series.length > policy.maxSeriesInContext) claims.restricted = true;
       else claims.series = ev.release.series;
@@ -387,8 +331,8 @@ export function createImagingServer(opts: ImagingServerOptions) {
     if (!("id" in parsed)) return Response.json(outcome(parsed.code, parsed.text), { status: parsed.status });
     const patient = parsed.id;
     if (level === "patient" && patient !== t.patient) return Response.json(outcome("forbidden", "patient does not match the token's patient context"), { status: 403 });
-    const policy = policyRows();
-    if (level === "system" && !preAuthorizing(matchRule(t, patient, policy))) return Response.json(outcome("forbidden", "this patient is outside the client's authorized access"), { status: 403 });
+    const policy = snapshotOf(patient);
+    if (level === "system" && !model.preAuthorized(policy, t.client_id, patient)) return Response.json(outcome("forbidden", "this patient is outside the client's authorized access"), { status: 403 });
 
     const countParam = url.searchParams.get("_count");
     if (countParam !== null && !/^\d+$/.test(countParam)) return Response.json(outcome("invalid", "_count must be a whole number"), { status: 400 });
@@ -501,14 +445,26 @@ export function createImagingServer(opts: ImagingServerOptions) {
     }
     const study = opts.catalog().studyByUid(body.resource?.id);
     if (!study || study.status !== "available") return respond(false, { denial: "not_released", max_age_seconds: 30 }, "no such study");
-    const ev = evaluate(t, study);
-    if (ev.release === "none") return respond(false, { denial: "not_released", max_age_seconds: 30 }, ev.why);
-    return respond(true, { release: ev.release, version: study.version, max_age_seconds: Math.min(opts.store().getSettings().contextLifetimeSeconds, t.exp - now()) }, ev.why);
+    const snap = snapshotOf(study.patient);
+    const ev = evaluate(t, study, snap);
+    // The revisions this decision read, for a cache to compare against later.
+    const revision = { policy_revision: snap.revision!.policy, patient_revision: snap.revision!.patient };
+    if (ev.release === "none") return respond(false, { denial: "not_released", max_age_seconds: 30, ...revision }, ev.why);
+    return respond(true, { release: ev.release, version: study.version, ...revision, max_age_seconds: Math.min(opts.store().getSettings().contextLifetimeSeconds, t.exp - now()) }, ev.why);
   }
 
   const policyApi = createPolicyApi({
-    policySecret: opts.policySecret, store: opts.store, check,
-    model: { access: accessFor, explain, guardianSites, sitesFor: patient => opts.catalog().sitesFor(patient) },
+    policySecret: opts.policySecret, store: opts.store, check, name,
+    model: {
+      access: accessFor, explain,
+      /** A share's sites narrow to what the sharer may name. */
+      shareableSites: (store, user, patient) => ownSites(snapshotOf(patient, store), user, patient),
+      visibleSites: (store, user, patient, fhirUser) => visibleSites(snapshotOf(patient, store), user, patient, fhirUser),
+      sitesFor: patient => opts.catalog().sitesFor(patient),
+      sharingFor: (store, from, patient) => model.sharingFor(snapshotOf(idOf(patient, "patient")!, store), from, patient),
+      guardianPolicy: (store, patient) => model.guardianPolicy(snapshotOf(idOf(patient, "patient")!, store), patient),
+      isGuardian: (store, user, patient) => !!model.guardianOf(snapshotOf(patient, store), ref("user", user), ref("patient", patient)),
+    },
   });
 
   return {

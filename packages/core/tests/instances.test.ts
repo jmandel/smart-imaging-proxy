@@ -10,7 +10,7 @@ put(catalog, "1.1", {}, "p1");
 const STUDY = "1.1";
 
 function deployment(name: string, clock: ReturnType<typeof manualClock>) {
-  const store = new PolicyStore({ mode: "memory", guardians: [] });
+  const store = new PolicyStore({ mode: "memory" });
   const recorder = recordingObserver();
   const base = `https://host.example/s/${name}`;
   const introspect = async (token: string) => { const t = store.getToken(token, "access"); return t && !t.revoked ? { active: true, ...t } : { active: false }; };
@@ -37,13 +37,13 @@ const search = (d: typeof a) => d.imaging.fetch(new Request("http://imaging/fhir
 
 describe("two deployments side by side", () => {
   test("policy set through one's API isn't the other's", async () => {
-    await a.policy.setRules([{ id: "only-a", when: { client: "app" }, allow: { all: true } }]);
+    await a.policy.putPolicy({ id: "only-a", type: "service-access", service: "service:app", patients: "any", allow: { all: true } });
     await a.policy.setSettings({ contextLifetimeSeconds: 60 });
-    expect(await a.policy.grantApp({ client: "app", user: "pat", fhirUser: "Patient/p1", patient: "p1" })).toBe(true);
-    expect((await a.policy.getPolicy()).rules.map(r => r.id)).toEqual(["only-a"]);
-    expect((await a.policy.getPolicy()).appGrants).toEqual([{ client: "app", user: "pat", patient: "p1" }]);
-    expect((await b.policy.getPolicy()).rules).toEqual([]);
-    expect((await b.policy.getPolicy()).appGrants).toEqual([]);
+    expect((await a.policy.approveApp({ by: "user:pat", app: "app:app", fhirUser: "Patient/p1", patient: "patient:p1" })).ok).toBe(true);
+    expect((await a.policy.policies()).map(r => r.id)).toEqual(["only-a"]);
+    expect(await a.policy.approvals()).toEqual([{ by: "user:pat", app: "app:app", patient: "patient:p1" }]);
+    expect(await b.policy.policies()).toEqual([]);
+    expect(await b.policy.approvals()).toEqual([]);
     expect((await b.policy.getSettings()).contextLifetimeSeconds).toBe(300);
   });
   test("tokens are each store's own", async () => {

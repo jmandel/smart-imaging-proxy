@@ -1,29 +1,14 @@
-// Durable state: Imaging Server policy, its signing key, and the Authorization Server's token
-// records. One SQLite database holds all of it, which keeps the configuration in one place you can
-// inspect and reset.
+// Durable state: Imaging Server policy in its three levels, its signing key, and the Authorization
+// Server's token records. One SQLite database holds all of it, which keeps the configuration in one
+// place you can inspect and reset. A write about one patient raises that patient's revision, and an
+// organization policy write raises the policy revision. Reads for decisions take one patient's rows,
+// by index, and organization policy from memory.
 import { Database } from "bun:sqlite";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { createPrivateKey, createPublicKey, randomBytes, type KeyObject } from "node:crypto";
 import { generateEd25519, sha, type KeyPair } from "./jws";
-
-export interface Rule {
-  id: string;
-  description?: string;
-  when: { client?: string; user?: string; patient?: string };
-  allow: { all?: boolean; sites?: string[]; modalities?: string[]; studies?: string[]; since?: string };
-  withholdSeries?: string[];
-  /** "restricted" sends every retrieval through can_i, rather than listing series in the URL. */
-  contextForm?: "auto" | "restricted";
-  withdrawn?: boolean;
-}
-/** A patient, or a patient's guardian, lets a related person sign in and see some of the patient's records. `asGuardian` makes it last only while the grantor is the guardian. */
-export interface Delegation { patient: string; grantedBy: string; delegate: string; relationship: string; sites: string[]; asGuardian?: boolean; }
-/** An account on file as able to act for a patient, covering their record apart from `excludedStudies`, which are confidential from them. No one chose it by sharing. */
-export interface Guardian { patient: string; guardian: string; relationship: string; excludedStudies?: string[]; }
-/** A signed-in user lets an app act for them. No `sites` means everything that user can see. */
-export interface AppGrant { client: string; user: string; patient: string; sites?: string[]; }
-export interface Policy { rules: Rule[]; delegations: Delegation[]; guardians: Guardian[]; appGrants: AppGrant[]; contextLifetimeSeconds: number; maxSeriesInContext: number; }
+import { validateApproval, validateDocument, validateOrgPolicy, validateRelationship, validateShare, type AppApproval, type OrgPolicy, type PolicyDocument, type Relationship, type Revision, type Share, type Snapshot } from "./policy-model";
 
 export interface Settings { contextLifetimeSeconds: number; maxSeriesInContext: number; tokenLifetimeSeconds: number; refreshTokenLifetimeSeconds: number; }
 const REFRESH_DEFAULT = 30 * 86400;
@@ -34,146 +19,67 @@ export type TokenKind = "access" | "refresh";
 /** `family` is shared by every token descended from one refresh token. It isn't derived from any token. */
 export interface TokenRecord { client_id: string; scope: string; patient?: string; sub?: string; fhirUser?: string; family?: string; exp?: number; revoked: boolean; }
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 export type Durability = "off" | "normal" | "full";
 const SYNCHRONOUS: Record<Durability, number> = { off: 0, normal: 1, full: 2 };
 export const DURABILITIES = Object.keys(SYNCHRONOUS) as Durability[];
 
-/**
- * A file store needs `path`. `guardians` are the ones on file, which a new database starts with and a
- * reset puts back: no one chose them by sharing.
- */
-export interface StoreConfig { mode: "file" | "memory"; path?: string; durability?: Durability; guardians?: Guardian[]; }
+/** What's on file: the facts and organization policy a new database starts with, and a reset puts back. No one chose these. */
+export interface OnFile { relationships?: Relationship[]; policies?: OrgPolicy[]; }
+/** A file store needs `path`. */
+export interface StoreConfig { mode: "file" | "memory"; path?: string; durability?: Durability; onFile?: OnFile; }
 
 export class PolicyValidationError extends Error {
   constructor(public errors: string[]) { super(errors.join("; ")); this.name = "PolicyValidationError"; }
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
-const isText = (v: unknown): v is string => typeof v === "string" && v.length > 0;
-const isTextList = (v: unknown): v is string[] => Array.isArray(v) && v.every(isText);
-function unknownKeys(o: Record<string, unknown>, allowed: string[], at: string, errors: string[]) {
-  for (const k of Object.keys(o)) if (!allowed.includes(k)) errors.push(`${at}: unknown field "${k}"`);
-}
-
-function validateRule(r: unknown, at: string, errors: string[]) {
-  if (!isObject(r)) { errors.push(`${at} must be an object`); return; }
-  unknownKeys(r, ["id", "description", "when", "allow", "withholdSeries", "contextForm", "withdrawn"], at, errors);
-  if (!isText(r.id)) errors.push(`${at}.id must be a non-empty string`);
-  if (r.description !== undefined && typeof r.description !== "string") errors.push(`${at}.description must be a string`);
-  if (!isObject(r.when)) errors.push(`${at}.when must be an object`);
-  else {
-    unknownKeys(r.when, ["client", "user", "patient"], `${at}.when`, errors);
-    for (const k of ["client", "user", "patient"]) if (r.when[k] !== undefined && !isText(r.when[k])) errors.push(`${at}.when.${k} must be a non-empty string`);
-  }
-  if (!isObject(r.allow)) errors.push(`${at}.allow must be an object`);
-  else {
-    unknownKeys(r.allow, ["all", "sites", "modalities", "studies", "since"], `${at}.allow`, errors);
-    if (r.allow.all !== undefined && typeof r.allow.all !== "boolean") errors.push(`${at}.allow.all must be true or false`);
-    for (const k of ["sites", "modalities", "studies"]) if (r.allow[k] !== undefined && !isTextList(r.allow[k])) errors.push(`${at}.allow.${k} must be a list of strings`);
-    if (r.allow.since !== undefined && !(typeof r.allow.since === "string" && /^\d{4}-?\d{2}-?\d{2}$/.test(r.allow.since))) errors.push(`${at}.allow.since must be a date, YYYY-MM-DD`);
-  }
-  if (r.withholdSeries !== undefined && !isTextList(r.withholdSeries)) errors.push(`${at}.withholdSeries must be a list of strings`);
-  if (r.contextForm !== undefined && r.contextForm !== "auto" && r.contextForm !== "restricted") errors.push(`${at}.contextForm must be auto or restricted`);
-  if (r.withdrawn !== undefined && typeof r.withdrawn !== "boolean") errors.push(`${at}.withdrawn must be true or false`);
-}
-
-function duplicates(items: unknown[], keyOf: (o: Record<string, unknown>) => string, describe: string, errors: string[]) {
-  const seen = new Set<string>();
-  for (const o of items) {
-    if (!isObject(o)) continue;
-    const key = keyOf(o);
-    if (seen.has(key)) errors.push(`${describe}: duplicate ${key}`);
-    seen.add(key);
-  }
-}
-
 export function validateSetting(name: keyof Settings, v: unknown, errors: string[]) {
   const [min, max] = LIMITS[name];
   if (!Number.isInteger(v) || (v as number) < min || (v as number) > max) errors.push(`${name} must be a whole number from ${min} to ${max}`);
 }
 
-/** Every problem with a policy, or a part of one. Each message names the field it's about. */
-export function validatePolicy(p: unknown): string[] {
-  const errors: string[] = [];
-  if (!isObject(p)) return ["policy must be a JSON object"];
-  unknownKeys(p, ["rules", "delegations", "guardians", "appGrants", "contextLifetimeSeconds", "maxSeriesInContext"], "policy", errors);
-  if (p.rules !== undefined) {
-    if (!Array.isArray(p.rules)) errors.push("rules must be an array");
-    else { p.rules.forEach((r, i) => validateRule(r, `rules[${i}]`, errors)); duplicates(p.rules, r => `id ${r.id}`, "rules", errors); }
-  }
-  if (p.delegations !== undefined) {
-    if (!Array.isArray(p.delegations)) errors.push("delegations must be an array");
-    else {
-      p.delegations.forEach((d, i) => {
-        const at = `delegations[${i}]`;
-        if (!isObject(d)) { errors.push(`${at} must be an object`); return; }
-        unknownKeys(d, ["patient", "grantedBy", "delegate", "relationship", "sites", "asGuardian"], at, errors);
-        for (const k of ["patient", "grantedBy", "delegate", "relationship"]) if (!isText(d[k])) errors.push(`${at}.${k} must be a non-empty string`);
-        if (!isTextList(d.sites)) errors.push(`${at}.sites must be a list of strings`);
-        if (d.asGuardian !== undefined && typeof d.asGuardian !== "boolean") errors.push(`${at}.asGuardian must be true or false`);
-      });
-      duplicates(p.delegations, d => `patient ${d.patient} and delegate ${d.delegate}`, "delegations", errors);
-    }
-  }
-  if (p.guardians !== undefined) {
-    if (!Array.isArray(p.guardians)) errors.push("guardians must be an array");
-    else {
-      p.guardians.forEach((g, i) => {
-        const at = `guardians[${i}]`;
-        if (!isObject(g)) { errors.push(`${at} must be an object`); return; }
-        unknownKeys(g, ["patient", "guardian", "relationship", "excludedStudies"], at, errors);
-        if (g.excludedStudies !== undefined && !(Array.isArray(g.excludedStudies) && g.excludedStudies.every(isText))) errors.push(`${at}.excludedStudies must be an array of study IDs`);
-        for (const k of ["patient", "guardian", "relationship"]) if (!isText(g[k])) errors.push(`${at}.${k} must be a non-empty string`);
-      });
-      duplicates(p.guardians, g => `patient ${g.patient} and guardian ${g.guardian}`, "guardians", errors);
-    }
-  }
-  if (p.appGrants !== undefined) {
-    if (!Array.isArray(p.appGrants)) errors.push("appGrants must be an array");
-    else {
-      p.appGrants.forEach((g, i) => {
-        const at = `appGrants[${i}]`;
-        if (!isObject(g)) { errors.push(`${at} must be an object`); return; }
-        unknownKeys(g, ["client", "user", "patient", "sites"], at, errors);
-        for (const k of ["client", "user", "patient"]) if (!isText(g[k])) errors.push(`${at}.${k} must be a non-empty string`);
-        if (g.sites !== undefined && !isTextList(g.sites)) errors.push(`${at}.sites must be a list of strings`);
-      });
-      duplicates(p.appGrants, g => `client ${g.client}, user ${g.user} and patient ${g.patient}`, "appGrants", errors);
-    }
-  }
-  for (const k of ["contextLifetimeSeconds", "maxSeriesInContext"] as const) if (p[k] !== undefined) validateSetting(k, p[k], errors);
-  return errors;
-}
-
 const SCHEMA = `
-  CREATE TABLE IF NOT EXISTS delegations (
-    patient TEXT NOT NULL, delegate TEXT NOT NULL, granted_by TEXT NOT NULL, relationship TEXT NOT NULL, sites TEXT NOT NULL, as_guardian INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (patient, delegate));
-  CREATE TABLE IF NOT EXISTS guardians (
-    patient TEXT NOT NULL, guardian TEXT NOT NULL, relationship TEXT NOT NULL, excluded_studies TEXT NOT NULL DEFAULT '[]',
-    PRIMARY KEY (patient, guardian));
-  CREATE TABLE IF NOT EXISTS app_grants (
-    client TEXT NOT NULL, user TEXT NOT NULL, patient TEXT NOT NULL, sites TEXT,
-    PRIMARY KEY (client, user, patient));
-  CREATE TABLE IF NOT EXISTS rules (id TEXT PRIMARY KEY, position INTEGER NOT NULL, body TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS relationships (subject TEXT NOT NULL, relation TEXT NOT NULL, object TEXT NOT NULL, recorded_by TEXT, PRIMARY KEY (subject, relation, object));
+  CREATE INDEX IF NOT EXISTS relationships_by_object ON relationships (object);
+  CREATE TABLE IF NOT EXISTS policies (id TEXT PRIMARY KEY, position INTEGER NOT NULL, body TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS shares (patient TEXT NOT NULL, with_user TEXT NOT NULL, from_user TEXT NOT NULL, sites TEXT NOT NULL, label TEXT NOT NULL, PRIMARY KEY (patient, with_user));
+  CREATE INDEX IF NOT EXISTS shares_by_with ON shares (with_user);
+  CREATE INDEX IF NOT EXISTS shares_by_from ON shares (from_user);
+  CREATE TABLE IF NOT EXISTS approvals (app TEXT NOT NULL, by_user TEXT NOT NULL, patient TEXT NOT NULL, sites TEXT, PRIMARY KEY (app, by_user, patient));
+  CREATE INDEX IF NOT EXISTS approvals_by_patient ON approvals (patient);
+  CREATE INDEX IF NOT EXISTS approvals_by_user ON approvals (by_user);
+  CREATE TABLE IF NOT EXISTS patient_revisions (patient TEXT PRIMARY KEY, revision INTEGER NOT NULL);
+  CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS signing_keys (kid TEXT PRIMARY KEY, private_key TEXT NOT NULL, public_key TEXT NOT NULL, retired INTEGER NOT NULL DEFAULT 0);
   CREATE TABLE IF NOT EXISTS tokens (
     hash TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK (kind IN ('access', 'refresh')), record TEXT NOT NULL, exp INTEGER, revoked INTEGER NOT NULL DEFAULT 0);`;
+const POLICY_TABLES = ["relationships", "policies", "shares", "approvals", "settings"];
+
+/** Throws PolicyValidationError if any of `items` fails `check`. */
+function checked<T>(items: unknown[], at: string, check: (x: unknown, at: string, errors: string[]) => void): T[] {
+  const errors: string[] = [];
+  items.forEach((x, i) => check(x, items.length === 1 ? at : `${at}[${i}]`, errors));
+  if (errors.length) throw new PolicyValidationError(errors);
+  return items as T[];
+}
+
 
 export class PolicyStore {
   readonly db: Database;
   readonly mode: "file" | "memory";
   readonly path: string;
   readonly durability: Durability;
-  private readonly onFile: Guardian[];
+  private readonly onFile: Required<OnFile>;
 
   constructor(config: StoreConfig) {
     if (config.mode === "file" && !config.path) throw new Error("a file policy store needs a path");
     this.mode = config.mode;
     this.path = config.mode === "file" ? config.path! : ":memory:";
-    this.onFile = (config.guardians ?? []).map(g => ({ ...g }));
+    const errors = validateDocument({ relationships: config.onFile?.relationships ?? [], policies: config.onFile?.policies ?? [] });
+    if (errors.length) throw new PolicyValidationError(errors);
+    this.onFile = structuredClone({ relationships: config.onFile?.relationships ?? [], policies: config.onFile?.policies ?? [] });
     this.durability = config.durability ?? "normal";
     if (config.mode === "file") mkdirSync(dirname(this.path), { recursive: true });
     this.db = new Database(this.path, { create: true });
@@ -190,12 +96,8 @@ export class PolicyStore {
         this.db.exec("ALTER TABLE signing_keys ADD COLUMN retired INTEGER NOT NULL DEFAULT 0");
         this.db.run("UPDATE tokens SET exp = ? WHERE kind = 'refresh' AND exp IS NULL", [Math.floor(Date.now() / 1000) + REFRESH_DEFAULT]);
       }
-      if (found === 1 || found === 2) {
-        this.db.exec("ALTER TABLE delegations ADD COLUMN as_guardian INTEGER NOT NULL DEFAULT 0");
-        this.db.exec("CREATE TABLE guardians (patient TEXT NOT NULL, guardian TEXT NOT NULL, relationship TEXT NOT NULL, excluded_studies TEXT NOT NULL DEFAULT '[]', PRIMARY KEY (patient, guardian))");
-      }
-      if (found === 3) this.db.exec("ALTER TABLE guardians ADD COLUMN excluded_studies TEXT NOT NULL DEFAULT '[]'");
-      this.seedGuardians();
+      if (found >= 1) this.upgradeToLevels(found);
+      this.seedOnFile();
       this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     });
   }
@@ -203,76 +105,180 @@ export class PolicyStore {
   private tx<T>(fn: () => T): T { return this.db.transaction(fn)(); }
   private schemaVersion(): number { return (this.db.query("PRAGMA user_version").get() as any).user_version; }
 
-  // Policy
+  /**
+   * From the single-level model: delegations become shares, app grants approvals, and each rule for a
+   * client alone a service-access policy. Guardians and their exclusions come back as facts and policy
+   * from what's on file.
+   */
+  private upgradeToLevels(found: number) {
+    const has = (t: string) => !!this.db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(t);
+    const delegations = has("delegations") ? this.db.query("SELECT * FROM delegations").all() as any[] : [];
+    const grants = has("app_grants") ? this.db.query("SELECT * FROM app_grants").all() as any[] : [];
+    const rules = has("rules") ? (this.db.query("SELECT body FROM rules ORDER BY position").all() as any[]).map(r => JSON.parse(r.body)) : [];
+    for (const t of ["delegations", "app_grants", "rules", "guardians"]) this.db.exec(`DROP TABLE IF EXISTS ${t}`);
+    this.db.exec(SCHEMA);
+    for (const d of delegations) this.db.run("INSERT OR IGNORE INTO shares (patient, with_user, from_user, sites, label) VALUES (?, ?, ?, ?, ?)", [`patient:${d.patient}`, `user:${d.delegate}`, `user:${d.granted_by}`, d.sites, d.relationship]);
+    for (const g of grants) this.db.run("INSERT OR IGNORE INTO approvals (app, by_user, patient, sites) VALUES (?, ?, ?, ?)", [`app:${g.client}`, `user:${g.user}`, `patient:${g.patient}`, g.sites]);
+    rules.forEach((r, i) => {
+      if (!r.when?.client || r.when.user) return;
+      const { when, id, description, ...rest } = r;
+      const p = { id, type: "service-access", ...(description ? { description } : {}), service: `service:${when.client}`, patients: when.patient ? `patient:${when.patient}` : "any", ...rest };
+      const errors: string[] = [];
+      validateOrgPolicy(p, "policy", errors);
+      if (!errors.length) this.db.run("INSERT OR IGNORE INTO policies (id, position, body) VALUES (?, ?, ?)", [id, 1000 + i, JSON.stringify(p)]);
+    });
+    void found;
+  }
 
-  getPolicy(): Policy {
-    const s = this.getSettings();
-    return { rules: this.rules(), delegations: this.delegations(), guardians: this.guardians(), appGrants: this.appGrants(), contextLifetimeSeconds: s.contextLifetimeSeconds, maxSeriesInContext: s.maxSeriesInContext };
+  private meta(key: string): number { return Number((this.db.query("SELECT value FROM meta WHERE key = ?").get(key) as any)?.value ?? 0); }
+  /** The policy revision, which organization policy and settings writes raise. */
+  policyRevision(): number { return this.meta("policy"); }
+  /** One patient's revision, which every write about that patient raises. */
+  patientRevision(patient: string): number { return (this.db.query("SELECT revision FROM patient_revisions WHERE patient = ?").get(patient) as any)?.revision ?? 0; }
+  revision(patient?: string): Revision { return { policy: this.policyRevision(), ...(patient ? { patient: this.patientRevision(patient) } : {}) }; }
+  private bumpPolicy() { this.db.run("INSERT OR REPLACE INTO meta (key, value) VALUES ('policy', ?)", [String(this.policyRevision() + 1)]); this.policies.cache = undefined; }
+  private bumpPatient(patient: string) { this.db.run("INSERT INTO patient_revisions (patient, revision) VALUES (?, 1) ON CONFLICT (patient) DO UPDATE SET revision = revision + 1", [patient]); }
+  /** Every patient with any row of their own, for writes that touch them all. */
+  private patientsWithRows(): string[] {
+    return (this.db.query("SELECT object AS p FROM relationships WHERE object LIKE 'patient:%' UNION SELECT patient FROM shares UNION SELECT patient FROM approvals UNION SELECT patient FROM patient_revisions").all() as any[]).map(r => r.p);
   }
-  rules(): Rule[] { return (this.db.query("SELECT body FROM rules ORDER BY position").all() as any[]).map(r => JSON.parse(r.body)); }
-  delegations(): Delegation[] {
-    return (this.db.query("SELECT patient, granted_by, delegate, relationship, sites, as_guardian FROM delegations ORDER BY rowid").all() as any[])
-      .map(d => ({ patient: d.patient, grantedBy: d.granted_by, delegate: d.delegate, relationship: d.relationship, sites: JSON.parse(d.sites), ...(d.as_guardian ? { asGuardian: true } : {}) }));
+  /** A write about one patient, in one transaction, returning both revisions. */
+  private patientWrite(patient: string, fn: () => boolean | void): Revision | undefined {
+    return this.tx(() => { if (fn() === false) return undefined; this.bumpPatient(patient); return this.revision(patient); });
   }
-  guardians(): Guardian[] { return (this.db.query("SELECT patient, guardian, relationship, excluded_studies FROM guardians ORDER BY rowid").all() as any[]).map(({ excluded_studies, ...g }) => { const excluded = JSON.parse(excluded_studies); return excluded.length ? { ...g, excludedStudies: excluded } : g; }); }
-  private putGuardian(g: Guardian) { this.db.run("INSERT OR REPLACE INTO guardians (patient, guardian, relationship, excluded_studies) VALUES (?, ?, ?, ?)", [g.patient, g.guardian, g.relationship, JSON.stringify(g.excludedStudies ?? [])]); }
-  private seedGuardians() { for (const g of this.onFile) this.putGuardian(g); }
-  appGrants(): AppGrant[] {
-    return (this.db.query("SELECT client, user, patient, sites FROM app_grants ORDER BY rowid").all() as any[])
-      .map(g => ({ client: g.client, user: g.user, patient: g.patient, ...(g.sites === null ? {} : { sites: JSON.parse(g.sites) }) }));
+  /** A write that affects everyone: organization policy, settings, or a reset. */
+  private policyWrite(fn: () => void, patients: () => string[] = () => []): Revision {
+    return this.tx(() => { const before = patients(); fn(); for (const p of new Set([...before, ...patients()])) this.bumpPatient(p); this.bumpPolicy(); return this.revision(); });
+  }
+  /** The patient a relationship is about: its object, or failing that its subject. */
+  private static patientOfRelationship(r: Pick<Relationship, "subject" | "object">) { return r.object.startsWith("patient:") ? r.object : r.subject.startsWith("patient:") ? r.subject : r.object; }
+
+  private seedOnFile() {
+    for (const r of this.onFile.relationships) this.putRelationshipRow(r);
+    for (const p of this.onFile.policies) this.putPolicyRow(p);
+    this.policies.cache = undefined;
   }
 
-  /** Replaces the parts given, all or none. Throws PolicyValidationError, changing nothing, if any part is invalid. */
-  setPolicy(p: Partial<Policy>) {
-    const errors = validatePolicy(p);
+  // Level 1
+
+  private relationshipRows(where = "1", ...args: string[]): Relationship[] {
+    return (this.db.query(`SELECT subject, relation, object, recorded_by FROM relationships WHERE ${where} ORDER BY rowid`).all(...args) as any[]).map(r => ({ subject: r.subject, relation: r.relation, object: r.object, ...(r.recorded_by ? { recordedBy: r.recorded_by } : {}) }));
+  }
+  relationships(): Relationship[] { return this.relationshipRows(); }
+  private putRelationshipRow(r: Relationship) { this.db.run("INSERT OR REPLACE INTO relationships (subject, relation, object, recorded_by) VALUES (?, ?, ?, ?)", [r.subject, r.relation, r.object, r.recordedBy ?? null]); }
+  putRelationship(r: Relationship): Revision { checked([r], "relationship", validateRelationship); return this.patientWrite(PolicyStore.patientOfRelationship(r), () => this.putRelationshipRow(r))!; }
+  /** Removes a relationship, and returns the revisions, or undefined if there was none. */
+  removeRelationship(r: Pick<Relationship, "subject" | "relation" | "object">): Revision | undefined {
+    return this.patientWrite(PolicyStore.patientOfRelationship(r), () => this.db.run("DELETE FROM relationships WHERE subject = ? AND relation = ? AND object = ?", [r.subject, r.relation, r.object]).changes > 0);
+  }
+
+  // Level 2
+
+  /**
+   * Organization policy, in order, from memory: it's read again when the policy revision changes, which
+   * any process's write raises.
+   */
+  policies = Object.assign((): OrgPolicy[] => {
+    const at = this.policyRevision();
+    if (this.policies.cache?.at !== at) this.policies.cache = { at, all: (this.db.query("SELECT body FROM policies ORDER BY position, rowid").all() as any[]).map(r => JSON.parse(r.body)) };
+    return this.policies.cache.all;
+  }, { cache: undefined as { at: number; all: OrgPolicy[] } | undefined });
+  /** One type's policies, in order. */
+  policiesOf<T extends OrgPolicy["type"]>(type: T): Extract<OrgPolicy, { type: T }>[] { return this.policies().filter((p): p is Extract<OrgPolicy, { type: T }> => p.type === type); }
+  private putPolicyRow(p: OrgPolicy) {
+    const at = this.db.query("SELECT position FROM policies WHERE id = ?").get(p.id) as any;
+    const position = at?.position ?? (((this.db.query("SELECT max(position) AS n FROM policies").get() as any)?.n ?? -1) + 1);
+    this.db.run("INSERT OR REPLACE INTO policies (id, position, body) VALUES (?, ?, ?)", [p.id, position, JSON.stringify(p)]);
+  }
+  /** Adds a policy, or replaces the one with its id in place. Policies of a type apply in order. */
+  putPolicy(p: OrgPolicy): Revision { checked([p], "policy", validateOrgPolicy); return this.policyWrite(() => this.putPolicyRow(p)); }
+  removePolicy(id: string): Revision | undefined { return this.db.query("SELECT 1 FROM policies WHERE id = ?").get(id) ? this.policyWrite(() => this.db.run("DELETE FROM policies WHERE id = ?", [id])) : undefined; }
+  /** Replaces every policy of one type with these, in this order. */
+  replacePolicies(type: OrgPolicy["type"], ps: OrgPolicy[]): Revision {
+    const errors = validateDocument({ policies: ps });
+    for (const [i, p] of ps.entries()) if (p.type !== type) errors.push(`policies[${i}].type must be ${type}`);
     if (errors.length) throw new PolicyValidationError(errors);
-    this.tx(() => {
-      if (p.rules) {
-        this.db.run("DELETE FROM rules");
-        p.rules.forEach((r, i) => this.db.run("INSERT INTO rules (id, position, body) VALUES (?, ?, ?)", [r.id, i, JSON.stringify(r)]));
+    return this.policyWrite(() => {
+      for (const p of this.policiesOf(type)) this.db.run("DELETE FROM policies WHERE id = ?", [p.id]);
+      for (const p of ps) {
+        if (this.db.query("SELECT 1 FROM policies WHERE id = ?").get(p.id)) throw new PolicyValidationError([`policy ${p.id} is already a policy of another type`]);
+        this.putPolicyRow(p);
       }
-      if (p.delegations) {
-        this.db.run("DELETE FROM delegations");
-        for (const d of p.delegations) this.putDelegation(d);
-      }
-      if (p.guardians) {
-        this.db.run("DELETE FROM guardians");
-        for (const g of p.guardians) this.putGuardian(g);
-      }
-      if (p.guardians || p.delegations) for (const d of this.delegations()) if (d.asGuardian && !this.guardians().some(g => g.guardian === d.grantedBy && g.patient === d.patient)) this.db.run("DELETE FROM delegations WHERE patient = ? AND granted_by = ? AND delegate = ?", [d.patient, d.grantedBy, d.delegate]);
-      if (p.appGrants) {
-        this.db.run("DELETE FROM app_grants");
-        for (const g of p.appGrants) this.putAppGrant(g);
-      }
-      if (p.contextLifetimeSeconds !== undefined) this.writeSetting("contextLifetimeSeconds", p.contextLifetimeSeconds);
-      if (p.maxSeriesInContext !== undefined) this.writeSetting("maxSeriesInContext", p.maxSeriesInContext);
     });
   }
-  /** Merges a change into one rule. The result has to be a valid rule. An unknown id changes nothing. */
-  updateRule(id: string, patch: Partial<Rule>) {
-    const rules = this.rules();
-    if (!rules.some(r => r.id === id)) return;
-    this.setPolicy({ rules: rules.map(r => r.id === id ? { ...r, ...patch } : r) });
+
+  // Level 3
+
+  private shareRows(where = "1", ...args: string[]): Share[] {
+    return (this.db.query(`SELECT patient, with_user, from_user, sites, label FROM shares WHERE ${where} ORDER BY rowid`).all(...args) as any[]).map(s => ({ from: s.from_user, with: s.with_user, patient: s.patient, sites: JSON.parse(s.sites), label: s.label }));
   }
-  putDelegation(d: Delegation) {
-    this.tx(() => {
-      this.db.run("DELETE FROM delegations WHERE patient = ? AND delegate = ?", [d.patient, d.delegate]);
-      this.db.run("INSERT INTO delegations (patient, delegate, granted_by, relationship, sites, as_guardian) VALUES (?, ?, ?, ?, ?, ?)", [d.patient, d.delegate, d.grantedBy, d.relationship, JSON.stringify(d.sites), d.asGuardian ? 1 : 0]);
+  shares(): Share[] { return this.shareRows(); }
+  private putShareRow(s: Share) {
+    this.db.run("DELETE FROM shares WHERE patient = ? AND with_user = ?", [s.patient, s.with]);
+    this.db.run("INSERT INTO shares (patient, with_user, from_user, sites, label) VALUES (?, ?, ?, ?, ?)", [s.patient, s.with, s.from, JSON.stringify(s.sites), s.label]);
+  }
+  /** Puts a share as given. The policy API checks it against organization policy first. */
+  putShare(s: Share): Revision { checked([s], "share", validateShare); return this.patientWrite(s.patient, () => this.putShareRow(s))!; }
+  /** Removes shares matching every field given, and returns the revisions, or undefined if there were none. */
+  removeShares(m: { with: string; from?: string; patient?: string }): Revision | undefined {
+    const hit = this.shareRows("with_user = ?1 AND (?2 IS NULL OR from_user = ?2) AND (?3 IS NULL OR patient = ?3)", m.with, m.from ?? null as any, m.patient ?? null as any);
+    if (!hit.length) return undefined;
+    return this.tx(() => {
+      for (const s of hit) { this.db.run("DELETE FROM shares WHERE patient = ? AND with_user = ?", [s.patient, s.with]); this.bumpPatient(s.patient); }
+      return this.revision(hit.length === 1 ? hit[0]!.patient : undefined);
     });
   }
-  /** Removes delegations matching every field given, and returns how many. */
-  removeDelegations(m: { patient?: string; grantedBy?: string; delegate: string }): number {
-    return this.db.run("DELETE FROM delegations WHERE delegate = ?1 AND (?2 IS NULL OR patient = ?2) AND (?3 IS NULL OR granted_by = ?3)", [m.delegate, m.patient ?? null, m.grantedBy ?? null]).changes;
+  private approvalRows(where = "1", ...args: string[]): AppApproval[] {
+    return (this.db.query(`SELECT app, by_user, patient, sites FROM approvals WHERE ${where} ORDER BY rowid`).all(...args) as any[]).map(a => ({ by: a.by_user, app: a.app, patient: a.patient, ...(a.sites === null ? {} : { sites: JSON.parse(a.sites) }) }));
   }
-  putAppGrant(g: AppGrant) {
-    this.tx(() => {
-      this.db.run("DELETE FROM app_grants WHERE client = ? AND user = ? AND patient = ?", [g.client, g.user, g.patient]);
-      this.db.run("INSERT INTO app_grants (client, user, patient, sites) VALUES (?, ?, ?, ?)", [g.client, g.user, g.patient, g.sites ? JSON.stringify(g.sites) : null]);
+  approvals(): AppApproval[] { return this.approvalRows(); }
+  private putApprovalRow(a: AppApproval) {
+    this.db.run("DELETE FROM approvals WHERE app = ? AND by_user = ? AND patient = ?", [a.app, a.by, a.patient]);
+    this.db.run("INSERT INTO approvals (app, by_user, patient, sites) VALUES (?, ?, ?, ?)", [a.app, a.by, a.patient, a.sites ? JSON.stringify(a.sites) : null]);
+  }
+  putApproval(a: AppApproval): Revision { checked([a], "approval", validateApproval); return this.patientWrite(a.patient, () => this.putApprovalRow(a))!; }
+  removeApprovals(m: { by: string; app: string; patient?: string }): Revision | undefined {
+    const hit = this.approvalRows("app = ?1 AND by_user = ?2 AND (?3 IS NULL OR patient = ?3)", m.app, m.by, m.patient ?? null as any);
+    if (!hit.length) return undefined;
+    return this.tx(() => {
+      for (const a of hit) { this.db.run("DELETE FROM approvals WHERE app = ? AND by_user = ? AND patient = ?", [a.app, a.by, a.patient]); this.bumpPatient(a.patient); }
+      return this.revision(hit.length === 1 ? hit[0]!.patient : undefined);
     });
   }
-  /** Removes an app's grants from one user, for one patient if `patient` is given, and returns how many. */
-  removeAppGrants(m: { client: string; user: string; patient?: string }): number {
-    return this.db.run("DELETE FROM app_grants WHERE client = ?1 AND user = ?2 AND (?3 IS NULL OR patient = ?3)", [m.client, m.user, m.patient ?? null]).changes;
+
+  // Reads for decisions, which never scan other patients' rows
+
+  /** Organization policy, and one patient's relationships and choices, at their revisions. */
+  patientSnapshot(patient: string): Snapshot {
+    return this.tx(() => ({
+      policies: this.policies(), relationships: this.relationshipRows("object = ?", patient),
+      shares: this.shareRows("patient = ?", patient), approvals: this.approvalRows("patient = ?", patient), revision: this.revision(patient),
+    }));
+  }
+  /** Organization policy, and one person's own relationships and choices: what their account pages read. */
+  personSnapshot(user: string): Snapshot {
+    return this.tx(() => ({
+      policies: this.policies(), relationships: this.relationshipRows("subject = ?", user),
+      shares: this.shareRows("with_user = ?1 OR from_user = ?1", user), approvals: this.approvalRows("by_user = ?", user), revision: this.revision(),
+    }));
+  }
+
+  // The whole document
+
+  /** Every level the store holds, for the admin screen and seeds. Decisions read a patient's snapshot. */
+  snapshot(): PolicyDocument & { revision: Revision } {
+    return this.tx(() => ({ relationships: this.relationships(), policies: this.policies(), shares: this.shares(), approvals: this.approvals(), revision: this.revision() }));
+  }
+  /** Replaces the parts given, all or none. Throws PolicyValidationError, changing nothing, if any part is invalid. */
+  setDocument(d: Partial<PolicyDocument>): Revision {
+    const errors = validateDocument(d);
+    if (errors.length) throw new PolicyValidationError(errors);
+    return this.policyWrite(() => {
+      if (d.relationships) { this.db.run("DELETE FROM relationships"); for (const r of d.relationships) this.putRelationshipRow(r); }
+      if (d.policies) { this.db.run("DELETE FROM policies"); for (const p of d.policies) this.putPolicyRow(p); }
+      if (d.shares) { this.db.run("DELETE FROM shares"); for (const s of d.shares) this.putShareRow(s); }
+      if (d.approvals) { this.db.run("DELETE FROM approvals"); for (const a of d.approvals) this.putApprovalRow(a); }
+    }, () => this.patientsWithRows());
   }
 
   // Settings
@@ -284,7 +290,7 @@ export class PolicyStore {
   }
   private writeSetting(key: keyof Settings, value: number) { this.db.run("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", [key, JSON.stringify(value)]); }
   /** Changes the settings given, all or none. */
-  setSettings(s: Partial<Settings>) {
+  setSettings(s: Partial<Settings>): Revision {
     const errors: string[] = [];
     if (!isObject(s)) throw new PolicyValidationError(["settings must be a JSON object"]);
     for (const [k, v] of Object.entries(s)) {
@@ -292,7 +298,7 @@ export class PolicyStore {
       else validateSetting(k as keyof Settings, v, errors);
     }
     if (errors.length) throw new PolicyValidationError(errors);
-    this.tx(() => { for (const [k, v] of Object.entries(s)) this.writeSetting(k as keyof Settings, v as number); });
+    return this.policyWrite(() => { for (const [k, v] of Object.entries(s)) this.writeSetting(k as keyof Settings, v as number); });
   }
 
   // Signing key
@@ -341,12 +347,12 @@ export class PolicyStore {
   // Maintenance
 
   /**
-   * Clears what people chose: delegations, grants, rules and settings. Guardians go back to the ones on
-   * file, since no one here chose those. Tokens and the signing key stay.
+   * Clears what people chose and what was set here: shares, approvals, settings, and any fact or
+   * policy beyond what's on file, which goes back as it was. Tokens and the signing key stay.
    */
-  resetPolicy() { this.tx(() => { for (const t of ["delegations", "guardians", "app_grants", "rules", "settings"]) this.db.run(`DELETE FROM ${t}`); this.seedGuardians(); }); }
+  resetPolicy(): Revision { return this.policyWrite(() => { for (const t of POLICY_TABLES) this.db.run(`DELETE FROM ${t}`); this.seedOnFile(); }, () => this.patientsWithRows()); }
   /** Resets policy and clears tokens. The signing key stays. */
-  resetAll() { this.tx(() => { this.resetPolicy(); this.db.run("DELETE FROM tokens"); }); }
+  resetAll(): Revision { return this.tx(() => { const n = this.resetPolicy(); this.db.run("DELETE FROM tokens"); return n; }); }
 
   info() {
     const count = (sql: string) => (this.db.query(`SELECT count(*) AS n FROM ${sql}`).get() as any).n as number;
@@ -357,8 +363,9 @@ export class PolicyStore {
       durability: (Object.keys(SYNCHRONOUS) as Durability[]).find(k => SYNCHRONOUS[k] === sync) ?? String(sync),
       journal: (this.db.query("PRAGMA journal_mode").get() as any).journal_mode as string,
       schemaVersion: this.schemaVersion(),
+      revision: this.policyRevision(),
       counts: {
-        delegations: count("delegations"), guardians: count("guardians"), appGrants: count("app_grants"), rules: count("rules"), settings: count("settings"), signingKeys: count("signing_keys WHERE retired = 0"), retiredSigningKeys: count("signing_keys WHERE retired = 1"),
+        relationships: count("relationships"), policies: count("policies"), shares: count("shares"), approvals: count("approvals"), settings: count("settings"), signingKeys: count("signing_keys WHERE retired = 0"), retiredSigningKeys: count("signing_keys WHERE retired = 1"),
         accessTokens: count("tokens WHERE kind = 'access'"), liveAccessTokens: count("tokens WHERE kind = 'access' AND revoked = 0"),
         refreshTokens: count("tokens WHERE kind = 'refresh' AND revoked = 0"),
       },

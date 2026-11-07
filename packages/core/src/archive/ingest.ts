@@ -23,6 +23,8 @@ export interface StudyInput {
   id: string;
   title?: string;
   site?: string;
+  /** Labels on the record, which go into its study document. */
+  labels?: string[];
   files: string[];
   /** Changes a working copy of each file before anything reads it. */
   rewrite?: (file: string) => Promise<void>;
@@ -223,7 +225,7 @@ async function ingestStudy(store: ObjectStore, input: StudyInput, work: string, 
   const instances = ordered.reduce((n, s) => n + s.instances.length, 0);
   const documents = (version: number) => ({
     study: {
-      format: ARCHIVE_FORMAT, uid: uid!, id: input.id, version, title: input.title, ...attrs, site: input.site,
+      format: ARCHIVE_FORMAT, uid: uid!, id: input.id, version, title: input.title, ...attrs, site: input.site, ...(input.labels?.length ? { labels: input.labels } : {}),
       series: ordered.map(s => ({ uid: s.uid, number: s.number, modality: s.modality, instanceCount: s.instances.length })),
     } satisfies StudyDocument,
     series: ordered.map(s => ({

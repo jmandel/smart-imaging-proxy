@@ -1,25 +1,31 @@
 // A typed client for the policy API in policy-api.ts.
-import { POLICY_API_PATH, type Access, type AppGrantRequest, type DelegationRequest, type ExplainQuery, type Relationship } from "./policy-api";
-import type { Guardian, Policy, PolicyStore, Rule, Settings } from "./policy-store";
+import { POLICY_API_PATH, type Access, type ApprovalRequest, type ExplainQuery, type Refusal, type ShareRequest } from "./policy-api";
+import type { AppApproval, OrgPolicy, PolicyDocument, Relationship, Revision, Share } from "./policy-model";
+import type { PolicyStore, Settings } from "./policy-store";
 
-/** A call the API refused or failed. `errors` lists each problem with a policy, when it says. */
+/** A call the API refused or failed. `errors` lists each problem with a policy, and `policy` names the one that refused a choice. */
 export class PolicyApiError extends Error {
-  constructor(public status: number, message: string, public errors?: string[]) { super(message); this.name = "PolicyApiError"; }
+  constructor(public status: number, message: string, public errors?: string[], public policy?: string) { super(message); this.name = "PolicyApiError"; }
 }
 
 /** Each call, by name, so a caller's `fetch` can label it. */
 export type PolicyOperation =
-  | "relationships" | "access" | "explain" | "delegate" | "remove-delegations" | "grant-app" | "remove-app-grants"
-  | "get-policy" | "set-policy" | "set-guardians" | "set-rules" | "update-rule" | "get-settings" | "set-settings" | "reset" | "info";
+  | "get-document" | "set-document" | "relationships" | "put-relationship" | "remove-relationship"
+  | "policies" | "put-policy" | "replace-policies" | "remove-policy"
+  | "shares" | "share" | "remove-shares" | "approvals" | "approve-app" | "remove-approvals"
+  | "access" | "explain" | "get-settings" | "set-settings" | "reset" | "info";
 
 export interface PolicyClientOptions {
-  /** The Imaging Server's service base: the API is at `${base}/policy/v1`. */
+  /** The Imaging Server's service base: the API is at `${base}/policy/v2`. */
   base: string;
   /** The policy API's credential, which the Imaging Server's `policySecret` names. */
   policySecret: string;
   /** Makes each request. The platform's fetch by default. */
   fetch?: (operation: PolicyOperation, url: string, init: RequestInit & { headers: Record<string, string> }) => Promise<Response>;
 }
+
+/** A choice's outcome: made, with the revisions it raised, or refused by the policy named. */
+export type ChoiceResult<T> = { ok: true; revision: Revision } & T | { ok: false; refusal: Refusal };
 
 export function createPolicyClient(opts: PolicyClientOptions) {
   const send = opts.fetch ?? ((_op, url, init) => fetch(url, init));
@@ -32,36 +38,45 @@ export function createPolicyClient(opts: PolicyClientOptions) {
   }
   async function fail(r: Response): Promise<never> {
     const b: any = await r.json().catch(() => undefined);
-    throw new PolicyApiError(r.status, typeof b?.error === "string" ? b.error : `the Imaging Server answered ${r.status}`, Array.isArray(b?.errors) ? b.errors : undefined);
+    throw new PolicyApiError(r.status, typeof b?.error === "string" ? b.error : `the Imaging Server answered ${r.status}`, Array.isArray(b?.errors) ? b.errors : undefined, typeof b?.policy === "string" ? b.policy : undefined);
   }
   const read = async <T>(r: Response): Promise<T> => r.ok ? r.json() as Promise<T> : fail(r);
-  const done = async (r: Response) => { if (!r.ok) await fail(r); await r.body?.cancel(); };
-  /** True when the server did it, false when it answered `when`. */
-  const outcome = async (r: Response, when: number) => { if (r.status === when) { await r.body?.cancel(); return false; } await done(r); return true; };
+  const revision = async (r: Response) => (await read<{ revision: Revision }>(r)).revision;
+  /** The revisions a removal raised, or undefined when nothing matched. */
+  const removal = async (r: Response) => r.status === 404 ? (await r.body?.cancel(), undefined) : revision(r);
+  /** A choice: its body, or the refusal a 403 carries. */
+  const choice = async <T>(r: Response): Promise<ChoiceResult<T>> => r.status === 403 ? { ok: false, refusal: await r.json() as Refusal } : { ok: true, ...(await read<any>(r)) };
 
   return {
-    /** Who is related to whom: guardians on file and delegations. */
-    relationships: async () => read<Relationship[]>(await call("relationships", "GET", "/relationships")),
+    getDocument: async () => read<PolicyDocument & { revision: Revision }>(await call("get-document", "GET", "/document")),
+    /** Replaces the parts given, all or none. */
+    setDocument: async (d: Partial<PolicyDocument>) => revision(await call("set-document", "PUT", "/document", {}, d)),
+
+    relationships: async () => (await read<{ relationships: Relationship[] }>(await call("relationships", "GET", "/relationships"))).relationships,
+    putRelationship: async (r: Relationship) => revision(await call("put-relationship", "PUT", "/relationships", {}, r)),
+    removeRelationship: async (r: Pick<Relationship, "subject" | "relation" | "object">) => removal(await call("remove-relationship", "DELETE", "/relationships", { ...r })),
+
+    policies: async (type?: OrgPolicy["type"]) => (await read<{ policies: OrgPolicy[] }>(await call("policies", "GET", "/policies", { type }))).policies,
+    putPolicy: async (p: OrgPolicy) => revision(await call("put-policy", "PUT", `/policies/${encodeURIComponent(p.id)}`, {}, p)),
+    /** Replaces every policy of one type, in this order. */
+    replacePolicies: async (type: OrgPolicy["type"], ps: OrgPolicy[]) => revision(await call("replace-policies", "PUT", "/policies", { type }, ps)),
+    removePolicy: async (id: string) => removal(await call("remove-policy", "DELETE", `/policies/${encodeURIComponent(id)}`)),
+
+    shares: async () => (await read<{ shares: Share[] }>(await call("shares", "GET", "/shares"))).shares,
+    /** A share, which organization policy may refuse. Its sites narrow to what the sharer may name. */
+    share: async (s: ShareRequest) => choice<{ share: Share }>(await call("share", "POST", "/shares", {}, s)),
+    removeShares: async (m: { with: string; from?: string; patient?: string }) => removal(await call("remove-shares", "DELETE", "/shares", m)),
+    approvals: async () => (await read<{ approvals: AppApproval[] }>(await call("approvals", "GET", "/app-approvals"))).approvals,
+    /** An app approval, which is refused when the user holds no record of the patient. */
+    approveApp: async (a: ApprovalRequest) => choice<{ approval: AppApproval }>(await call("approve-app", "POST", "/app-approvals", {}, a)),
+    removeApprovals: async (m: { by: string; app: string; patient?: string }) => removal(await call("remove-approvals", "DELETE", "/app-approvals", m)),
+
     access: async (user: string, fhirUser: string) => read<Access>(await call("access", "GET", "/access", { user, fhirUser })),
     explain: async (q: ExplainQuery) => read<any>(await call("explain", "GET", "/explain", { ...q })),
-    /** False when the grantor is neither the patient nor their guardian. */
-    delegate: async (d: DelegationRequest) => outcome(await call("delegate", "POST", "/delegations", {}, d), 403),
-    /** False when nothing matched. */
-    removeDelegations: async (m: { delegate: string; grantedBy?: string; patient?: string }) => outcome(await call("remove-delegations", "DELETE", "/delegations", m), 404),
-    /** False when the user holds no record of this patient. */
-    grantApp: async (g: AppGrantRequest) => outcome(await call("grant-app", "POST", "/app-grants", {}, g), 403),
-    removeAppGrants: async (m: { client: string; user: string; patient?: string }) => outcome(await call("remove-app-grants", "DELETE", "/app-grants", m), 404),
-    getPolicy: async () => read<Policy>(await call("get-policy", "GET", "/policy")),
-    /** Replaces the parts given, all or none. */
-    setPolicy: async (p: Partial<Policy>) => done(await call("set-policy", "PUT", "/policy", {}, p)),
-    setGuardians: async (g: Guardian[]) => done(await call("set-guardians", "PUT", "/guardians", {}, g)),
-    setRules: async (rules: Rule[]) => done(await call("set-rules", "PUT", "/rules", {}, rules)),
-    /** False when there's no rule with this id. */
-    updateRule: async (id: string, patch: Partial<Rule>) => outcome(await call("update-rule", "PATCH", `/rules/${encodeURIComponent(id)}`, {}, patch), 404),
-    getSettings: async () => read<Settings>(await call("get-settings", "GET", "/settings")),
-    setSettings: async (s: Partial<Settings>) => done(await call("set-settings", "PATCH", "/settings", {}, s)),
-    /** Clears delegations, app grants, rules and settings, and puts the guardians on file back. `tokens` clears token records too. */
-    reset: async (o: { tokens?: boolean } = {}) => done(await call("reset", "POST", "/reset", {}, o)),
+    getSettings: async () => read<Settings & { revision: Revision }>(await call("get-settings", "GET", "/settings")),
+    setSettings: async (s: Partial<Settings>) => revision(await call("set-settings", "PATCH", "/settings", {}, s)),
+    /** Clears shares, approvals and settings, and puts facts and policy back as they are on file. `tokens` clears token records too. */
+    reset: async (o: { tokens?: boolean } = {}) => revision(await call("reset", "POST", "/reset", {}, o)),
     info: async () => read<ReturnType<PolicyStore["info"]>>(await call("info", "GET", "/store")),
   };
 }
