@@ -171,7 +171,7 @@ export class ArchiveBackend implements Backend {
       const element = inst?.bulk?.[ref.toUpperCase()];
       const stored = inst?.offers.find(o => o.stored);
       if (!element || !stored) throw new BackendError("NotFound");
-      return { contentType: "application/octet-stream", body: this.bulkBody(stored, element) };
+      return { bytes: element.length, body: this.bulkBody(stored, element) };
     });
   }
 

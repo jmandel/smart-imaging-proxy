@@ -22,6 +22,7 @@ const says = (quote: string) => { if (!specText.includes(quote)) throw new Error
 
 const part = (s: string, q?: number) => `multipart/related; type=application/dicom; transfer-syntax=${s}${q !== undefined ? `; q=${q}` : ""}`;
 let stack: Stack, clients: any, token: string, bundle: any;
+const bulkDigests: Record<string, string> = {};
 const WRIST = "xr-wrist-left-2012", SLIDE = "slide-lung-2023";
 const res = (id: string) => bundle.entry.find((e: any) => e.resource.id === id)?.resource;
 const base = (id: string) => bundle.entry.find((e: any) => e.fullUrl === res(id).endpoint[0].reference).resource.address;
@@ -76,6 +77,51 @@ describe("Discovery and search", () => {
     expect(await ids(`patient=josh-example&identifier=http://hospital.example.org/accession%7C${accession}`)).toEqual([WRIST]);
     expect(await ids(`patient=josh-example&based-on:identifier=${accession}`)).toEqual([WRIST]);
     expect((await ids("patient=josh-example&_lastUpdated=gt2022-01-01T00:00:00Z"))).toEqual(["slide-lung-2023"]);
+  });
+  test("a withdrawn rule is a client with no rule: 403 on search, and what the demo says matches", async () => {
+    says("a request for a patient outside the client's authorized access SHALL receive `403 Forbidden`");
+    const c = clients["hand-referral-service"];
+    const backendToken = async () => ((await (await fetch(stack.auth.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "client_credentials", scope: "system/ImagingStudy.rs", client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: clientAssertion(c, stack.auth.tokenUrl) }).toString() })).json()) as any).access_token as string;
+    const t = await backendToken();
+    const none = await searchFor(t, "patient=josh-example");
+    stack.imaging.setPolicy({ rules: [{ id: "hand-referral", when: { client: "hand-referral-service", patient: "josh-example" }, allow: { modalities: ["CR"] } }] });
+    try {
+      const allowed: any = await (await searchFor(t, "patient=josh-example")).json();
+      expect(allowed.total).toBeGreaterThan(0);
+      stack.imaging.updateRule("hand-referral", { withdrawn: true });
+      const withdrawn = await searchFor(t, "patient=josh-example");
+      expect(withdrawn.status).toBe(403);
+      expect(await withdrawn.json()).toEqual(await none.json());
+      const seen = await stack.explain({ client: "hand-referral-service", patient: "josh-example" });
+      expect(seen.searchAllowed).toBe(false);
+      expect(seen.rule).toBeUndefined();
+    } finally { stack.imaging.setPolicy({ rules: [] }); }
+  });
+  test("a user's token sees a withdrawn rule as omitted studies, within the patient they can see", async () => {
+    says("SHALL omit studies and included Endpoints");
+    stack.imaging.setPolicy({ rules: [{ id: "gone", when: { client: "portal-app" }, allow: { all: true }, withdrawn: true }] });
+    try {
+      const r = await searchFor(token, "patient=josh-example");
+      expect(r.status).toBe(200);
+      expect(((await r.json()) as any).total).toBe(0);
+    } finally { stack.imaging.setPolicy({ rules: [] }); }
+  });
+  test("real search filters: nothing is silently ignored", async () => {
+    const total = async (q: string) => { const r = await searchFor(token, `patient=josh-example&${q}`); return r.status === 200 ? ((await r.json()) as any).total : r.status; };
+    expect(await total("identifier=")).toBe(400);
+    expect(await total("based-on:identifier=")).toBe(400);
+    expect(await total("_lastUpdated=lt2000-01-01T00:00:00Z")).toBe(0);
+    expect(await total("_lastUpdated=gtnonsense")).toBe(400);
+    expect(await total("_lastUpdated=gt2020")).toBe(1);
+    expect(await total("_lastUpdated=2020")).toBe(1);
+    expect(await total("identifier=http://hospital.example.org/accession%7C")).toBe(6);
+  });
+  test("a lower-case scheme works, and a patient on another server is refused", async () => {
+    says("a mismatch receives `403 Forbidden`, not an empty Bundle");
+    const lower = await fetch(`${CONFIG.imagingUrl}/fhir/ImagingStudy?patient=josh-example`, { headers: { Authorization: `bearer ${token}` } });
+    expect(lower.status).toBe(200);
+    expect((await searchFor(token, "patient=https://evil.example/fhir/Patient/josh-example")).status).toBe(403);
+    expect((await searchFor(token, `patient=${encodeURIComponent(`${CONFIG.authUrl}/fhir/Patient/josh-example`)}`)).status).toBe(200);
   });
   test("a patient mismatch is 403, not an empty Bundle", async () => {
     says("a mismatch receives `403 Forbidden`, not an empty Bundle");
@@ -230,6 +276,76 @@ for (const backend of (process.env.BACKENDS?.split(",") ?? ["static-files", "min
       const uri = text.match(/"BulkDataURI":"([^"]+7FE00010)"/)?.[1]!;
       expect(uri).toStartWith(CONFIG.proxyUrl);
       expect((await fetch(uri, { headers: { Authorization: `Bearer ${token}` } })).status).toBe(200);
+    });
+    test("metadata takes its form from Accept, and states its length", async () => {
+      sw();
+      const url = `${base(WRIST)}/studies/${uid(WRIST)}/metadata`;
+      const ask = (accept: string) => fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: accept } });
+      for (const refused of ["image/jpeg", "application/dicom", "multipart/related; type=application/dicom+xml", "application/dicom+json; q=0", "*/*; q=0"]) {
+        const r = await ask(refused);
+        await r.body?.cancel();
+        expect([refused, r.status]).toEqual([refused, 406]);
+      }
+      for (const [accept, type] of [["application/dicom+json", "application/dicom+json"], ["*/*", "application/dicom+json"], ["application/*", "application/dicom+json"], ["image/jpeg, application/dicom+json; q=0.5", "application/dicom+json"], ["application/json", "application/json"]] as const) {
+        const r = await ask(accept);
+        const body = await r.arrayBuffer();
+        expect([accept, r.status, r.headers.get("content-type")]).toEqual([accept, 200, type]);
+        expect(r.headers.get("content-length")).toBe(String(body.byteLength));
+      }
+    });
+    test("bulk data answers the same way on every backend", async () => {
+      sw();
+      const text = await (await fetch(`${base(WRIST)}/studies/${uid(WRIST)}/metadata`, { headers: { Authorization: `Bearer ${token}`, Accept: "application/dicom+json" } })).text();
+      const uri = text.match(/"BulkDataURI":"([^"]+7FE00010)"/)?.[1]!;
+      const ask = (accept?: string) => fetch(uri, { headers: { Authorization: `Bearer ${token}`, ...(accept ? { Accept: accept } : {}) } });
+
+      for (const accept of [undefined, "*/*", "multipart/related", "multipart/*", 'multipart/related; type="application/octet-stream"', "multipart/related; type=application/octet-stream; transfer-syntax=*", "image/png, multipart/related; type=application/octet-stream; q=0.1"]) {
+        const r = await ask(accept);
+        expect([accept, r.status]).toEqual([accept, 200]);
+        const contentType = r.headers.get("content-type")!;
+        expect(contentType).toMatch(/^multipart\/related; type="application\/octet-stream"; boundary=/);
+        const raw = new Uint8Array(await r.arrayBuffer());
+        expect(r.headers.get("content-length")).toBe(String(raw.length));
+        const chunks: Uint8Array[] = [];
+        let headers: Record<string, string> = {}, complete = false, parts = 0;
+        for await (const e of readMultipart((async function* () { yield raw; })(), boundaryOf(contentType)!)) {
+          if (e.type === "start") { headers = e.headers; parts++; }
+          else if (e.type === "data") chunks.push(e.bytes);
+          else if (e.type === "complete") complete = true;
+        }
+        expect(parts).toBe(1);
+        expect(complete).toBe(true);
+        expect(headers["content-type"]).toBe("application/octet-stream");
+        const bytes = Buffer.concat(chunks);
+        expect(headers["content-length"]).toBe(String(bytes.length));
+        expect(bytes.length).toBeGreaterThan(1000);
+        const digest = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+        bulkDigests[backend] = digest;
+        expect(digest).toBe(Object.values(bulkDigests)[0]!);
+      }
+
+      for (const accept of ["application/octet-stream", "application/*", "application/octet-stream, multipart/related; q=0.5", "multipart/related; q=0, */*"]) {
+        const r = await ask(accept);
+        const bytes = await r.arrayBuffer();
+        expect([accept, r.status, r.headers.get("content-type")]).toEqual([accept, 200, "application/octet-stream"]);
+        expect(r.headers.get("content-length")).toBe(String(bytes.byteLength));
+        expect(new Bun.CryptoHasher("sha256").update(bytes).digest("hex")).toBe(bulkDigests[backend]!);
+      }
+
+      for (const refused of ["image/png", "application/dicom", "multipart/related; type=application/dicom", "multipart/related; type=image/jp2", "application/octet-stream; q=0", "*/*; q=0", "application/octet-stream; transfer-syntax=1.2.840.10008.1.2.4.90"]) {
+        const r = await ask(refused);
+        await r.body?.cancel();
+        expect([refused, r.status]).toEqual([refused, 406]);
+      }
+      const bare = await fetch(uri, { headers: { authorization: `bearer ${token}`, Accept: "application/octet-stream" } });
+      await bare.body?.cancel();
+      expect(bare.status).toBe(200);
+    }, 60000);
+    test("a lower-case scheme works on the proxy too", async () => {
+      sw();
+      const r = await fetch(`${base(WRIST)}/studies/${uid(WRIST)}`, { headers: { Authorization: `bearer ${token}`, Accept: part(EVRLE) } });
+      await r.body?.cancel();
+      expect(r.status).toBe(200);
     });
   });
 }
