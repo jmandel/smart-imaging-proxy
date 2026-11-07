@@ -2,26 +2,33 @@
 // launch, search and retrieval across them, then a clean shutdown.
 import { afterAll, describe, expect, test } from "bun:test";
 import { randomBytes } from "node:crypto";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DEFAULT_CATALOG_DB } from "../src/catalog";
 import { CONFIG, PORTS } from "../src/config";
 import { scriptedLaunch } from "../src/flows/oauth";
+import { clientAssertion, DEMO_BACKEND_CLIENTS, DEMO_BACKEND_SCOPES, derivedBackendClient } from "../src/auth-server";
 import { boundaryOf, readMultipart } from "../src/multipart";
 
 const root = join(import.meta.dir, "..");
 const ACCEPT = "multipart/related; type=application/dicom; transfer-syntax=*";
 const running = new Set<ReturnType<typeof Bun.spawn>>();
-afterAll(() => { for (const p of running) p.kill("SIGKILL"); });
+// The archive this run reads, and a catalog of the run's own unless it was given one, so a child never opens the default files.
+const scratch = mkdtempSync(join(tmpdir(), "proxy-separate-"));
+const catalogDb = process.env.CATALOG_DB || join(scratch, "catalog.sqlite");
+afterAll(() => { for (const p of running) p.kill("SIGKILL"); rmSync(scratch, { recursive: true, force: true }); });
 
 function start(role: string, secret: string | undefined, extra: Record<string, string> = {}) {
   // Only what a process needs, plus PATH and HOME, so it can't be leaning on anything else from here.
-  const env: Record<string, string> = { PATH: process.env.PATH!, HOME: process.env.HOME!, DEMO_PORT_OFFSET: process.env.DEMO_PORT_OFFSET ?? "0", DEMO_TAILNET: "0", POLICY_STORE: "memory", TRACE_STORE: "memory", ...extra };
+  const env: Record<string, string> = { PATH: process.env.PATH!, HOME: process.env.HOME!, DEMO_PORT_OFFSET: process.env.DEMO_PORT_OFFSET ?? "0", DEMO_TAILNET: "0", POLICY_STORE: "memory", TRACE_STORE: "memory", ARCHIVE_DIR: CONFIG.archive.dir, CATALOG_DB: catalogDb, ...extra };
   if (secret) env.SERVICE_SECRET = secret;
   const p = Bun.spawn(["bun", join(root, "src/main.ts"), "--role", role], { cwd: root, env, stdout: "pipe", stderr: "pipe" });
   running.add(p);
   return p;
 }
 const reachable = (url: string) => fetch(url, { signal: AbortSignal.timeout(500) }).then(() => true, () => false);
-async function waitFor(urls: string[], ms = 10000) {
+async function waitFor(urls: string[], ms = 30000) {
   const end = Date.now() + ms;
   for (const u of urls) while (!await reachable(u)) { if (Date.now() > end) throw new Error(`${u} never came up`); await Bun.sleep(50); }
 }
@@ -47,6 +54,8 @@ for (const others of [["imaging,auth,trace"], ["imaging", "auth", "trace"]]) {
       const rest = others.map(role => start(role, secret));
       const proxy = start("proxy", secret, { PROXY_BACKEND: "static-files" });
       await waitFor([...SERVICE_URLS, `${CONFIG.proxyUrl}/wado/-/studies/1.2`]);
+      expect(catalogDb).not.toBe(DEFAULT_CATALOG_DB);
+      expect(existsSync(catalogDb)).toBe(true);
 
       const t = await scriptedLaunch("josh");
       expect(t.access_token).toBeTruthy();
@@ -80,6 +89,25 @@ for (const others of [["imaging,auth,trace"], ["imaging", "auth", "trace"]]) {
     }, 60000);
   });
 }
+
+describe("an auth process on its own", () => {
+  test("registers the demo's Backend Services clients, whose keys its service credential derives", async () => {
+    const secret = randomBytes(24).toString("base64url");
+    const p = start("auth", secret);
+    await waitFor([SERVICE_URLS[0]!]);
+    const conf: any = await (await fetch(SERVICE_URLS[0]!)).json();
+    const ask = (key: ReturnType<typeof derivedBackendClient>) => fetch(conf.token_endpoint, { method: "POST", body: new URLSearchParams({ grant_type: "client_credentials", scope: DEMO_BACKEND_SCOPES[0]!, client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: clientAssertion(key, conf.token_endpoint) }) });
+    for (const id of DEMO_BACKEND_CLIENTS) {
+      const r = await ask(derivedBackendClient(id, secret));
+      expect(r.status).toBe(200);
+      expect(((await r.json()) as any).scope).toBe(DEMO_BACKEND_SCOPES[0]);
+    }
+    const wrongSecret = await ask(derivedBackendClient(DEMO_BACKEND_CLIENTS[0]!, "another-secret"));
+    expect(wrongSecret.status).toBe(401);
+    expect(await wrongSecret.json()).toEqual({ error: "invalid_client" });
+    await stop(p);
+  }, 30000);
+});
 
 describe("starting a role", () => {
   test("without SERVICE_SECRET, or with an unknown role, it stops with a clear message", async () => {

@@ -1,4 +1,4 @@
-// Downloads the shlink-dicom sandbox sources, verifying each pinned SHA-256.
+// Downloads the sources listed in data/studies.source.json, verifying each pinned SHA-256.
 // Archives are unpacked into their own directories under data/sources/unpacked.
 import { mkdir, exists } from "node:fs/promises";
 import { createHash } from "node:crypto";

@@ -1,27 +1,47 @@
 // Authorization Server: user sign-in, the account page where patients delegate to related people
 // and users manage apps, SMART App Launch (authorization code with PKCE), Backend Services
 // (signed client assertions), refresh, revocation, introspection, and SMART discovery.
-import { createHash, createPublicKey, generateKeyPairSync, randomBytes, sign, verify, type KeyObject } from "node:crypto";
+import { createECDH, createHash, createPrivateKey, createPublicKey, generateKeyPairSync, hkdfSync, randomBytes, sign, verify, type KeyObject } from "node:crypto";
 import { ath, b64url } from "./jws";
 import type { PolicyStore } from "./policy-store";
 import { now } from "./clock";
+import { refuseWrite } from "./admin-api";
+import { PORTS } from "./config";
 import { check, traced } from "./trace";
 
-export interface Grant { client_id: string; scope: string; patient?: string; sub?: string; fhirUser?: string; }
+export interface Grant { client_id: string; scope: string; patient?: string; sub?: string; fhirUser?: string; family?: string; }
 
 export interface BackendClient { client_id: string; kid: string; privateKey: KeyObject; }
+export const DEMO_BACKEND_CLIENTS = ["hand-referral-service", "outside-release-service", "research-donation"];
+export const DEMO_BACKEND_SCOPES = ["system/ImagingStudy.rs"];
+const kidOf = (client_id: string) => `${client_id}-key`;
+/**
+ * A demo client with its key derived from SERVICE_SECRET, for a deployment split across processes,
+ * where a generated key would have no way to reach the client. Holding the secret means being able to act as these clients.
+ */
+export function derivedBackendClient(client_id: string, serviceSecret: string): BackendClient {
+  const d = Buffer.from(hkdfSync("sha256", serviceSecret, "", `smart-imaging-demo backend client ${client_id}`, 32));
+  const ecdh = createECDH("prime256v1");
+  ecdh.setPrivateKey(d);
+  const point = ecdh.getPublicKey();
+  const jwk = { kty: "EC", crv: "P-256", d: d.toString("base64url"), x: point.subarray(1, 33).toString("base64url"), y: point.subarray(33).toString("base64url") };
+  return { client_id, kid: kidOf(client_id), privateKey: createPrivateKey({ key: jwk, format: "jwk" }) };
+}
+
+/** A table looked up by request input. It has no inherited keys, such as "constructor", to find. */
+const table = <T>(rows: Record<string, T>): Record<string, T> => Object.assign(Object.create(null), rows);
 
 // Demo accounts. A deployment's identity provider would hold these.
 export interface DemoUser { name: string; fhirUser: string; patient?: string; }
-export const USERS: Record<string, DemoUser> = {
+export const USERS = table<DemoUser>({
   josh: { name: "Josh Example", fhirUser: "Patient/josh-example", patient: "josh-example" },
   robin: { name: "Robin Example", fhirUser: "Patient/robin-example", patient: "robin-example" },
   "sam-caregiver": { name: "Sam Example", fhirUser: "RelatedPerson/sam-caregiver" },
   "alex-neighbor": { name: "Alex Neighbor", fhirUser: "RelatedPerson/alex-neighbor" },
-};
+});
 const userOf = (name: string): DemoUser | undefined => Object.hasOwn(USERS, name) ? USERS[name] : undefined;
-export const PATIENT_NAMES: Record<string, string> = { "josh-example": "Josh Example", "robin-example": "Robin Example" };
-export const APP_NAMES: Record<string, string> = { "portal-app": "Health Records App", "separate-viewer": "Separate Image Viewer" };
+export const PATIENT_NAMES = table<string>({ "josh-example": "Josh Example", "robin-example": "Robin Example" });
+export const APP_NAMES = table<string>({ "portal-app": "Health Records App", "separate-viewer": "Separate Image Viewer" });
 /** Describes an account by what's in place now: "Patient", the delegations it holds, or neither. */
 export const RELATIONSHIPS = ["caregiver", "spouse", "adult child", "neighbor"];
 
@@ -101,10 +121,10 @@ form.inline{display:inline}
 `;
 
 export function createAuthServer(opts: { issuer: string; imagingFhirBase: string; serviceSecret: string; redirectUri: string; directory: Directory; store: () => PolicyStore; storeLabel: () => string }) {
-  const PUBLIC_CLIENTS: Record<string, { name: string; redirectUris: string[] }> = {
+  const PUBLIC_CLIENTS = table<{ name: string; redirectUris: string[] }>({
     "portal-app": { name: APP_NAMES["portal-app"]!, redirectUris: [opts.redirectUri] },
     "separate-viewer": { name: APP_NAMES["separate-viewer"]!, redirectUris: [opts.redirectUri] },
-  };
+  });
   const txns = new Map<string, { client_id: string; redirect_uri: string; state: string; scope: string; code_challenge: string; exp: number; user?: string; login_hint?: string }>();
   const accountSessions = new Map<string, string>();
   const decidedBy = new Map<string, string>();
@@ -113,7 +133,9 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
   const codes = new Map<string, { grant: Grant; client_id: string; redirect_uri: string; code_challenge: string; exp: number }>();
   const backendKeys = new Map<string, { kid: string; publicKey: KeyObject; scopes: string[] }>();
 
-  const issue = (g: Grant, withRefresh: boolean) => {
+  const issue = (given: Grant, withRefresh: boolean) => {
+    // Tokens from one refresh chain share a family, so replaying a used one can revoke the others.
+    const g = withRefresh ? { ...given, family: given.family ?? randomBytes(16).toString("base64url") } : given;
     const access_token = randomBytes(32).toString("base64url");
     const tokenLifetime = opts.store().getSettings().tokenLifetimeSeconds;
     const exp = now() + tokenLifetime;
@@ -124,23 +146,30 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     if (withRefresh) { const r = randomBytes(32).toString("base64url"); opts.store().putToken(r, "refresh", g, now() + opts.store().getSettings().refreshTokenLifetimeSeconds); res.refresh_token = r; }
     return res;
   };
-  const oauthError = (error: string, status = 400) => Response.json({ error }, { status });
+  const tokenResponse = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store", Pragma: "no-cache" } });
+  const oauthError = (error: string, status = 400) => tokenResponse({ error }, status);
+
+  /** A JWT part's JSON object, or undefined for anything else. */
+  const jwtPart = (part: string | undefined): any => {
+    try { const o = JSON.parse(Buffer.from(part ?? "", "base64url").toString()); return typeof o === "object" && o !== null ? o : undefined; }
+    catch { return undefined; }
+  };
 
   function verifyAssertion(jwt: string, tokenUrl: string) {
     const [h, b, s] = jwt.split(".");
-    if (!check("authorization-server", "client assertion is a three-part JWT", !!(h && b && s))) return undefined;
-    const head = JSON.parse(Buffer.from(h!, "base64url").toString());
-    const claims = JSON.parse(Buffer.from(b!, "base64url").toString());
+    const head = jwtPart(h), claims = jwtPart(b);
+    if (!check("authorization-server", "client assertion is a three-part JWT", !!(head && claims && s))) return undefined;
     const reg = backendKeys.get(claims.iss);
     if (!check("authorization-server", "client is registered, with its public key on file", !!reg && head.kid === reg.kid, { client: claims.iss, kid: head.kid, registered_scopes: reg?.scopes.join(" ") })) return undefined;
     if (!check("authorization-server", "assertion is ES256, and iss equals sub", head.alg === "ES256" && claims.sub === claims.iss, { alg: head.alg, iss: claims.iss, sub: claims.sub })) return undefined;
     if (!check("authorization-server", "assertion's aud is this token endpoint", claims.aud === tokenUrl, { aud: claims.aud })) return undefined;
-    if (!check("authorization-server", "assertion hasn't expired", claims.exp >= now(), { exp: claims.exp, now: now() })) return undefined;
-    if (!check("authorization-server", "assertion's jti hasn't been used", !!claims.jti && !usedJti.has(claims.jti), { jti: claims.jti })) return undefined;
+    if (!check("authorization-server", "assertion hasn't expired", Number.isInteger(claims.exp) && claims.exp >= now(), { exp: claims.exp, now: now() })) return undefined;
+    if (!check("authorization-server", "assertion's exp is no more than five minutes ahead", claims.exp <= now() + 300, { exp: claims.exp, now: now() })) return undefined;
+    if (!check("authorization-server", "assertion's jti hasn't been used", typeof claims.jti === "string" && !!claims.jti && !usedJti.has(claims.jti), { jti: claims.jti })) return undefined;
     const ok = verify("sha256", Buffer.from(`${h}.${b}`), { key: reg!.publicKey, dsaEncoding: "ieee-p1363" }, Buffer.from(s!, "base64url"));
     check("authorization-server", "client assertion signature verifies", ok, { client: claims.iss, kid: head.kid, alg: head.alg });
     if (ok) usedJti.add(claims.jti);
-    return ok ? reg : undefined;
+    return ok ? { client_id: claims.iss as string, scopes: reg!.scopes } : undefined;
   }
 
   const page = (title: string, body: string, status = 200, showStore = false) => new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)}</title><style>${PAGE_CSS}</style></head><body><p class="brand">Authorization Server</p><main>${body}</main>${showStore ? `<p class="store-line">Policy in use: ${esc(opts.storeLabel())}</p>` : ""}</body></html>`, { status, headers: { "content-type": "text/html; charset=utf-8" } });
@@ -325,6 +354,8 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
   const fetchHandler = traced("authorization-server", async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
     const tokenUrl = `${opts.issuer}/token`;
+    const browserForm = req.method === "POST" && (url.pathname === "/authorize/signin" || url.pathname === "/authorize/decision" || url.pathname.startsWith("/account/"));
+    if (browserForm) { const refused = refuseWrite(req, url, PORTS.auth); if (refused) return refused; }
     if (url.pathname === "/fhir/.well-known/smart-configuration") {
       return Response.json({
         issuer: opts.issuer, authorization_endpoint: `${opts.issuer}/authorize`, token_endpoint: tokenUrl,
@@ -344,10 +375,9 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
         if (!check("authorization-server", "client authenticates with private_key_jwt", f.get("client_assertion_type") === "urn:ietf:params:oauth:client-assertion-type:jwt-bearer")) return oauthError("invalid_client", 401);
         const reg = verifyAssertion(f.get("client_assertion") ?? "", tokenUrl);
         if (!reg) return oauthError("invalid_client", 401);
-        const iss = JSON.parse(Buffer.from((f.get("client_assertion") ?? "").split(".")[1]!, "base64url").toString()).iss;
         const asked = (f.get("scope") ?? "").split(" ").filter(s => reg.scopes.includes(s));
         if (!check("authorization-server", "requested scope is within the client's registration", asked.length > 0, { requested: f.get("scope"), granted: asked.join(" ") })) return oauthError("invalid_scope");
-        return Response.json(issue({ client_id: iss, scope: asked.join(" ") }, false));
+        return tokenResponse(issue({ client_id: reg.client_id, scope: asked.join(" ") }, false));
       }
       if (grant === "authorization_code") {
         const code = f.get("code") ?? "";
@@ -359,19 +389,25 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
         const verifier = f.get("code_verifier") ?? "";
         const computed = createHash("sha256").update(verifier).digest("base64url");
         if (!check("authorization-server", "PKCE: S256 of code_verifier equals code_challenge", computed === c!.code_challenge, { computed: computed.slice(0, 10), challenge: c!.code_challenge.slice(0, 10) })) return oauthError("invalid_grant");
-        return Response.json(issue(c!.grant, /(^| )(online|offline)_access( |$)/.test(c!.grant.scope)));
+        return tokenResponse(issue(c!.grant, /(^| )(online|offline)_access( |$)/.test(c!.grant.scope)));
       }
       if (grant === "refresh_token") {
         const presented = f.get("refresh_token") ?? "";
         const held = opts.store().getToken(presented, "refresh");
-        if (!held || held.revoked) return oauthError("invalid_grant");
+        if (!held) return oauthError("invalid_grant");
+        if (!check("authorization-server", "refresh token was issued to this client", held.client_id === f.get("client_id"), { client: f.get("client_id"), issued_to: held.client_id })) return oauthError("invalid_grant");
+        // A used token stays on file, marked revoked, until it expires. Seeing it again means the chain has leaked.
+        if (!check("authorization-server", "refresh token hasn't been used or revoked", !held.revoked, { client: held.client_id, family_revoked: held.revoked ? !!held.family : undefined })) {
+          if (held.family) opts.store().revokeTokenFamily(held.family);
+          return oauthError("invalid_grant");
+        }
         if (!check("authorization-server", "refresh token hasn't expired", held.exp === undefined || held.exp > now(), { exp: held.exp, now: now() })) {
           opts.store().deleteToken(presented);
           return oauthError("invalid_grant");
         }
-        opts.store().deleteToken(presented);
+        opts.store().revokeToken(presented);
         const { revoked: _revoked, exp: _exp, ...g } = held;
-        return Response.json(issue(g, true));
+        return tokenResponse(issue(g, true));
       }
       return oauthError("unsupported_grant_type");
     }
@@ -387,7 +423,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
       const t = opts.store().getToken(f.get("token") ?? "", "access");
       check("authorization-server", "introspect token", !!t && !t.revoked && t.exp! > now(), { token_hash: ath(f.get("token") ?? "").slice(0, 10), client: t?.client_id, revoked: t?.revoked, expired: !!t && t.exp! <= now() });
       if (!t || t.revoked || t.exp! <= now()) return Response.json({ active: false });
-      const { revoked, ...rest } = t;
+      const { revoked, family, ...rest } = t;
       return Response.json({ active: true, iss: opts.issuer, ...rest });
     }
     if (url.pathname === "/revoke" && req.method === "POST") {
@@ -396,7 +432,11 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
       return new Response(null, { status: 200 });
     }
     if (url.pathname.startsWith("/fhir/Patient/")) {
-      const id = url.pathname.split("/").pop();
+      const id = url.pathname.slice("/fhir/Patient/".length);
+      const bearer = req.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1];
+      const t = bearer ? opts.store().getToken(bearer, "access") : undefined;
+      if (!check("authorization-server", "patient read has a live access token", !!t && !t.revoked && t.exp! > now(), { token_hash: bearer && ath(bearer).slice(0, 10) })) return new Response(null, { status: 401, headers: { "WWW-Authenticate": bearer ? 'Bearer error="invalid_token"' : "Bearer" } });
+      if (!check("authorization-server", "the token's patient context is this patient", t!.patient === id, { patient: id, patient_context: t!.patient })) return new Response(null, { status: 403, headers: { "WWW-Authenticate": 'Bearer error="insufficient_scope"' } });
       if (id !== "josh-example" && id !== "robin-example") return new Response(null, { status: 404 });
       return Response.json({ resourceType: "Patient", id, name: [{ family: "Example", given: [id === "josh-example" ? "Josh" : "Robin"] }] });
     }
@@ -405,10 +445,9 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
 
   return {
     fetch: fetchHandler,
-    registerBackendClient(client_id: string, scopes: string[]): BackendClient {
-      const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
-      const kid = `${client_id}-key`;
-      backendKeys.set(client_id, { kid, publicKey, scopes });
+    registerBackendClient(client_id: string, scopes: string[], privateKey: KeyObject = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey): BackendClient {
+      const kid = kidOf(client_id);
+      backendKeys.set(client_id, { kid, publicKey: createPublicKey(privateKey), scopes });
       return { client_id, kid, privateKey };
     },
     tokenUrl: `${opts.issuer}/token`,

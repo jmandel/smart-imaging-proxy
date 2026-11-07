@@ -5,13 +5,16 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes } from "node:crypto";
 
-export type Service = "user" | "app" | "authorization-server" | "imaging-fhir" | "policy" | "dicomweb-proxy" | "backend" | "demo";
-export type Kind = "action" | "server" | "client" | "internal" | "check";
+export const SERVICES = ["user", "app", "authorization-server", "imaging-fhir", "policy", "dicomweb-proxy", "backend", "demo"] as const;
+export const KINDS = ["action", "server", "client", "internal", "check"] as const;
+export const STATUSES = ["ok", "error", "denied"] as const;
+export type Service = typeof SERVICES[number];
+export type Kind = typeof KINDS[number];
 
 export interface SpanRecord {
   session: string; trace: string; span: string; parent?: string;
   service: Service; kind: Kind; name: string; start: number; end?: number;
-  status?: "ok" | "error" | "denied"; attrs: Record<string, unknown>; seq?: number; http?: HttpCapture;
+  status?: typeof STATUSES[number]; attrs: Record<string, unknown>; seq?: number; http?: HttpCapture;
 }
 export interface CapturedMessage { headers: Record<string, string>; body?: string; encoding?: "text" | "hex"; bytes?: number; truncated?: boolean; }
 export interface HttpCapture { method: string; url: string; status?: number; request: CapturedMessage; response?: CapturedMessage; }
@@ -163,13 +166,18 @@ export async function tfetch(service: Service, name: string, url: string, init: 
   } catch (e) { s.end("error", { error: String((e as Error).message ?? e) }); throw e; }
 }
 
+/** The session a request's baggage names. Anyone can send baggage, so an undecodable one names none. */
+const baggageSession = (baggage: string | null) => {
+  try { return decodeURIComponent(baggage?.match(/demo\.session=([^,;]+)/)?.[1] ?? "unattributed"); } catch { return "unattributed"; }
+};
+
 /** Wraps an HTTP service: continues the caller's trace, and records a server span. */
 export function traced(service: Service, handler: (req: Request, span: SpanHandle) => Promise<Response> | Response, nameOf?: (req: Request, url: URL) => string, contextFor?: (req: Request, url: URL) => Partial<Current> | undefined) {
   return async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
     // A browser redirect can't carry trace headers, so the demo passes them as query parameters.
     const tp = (req.headers.get("traceparent") ?? url.searchParams.get("demo_traceparent"))?.match(/^00-([0-9a-f]{32})-([0-9a-f]{16})-/);
-    const session = url.searchParams.get("demo_session") || decodeURIComponent(req.headers.get("baggage")?.match(/demo\.session=([^,;]+)/)?.[1] ?? "unattributed");
+    const session = url.searchParams.get("demo_session") || baggageSession(req.headers.get("baggage"));
     // A request that carries no context can belong to whatever its service knows is waiting for it.
     const known = tp ? undefined : contextFor?.(req, url);
     const parent = tp ? { session, trace: tp[1]!, span: tp[2]! } : { session: known?.session ?? session, trace: known?.trace ?? hex(16), span: known?.span ?? (undefined as unknown as string) };

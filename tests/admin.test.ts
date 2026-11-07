@@ -301,7 +301,7 @@ describe("tokens", () => {
     const s = await ok("POST", "/api/admin/tokens/revoke-all");
     expect(s.store.saved.counts.liveAccessTokens).toBe(0);
     expect((await search()).status).toBe(401);
-    const refreshed = await fetch(stack.auth.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: t.refresh_token }).toString() });
+    const refreshed = await fetch(stack.auth.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: t.refresh_token, client_id: "portal-app" }).toString() });
     expect(refreshed.status).toBe(400);
     expect(stack.stores.scratch.getToken(scratch.access_token, "access")!.revoked).toBe(false);
   });
@@ -381,8 +381,11 @@ describe("writes naming another Host, over real HTTP", () => {
     expect((await send("/api/policy", `localhost:${PORTS.demo}`, { method: "PUT", body: JSON.stringify({ maxSeriesInContext: 8 }) })).status).toBe(200);
     expect(stack.imaging.getPolicy().maxSeriesInContext).toBe(8);
   });
-  test("reads aren't affected", async () => {
-    expect((await send("/api/admin/status", "evil.example", { method: "GET" })).status).toBe(200);
+  test("the admin status is refused under another Host too, and answers with no Host named", async () => {
+    expect((await send("/api/admin/status", "evil.example", { method: "GET" })).status).toBe(403);
+    expect((await send("/api/admin/backends", "evil.example", { method: "GET" })).status).toBe(403);
+    expect((await send("/api/admin/status", `localhost:${PORTS.demo}`, { method: "GET" })).status).toBe(200);
+    expect((await demo.fetch(new Request(`${CONFIG.demoUrl}/api/admin/status`))).status).toBe(200);
   });
 });
 

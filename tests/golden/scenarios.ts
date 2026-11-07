@@ -86,7 +86,7 @@ export async function runScenarios(stack: any, clients: any) {
   await record("josh: _lastUpdated after 2022", josh, "patient=josh-example&_lastUpdated=gt2022-01-01T00:00:00Z");
   await record("josh: _lastUpdated after 2012-10-09", josh, "patient=josh-example&_lastUpdated=gt2012-10-09T00:00:00Z");
   await record("josh: _lastUpdated after everything", josh, "patient=josh-example&_lastUpdated=gt2030-01-01T00:00:00Z");
-  await record("josh: _lastUpdated with another prefix is ignored", josh, "patient=josh-example&_lastUpdated=ge2022-01-01T00:00:00Z");
+  await record("josh: _lastUpdated with the ge prefix", josh, "patient=josh-example&_lastUpdated=ge2022-01-01T00:00:00Z");
   await record("josh: identifier and _lastUpdated", josh, `patient=josh-example&identifier=${wristAccession}&_lastUpdated=gt2022-01-01T00:00:00Z`);
 
   fresh();

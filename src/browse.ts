@@ -271,9 +271,12 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
           if (!t.access_token) {
             s.status = t.error === "access_denied" ? "denied" : "failed";
             const who = s.signedIn ?? user;
-            const holds = recordsOf(who).length > 0;
+            const records = recordsOf(who);
+            // A scripted sign-in names its patient, and a person in a window picks from what they hold.
+            const missing = mode === "scripted" && patient && !records.some(r => r.patient === patient) ? patient : undefined;
+            const why = t.error !== "access_denied" ? "" : missing ? ` ${firstName(who)} doesn't hold ${PATIENT_NAMES[missing] ?? missing}'s records, so there was nothing to approve.` : records.length ? ` ${firstName(who)} chose not to approve the app.` : ` No patient has shared records with ${firstName(who)}.`;
             s.headline = t.error === "access_denied" ? `${firstName(who)}'s sign-in ended in access_denied` : `The sign-in ended in ${t.error ?? "an error"}`;
-            s.detail = `The Authorization Server redirected back with error=${t.error ?? "unknown"} and issued no token, so no search ran. ${holds ? `${firstName(who)} chose not to approve the app.` : `No patient has shared records with ${firstName(who)}.`}`;
+            s.detail = `The Authorization Server redirected back with error=${t.error ?? "unknown"} and issued no token, so no search ran.${why}`;
             await explainFor(s, patient ?? recordsOf(who)[0]?.patient ?? stack.catalog.allStudies()[0]?.patient ?? "josh-example");
             return;
           }

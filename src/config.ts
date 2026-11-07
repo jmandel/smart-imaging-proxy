@@ -18,15 +18,25 @@ export const TAILNET = detectTailnet();
 const host = `http://${TAILNET?.ip ?? "127.0.0.1"}`;
 /** The address every service listens on. MinIO and Orthanc stay on loopback: only the proxy reaches them. */
 export const LISTEN_HOSTS = ["127.0.0.1", ...(TAILNET ? [TAILNET.ip] : [])];
+/** What a client sees of a failed request. The details go to the server's log. */
+const serverError = (err: Error) => { console.error(err); return new Response("Internal Server Error", { status: 500, headers: { "content-type": "text/plain" } }); };
 export const serveOn = (port: number, options: Omit<Parameters<typeof Bun.serve>[0], "port" | "hostname">) =>
-  LISTEN_HOSTS.map(hostname => Bun.serve({ ...options, port, hostname } as any));
+  LISTEN_HOSTS.map(hostname => Bun.serve({
+    ...options, port, hostname, development: false, error: serverError,
+    fetch(req: Request, server: unknown) {
+      // With no Host header, Bun gives a relative URL, and the services read absolute ones.
+      const url = new URL(req.url, `http://${hostname}:${port}`);
+      if (url.pathname === "/favicon.ico") return new Response(null, { status: 204 });
+      return (options as any).fetch(/^https?:/.test(req.url) ? req : new Request(url, req), server);
+    },
+  } as any));
 export const CONFIG = {
   demoUrl: `${host}:${PORTS.demo}`,
   proxyUrl: `${host}:${PORTS.proxy}`,
   imagingUrl: `${host}:${PORTS.imaging}`,
   authUrl: `${host}:${PORTS.auth}`,
   traceUrl: `${host}:${PORTS.trace}`,
-  minio: { endpoint: "http://127.0.0.1:4610", accessKey: "demo-minio", secretKey: "demo-minio-secret", bucket: "smart-imaging" },
+  minio: { endpoint: "http://127.0.0.1:4610", accessKey: "demo-minio", secretKey: "demo-minio-secret" },
   archive: { dir: process.env.ARCHIVE_DIR ?? "/tmp/smart-imaging-demo/archive", bucket: "smart-imaging-archive" },
   orthanc: { base: "http://127.0.0.1:4611", user: "demo-proxy", password: "demo-orthanc-secret" },
 };

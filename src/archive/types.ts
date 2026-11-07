@@ -117,14 +117,21 @@ export interface CatalogStudy {
   series: { uid: string; number: number; modality: string; instanceCount: number }[];
 }
 
+/** One FHIR token. No `system` is any system, and `null` is an identifier with none. No `value` is any value. */
+export interface TokenTerm { system?: string | null; value?: string; }
+/** Every inner list has to match (repeated parameters), by any one of its terms (comma-separated values). */
+export type TokenFilter = TokenTerm[][];
+/** Epoch milliseconds: `from` is inclusive and `before` exclusive. `not` is everything outside the range. */
+export interface InstantRange { from?: number; before?: number; not?: boolean; }
+
 export interface CatalogSearch {
   patient: string;
   /** Matches any identifier on the study: DICOM UID or accession. */
-  identifier?: { system?: string; value: string };
+  identifier?: TokenFilter;
   /** Matches order identifiers, for `based-on:identifier`. */
-  basedOn?: { system?: string; value: string };
-  /** Strictly after this ISO 8601 instant. */
-  lastUpdatedAfter?: string;
+  basedOn?: TokenFilter;
+  /** `lastUpdated` is in every one of these. */
+  lastUpdated?: InstantRange[];
 }
 
 /** Newest first: `(date DESC, pk DESC)`. A cursor resumes strictly after this position. */
@@ -137,7 +144,7 @@ export interface StudyPublication { document: StudyDocument; patient: string; st
  * no bucket reads. Queries are scoped to a patient, since the search API always is.
  */
 export interface CatalogStore {
-  /** Atomically makes this version of the study live. This is ingest's publish step. */
+  /** Atomically makes this version of the study searchable. Ingest makes a version live separately, by writing `current.json`. */
   publish(p: StudyPublication): void;
   /** Rows for one patient, in order, starting after `after`, without hierarchies. */
   candidates(q: CatalogSearch, after?: CatalogPosition, batch?: number): CatalogStudy[];

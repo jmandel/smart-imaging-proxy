@@ -2,6 +2,7 @@
 // through CONFIG, and act together only over HTTP.
 import { randomBytes } from "node:crypto";
 import { CONFIG, PORTS, serveOn } from "./config";
+import { DEMO_BACKEND_CLIENTS, DEMO_BACKEND_SCOPES, derivedBackendClient } from "./auth-server";
 import { createProxy } from "./proxy";
 import { DEFAULT_JWKS_TTL_SECONDS } from "./jwks";
 import { createStores, storeConfigFromEnv } from "./policy-store";
@@ -34,6 +35,7 @@ export async function startRoles(root: string, roles: Role[], env: Record<string
     const stores = createStores(storeConfigFromEnv(env));
     if (has("auth")) {
       const auth = buildAuthServer(stores, serviceSecret);
+      for (const id of DEMO_BACKEND_CLIENTS) auth.registerBackendClient(id, DEMO_BACKEND_SCOPES, derivedBackendClient(id, serviceSecret).privateKey);
       const servers = serveOn(PORTS.auth, { fetch: auth.fetch, idleTimeout: 120 });
       stops.push(() => servers.forEach(s => s.stop(true)));
     }

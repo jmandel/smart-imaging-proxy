@@ -30,7 +30,8 @@ const defaultSettings = (): Settings => ({ contextLifetimeSeconds: 300, maxSerie
 const LIMITS: Record<keyof Settings, [number, number]> = { contextLifetimeSeconds: [1, 86400], maxSeriesInContext: [0, 10000], tokenLifetimeSeconds: [1, 2592000], refreshTokenLifetimeSeconds: [1, 31536000] };
 
 export type TokenKind = "access" | "refresh";
-export interface TokenRecord { client_id: string; scope: string; patient?: string; sub?: string; fhirUser?: string; exp?: number; revoked: boolean; }
+/** `family` is shared by every token descended from one refresh token. It isn't derived from any token. */
+export interface TokenRecord { client_id: string; scope: string; patient?: string; sub?: string; fhirUser?: string; family?: string; exp?: number; revoked: boolean; }
 
 export const SCHEMA_VERSION = 2;
 export type Durability = "off" | "normal" | "full";
@@ -301,6 +302,8 @@ export class PolicyStore {
   }
   revokeToken(token: string) { this.db.run("UPDATE tokens SET revoked = 1 WHERE hash = ?", [sha(token)]); }
   deleteToken(token: string) { this.db.run("DELETE FROM tokens WHERE hash = ?", [sha(token)]); }
+  /** Revokes every token in a family, and returns how many were still live. */
+  revokeTokenFamily(family: string): number { return this.db.run("UPDATE tokens SET revoked = 1 WHERE revoked = 0 AND json_extract(record, '$.family') = ?", [family]).changes; }
   revokeAllTokens(): number { return this.db.run("UPDATE tokens SET revoked = 1 WHERE revoked = 0").changes; }
   /** Drops access and refresh tokens that have expired as of this time, and returns how many. */
   purgeExpiredTokens(asOf: number): number { return this.db.run("DELETE FROM tokens WHERE exp <= ?", [asOf]).changes; }

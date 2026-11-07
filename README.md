@@ -31,7 +31,7 @@ Every service listens on `127.0.0.1`. If Tailscale is running, each one also lis
 | 4600 | Demo | `/` flow player, `/browse` Browse, `/admin` admin screen |
 | 4601 | WADO-RS proxy | `/wado/{signed-context}/studies/...`, opaque to clients |
 | 4602 | Imaging Server | `/fhir/ImagingStudy`, `/fhir/metadata`, `/access/v1/evaluation`, `/.well-known/jwks.json`, `/.well-known/authzen-configuration` |
-| 4603 | Authorization Server | `/fhir/.well-known/smart-configuration`, `/authorize`, `/token`, `/introspect`, `/revoke`, `/account`, `/fhir/Patient/{id}` |
+| 4603 | Authorization Server | `/fhir/.well-known/smart-configuration`, `/authorize`, `/token`, `/introspect`, `/revoke`, `/account`, `/fhir/Patient/{id}` (with a token for that patient) |
 | 4604 | Live trace | `/` viewer, `/span.html` full exchange, `/log.html` HTTP log, `/api/sessions/{id}/export` |
 | 4610 | MinIO | Loopback only |
 | 4611 | Orthanc | Loopback only |
@@ -45,14 +45,31 @@ Every service listens on `127.0.0.1`. If Tailscale is running, each one also lis
 ## How it works
 
 - **Instant path:** search signs its decision into `Endpoint.address`. The proxy checks the signature, expiry, study, series, and a hash of the token, with no network call.
-- **Otherwise, it asks:** a refreshed token, a separate client, an expired context, or a `restricted` one leads to an [AuthZEN](https://openid.net/specs/authorization-api-1_0.html) evaluation at the Imaging Server, cached briefly. If that fails, no data is released.
-- **Signing keys:** the proxy reads public keys from the Imaging Server's JWKS, holding them for 60 seconds. A retired key ends the instant path for its URLs, and current policy still decides through the evaluation. Ending access at once takes three controls together on `/admin`: revoke tokens, flush decisions, and rotate the key.
+- **Otherwise, it asks:** a refreshed token, a separate client, an expired context, or a `restricted` one leads to an [AuthZEN](https://openid.net/specs/authorization-api-1_0.html) evaluation at the Imaging Server. Allowed answers are cached as described under [Ending access](#ending-access). If that fails, no data is released.
+- **Signing keys:** the proxy reads public keys from the Imaging Server's JWKS, holding them for 60 seconds. A retired key ends the instant path for its URLs, and current policy still decides through the evaluation.
 - **App Launch:** discovery, authorization code with PKCE S256, required `state`, exact `redirect_uri`, single-use codes, and a consent page where the user picks a patient and sites.
 - **Backend Services:** ES256 client assertions, with each check traced separately: registered key, algorithm, `iss` and `sub`, `aud`, expiry, `jti`, signature, and scope.
 - **Delegation:** patient to related person to app, where each link can only narrow what the last one allows. The Imaging Server holds all of it.
 - **Search:** reads only the catalog, never a bucket. `_count` defaults to 20, with a maximum of 100. Each page's `next` link holds a signed cursor that grants nothing, because policy runs again on every page.
 - **Retrieval:** the proxy reads from the backend only as the client takes bytes. On the file and MinIO backends, it settles every `404`, `406`, and byte count from the indexes before opening an instance, and sends an exact `Content-Length`. A client sending `Accept-Encoding: zstd` gets stored zstd objects without decoding.
 - **Failures:** a response that can't finish aborts with no closing boundary, so a partial study can't look complete.
+
+## Ending access
+
+After a token is revoked:
+
+| Request | Result |
+|---|---|
+| Search | `401` at once |
+| Signed URL | `200`, instant, until the context's `exp` |
+| Plain or asked URL, already decided | `200`, cached, for the same time |
+| Plain URL, not cached | `401` at once |
+
+The window is `min(now + context lifetime, token exp)`, set when the context or decision is issued. Context lifetime is 300 seconds by default, and the admin screen offers up to 1,800.
+
+- **Flush decisions** ends the cached window only, not signed URLs.
+- **Rotate the key,** with the proxy told, ends the signed-URL window at once. A revoked token then gets `401`, and a valid token still works by asking.
+- **Ending access at once** takes all three on `/admin`: revoke tokens, flush decisions, and rotate the key.
 
 ## The archive
 
@@ -156,7 +173,7 @@ PROXY_BACKEND=minio bun src/main.ts --role proxy
 | `PROXY_BACKEND` | `static-files` | `static-files`, `minio`, or `orthanc`. Set `orthanc` on `imaging` too, to use Orthanc's catalog |
 | `JWKS_TTL_SECONDS` | `60` | How long a split proxy trusts its copy of the keys |
 
-Split services have no flow player, Browse, or admin screen, and no Backend Services clients are registered.
+Split services have no flow player, Browse, or admin screen. `auth` registers the demo's Backend Services clients with keys derived from `SERVICE_SECRET` (`derivedBackendClient` in `src/auth-server.ts`), so anyone holding that secret can act as them.
 
 ## Real and simulated
 
@@ -202,7 +219,7 @@ The images are real. Five studies are a real patient's, de-identified as "Josh E
 
 **Tradeoffs and restarts:**
 
-- A token revoked after search keeps working on the instant path until its context expires, 5 minutes by default.
+- A revoked token keeps working on signed URLs and cached decisions for the windows under [Ending access](#ending-access).
 - A restart loses sign-ins in progress, Browse and account sessions, and the proxy's cached decisions.
 - A restart also changes the paging key, so older `next` links get a `400`.
 

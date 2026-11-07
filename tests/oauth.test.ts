@@ -1,9 +1,16 @@
 // The App Launch flow is real, so it has to reject what a real Authorization Server rejects.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync, randomBytes, sign } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Database } from "bun:sqlite";
 import { startStack, type Stack } from "../src/stack";
-import { CONFIG } from "../src/config";
+import { CONFIG, serveOn } from "../src/config";
+import { APP_NAMES, clientAssertion, createAuthServer, PATIENT_NAMES, USERS, type BackendClient } from "../src/auth-server";
+import { PolicyStore } from "../src/policy-store";
+import { advance, now, resetClock } from "../src/clock";
+import { b64url } from "../src/jws";
 import { Ctx } from "../src/flows/runtime";
 import { FLOWS, registerClients, runStep, startFlow } from "../src/flows";
 import { accountUrl, buildAuthorization, CALLBACK, CLINICAL_FHIR, scriptedLaunch, submitConsent, submitDelegation, submitRevocation, tokenRequestBody } from "../src/flows/oauth";
@@ -29,6 +36,19 @@ describe("Authorization request", () => {
     const r = await statusOf(mutate(auth().url, q => q.set("client_id", "nobody")));
     expect(r.status).toBe(400);
     expect(r.headers.get("location")).toBeNull();
+  });
+  for (const name of ["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf"]) {
+    test(`client_id ${name} gets the unknown client page`, async () => {
+      const r = await statusOf(mutate(auth().url, q => q.set("client_id", name)));
+      expect(r.status).toBe(400);
+      expect(r.headers.get("location")).toBeNull();
+      expect(await r.text()).toContain("Unknown client");
+    });
+  }
+  test("the tables looked up by request input have no inherited keys", () => {
+    for (const lookup of [USERS, PATIENT_NAMES, APP_NAMES]) for (const key of ["constructor", "__proto__", "toString", "hasOwnProperty"]) expect(lookup[key]).toBeUndefined();
+    expect(Object.keys(USERS)).toContain("josh");
+    expect(PATIENT_NAMES["josh-example"]).toBe("Josh Example");
   });
   test("unregistered redirect URI gets an error page, with no redirect", async () => {
     const r = await statusOf(mutate(auth().url, q => q.set("redirect_uri", "https://evil.example/cb")));
@@ -383,11 +403,257 @@ describe("Delegation: patient to related person to app", () => {
 });
 
 describe("Backend Services", () => {
+  const JWT_BEARER = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
+  const part = (o: unknown) => b64url(JSON.stringify(o));
+  const assertionBody = (assertion: string, scope = "system/ImagingStudy.rs") => new URLSearchParams({ grant_type: "client_credentials", scope, client_assertion_type: JWT_BEARER, client_assertion: assertion }).toString();
+  const signed = (c: BackendClient, claims: Record<string, unknown>) => {
+    const head = part({ alg: "ES256", kid: c.kid, typ: "JWT" });
+    const body = part({ iss: c.client_id, sub: c.client_id, aud: conf.token_endpoint, jti: randomBytes(8).toString("hex"), exp: now() + 60, ...claims });
+    return `${head}.${body}.${b64url(sign("sha256", Buffer.from(`${head}.${body}`), { key: c.privateKey, dsaEncoding: "ieee-p1363" }))}`;
+  };
+  const client = () => stack.auth.registerBackendClient(`test-${randomBytes(4).toString("hex")}`, ["system/ImagingStudy.rs"]);
+  const refused = async (assertion: string) => {
+    const r = await post(assertionBody(assertion));
+    expect(r.status).toBe(401);
+    expect(await r.json()).toEqual({ error: "invalid_client" });
+  };
+
   test("a replayed assertion is rejected", async () => {
-    const { clientAssertion } = await import("../src/auth-server");
-    const client = stack.auth.registerBackendClient("replay-test", ["system/ImagingStudy.rs"]);
-    const body = new URLSearchParams({ grant_type: "client_credentials", scope: "system/ImagingStudy.rs", client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: clientAssertion(client, conf.token_endpoint) }).toString();
+    const body = assertionBody(clientAssertion(client(), conf.token_endpoint));
     expect((await post(body)).status).toBe(200);
     expect((await post(body)).status).toBe(401);
+  });
+  test("a malformed assertion is invalid_client", async () => {
+    const c = client();
+    const good = signed(c, {}).split(".");
+    for (const bad of ["", "a", "a.b", "a.b.c", "..", "{}.{}.{}", `${part(null)}.${part(null)}.c`, `${part(1)}.${part("x")}.c`, `${part([])}.${part([])}.c`, `${good[0]}.a.${good[2]}`, `a.${good[1]}.${good[2]}`, `${good[0]}.${good[1]}.c`, `${good[0]}.${good[1]}.${b64url(randomBytes(64))}`, `${good[0]}.${good[1]}.${b64url(randomBytes(500))}`]) await refused(bad);
+  });
+  test("assertion fields of the wrong type are invalid_client", async () => {
+    const c = client();
+    for (const claims of [{ iss: {} }, { iss: "constructor", sub: "constructor" }, { iss: "__proto__", sub: "__proto__" }, { exp: "9999999999" }, { exp: null }, { exp: now() + 1.5 }, { jti: {} }, { jti: 1 }, { jti: "" }, { aud: [] }]) await refused(signed(c, claims));
+  });
+  test("an assertion's signature has to be from the registered key", async () => {
+    const other = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey;
+    const c = client();
+    await refused(signed({ ...c, privateKey: other }, {}));
+  });
+  test("an assertion's exp can be at most five minutes ahead", async () => {
+    const c = client();
+    for (const ahead of [301, 400, 3600, 365 * 86400]) await refused(signed(c, { exp: now() + ahead }));
+    // Two seconds' margin keeps this from depending on when the second turns over.
+    expect((await post(assertionBody(signed(c, { exp: now() + 298 })))).status).toBe(200);
+    expect((await post(assertionBody(clientAssertion(c, conf.token_endpoint)))).status).toBe(200);
+  });
+  test("an expired assertion is refused", async () => {
+    const c = client();
+    await refused(signed(c, { exp: now() - 1 }));
+  });
+});
+
+describe("Token responses can't be cached", () => {
+  const noStore = (r: Response) => {
+    expect(r.headers.get("cache-control")).toBe("no-store");
+    expect(r.headers.get("pragma")).toBe("no-cache");
+  };
+  test("all three grants", async () => {
+    const a = auth();
+    const back = await submitConsent(a.url, { user: "josh" });
+    const code = await post(tokenRequestBody(a, back.searchParams.get("code")!));
+    expect(code.status).toBe(200);
+    noStore(code);
+    const t: any = await code.json();
+    const refreshed = await post(new URLSearchParams({ grant_type: "refresh_token", refresh_token: t.refresh_token, client_id: "portal-app" }).toString());
+    expect(refreshed.status).toBe(200);
+    noStore(refreshed);
+    const c = stack.auth.registerBackendClient("no-store-test", ["system/ImagingStudy.rs"]);
+    const backend = await post(new URLSearchParams({ grant_type: "client_credentials", scope: "system/ImagingStudy.rs", client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: clientAssertion(c, conf.token_endpoint) }).toString());
+    expect(backend.status).toBe(200);
+    noStore(backend);
+  });
+  test("errors", async () => {
+    for (const body of ["grant_type=nonsense", "grant_type=authorization_code&code=x", "grant_type=refresh_token&refresh_token=x", "grant_type=client_credentials", "grant_type=client_credentials&client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer&client_assertion=a.b.c"]) {
+      const r = await post(body);
+      expect(r.status).toBeGreaterThanOrEqual(400);
+      noStore(r);
+    }
+  });
+});
+
+describe("Refresh tokens", () => {
+  const refresh = (token: string, client?: string) => post(new URLSearchParams({ grant_type: "refresh_token", refresh_token: token, ...(client ? { client_id: client } : {}) }).toString());
+  const launch = async () => { stack.resetAll(); return scriptedLaunch("josh"); };
+  const liveAccess = (token: string) => !stack.stores.active.getToken(token, "access")!.revoked;
+
+  test("only the client it was issued to can use one, and a refused try doesn't spend it", async () => {
+    const t = await launch();
+    for (const client of ["separate-viewer", undefined, "constructor"]) {
+      const r = await refresh(t.refresh_token, client);
+      expect(r.status).toBe(400);
+      expect(await r.json()).toEqual({ error: "invalid_grant" });
+    }
+    expect(liveAccess(t.access_token)).toBe(true);
+    expect((await refresh(t.refresh_token, "portal-app")).status).toBe(200);
+  });
+  test("replaying a used one revokes the rest of its family", async () => {
+    const t = await launch();
+    const next: any = await (await refresh(t.refresh_token, "portal-app")).json();
+    const newer: any = await (await refresh(next.refresh_token, "portal-app")).json();
+    const replay = await refresh(t.refresh_token, "portal-app");
+    expect(replay.status).toBe(400);
+    expect(await replay.json()).toEqual({ error: "invalid_grant" });
+    expect((await refresh(newer.refresh_token, "portal-app")).status).toBe(400);
+    for (const token of [t.access_token, next.access_token, newer.access_token]) expect(liveAccess(token)).toBe(false);
+    expect((await fetch(`${conf.associated_endpoints[0].url}/ImagingStudy?patient=josh-example`, { headers: { Authorization: `Bearer ${newer.access_token}` } })).status).toBe(401);
+  });
+  test("another client replaying a used one changes nothing", async () => {
+    const t = await launch();
+    const next: any = await (await refresh(t.refresh_token, "portal-app")).json();
+    expect((await refresh(t.refresh_token, "separate-viewer")).status).toBe(400);
+    expect((await refresh(next.refresh_token, "portal-app")).status).toBe(200);
+  });
+  test("a replay doesn't reach another launch's tokens", async () => {
+    const t = await launch();
+    const other = await scriptedLaunch("josh");
+    await refresh(t.refresh_token, "portal-app");
+    expect((await refresh(t.refresh_token, "portal-app")).status).toBe(400);
+    expect(liveAccess(other.access_token)).toBe(true);
+    expect((await refresh(other.refresh_token, "portal-app")).status).toBe(200);
+  });
+  test("a used one is purged when it expires, and rotation keeps working", async () => {
+    const t = await launch();
+    stack.stores.active.setSettings({ refreshTokenLifetimeSeconds: 100 });
+    const next: any = await (await refresh(t.refresh_token, "portal-app")).json();
+    expect(stack.stores.active.getToken(t.refresh_token, "refresh")!.revoked).toBe(true);
+    advance(30 * 86400 + 1);
+    stack.purgeTokens();
+    expect(stack.stores.active.getToken(t.refresh_token, "refresh")).toBeUndefined();
+    expect(stack.stores.active.getToken(next.refresh_token, "refresh")).toBeUndefined();
+    resetClock();
+  });
+  test("a family's id doesn't appear in anything a client or service reads", async () => {
+    const t = await launch();
+    expect(stack.stores.active.getToken(t.access_token, "access")!.family).toBeTruthy();
+    expect(JSON.stringify(t)).not.toContain(stack.stores.active.getToken(t.access_token, "access")!.family!);
+    expect(t.family).toBeUndefined();
+  });
+  test("replay detection survives a restart, in SQLite, holding only hashes", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "refresh-family-"));
+    const path = join(dir, "policy.sqlite");
+    const open = () => {
+      const store = new PolicyStore({ mode: "file", path });
+      const none = async () => { throw new Error("not used"); };
+      const server = createAuthServer({ issuer: CONFIG.authUrl, imagingFhirBase: "http://imaging/fhir", serviceSecret: "s", redirectUri: CALLBACK, store: () => store, storeLabel: () => "test", directory: { relationships: none, access: none, recordConsent: none, delegate: none, revokeDelegation: none, revokeApp: none } });
+      const send = (token: string) => server.fetch(new Request(`${CONFIG.authUrl}/token`, { method: "POST", body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: token, client_id: "portal-app" }) }));
+      return { store, send, server };
+    };
+    try {
+      let s = open();
+      s.store.putToken("first-raw-refresh-value", "refresh", { client_id: "portal-app", scope: "launch/patient online_access", patient: "josh-example", family: "family-1" }, now() + 1000);
+      s.store.putToken("unrelated-raw-refresh-value", "refresh", { client_id: "portal-app", scope: "online_access", family: "family-2" }, now() + 1000);
+      const next: any = await (await s.send("first-raw-refresh-value")).json();
+      s.store.close();
+
+      s = open();
+      expect((await s.send("first-raw-refresh-value")).status).toBe(400);
+      s.store.close();
+
+      s = open();
+      expect((await s.send(next.refresh_token)).status).toBe(400);
+      expect(s.store.getToken(next.access_token, "access")!.revoked).toBe(true);
+      const live: any = await (await s.send("unrelated-raw-refresh-value")).json();
+      const introspected: any = await (await s.server.fetch(new Request(`${CONFIG.authUrl}/introspect`, { method: "POST", headers: { Authorization: "Bearer s" }, body: new URLSearchParams({ token: live.access_token }) }))).json();
+      expect(introspected.active).toBe(true);
+      expect(introspected.family).toBeUndefined();
+      s.store.close();
+
+      const db = new Database(path);
+      const rows = JSON.stringify(db.query("SELECT * FROM tokens").all());
+      db.close();
+      const onDisk = rows + readFileSync(path, "latin1");
+      for (const raw of ["first-raw-refresh-value", "unrelated-raw-refresh-value", next.refresh_token, next.access_token]) expect(onDisk).not.toContain(raw);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe("The Clinical FHIR Server's Patient", () => {
+  const read = (id: string, token?: string) => fetch(`${CLINICAL_FHIR}/Patient/${id}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  test("needs a token", async () => {
+    for (const r of [await read("josh-example"), await read("josh-example", "not-a-real-token")]) {
+      expect(r.status).toBe(401);
+      expect(r.headers.get("www-authenticate")).toStartWith("Bearer");
+      expect(await r.text()).not.toContain("Josh");
+    }
+  });
+  test("answers a token for that patient, and no other", async () => {
+    stack.resetAll();
+    const josh = await scriptedLaunch("josh");
+    const r = await read("josh-example", josh.access_token);
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as any).id).toBe("josh-example");
+    expect((await read("robin-example", josh.access_token)).status).toBe(403);
+    expect((await read("nobody", josh.access_token)).status).toBe(403);
+    expect((await read("josh-example/extra", josh.access_token)).status).toBe(403);
+  });
+  test("refuses a refresh token, a revoked token, an expired one, or one with no patient", async () => {
+    stack.resetAll();
+    const josh = await scriptedLaunch("josh");
+    expect((await read("josh-example", josh.refresh_token)).status).toBe(401);
+    const c = stack.auth.registerBackendClient("patient-read-test", ["system/ImagingStudy.rs"]);
+    const backend: any = await (await post(new URLSearchParams({ grant_type: "client_credentials", scope: "system/ImagingStudy.rs", client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: clientAssertion(c, conf.token_endpoint) }).toString())).json();
+    expect((await read("josh-example", backend.access_token)).status).toBe(403);
+    stack.stores.active.revokeToken(josh.access_token);
+    expect((await read("josh-example", josh.access_token)).status).toBe(401);
+    const later = await scriptedLaunch("josh");
+    advance(3601);
+    expect((await read("josh-example", later.access_token)).status).toBe(401);
+    resetClock();
+  });
+});
+
+describe("serveOn, for every service", () => {
+  const start = (fetch: (req: Request) => Response | Promise<Response>) => serveOn(0, { fetch })[0]!;
+  test("a failure answers with a generic 500, and shows no path, source or message", async () => {
+    const quiet = console.error;
+    const logged: unknown[] = [];
+    console.error = (...a: unknown[]) => { logged.push(...a); };
+    for (const handler of [() => { throw new Error("secret detail at /home/someone/src/thing.ts"); }, async () => { throw new Error("secret detail at /home/someone/src/thing.ts"); }]) {
+      const s = start(handler);
+      try {
+        const r = await fetch(`http://127.0.0.1:${s.port}/boom`);
+        expect(r.status).toBe(500);
+        const text = await r.text();
+        expect(text).toBe("Internal Server Error");
+        expect(r.headers.get("content-type")).toStartWith("text/plain");
+      } finally { s.stop(true); }
+    }
+    console.error = quiet;
+    expect(String(logged[0])).toContain("secret detail");
+  });
+  test("a favicon request is a 204, without reaching the service", async () => {
+    let reached = 0;
+    const s = start(() => { reached++; return new Response("page"); });
+    try {
+      const r = await fetch(`http://127.0.0.1:${s.port}/favicon.ico`);
+      expect(r.status).toBe(204);
+      expect(reached).toBe(0);
+      expect(await (await fetch(`http://127.0.0.1:${s.port}/other`)).text()).toBe("page");
+      expect(reached).toBe(1);
+    } finally { s.stop(true); }
+  });
+  test("a real request with no Host reaches the service, with an absolute URL", async () => {
+    let seen = "";
+    const s = start(req => { seen = req.url; return new Response("page"); });
+    try {
+      const reply = await new Promise<string>((resolve, reject) => {
+        let text = "";
+        Bun.connect({ hostname: "127.0.0.1", port: s.port, socket: { open(c) { c.write("GET /path?q=1 HTTP/1.0\r\n\r\n"); }, data(_c, d) { text += d.toString(); }, close() { resolve(text); }, error(_c, e) { reject(e); } } }).catch(reject);
+      });
+      expect(reply).toStartWith("HTTP/1.1 200");
+      expect(seen).toStartWith("http://127.0.0.1:");
+      expect(seen).toEndWith("/path?q=1");
+    } finally { s.stop(true); }
+  });
+  test("each running service answers a favicon request", async () => {
+    for (const base of [CONFIG.authUrl, CONFIG.imagingUrl, CONFIG.traceUrl]) expect((await fetch(`${base}/favicon.ico`)).status).toBe(204);
   });
 });

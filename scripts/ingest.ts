@@ -3,7 +3,6 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { ingestStudies, runTool, QUARANTINE_REPORT_KEY, type StudyInput } from "../src/archive/ingest";
-import { ArchiveReader } from "../src/archive/reader";
 import { fileStore } from "../src/archive/sources";
 import { CONFIG } from "../src/config";
 
@@ -55,9 +54,6 @@ const run = await ingestStudies(store, inputs, {
   workRoot: process.env.INGEST_WORK,
   log: r => console.log(`${r.id}: ${r.status}${r.version ? ` v${r.version}` : ""}, ${r.instances} instances${r.quarantined ? `, ${r.quarantined} quarantined` : ""}${r.uid ? `, ${r.uid}` : ""}`),
 });
-
-// Kept until the Imaging Server reads the catalog. Describes what's live, whatever this run did.
-const reader = new ArchiveReader(store, { currentTtlMs: 0 });
 
 const total = run.results.reduce((n, r) => n + r.instances, 0);
 console.log(`studies ${run.results.length}, instances ${total}, content writes ${run.contentWrites}, document writes ${run.documentWrites}`);
