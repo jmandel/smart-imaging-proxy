@@ -206,6 +206,7 @@ function inputHtml(step, i) {
   const id = `${step.id}-${i.id}`;
   const help = i.help ? `<div class="help">${esc(i.help)}</div>` : "";
   if (i.type === "multi") return `<div><span class="name"><label class="name">${esc(i.label)}</label></span><div class="checks" data-input="${i.id}" data-type="multi">${(i.options ?? []).map(o => `<label><input type="checkbox" value="${esc(o.value)}" ${(i.default ?? []).includes(o.value) ? "checked" : ""}> ${esc(o.label)}</label>`).join("")}</div>${help}</div>`;
+  if (i.type === "select" && !i.options?.length) return ""; // Earlier steps left nothing to choose, and the step says so when it runs.
   if (i.type === "select") return `<div><label class="name" for="${id}">${esc(i.label)}</label><select id="${id}" data-input="${i.id}">${(i.options ?? []).map(o => `<option value="${esc(o.value)}" ${o.value === i.default ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select>${help}</div>`;
   return `<div><label class="name" for="${id}">${esc(i.label)}</label><input type="text" id="${id}" data-input="${i.id}" value="${esc(i.default)}">${help}</div>`;
 }

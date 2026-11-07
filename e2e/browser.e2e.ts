@@ -380,6 +380,19 @@ describe("flows, in real windows", () => {
     await popup.getByRole("button", { name: "Continue" }).click();
     await popup.getByRole("link", { name: /Done, back to the demo/ }).waitFor();
   });
+  test("a patient who approves no sites can still finish the flow", async () => {
+    const page = await open("/");
+    await consent(page);
+    await page.locator("[data-step=consent] select[data-input=mode]").selectOption("scripted");
+    await page.locator("[data-step=consent] [data-input=sites] input:checked").evaluateAll(all => all.forEach(b => { (b as HTMLInputElement).checked = false; }));
+    await page.locator("[data-run=consent]").click();
+    await page.locator("[data-run=search]").click();
+    await page.locator("[data-run=retrieve]").click();
+    await page.locator("[data-step=retrieve] .result").getByText("Nothing approved, so nothing to retrieve").waitFor();
+    expect(await page.locator("[data-step=retrieve] select").count()).toBe(0);
+    await page.locator("[data-run=unapproved]").waitFor();
+    expect(problems).toEqual([]);
+  });
   test("an open exchange doesn't make a phone page scroll sideways", async () => {
     const page = await open("/", { viewport: PHONE });
     await consent(page);
