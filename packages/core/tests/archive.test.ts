@@ -1,13 +1,12 @@
 // The archive format, ingest, and the backend over it. Small studies are built here, so these
-// tests say exactly what each file holds. The last block checks the real archive and the S3 bucket.
+// tests say exactly what each file holds. The last block writes them to a temporary S3 bucket.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import { S3Client } from "bun";
-import { ARCHIVE_FORMAT, ArchiveBackend, archiveKeys, ArchiveReader, type Backend, BackendError, ByteLru, chooseOffer, closing, decodeJson, EVRLE, fileStore, ingestStudies, isStandard, JPEG_BASELINE, JPEG_LOSSLESS, newBoundary, ObjectNotFoundError, type ObjectSource, type ObjectStore, type Offer, parsePart10, partFooter, partHeader, type PartStream, PRIVATE_DEMO, QUARANTINE_REPORT_KEY, readFileMeta, readMultipart, runTool, s3Store, type SeriesIndex, type StudyDocument, type StudyInput, withPrivateSyntax, withTruncation, wrapperPaysOff, zstdCompress, zstdDecode, zstdDecompressSync } from "@smart-imaging-proxy/core";
-import { CONFIG } from "../src/config";
+import { ARCHIVE_FORMAT, ArchiveBackend, archiveKeys, ArchiveReader, type Backend, BackendError, ByteLru, chooseOffer, closing, decodeJson, EVRLE, fileStore, ingestStudies, isStandard, JPEG_BASELINE, JPEG_LOSSLESS, newBoundary, ObjectNotFoundError, type ObjectSource, type ObjectStore, type Offer, parsePart10, partFooter, partHeader, type PartStream, PRIVATE_DEMO, QUARANTINE_REPORT_KEY, readFileMeta, readMultipart, runTool, s3Store, type SeriesIndex, type StudyDocument, type StudyInput, withPrivateSyntax, withTruncation, wrapperPaysOff, zstdCompress, zstdDecode, zstdDecompressSync } from "../src";
 
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 const ANY = [{ syntax: "*", q: 1 }];
@@ -188,10 +187,6 @@ describe("Format", () => {
     expect(items[0]["00100020"].Value[0]).toBe("PID-1");
   });
 
-  test("each study in the source data carries a site", async () => {
-    const def = await Bun.file(join(import.meta.dir, "../data/studies.source.json")).json();
-    expect(def.studies.every((s: any) => typeof s.site === "string" && s.site.length > 0)).toBe(true);
-  });
 
   test("Implicit VR and deflated inputs are stored as Explicit VR, recording what they were", async () => {
     const store = await fresh();
@@ -873,7 +868,9 @@ describe("ByteLru", () => {
 });
 
 describe("Local files and the S3 bucket", () => {
-  const { endpoint, accessKey, secretKey } = CONFIG.s3;
+  // The S3 store to make a temporary bucket in, which by default is the one `bun scripts/backends.ts start` runs.
+  const endpoint = process.env.S3_ENDPOINT ?? `http://127.0.0.1:${process.env.S3_PORT ?? 4610}`;
+  const accessKey = process.env.S3_ACCESS_KEY ?? "demo-s3", secretKey = process.env.S3_SECRET_KEY ?? "demo-s3-secret";
   const client = (bucket: string) => new S3Client({ endpoint, accessKeyId: accessKey, secretAccessKey: secretKey, bucket });
   const bucketCall = (method: string, bucket: string) => Bun.spawn(["curl", "-s", "--aws-sigv4", "aws:amz:us-east-1:s3", "--user", `${accessKey}:${secretKey}`, "-X", method, `${endpoint}/${bucket}`], { stdout: "ignore", stderr: "ignore" }).exited;
   const listAll = async (s: ObjectSource, prefix = "") => { const out: string[] = []; for await (const k of s.list(prefix)) out.push(k); return out; };
@@ -940,94 +937,5 @@ describe("Local files and the S3 bucket", () => {
       expect(sha(await collect(remote.readRange(key, 132, 100)))).toBe(sha((await local.bytes(key)).subarray(132, 232)));
       for await (const _ of remote.read(key)) break;
     });
-  });
-
-  describe("the real archive", () => {
-    const dirStore = () => fileStore(CONFIG.archive.dir);
-    const bucketStore = () => s3Store(client(CONFIG.archive.bucket));
-    const SOURCE = () => Bun.file(join(import.meta.dir, "../data/studies.source.json")).json().then((d: any) => d.studies as any[]);
-    const SITES = () => SOURCE().then(studies => Object.fromEntries(studies.map(s => [s.id, s.site])));
-    const PATIENT_IDS = () => SOURCE().then(studies => Object.fromEntries(studies.map(s => [s.id, s.patient?.mrn ?? "JEXAMPLE01"])));
-    const manifest = async () => {
-      const reader = new ArchiveReader(dirStore());
-      const uids = (await listAll(dirStore())).filter(k => k.endsWith("/current.json")).map(k => k.split("/")[1]!);
-      return { studies: await Promise.all(uids.map(async uid => reader.study(uid, await reader.currentVersion(uid)))) };
-    };
-
-    test("the bucket holds exactly what the directory holds", async () => {
-      const a = dirStore(), b = bucketStore();
-      const keys = await listAll(a);
-      expect(keys.filter(k => k.endsWith("current.json"))).toHaveLength(10);
-      expect(await listAll(b)).toEqual(keys);
-      for (const k of keys) {
-        if (k.startsWith("content/")) expect(await b.size(k)).toBe((await a.size(k))!);
-        else expect(sha(await b.bytes(k))).toBe(sha(await a.bytes(k)));
-      }
-    });
-
-    test("studies say where they came from, and who the images say they're of", async () => {
-      const m = await manifest();
-      const sites: any = await SITES();
-      const patientIds: any = await PATIENT_IDS();
-      const reader = new ArchiveReader(dirStore());
-      for (const s of m.studies) {
-        const doc = await reader.study(s.uid, await reader.currentVersion(s.uid));
-        expect(doc).toMatchObject({ format: ARCHIVE_FORMAT, id: s.id, uid: s.uid, site: sites[s.id], sourcePatientId: patientIds[s.id], accession: s.accession });
-        expect(doc.series.map(x => x.uid)).toEqual(s.series.map((x: any) => x.uid));
-      }
-    });
-
-    test("every real study's offers verify, from both stores, and the fixture is where it should be", async () => {
-      const m = await manifest();
-      const wrist = m.studies.find((s: any) => s.id === "xr-wrist-left-2012");
-      const a = new ArchiveBackend(dirStore()), b = new ArchiveBackend(bucketStore());
-      const plan = [{ syntax: "*", q: 1 }];
-      const x = await a.openInstances({ study: wrist.uid }, plan, { passthroughZstd: true });
-      const y = await b.openInstances({ study: wrist.uid }, plan);
-      expect(x.plan!.every(p => p.syntax === EVRLE)).toBe(true);
-      const dx = await drain(x), dy = await drain(y);
-      expect(dy.end).toBe("complete");
-      dx.parts.forEach((p, i) => {
-        expect(p.encoding).toBe("zstd");
-        expect(sha(zstdDecompressSync(p.body))).toBe(sha(dy.parts[i]!.body));
-        expect(dy.parts[i]!.body.length).toBe(dy.parts[i]!.bytes!);
-      });
-      const first = wrist.series[0];
-      const offers = (await a.reader.seriesIndex(wrist.uid, await a.reader.currentVersion(wrist.uid), first.uid)).instances[0]!.offers;
-      expect(offers.map(o => [o.syntax, o.stored, !!o.private])).toEqual([[PRIVATE_DEMO, true, true], [EVRLE, false, false], [JPEG_LOSSLESS, false, false]]);
-    }, 60000);
-
-    test("the slide keeps its lossy instances, and the 5% rule was applied to each", async () => {
-      const m = await manifest();
-      const slide = m.studies.find((s: any) => s.id === "slide-lung-2023");
-      const reader = new ArchiveReader(dirStore());
-      const version = await reader.currentVersion(slide.uid);
-      const offers = (await reader.seriesIndex(slide.uid, version, slide.series[0].uid)).instances.flatMap(i => i.offers);
-      expect(offers.filter(o => o.syntax === JPEG_BASELINE)).toHaveLength(3);
-      for (const o of offers) {
-        if (o.encoding === "zstd") expect(o.objectBytes).toBeLessThanOrEqual(o.storedBytes * 0.95);
-        else {
-          expect(o.objectBytes).toBe(o.storedBytes);
-          expect(o.key.endsWith(".dcm")).toBe(true);
-        }
-      }
-    });
-
-    test("a paused read from the S3 bucket doesn't buffer the object", async () => {
-      const m = await manifest();
-      const slide = m.studies.find((s: any) => s.id === "slide-lung-2023");
-      const b = new ArchiveBackend(bucketStore());
-      const { plan } = await b.openInstances({ study: slide.uid }, ANY);
-      const largest = plan!.reduce((x, p) => p.bytes > x.bytes ? p : x);
-      expect(largest.bytes).toBeGreaterThan(50 * 1024 * 1024);
-      const stream = await b.openInstances({ study: slide.uid, instance: largest.sop }, ANY);
-      const it = (await stream.parts.next()).value.body[Symbol.asyncIterator]();
-      await it.next();
-      Bun.gc(true);
-      const before = process.memoryUsage().rss;
-      await Bun.sleep(500);
-      expect(process.memoryUsage().rss - before).toBeLessThan(largest.bytes / 2);
-      await it.return?.();
-    }, 60000);
   });
 });

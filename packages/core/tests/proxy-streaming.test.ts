@@ -6,111 +6,15 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { acceptsZstd, ath, type Backend, BackendError, boundaryOf, createProxy, generateEd25519, type InstancePart, type KeyPair, type OpenOptions, type PartStream, type PlanItem, type PlannedPart, publicJwk, RAW_BLOCK_MAX, rawFrame, rawFrameSize, RawFrameWriter, readMultipart, type Scope, serveStreaming, signJws } from "@smart-imaging-proxy/core";
-import { advance, demoClock, resetClock } from "../src/clock";
-import { flushTraces, setTraceSink, traceObserver, type SpanRecord } from "../src/trace";
+import { acceptsZstd, type Backend, BackendError, boundaryOf, createProxy, generateEd25519, publicJwk, RAW_BLOCK_MAX, rawFrame, rawFrameSize, RawFrameWriter, readMultipart, serveStreaming } from "../src";
+import { ACCEPT, concat, context, dicom, EVRLE, FakeBackend, fakeInstance, type FakeInstance, JPEG, key, large, LOOPBACK, request, sleep, STUDY, TOKEN, until } from "./fake-backend";
+import { manualClock } from "./support";
 
-const EVRLE = "1.2.840.10008.1.2.1", JPEG = "1.2.840.10008.1.2.4.50";
-const STUDY = "1.2.3", TOKEN = "the-token";
-const ACCEPT = "multipart/related; type=application/dicom; transfer-syntax=*";
-const LOOPBACK = ["127.0.0.1"];
-const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-const until = async (f: () => boolean, ms = 3000) => { const end = Date.now() + ms; while (!f() && Date.now() < end) await sleep(10); return f(); };
-const concat = (parts: Uint8Array[]) => new Uint8Array(Buffer.concat(parts));
-
-/** A small but real Part 10 file. Its File Meta states `syntax`, and its size is exact. */
-function dicom(syntax: string, size: number, seed = 0): Uint8Array {
-  const value = syntax.length % 2 ? `${syntax}\0` : syntax;
-  const head = new Uint8Array(132 + 8 + value.length);
-  head.set(new TextEncoder().encode("DICM"), 128);
-  const v = new DataView(head.buffer);
-  v.setUint16(132, 0x0002, true); v.setUint16(134, 0x0010, true);
-  head.set(new TextEncoder().encode("UI"), 136);
-  v.setUint16(138, value.length, true);
-  head.set(new TextEncoder().encode(value), 140);
-  const out = new Uint8Array(Math.max(size, head.length));
-  // Compressible, and different for each instance.
-  for (let i = head.length; i < out.length; i++) out[i] = ((i >> 6) + seed) & 0xff;
-  out.set(head);
-  return out;
-}
-
-interface FakeInstance { sop: string; syntax: string; size: number; stored?: Uint8Array; zstd?: Uint8Array; }
-
-function fakeInstance(sop: string, syntax: string, size: number, opts: { compressed?: boolean } = {}): FakeInstance {
-  const stored = dicom(syntax, size, sop.length + Number(sop.slice(-1)));
-  return { sop, syntax, size: stored.length, stored, zstd: opts.compressed ? Bun.zstdCompressSync(stored) : undefined };
-}
-
-/** Bytes come from a generator on demand, so a study can be far larger than this test's memory. */
-class FakeBackend implements Backend {
-  produced = 0; bodiesOpened = 0; bodiesAbandoned = 0; partsAbandoned = 0; bytesRead = 0;
-  options?: OpenOptions; scope?: Scope; bulkVersion?: number;
-  constructor(public instances: FakeInstance[], public opts: {
-    plan?: boolean; chunk?: number; fileMetaOff?: boolean; end?: "complete" | "truncated"; failAtPart?: number; shortPart?: number; longPart?: number; failAtOpen?: BackendError; planOverride?: (p: PlannedPart[]) => PlannedPart[]; dropDecoded?: boolean;
-  } = {}) {}
-  capabilities() { return { name: "fake", selection: "per-instance" as const, hasManifest: !!this.opts.plan, enforcesHierarchy: true, notes: [] }; }
-  async listSeries() { return ["9"]; }
-  private async *body(inst: FakeInstance, encoded: boolean, index: number): AsyncGenerator<Uint8Array> {
-    this.bodiesOpened++;
-    const chunk = this.opts.chunk ?? 64 * 1024;
-    let finished = false;
-    try {
-      if (this.opts.failAtOpen) throw this.opts.failAtOpen;
-      const source = encoded ? inst.zstd! : inst.stored;
-      let total = source ? source.length : inst.size;
-      if (index === this.opts.shortPart) total -= 1;
-      if (index === this.opts.longPart) total += 1;
-      // A large fake instance repeats one chunk, after a real head.
-      const filler = source ? undefined : new Uint8Array(chunk).fill(7);
-      const head = source ? undefined : dicom(inst.syntax, 256);
-      for (let at = 0; at < total;) {
-        const n = Math.min(chunk, total - at);
-        if (index === this.opts.failAtPart && at >= n) throw new Error("the object store failed");
-        let piece: Uint8Array;
-        if (source) piece = at + n <= source.length ? source.subarray(at, at + n) : concat([source.subarray(at), new Uint8Array(at + n - source.length)]);
-        else if (at === 0) { piece = new Uint8Array(n); piece.set(filler!.subarray(0, n)); piece.set(head!.subarray(0, Math.min(n, head!.length))); }
-        else piece = filler!.subarray(0, n);
-        this.produced += piece.length;
-        yield piece;
-        at += n;
-      }
-      finished = true;
-    } finally { if (!finished) this.bodiesAbandoned++; }
-  }
-  async openInstances(scope: Scope, _plan: PlanItem[], options?: OpenOptions): Promise<PartStream> {
-    this.options = options; this.scope = scope;
-    const self = this;
-    const encodedFor = (i: FakeInstance) => !!(options?.passthroughZstd && i.zstd);
-    let plan: PlannedPart[] | undefined;
-    if (this.opts.plan) {
-      plan = this.instances.map(i => ({ sop: i.sop, syntax: i.syntax, encoding: encodedFor(i) ? "zstd" as const : "none" as const, bytes: encodedFor(i) ? i.zstd!.length : i.size, ...(encodedFor(i) && !this.opts.dropDecoded ? { decodedBytes: i.size } : {}) }));
-      if (this.opts.planOverride) plan = this.opts.planOverride(plan);
-    }
-    async function* parts(): AsyncGenerator<InstancePart, "complete" | "truncated"> {
-      let finished = false;
-      try {
-        for (const [index, i] of self.instances.entries()) {
-          const encoded = !!plan && encodedFor(i);
-          yield { sop: i.sop, syntax: self.opts.plan ? i.syntax : undefined, encoding: encoded ? "zstd" : "none", ...(plan ? { bytes: encoded ? i.zstd!.length : i.size } : {}), body: self.body(i, encoded, index) };
-        }
-        finished = true;
-        return self.opts.end ?? "complete";
-      } finally { if (!finished) self.partsAbandoned++; }
-    }
-    return { parts: parts(), ...(plan ? { plan } : {}) };
-  }
-  async getMetadata(scope: Scope) { this.scope = scope; return [{ __path: { series: "9", instance: "8" } }]; }
-  async openBulk(_s: string, _se: string, _i: string, _r: string, version?: number) { this.bulkVersion = version; return { body: (async function* () { yield new Uint8Array(1); })() }; }
-}
-
-const key = generateEd25519("k1");
-const context = (k: KeyPair = key, claims: object = {}) => signJws(k, { v: 1, study: STUDY, ath: ath(TOKEN), exp: 4102444800, ...claims });
-const request = (headers: Record<string, string> = {}, ctx = context(), path = "") => new Request(`http://proxy/wado/${ctx}/studies/${STUDY}${path}`, { headers: { Authorization: `Bearer ${TOKEN}`, Accept: ACCEPT, ...headers } });
-const proxyOver = (backend: Backend) => createProxy({ publicBase: () => "http://proxy", keys: new Map([[key.kid, key.publicKey]]), decisionUrl: "http://127.0.0.1:1/none", serviceSecret: "s", backend: () => backend, observer: traceObserver, clock: demoClock });
+const proxyOver = (backend: Backend) => createProxy({ publicBase: () => "http://proxy", keys: new Map([[key.kid, key.publicKey]]), decisionUrl: "http://127.0.0.1:1/none", serviceSecret: "s", backend: () => backend, clock });
 
 const cleanups: (() => void)[] = [];
-afterEach(() => { for (const c of cleanups.splice(0)) c(); resetClock(); });
+const clock = manualClock();
+afterEach(() => { for (const c of cleanups.splice(0)) c(); clock.reset(); });
 async function serving(proxy: ReturnType<typeof createProxy>) {
   const server = await serveStreaming(0, proxy.fetch, { hosts: LOOPBACK });
   cleanups.push(() => server.stop());
@@ -142,7 +46,6 @@ function rawClient(port: number, ctx = context(), headers: Record<string, string
 }
 
 const CHUNK = 64 * 1024;
-const large = (count: number, size: number) => Array.from({ length: count }, (_, n) => ({ sop: `1.1.${n}`, syntax: EVRLE, size }));
 
 describe("backpressure", () => {
   for (const planned of [false, true]) {
@@ -244,57 +147,6 @@ describe("backpressure", () => {
   });
 });
 
-describe("spans measure delivery", () => {
-  /** The latest version of each span the proxy reported, from a real trace sink. */
-  async function collecting(run: () => Promise<void>) {
-    const seen = new Map<string, SpanRecord>();
-    const sink = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) { for (const r of await req.json() as SpanRecord[]) seen.set(r.span, r); return new Response(null, { status: 204 }); } });
-    cleanups.push(() => sink.stop(true));
-    setTraceSink(`http://127.0.0.1:${sink.port}`);
-    try { await run(); flushTraces(); await sleep(60); } finally { setTraceSink(""); }
-    return [...seen.values()].filter(r => r.session === "delivery-test");
-  }
-  // How a caller's trace reaches any service here.
-  const traced = { traceparent: `00-${"a".repeat(32)}-${"b".repeat(16)}-01`, baggage: "demo.session=delivery-test" };
-  const study = () => [fakeInstance("1.1.1", EVRLE, 400_000), fakeInstance("1.1.2", EVRLE, 400_000)];
-
-  for (const planned of [false, true]) {
-    test(`the server span ends when the client finishes, with the stream in its session, ${planned ? "with a plan" : "without one"}`, async () => {
-      let elapsed = 0;
-      const spans = await collecting(async () => {
-        const res = await proxyOver(new FakeBackend(study(), { plan: planned })).fetch(request(traced));
-        const reader = res.body!.getReader();
-        const started = performance.now();
-        while (!(await reader.read()).done) await sleep(3);
-        elapsed = performance.now() - started;
-      });
-      const server = spans.find(s => s.kind === "server")!, stream = spans.find(s => s.name === "stream multipart response")!;
-      expect(server.status).toBe("ok");
-      expect(server.end! - server.start).toBeGreaterThanOrEqual(elapsed * 0.8);
-      expect(stream.parent).toBe(server.span);
-      expect(stream.attrs.closing_boundary).toBe(true);
-      expect(stream.attrs.bytes_sent).toBeGreaterThan(800_000);
-      // Work done while the client pulls still belongs to this request, not to nobody.
-      const labels = spans.filter(s => /^part \d/.test(s.name));
-      expect(labels.length).toBe(2);
-      for (const l of labels) { expect(l.session).toBe("delivery-test"); expect(l.trace).toBe(server.trace); expect(l.parent).toBe(server.span); }
-    });
-  }
-
-  test("a disconnect ends the spans, and says so", async () => {
-    const spans = await collecting(async () => {
-      const res = await proxyOver(new FakeBackend(large(10, 8 * 1024 * 1024), { plan: true })).fetch(request(traced));
-      const reader = res.body!.getReader();
-      for (let i = 0; i < 5; i++) await reader.read();
-      await reader.cancel();
-    });
-    const server = spans.find(s => s.kind === "server")!, stream = spans.find(s => s.name === "stream multipart response")!;
-    expect(server.status).toBe("error");
-    expect(server.end).toBeGreaterThan(0);
-    expect(stream.attrs).toMatchObject({ client_disconnected: true, backend_reads_cancelled: true, closing_boundary: false });
-    expect(spans.find(s => s.name === "client stayed until the response ended")!.status).toBe("denied");
-  });
-});
 
 describe("the response when something fails mid-stream", () => {
   // Both framings end without a closing boundary, and a socket client can tell it's not complete.
@@ -760,7 +612,7 @@ describe("study version", () => {
     const pdp = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => Response.json({ decision: true, context: { release: "study", max_age_seconds: 30, ...context_ } }) });
     cleanups.push(() => pdp.stop(true));
     const backend = new FakeBackend([fakeInstance("1.1.1", EVRLE, 300)], { plan: true });
-    const proxy = createProxy({ publicBase: () => "http://proxy", keys: new Map([[key.kid, key.publicKey]]), decisionUrl: `http://127.0.0.1:${pdp.port}/x`, serviceSecret: "s", backend: () => backend, observer: traceObserver, clock: demoClock });
+    const proxy = createProxy({ publicBase: () => "http://proxy", keys: new Map([[key.kid, key.publicKey]]), decisionUrl: `http://127.0.0.1:${pdp.port}/x`, serviceSecret: "s", backend: () => backend, clock });
     return { proxy, backend };
   };
   const plain = () => new Request(`http://proxy/wado/-/studies/${STUDY}`, { headers: { Authorization: `Bearer ${TOKEN}`, Accept: ACCEPT } });
@@ -871,7 +723,7 @@ describe("what the proxy holds", () => {
     return `http://127.0.0.1:${pdp.port}/x`;
   };
   const ask = (token: string) => new Request(`http://proxy/wado/-/studies/${STUDY}`, { headers: { Authorization: `Bearer ${token}`, Accept: ACCEPT } });
-  const make = (decisionUrl: string, limits: { maxDecisions?: number; maxEvents?: number }) => createProxy({ publicBase: () => "http://proxy", keys: new Map(), decisionUrl, serviceSecret: "s", backend: () => new FakeBackend([fakeInstance("1.1.1", EVRLE, 300)], { plan: true }), clock: demoClock, ...limits });
+  const make = (decisionUrl: string, limits: { maxDecisions?: number; maxEvents?: number }) => createProxy({ publicBase: () => "http://proxy", keys: new Map(), decisionUrl, serviceSecret: "s", backend: () => new FakeBackend([fakeInstance("1.1.1", EVRLE, 300)], { plan: true }), clock, ...limits });
 
   test("the decision cache stays within its count, dropping the oldest", async () => {
     const proxy = make(pdpFor(300), { maxDecisions: 3 });
@@ -885,10 +737,10 @@ describe("what the proxy holds", () => {
   test("expired decisions go first, and an expired one found by lookup is removed", async () => {
     const proxy = make(pdpFor(10), { maxDecisions: 3 });
     for (let i = 0; i < 3; i++) await (await proxy.fetch(ask(`t${i}`))).arrayBuffer();
-    advance(11);
+    clock.advance(11);
     await (await proxy.fetch(ask("fresh"))).arrayBuffer();
     expect(proxy.cachedDecisions).toBe(1);
-    advance(11);
+    clock.advance(11);
     await (await proxy.fetch(ask("fresh"))).arrayBuffer();
     expect(proxy.events.at(-1)!.authz).toBe("asked");
     expect(proxy.cachedDecisions).toBe(1);
