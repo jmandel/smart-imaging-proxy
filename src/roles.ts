@@ -1,11 +1,13 @@
-// Runs some of the services in this process, for a deployment that splits them. They find each other
-// through CONFIG, and act together only over HTTP.
+// Runs some of the root world's services in this process, for a deployment that splits them. They find
+// each other through CONFIG, and act together only over HTTP. Scopes are the whole demo's, not a split one's.
 import { randomBytes } from "node:crypto";
-import { createProxy, DEFAULT_JWKS_TTL_SECONDS } from "@smart-imaging-proxy/core";
+import { createCatalog, DEFAULT_JWKS_TTL_SECONDS, PolicyStore } from "@smart-imaging-proxy/core";
 import { CONFIG, DEFAULT_CATALOG_DB, GATEWAY_HOSTS, ONE_ORIGIN, PORTS, serveOn, serveStreamingOn } from "./config";
-import { DEMO_BACKEND_CLIENTS, DEMO_BACKEND_SCOPES, derivedBackendClient } from "./auth-server";
-import { createStores, storeConfigFromEnv } from "./stores";
-import { buildAuthServer, buildBackend, buildImagingServer, openCatalogs, proxyLinks, type BackendName } from "./stack";
+import { DEMO_BACKEND_CLIENTS, derivedBackendClient } from "./auth-server";
+import { openRootStore, storeConfigFromEnv } from "./stores";
+import { buildBackend, openCatalogs, type BackendName } from "./stack";
+import { createWorld } from "./world";
+import { demoClock } from "./clock";
 import { flushTraces, setTraceSink } from "./trace";
 import { createCollector } from "./trace-collector";
 import { traceStoreConfigFromEnv } from "./trace-store";
@@ -34,32 +36,32 @@ export async function startRoles(root: string, roles: Role[], env: Record<string
     const servers = serveOn(PORTS.trace, { fetch: collector.fetch, idleTimeout: 0 });
     stops.push(() => { servers.forEach(s => s.stop(true)); collector.close(); });
   }
-  if (has("imaging") || has("auth")) {
-    const stores = createStores(storeConfigFromEnv(env));
-    if (has("auth")) {
-      const auth = buildAuthServer(stores, serviceSecret, policySecret!);
-      for (const id of DEMO_BACKEND_CLIENTS) auth.registerBackendClient(id, DEMO_BACKEND_SCOPES, derivedBackendClient(id, serviceSecret).privateKey);
-      // The one origin runs with the Authorization Server, whose base is its root.
-      const servers = serveOn(PORTS.auth, { fetch: withCors(auth.fetch), idleTimeout: 120 });
-      stops.push(() => servers.forEach(s => s.stop(true)));
-    }
-    if (has("imaging")) {
-      const catalogs = await openCatalogs(root, env.CATALOG_DB || DEFAULT_CATALOG_DB);
-      const catalog = env.PROXY_BACKEND === "orthanc" ? catalogs.orthanc : catalogs.archive;
-      const imaging = buildImagingServer(stores, serviceSecret, policySecret!, () => catalog);
-      const servers = serveOn(PORTS.imaging, { fetch: withCors(imaging.fetch), idleTimeout: 120 });
-      stops.push(() => { servers.forEach(s => s.stop(true)); catalogs.archive.close(); catalogs.orthanc.close(); });
-    }
-    stops.push(() => stores.close());
+  const name = (env.PROXY_BACKEND ?? "static-files") as BackendName;
+  if (has("proxy") && !BACKENDS.includes(name)) throw new Error(`PROXY_BACKEND must be one of ${BACKENDS.join(", ")}, not "${name}"`);
+  const catalogs = has("imaging") ? await openCatalogs(root, env.CATALOG_DB || DEFAULT_CATALOG_DB) : undefined;
+  const catalog = catalogs ? (name === "orthanc" ? catalogs.orthanc : catalogs.archive) : createCatalog();
+  const backends = has("proxy") ? Object.fromEntries(BACKENDS.map(b => [b, buildBackend(b)])) as Record<BackendName, ReturnType<typeof buildBackend>> : {} as Record<BackendName, ReturnType<typeof buildBackend>>;
+  const store = has("imaging") || has("auth") ? openRootStore(storeConfigFromEnv(env)) : new PolicyStore({ mode: "memory" });
+  // The demo's Backend Services clients get keys derived from SERVICE_SECRET, so every process agrees on them.
+  const clientKeys = new Map(DEMO_BACKEND_CLIENTS.map(id => [id, derivedBackendClient(id, serviceSecret).privateKey]));
+  const world = createWorld({
+    store, clock: demoClock, serviceSecret, policySecret: policySecret ?? randomBytes(24).toString("base64url"), jwksTtlSeconds: Number(env.JWKS_TTL_SECONDS ?? DEFAULT_JWKS_TTL_SECONDS),
+    shared: { catalog: () => catalog, catalogSource: () => name === "orthanc" ? "orthanc" : "archive", backendName: () => name, backends, clientKeys },
+  });
+  if (has("auth")) {
+    // The one origin runs with the Authorization Server, whose base is its root.
+    const servers = serveOn(PORTS.auth, { fetch: withCors(world.auth.fetch), idleTimeout: 120 });
+    stops.push(() => servers.forEach(s => s.stop(true)));
+  }
+  if (has("imaging")) {
+    const servers = serveOn(PORTS.imaging, { fetch: withCors(world.imaging.fetch), idleTimeout: 120 });
+    stops.push(() => servers.forEach(s => s.stop(true)));
   }
   if (has("proxy")) {
-    const name = (env.PROXY_BACKEND ?? "static-files") as BackendName;
-    if (!BACKENDS.includes(name)) throw new Error(`PROXY_BACKEND must be one of ${BACKENDS.join(", ")}, not "${name}"`);
-    const backend = buildBackend(name);
-    const proxy = createProxy({ ...proxyLinks, jwksTtlSeconds: Number(env.JWKS_TTL_SECONDS ?? DEFAULT_JWKS_TTL_SECONDS), serviceSecret, backend: () => backend });
-    const server = await serveStreamingOn(PORTS.proxy, withCors(proxy.fetch));
+    const server = await serveStreamingOn(PORTS.proxy, withCors(world.proxy.fetch));
     stops.push(() => server.stop());
   }
+  stops.push(() => { store.close(); catalogs?.archive.close(); catalogs?.orthanc.close(); });
   if (has("gateway")) {
     if (!ONE_ORIGIN) throw new Error("--role gateway serves the one origin, which DEMO_ONE_ORIGIN=0 turns off");
     const server = await serveStreamingOn(PORTS.gateway, gatewayFetch, GATEWAY_HOSTS);

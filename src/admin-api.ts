@@ -1,8 +1,8 @@
 // JSON endpoints behind the admin screen. The demo has no admin login: every service binds to
 // 127.0.0.1 and the tailnet address, and a request naming another Host, or a write from another web
 // origin, is refused. Every write takes a fixed choice from this file or from rule-presets.ts, and
-// nothing else. A store action applies to the active store unless it names one. Policy changes go
-// through the Imaging Server's policy API.
+// nothing else. It acts on the root: the one real policy database. Policy changes go through the
+// Imaging Server's policy API.
 import type { BackendName, Stack } from "./stack";
 import { PolicyApiError, type Settings } from "@smart-imaging-proxy/core";
 import { matchRuleSet, RULE_SETS, ruleSetById } from "./rule-presets";
@@ -60,12 +60,12 @@ function ruleSetStatus(stack: Stack, rules: Parameters<typeof matchRuleSet>[0]) 
 }
 
 export function adminStatus(stack: Stack) {
-  const { stores } = stack;
-  const policy = stores.active.getPolicy();
+  const policy = stack.store.getPolicy();
   return {
-    store: { active: stores.activeName, label: stores.activeLabel, saved: stores.saved.info(), scratch: stores.scratch.info() },
+    store: stack.store.info(),
+    scopes: { live: stack.scopes.size },
     policy: { rules: policy.rules, delegations: policy.delegations, guardians: policy.guardians, appGrants: policy.appGrants },
-    settings: stores.active.getSettings(),
+    settings: stack.store.getSettings(),
     settingChoices: SETTING_CHOICES,
     clockChoices: CLOCK_CHOICES,
     ruleSets: ruleSetStatus(stack, policy.rules),
@@ -80,10 +80,10 @@ export function adminStatus(stack: Stack) {
 
 /** The query fields each delete needs to identify one row. */
 const DELETE_FIELDS: Record<string, string[]> = { "/delegations": ["patient", "delegate"], "/app-grants": ["client", "user", "patient"] };
-const NO_INPUT = ["/store/reset-scratch", "/tokens/revoke-all", "/proxy/flush", "/signing-key/rotate"];
-const WITH_INPUT: Record<string, string> = { "/store/activate": "POST", "/store/reset-saved": "POST", "/rule-set": "POST", "/settings": "PUT", "/clock": "POST", "/backend": "POST", "/outage": "POST" };
+const NO_INPUT = ["/tokens/revoke-all", "/proxy/flush", "/signing-key/rotate"];
+const WITH_INPUT: Record<string, string> = { "/store/reset-saved": "POST", "/rule-set": "POST", "/settings": "PUT", "/clock": "POST", "/backend": "POST", "/outage": "POST" };
 
-export async function adminApi(stack: Stack, req: Request, url: URL, hooks: { forgetFlow: () => void }): Promise<Response> {
+export async function adminApi(stack: Stack, req: Request, url: URL): Promise<Response> {
   const p = url.pathname.slice("/api/admin".length);
   const m = req.method;
   const status = () => json(adminStatus(stack));
@@ -109,13 +109,8 @@ export async function adminApi(stack: Stack, req: Request, url: URL, hooks: { fo
   if (m === "POST" && NO_INPUT.includes(p)) {
     const unwanted = url.search ? "this action takes no input" : await unwantedBody(req);
     if (unwanted) return bad(unwanted);
-    if (p === "/store/reset-scratch") {
-      await stack.resetScratch();
-      hooks.forgetFlow();
-      return status();
-    }
     if (p === "/tokens/revoke-all") {
-      stack.stores.active.revokeAllTokens();
+      stack.store.revokeAllTokens();
       return status();
     }
     if (p === "/proxy/flush") {
@@ -133,12 +128,6 @@ export async function adminApi(stack: Stack, req: Request, url: URL, hooks: { fo
   const only = (...allowed: string[]) => { const extra = extraField(b, allowed); return extra ? bad(extra) : undefined; };
 
   try {
-    if (p === "/store/activate") {
-      const extra = only("store"); if (extra) return extra;
-      if (b.store !== "saved" && b.store !== "scratch") return bad('store must be "saved" or "scratch"');
-      stack.useStore(b.store);
-      return status();
-    }
     if (p === "/store/reset-saved") {
       const extra = only("confirm"); if (extra) return extra;
       if (b.confirm !== true) return bad("resetting saved policy needs confirm: true");

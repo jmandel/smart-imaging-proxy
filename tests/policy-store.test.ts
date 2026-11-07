@@ -1,4 +1,4 @@
-// Saved policy has to survive a restart, and a flow must never disturb it. Everything here runs
+// Saved policy has to survive a restart, and a flow, in its own scope, must never disturb it. Everything here runs
 // against memory stores, or a file in its own temporary directory. The store itself is tested in core.
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -9,7 +9,7 @@ import { startStack } from "../src/stack";
 import { defaultsFor, FLOWS, registerClients, runStep, startFlow } from "../src/flows";
 import { accountUrl, scriptedLaunch, submitDelegation } from "../src/flows/oauth";
 import { CONFIG, DEFAULT_POLICY_DB } from "../src/config";
-import { createStores, storeConfigFromEnv } from "../src/stores";
+import { storeConfigFromEnv } from "../src/stores";
 import { resetClock, now, advance } from "../src/clock";
 
 const root = join(import.meta.dir, "..");
@@ -32,89 +32,79 @@ describe("configuration", () => {
   });
 });
 
-describe("saved and scratch", () => {
-  test("a store pair starts on saved, and activating doesn't copy anything", () => {
-    const stores = createStores({ mode: "memory" });
-    stores.saved.setPolicy({ rules: [RULE] });
-    expect(stores.activeName).toBe("saved");
-    expect(stores.activeLabel).toBe("Saved policy");
-    stores.activate("scratch");
-    expect(stores.activeLabel).toBe("Flow scratch: reset when a flow starts");
-    expect(stores.active.getPolicy().rules).toEqual([]);
-    stores.close();
-  });
-
-  test("with no configuration, a stack's saved store is in memory", async () => {
+describe("the root and scopes", () => {
+  test("with no configuration, the root's store is in memory, and so is every scope's", async () => {
     const stack = await startStack(root);
-    expect(stack.stores.saved.info().mode).toBe("memory");
-    expect(stack.stores.scratch.info().mode).toBe("memory");
+    expect(stack.store.info().mode).toBe("memory");
+    expect(stack.scopes.mint().store.info().mode).toBe("memory");
     stack.stop();
   });
 
-  test("starting and running a flow leaves the saved store untouched", async () => {
+  test("starting and running a flow leaves the root's store untouched", async () => {
     const path = tempPath();
     const stack = await startStack(root, { store: { mode: "file", path, durability: "normal" } });
     try {
       const clients = registerClients(stack);
-      expect(stack.stores.activeName).toBe("saved");
-      stack.stores.active.setPolicy({ rules: [RULE], delegations: [DELEGATION], appGrants: [GRANT], contextLifetimeSeconds: 77 });
-      stack.stores.saved.setSettings({ tokenLifetimeSeconds: 111 });
+      stack.store.setPolicy({ rules: [RULE], delegations: [DELEGATION], appGrants: [GRANT], contextLifetimeSeconds: 77 });
+      stack.store.setSettings({ tokenLifetimeSeconds: 111 });
       const savedToken = await scriptedLaunch("josh", "portal-app");
       expect(savedToken.expires_in).toBe(111);
-      const dump = () => JSON.stringify({ tables: ["delegations", "app_grants", "rules", "settings", "signing_keys", "tokens"].map(t => stack.stores.saved.db.query(`SELECT * FROM ${t} ORDER BY 1, 2`).all()) });
+      const dump = () => JSON.stringify({ tables: ["delegations", "app_grants", "rules", "settings", "signing_keys", "tokens"].map(t => stack.store.db.query(`SELECT * FROM ${t} ORDER BY 1, 2`).all()) });
       const before = dump();
 
       const flow = FLOWS.find(f => f.id === "caregiver")!;
       const c = await startFlow(stack, clients, flow);
-      expect(stack.stores.activeName).toBe("scratch");
-      expect(stack.stores.active.getPolicy().rules).toEqual([]);
-      expect(stack.stores.active.getPolicy().delegations).toEqual([]);
-      expect(stack.stores.active.getPolicy().contextLifetimeSeconds).toBe(300);
+      expect(c.world.store).not.toBe(stack.store);
+      expect(c.world.store.getPolicy().rules).toEqual([]);
+      expect(c.world.store.getPolicy().delegations).toEqual([]);
+      expect(c.world.store.getPolicy().contextLifetimeSeconds).toBe(300);
+      expect(c.world.store.guardians()).toEqual(stack.store.guardians());
       for (const s of flow.steps) {
         const r = await runStep(c, flow, s.id, defaultsFor(c, flow, s.id));
         expect(r.checks.filter(k => !k.ok)).toEqual([]);
       }
-      expect(stack.stores.scratch.getPolicy().appGrants.length).toBeGreaterThan(0);
+      expect(c.world.store.getPolicy().appGrants.length).toBeGreaterThan(0);
       expect(dump()).toBe(before);
 
-      // A second flow starts from an empty scratch store.
-      await startFlow(stack, clients, FLOWS.find(f => f.id === "backend-referral")!);
-      expect(stack.stores.scratch.getPolicy().appGrants).toEqual([]);
-      expect(stack.stores.scratch.info().counts.accessTokens).toBe(0);
+      // A second flow gets a scope of its own, which starts empty.
+      const second = await startFlow(stack, clients, FLOWS.find(f => f.id === "backend-referral")!);
+      expect(second.world.scope).not.toBe(c.world.scope);
+      expect(second.world.store.getPolicy().appGrants).toEqual([]);
+      expect(second.world.store.info().counts.accessTokens).toBe(0);
+      expect(c.world.store.getPolicy().appGrants.length).toBeGreaterThan(0);
       expect(dump()).toBe(before);
 
-      stack.useStore("saved");
-      expect(stack.stores.active.getPolicy().rules).toEqual([RULE]);
-      expect(stack.stores.active.getPolicy().contextLifetimeSeconds).toBe(77);
+      expect(stack.store.getPolicy().rules).toEqual([RULE]);
+      expect(stack.store.getPolicy().contextLifetimeSeconds).toBe(77);
     } finally { stack.stop(); }
   }, 60000);
 
-  test("a token lives in the store that issued it", async () => {
+  test("a token lives in the world that issued it", async () => {
     const stack = await startStack(root);
     try {
-      const introspect = (token: string) => stack.auth.grantOf(token);
-      const saved = await scriptedLaunch("josh");
-      await stack.resetAll();
-      expect(introspect(saved.access_token)).toBeUndefined();
-      const scratch = await scriptedLaunch("josh");
-      stack.useStore("saved");
-      expect(introspect(saved.access_token)!.sub).toBe("josh");
-      expect(introspect(scratch.access_token)).toBeUndefined();
+      const a = stack.scopes.mint(), b = stack.scopes.mint();
+      const atRoot = await scriptedLaunch("josh");
+      const inA = await scriptedLaunch("josh", "portal-app", { at: a.urls });
+      expect(stack.auth.grantOf(atRoot.access_token)!.sub).toBe("josh");
+      expect(stack.auth.grantOf(inA.access_token)).toBeUndefined();
+      expect(a.auth.grantOf(inA.access_token)!.sub).toBe("josh");
+      expect(a.auth.grantOf(atRoot.access_token)).toBeUndefined();
+      expect(b.auth.grantOf(inA.access_token)).toBeUndefined();
     } finally { stack.stop(); }
   });
 
-  test("each store keeps its own clock offset", async () => {
+  test("each world keeps its own clock", async () => {
     const stack = await startStack(root);
     try {
       const real = () => Math.floor(Date.now() / 1000);
-      await stack.resetAll();
-      advance(4000);
-      stack.useStore("saved");
+      const a = stack.scopes.mint(), b = stack.scopes.mint();
+      a.clock.advance(4000);
+      expect(a.clock.now()).toBeGreaterThanOrEqual(real() + 3990);
+      expect(b.clock.now()).toBeLessThan(real() + 10);
       expect(now()).toBeLessThan(real() + 10);
-      stack.useStore("scratch");
-      expect(now()).toBeGreaterThanOrEqual(real() + 3990);
-      await stack.resetAll();
-      expect(now()).toBeLessThan(real() + 10);
+      advance(100);
+      expect(b.clock.now()).toBeLessThan(real() + 10);
+      expect(now()).toBeGreaterThanOrEqual(real() + 99);
     } finally { stack.stop(); }
   });
 });
@@ -138,10 +128,9 @@ describe("a restart", () => {
 
     const second = await startStack(root, { store: config });
     try {
-      expect(second.stores.activeName).toBe("saved");
       expect(JSON.stringify(second.imaging.jwks())).toBe(publicKeyBefore);
-      expect(second.stores.active.getPolicy().delegations.map(d => d.delegate)).toEqual(["sam-caregiver"]);
-      expect(second.stores.active.getPolicy().appGrants[0]!.sites).toEqual(["Riverside Hospital"]);
+      expect(second.store.getPolicy().delegations.map(d => d.delegate)).toEqual(["sam-caregiver"]);
+      expect(second.store.getPolicy().appGrants[0]!.sites).toEqual(["Riverside Hospital"]);
 
       const search = await fetch(`${CONFIG.imagingUrl}/fhir/ImagingStudy?patient=josh-example`, { headers: { Authorization: `Bearer ${token.access_token}` } });
       expect(search.status).toBe(200);
@@ -168,7 +157,7 @@ describe("token lifecycle", () => {
     const stack = await startStack(root);
     try {
       const t = await scriptedLaunch("josh");
-      const record = stack.stores.active.getToken(t.refresh_token, "refresh")!;
+      const record = stack.store.getToken(t.refresh_token, "refresh")!;
       expect(record.exp! - now()).toBeGreaterThan(30 * 86400 - 5);
       expect(record.exp! - now()).toBeLessThanOrEqual(30 * 86400);
       advance(30 * 86400 - 60);
@@ -190,7 +179,7 @@ describe("token lifecycle", () => {
   test("the configured lifetime applies to new refresh tokens", async () => {
     const stack = await startStack(root);
     try {
-      stack.stores.active.setSettings({ refreshTokenLifetimeSeconds: 100 });
+      stack.store.setSettings({ refreshTokenLifetimeSeconds: 100 });
       const t = await scriptedLaunch("josh");
       advance(101);
       expect((await refresh(stack.auth.tokenUrl, t.refresh_token)).status).toBe(400);
@@ -200,9 +189,9 @@ describe("token lifecycle", () => {
   test("purging removes expired access and refresh tokens, by the store's clock, and leaves the rest", async () => {
     const stack = await startStack(root);
     try {
-      stack.stores.active.setSettings({ tokenLifetimeSeconds: 100, refreshTokenLifetimeSeconds: 200 });
+      stack.store.setSettings({ tokenLifetimeSeconds: 100, refreshTokenLifetimeSeconds: 200 });
       const t = await scriptedLaunch("josh");
-      const { active } = stack.stores;
+      const active = stack.store;
       advance(50);
       expect(stack.purgeTokens()).toBe(0);
       advance(51);
@@ -218,28 +207,33 @@ describe("token lifecycle", () => {
     } finally { stack.stop(); }
   });
 
-  test("a store's tokens expire by its own clock while the other is active", async () => {
+  test("each world's tokens expire by its own clock", async () => {
     const stack = await startStack(root);
     try {
-      const saved = await scriptedLaunch("josh");
-      await stack.resetAll();
+      const scope = stack.scopes.mint();
+      const atRoot = await scriptedLaunch("josh");
+      const inScope = await scriptedLaunch("josh", "portal-app", { at: scope.urls });
       advance(100000);
       stack.purgeTokens();
-      expect(stack.stores.saved.getToken(saved.access_token, "access")).toBeDefined();
+      expect(stack.store.getToken(atRoot.access_token, "access")).toBeUndefined();
+      expect(scope.store.getToken(inScope.access_token, "access")).toBeDefined();
+      scope.clock.advance(100000);
+      stack.purgeTokens();
+      expect(scope.store.getToken(inScope.access_token, "access")).toBeUndefined();
     } finally { stack.stop(); }
   });
 
   test("purging runs periodically while the stack runs", async () => {
     const stack = await startStack(root, { purgeIntervalMs: 20 });
     try {
-      stack.stores.active.setSettings({ tokenLifetimeSeconds: 100, refreshTokenLifetimeSeconds: 100 });
+      stack.store.setSettings({ tokenLifetimeSeconds: 100, refreshTokenLifetimeSeconds: 100 });
       const t = await scriptedLaunch("josh");
       await Bun.sleep(60);
-      expect(stack.stores.active.getToken(t.access_token, "access")).toBeDefined();
+      expect(stack.store.getToken(t.access_token, "access")).toBeDefined();
       advance(101);
       await Bun.sleep(80);
-      expect(stack.stores.active.getToken(t.access_token, "access")).toBeUndefined();
-      expect(stack.stores.active.getToken(t.refresh_token, "refresh")).toBeUndefined();
+      expect(stack.store.getToken(t.access_token, "access")).toBeUndefined();
+      expect(stack.store.getToken(t.refresh_token, "refresh")).toBeUndefined();
     } finally { stack.stop(); }
   });
 
@@ -254,9 +248,9 @@ describe("token lifecycle", () => {
     s.close();
     const stack = await startStack(root, { store: config });
     try {
-      expect(stack.stores.saved.getToken("old-access", "access")).toBeUndefined();
-      expect(stack.stores.saved.getToken("old-refresh", "refresh")).toBeUndefined();
-      expect(stack.stores.saved.getToken("live-refresh", "refresh")).toBeDefined();
+      expect(stack.store.getToken("old-access", "access")).toBeUndefined();
+      expect(stack.store.getToken("old-refresh", "refresh")).toBeUndefined();
+      expect(stack.store.getToken("live-refresh", "refresh")).toBeDefined();
     } finally { stack.stop(); }
   });
 });

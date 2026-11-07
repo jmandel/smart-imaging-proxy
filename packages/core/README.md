@@ -117,7 +117,6 @@ reports/quarantine.json                                       inputs left out of
 | `catalog()` | The catalog to search, asked per request |
 | `keyStore` | The `PolicyStore` holding the signing key |
 | `store()` | The `PolicyStore` search and decisions use |
-| `namedStore(name)` | Other stores the policy API can name with `?store=` |
 | `cursorKey`, `pageBytes` | The paging cursor key, which processes behind one address share, and a page's byte budget (5 MiB) |
 | `observer`, `clock` | See above |
 
@@ -143,7 +142,7 @@ Policy is evaluated against the store's rows: the patient or a guardian on file,
 
 ## The policy API
 
-Version 1, at `/policy/v1` on the Imaging Server. JSON in and out. Every call carries `Authorization: Bearer {policySecret}`, or gets `401`, and the service credential doesn't work here. It belongs on an internal address only. Every call takes `?store={name}` to act on a store `namedStore` knows, or `404`, and otherwise acts on `store()`. A body that isn't JSON, or a policy that doesn't validate, gets `400` with `error` and, for a policy, `errors`, naming each field.
+Version 1, at `/policy/v1` on the Imaging Server. JSON in and out. Every call carries `Authorization: Bearer {policySecret}`, or gets `401`, and the service credential doesn't work here. It belongs on an internal address only. Every call acts on `store()`. A body that isn't JSON, or a policy that doesn't validate, gets `400` with `error` and, for a policy, `errors`, naming each field.
 
 | Call | Body or query | Answer |
 |---|---|---|
@@ -164,7 +163,7 @@ Version 1, at `/policy/v1` on the Imaging Server. JSON in and out. Every call ca
 | `POST /reset` | `{ tokens?: boolean }` | `204`. Clears delegations, app grants, rules and settings, and puts the guardians on file back. `tokens: true` clears token records too. The signing key stays |
 | `GET /store` | | The store's mode, path, durability, journal mode, schema version, and row counts |
 
-`createPolicyClient({ base, policySecret, store?, fetch? })` calls it, with a method for each call: `relationships`, `access`, `explain`, `delegate`, `removeDelegations`, `grantApp`, `removeAppGrants`, `getPolicy`, `setPolicy`, `setGuardians`, `setRules`, `updateRule`, `getSettings`, `setSettings`, `reset`, and `info`, and `withStore(name)` for a client on another store. `delegate` and `grantApp` answer `false` for a `403`, and the removals and `updateRule` `false` for a `404`. Anything else that fails throws `PolicyApiError`, with its `status`, message and `errors`. `fetch(operation, url, init)` makes each request, so a caller can name and trace it.
+`createPolicyClient({ base, policySecret, fetch? })` calls it, with a method for each call: `relationships`, `access`, `explain`, `delegate`, `removeDelegations`, `grantApp`, `removeAppGrants`, `getPolicy`, `setPolicy`, `setGuardians`, `setRules`, `updateRule`, `getSettings`, `setSettings`, `reset`, and `info`. `delegate` and `grantApp` answer `false` for a `403`, and the removals and `updateRule` `false` for a `404`. Anything else that fails throws `PolicyApiError`, with its `status`, message and `errors`. `fetch(operation, url, init)` makes each request, so a caller can name and trace it.
 
 ## Tests
 

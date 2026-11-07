@@ -4,8 +4,8 @@
 //
 // A role can be a comma-separated list, as in `--role imaging,auth,trace`. `all` is the default, and
 // runs every service in this process. `demo` is the same: the flow player and admin screen change
-// policy through the policy API, and work directly on which store is in use, the decision log, the
-// proxy's event log and the clock, so they run with the services they drive.
+// policy through the policy API, mint scopes, and work directly on the decision log, the proxy's
+// event log and the clocks, so they run with the services they drive. Split roles serve the root only.
 //
 // Every service reads its own address and the others' from CONFIG in src/config.ts, so all the
 // processes need the same DEMO_PORT_OFFSET and DEMO_TAILNET. When split, a process also reads:
@@ -48,7 +48,7 @@ if (whole) {
   const demo = createDemoServer(stack, registerClients(stack), root);
   const demoServers = serveOn(PORTS.demo, { idleTimeout: 240, fetch: demo.fetch });
   stopping = () => { demoServers.forEach(s => s.stop(true)); stack.stop(); };
-  const info = stack.stores.saved.info();
+  const info = stack.store.info();
   console.log(`SMART Imaging Proxy: ${CONFIG.demoUrl}${TAILNET ? " (tailnet)" : ""}`);
   console.log(`Admin: ${CONFIG.demoUrl}/admin`);
   console.log(`Live trace: ${CONFIG.traceUrl}`);

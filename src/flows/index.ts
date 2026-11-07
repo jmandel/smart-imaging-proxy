@@ -1,26 +1,29 @@
 import { policyFlows } from "./policy-flows";
 import { protocolFlows } from "./protocol-flows";
-import { Ctx, resetDemo, type Flow, type StepResult } from "./runtime";
+import { Ctx, type Flow, type StepResult } from "./runtime";
 import type { Stack } from "../stack";
-import { DEMO_BACKEND_CLIENTS, DEMO_BACKEND_SCOPES, type BackendClient } from "../auth-server";
+import type { World } from "../world";
+import type { BackendClient } from "../auth-server";
 import { randomBytes } from "node:crypto";
-import { flushTraces, runInSession, withSpan } from "../trace";
+import { flushTraces, inScope, runInSession, withSpan } from "../trace";
 
 export const FLOWS: Flow[] = [...policyFlows, ...protocolFlows];
 export const flowById = (id: string) => FLOWS.find(f => f.id === id);
 
-export function registerClients(stack: Stack): Record<string, BackendClient> {
-  const clients: Record<string, BackendClient> = {};
-  for (const id of DEMO_BACKEND_CLIENTS) clients[id] = stack.auth.registerBackendClient(id, DEMO_BACKEND_SCOPES);
-  return clients;
-}
+/** The demo's Backend Services clients, which every world has registered with the same keys. */
+export function registerClients(stack: Stack): Record<string, BackendClient> { return stack.root.clients; }
 
-export async function startFlow(stack: Stack, clients: Record<string, BackendClient>, flow: Flow): Promise<Ctx> {
+/** Starts a flow in a new scope of its own, seeded from the guardians on file. */
+export function startFlow(stack: Stack, clients: Record<string, BackendClient>, flow: Flow): Promise<Ctx> {
+  return startFlowIn(stack.scopes.mint(), clients, flow);
+}
+/** Starts a flow in `world`, which is a fresh scope. */
+export async function startFlowIn(world: World, clients: Record<string, BackendClient>, flow: Flow): Promise<Ctx> {
   const session = `flow-${flow.number}-${flow.id}-${randomBytes(3).toString("hex")}`;
-  const c = new Ctx(stack, clients);
+  const c = new Ctx(world, clients);
   c.session = session;
-  // The reset and setup are policy API calls, which belong to the flow's session.
-  await runInSession(session, () => withSpan("demo", "action", `${flow.number}. Start from flow scratch`, { flow: flow.title }, async () => { await resetDemo(stack); await flow.setup?.(c); }));
+  // Setup makes policy API calls, which belong to the flow's session.
+  await inScope(world.scope, () => runInSession(session, () => withSpan("demo", "action", `${flow.number}. Start in a new scope`, { flow: flow.title, scope: world.scope }, async () => { await flow.setup?.(c); })));
   flushTraces();
   return c;
 }
@@ -44,12 +47,12 @@ export async function runStep(c: Ctx, flow: Flow, stepId: string, inputs: Record
   c.beginStep();
   // A request can leave out a step's choices, and a step always has them.
   inputs = { ...defaultsFor(c, flow, stepId), ...inputs };
-  const narrative = await runInSessionNoted(c, () => runInSession(c.session, () => withSpan("user", "action", `${flow.number}. ${step.title}`, { flow: flow.title, step: step.id, backend: c.backend, actor: step.actor, inputs }, async s => {
+  const narrative = await runInSessionNoted(c, () => inScope(c.world.scope, () => runInSession(c.session, () => withSpan("user", "action", `${flow.number}. ${step.title}`, { flow: flow.title, step: step.id, backend: c.backend, actor: step.actor, inputs }, async s => {
     const n = await step.run(c, inputs);
     const failed = c.checks.filter(k => !k.ok).length;
     s.end(failed ? "error" : "ok", { checks_passed: c.checks.length - failed, checks_failed: failed });
     return n;
-  }, { session: c.session, trace: randomBytes(16).toString("hex") })));
+  }, { session: c.session, trace: randomBytes(16).toString("hex"), ...(c.world.scope ? { scope: c.world.scope } : {}) }))));
   flushTraces();
   return c.endStep(narrative ?? undefined);
 }

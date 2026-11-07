@@ -1,24 +1,24 @@
-// Starts the Authorization Server, Imaging Server and proxy as separate HTTP services in one
-// process. They talk only over HTTP, so src/roles.ts can run the same services in separate processes.
-// The proxy fetches the Imaging Server's public keys, and is given nothing else from the others.
+// Starts the Authorization Server, Imaging Server and proxy as separate HTTP services in one process,
+// for the root world and every scope. They talk only over HTTP, so src/roles.ts can run the root's in
+// separate processes. Each service's listener sends `/s/{scope}/...` to that scope's own instance of
+// the same service, with the prefix taken off, and everything else to the root's.
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
+import { generateKeyPairSync, type KeyObject } from "node:crypto";
 import { S3Client } from "bun";
-import {
-  ArchiveBackend, catalogFromOrthanc, createCatalog, createImagingServer, createPolicyClient, createProxy, fileStore, orthancCatalogPath, OrthancBackend,
-  rebuildFromArchive, s3Store, seedPatientLinks, withTruncation, type Backend, type CatalogStore, type PolicyOperation, type StoreConfig,
-} from "@smart-imaging-proxy/core";
-import { createAuthServer, USERS } from "./auth-server";
+import { ArchiveBackend, catalogFromOrthanc, createCatalog, fileStore, orthancCatalogPath, OrthancBackend, rebuildFromArchive, s3Store, seedPatientLinks, type Backend, type CatalogStore, type StoreConfig } from "@smart-imaging-proxy/core";
+import { DEMO_BACKEND_CLIENTS } from "./auth-server";
 import { ACCESSION_SYSTEM, CONFIG, GATEWAY_HOSTS, ONE_ORIGIN, PORTS, serveOn, serveStreamingOn } from "./config";
 import { gatewayFetch } from "./gateway";
 import { withCors } from "./cors";
-import { setTraceSink, tfetch, traceObserver, type Service } from "./trace";
+import { inScope, setTraceSink, traceObserver } from "./trace";
 import { createCollector } from "./trace-collector";
 import type { TraceStoreConfig } from "./trace-store";
-import { createStores, type Stores, type StoreName } from "./stores";
-import { clockOffset, demoClock, resetClock, setClockOffset } from "./clock";
+import { openRootStore } from "./stores";
+import { demoClock } from "./clock";
+import { createWorld, type BackendName, type Shared, type World } from "./world";
+import { createScopes, splitScope, type Scopes } from "./scopes";
 
-export type BackendName = "static-files" | "s3" | "orthanc";
+export type { BackendName } from "./world";
 
 /** The archive's catalog and Orthanc's. Each is derived, so an empty one is built from its source. */
 export async function openCatalogs(root: string, path = ":memory:") {
@@ -44,98 +44,52 @@ export function buildBackend(name: BackendName): Backend {
   return new OrthancBackend(CONFIG.orthanc, { observer: traceObserver });
 }
 
-/** How each policy API call reads in the trace. */
-const POLICY_CALLS: Record<PolicyOperation, string> = {
-  relationships: "look up who is related to whom",
-  access: "look up the user's access",
-  explain: "the demo asks for the Imaging Server's view",
-  delegate: "record the delegation at the Imaging Server",
-  "remove-delegations": "revoke the delegation at the Imaging Server",
-  "grant-app": "record the app authorization at the Imaging Server",
-  "remove-app-grants": "revoke the app authorization at the Imaging Server",
-  "get-policy": "read policy at the Imaging Server",
-  "set-policy": "set policy at the Imaging Server",
-  "set-guardians": "set the guardians on file at the Imaging Server",
-  "set-rules": "set the rules at the Imaging Server",
-  "update-rule": "change a rule at the Imaging Server",
-  "get-settings": "read the settings at the Imaging Server",
-  "set-settings": "change the settings at the Imaging Server",
-  reset: "reset policy at the Imaging Server",
-  info: "read the policy store's state at the Imaging Server",
-};
+const notFound = (error: string, status = 404) => Response.json({ error }, { status });
 /**
- * The Imaging Server's policy API, called with the policy credential on its own loopback port: the
- * one origin doesn't forward the API. Traced as `service`.
+ * A listener for one service across worlds: `serviceOf(world)` answers for the world the path names,
+ * with the prefix taken off, and in that scope's trace context. No world ever answers for another.
  */
-export const policyClient = (policySecret: string, service: Service = "demo") =>
-  createPolicyClient({ base: `http://127.0.0.1:${PORTS.imaging}`, policySecret, fetch: (op, url, init) => tfetch(service, POLICY_CALLS[op], url, init) });
-
-/** The Authorization Server. Its directory of who may see what is the Imaging Server, over HTTP. */
-export function buildAuthServer(stores: Stores, serviceSecret: string, policySecret: string) {
-  const policy = policyClient(policySecret, "authorization-server");
-  return createAuthServer({
-    issuer: CONFIG.authUrl, imagingFhirBase: `${CONFIG.imagingUrl}/fhir`, serviceSecret, redirectUri: `${CONFIG.demoUrl}/oauth/callback`,
-    store: () => stores.active, storeLabel: () => stores.activeLabel,
-    directory: {
-      relationships: () => policy.relationships(),
-      access: (user, fhirUser) => policy.access(user, fhirUser),
-      recordConsent: async c => { await policy.grantApp(c); },
-      delegate: async d => { await policy.delegate(d); },
-      revokeDelegation: async (grantedBy, delegate, patient) => { if (delegate) await policy.removeDelegations({ grantedBy, delegate, patient }); },
-      revokeApp: async (client, user, patient) => { if (client) await policy.removeAppGrants({ client, user, patient }); },
-    },
-  });
-}
-
-/** The Imaging Server. It checks tokens at the Authorization Server, over HTTP. */
-export function buildImagingServer(stores: Stores, serviceSecret: string, policySecret: string, catalog: () => CatalogStore) {
-  const introspect = async (token: string) => {
-    const r = await tfetch("imaging-fhir", "introspect the token", `${CONFIG.authUrl}/introspect`, { method: "POST", headers: { Authorization: `Bearer ${serviceSecret}`, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token }) });
-    return r.ok ? r.json() : { active: false };
+export function scopedHandler(root: World, scopes: Scopes, serviceOf: (w: World) => (req: Request) => Promise<Response> | Response) {
+  return async (req: Request): Promise<Response> => {
+    const url = new URL(req.url);
+    const { scope, rest, nested } = splitScope(url.pathname);
+    if (!scope) return serviceOf(root)(req);
+    if (nested) return notFound("a scope can't hold another scope");
+    const found = scopes.resolve(scope);
+    if (!("world" in found)) return notFound(found.error, found.status);
+    const inner = new Request(new URL(rest + url.search, url.origin), req);
+    return inScope(scope, () => serviceOf(found.world)(inner));
   };
-  return createImagingServer({ base: `${CONFIG.imagingUrl}/fhir`, clinicalFhirBase: `${CONFIG.authUrl}/fhir`, proxyBase: () => CONFIG.proxyUrl, introspect, patientOf: user => USERS[user]?.patient, serviceSecret, policySecret, catalog, keyStore: stores.saved, store: () => stores.active, namedStore: name => stores.named(name), observer: traceObserver, clock: demoClock });
 }
-
-/** All a proxy gets from the other services: where its keys and its decisions are, and the demo's tracing and clock. */
-export const proxyLinks = { publicBase: () => CONFIG.proxyUrl, jwksUrl: `${CONFIG.imagingUrl}/.well-known/jwks.json`, decisionUrl: `${CONFIG.imagingUrl}/access/v1/evaluation`, observer: traceObserver, clock: demoClock };
 
 /**
- * With no store config, the saved store is in memory, and with no catalog path, so are the catalogs:
+ * With no store config, the root's store is in memory, and with no catalog path, so are the catalogs:
  * only src/main.ts reads the POLICY_* and CATALOG_DB settings.
  */
-export async function startStack(root: string, opts: { store?: StoreConfig; traces?: TraceStoreConfig; purgeIntervalMs?: number; catalog?: string } = {}) {
-  const stores = createStores(opts.store ?? { mode: "memory" });
+export async function startStack(root: string, opts: { store?: StoreConfig; traces?: TraceStoreConfig; purgeIntervalMs?: number; catalog?: string; scopes?: { idleMs?: number; max?: number } } = {}) {
+  const store = openRootStore(opts.store);
   const catalogs = await openCatalogs(root, opts.catalog);
-  const serviceSecret = randomBytes(24).toString("base64url");
-  // Only the Authorization Server and the demo hold this one. The proxy never does.
-  const policySecret = randomBytes(24).toString("base64url");
   const collector = createCollector(root, opts.traces);
   setTraceSink(CONFIG.traceSink);
 
-  const auth = buildAuthServer(stores, serviceSecret, policySecret);
-  const policy = policyClient(policySecret);
-  const imaging = buildImagingServer(stores, serviceSecret, policySecret, () => catalogFor(current));
-
-  let truncateAfter: number | undefined;
-  const wrap = (b: Backend) => withTruncation(b, () => truncateAfter);
-  const backends: Record<BackendName, Backend> = {
-    "static-files": wrap(buildBackend("static-files")),
-    s3: wrap(buildBackend("s3")),
-    orthanc: wrap(buildBackend("orthanc")),
-  };
+  const backends: Record<BackendName, Backend> = { "static-files": buildBackend("static-files"), s3: buildBackend("s3"), orthanc: buildBackend("orthanc") };
   let current: BackendName = "static-files";
   /** Search and decisions read the catalog that describes what the selected backend holds. */
-  function catalogFor(b: BackendName): CatalogStore { return b === "orthanc" ? catalogs.orthanc : catalogs.archive; }
+  const catalogFor = (b: BackendName): CatalogStore => b === "orthanc" ? catalogs.orthanc : catalogs.archive;
+  const clientKeys = new Map<string, KeyObject>(DEMO_BACKEND_CLIENTS.map(id => [id, generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey]));
+  const shared: Shared = { catalog: () => catalogFor(current), catalogSource: () => current === "orthanc" ? "orthanc" : "archive", backendName: () => current, backends, clientKeys };
 
-  const proxy = createProxy({ ...proxyLinks, serviceSecret, backend: () => backends[current] });
+  const rootWorld = createWorld({ store, clock: demoClock, shared });
+  const scopes = createScopes(shared, opts.scopes);
+  const route = (serviceOf: (w: World) => (req: Request) => Promise<Response> | Response) => scopedHandler(rootWorld, scopes, serviceOf);
 
   const servers = [
-    ...serveOn(PORTS.trace, { fetch: collector.fetch, idleTimeout: 0 }),
-    ...serveOn(PORTS.auth, { fetch: withCors(auth.fetch), idleTimeout: 120 }),
-    ...serveOn(PORTS.imaging, { fetch: withCors(imaging.fetch), idleTimeout: 120 }),
+    ...serveOn(PORTS.trace, { fetch: route(w => req => collector.fetch(req, w.scope)), idleTimeout: 0 }),
+    ...serveOn(PORTS.auth, { fetch: withCors(route(w => w.auth.fetch)), idleTimeout: 120 }),
+    ...serveOn(PORTS.imaging, { fetch: withCors(route(w => w.imaging.fetch)), idleTimeout: 120 }),
   ];
-  const proxyServer = await serveStreamingOn(PORTS.proxy, withCors(proxy.fetch));
   // The streaming server, so the proxy's exact Content-Length reaches the client.
+  const proxyServer = await serveStreamingOn(PORTS.proxy, withCors(route(w => w.proxy.fetch)));
   const gatewayServer = ONE_ORIGIN ? await serveStreamingOn(PORTS.gateway, gatewayFetch, GATEWAY_HOSTS) : undefined;
 
   /** Checks a backend works and reports what it declares. */
@@ -150,62 +104,35 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
     } catch (e) { return { name, ok: false, capabilities: b.capabilities(), detail: String(e) }; }
   }
 
-  // In-memory state that belongs to one store's world, cleared when moving between them or resetting.
-  const clearRuntime = () => { auth.reset(); imaging.reset(); proxy.reset(); truncateAfter = undefined; };
-  // A flow moves the demo clock, so each store keeps its own offset.
-  const offsets: Record<StoreName, number> = { saved: 0, scratch: 0 };
-  function useStore(name: StoreName) {
-    if (name === stores.activeName) return;
-    offsets[stores.activeName] = clockOffset();
-    stores.activate(name);
-    setClockOffset(offsets[name]);
-    clearRuntime();
-  }
-
-  /** Each store's tokens expire by that store's own demo clock. */
-  function purgeTokens() {
-    const offsetOf = (name: StoreName) => name === stores.activeName ? clockOffset() : offsets[name];
-    const real = Math.floor(Date.now() / 1000);
-    return stores.saved.purgeExpiredTokens(real + offsetOf("saved")) + stores.scratch.purgeExpiredTokens(real + offsetOf("scratch"));
-  }
+  /** Each world's tokens expire by its own clock. */
+  const purgeTokens = () => [rootWorld, ...scopes.worlds()].reduce((n, w) => n + w.purgeTokens(), 0);
   purgeTokens();
   const purgeTimer = setInterval(purgeTokens, opts.purgeIntervalMs ?? 60000);
   purgeTimer.unref();
 
   return {
-    auth, imaging, proxy, backends, collector, stores, catalogs,
-    /** The policy API, on the store in use. `policy.withStore("saved")` names one. */
-    policy,
+    /** The root world, which holds the one real policy database. */
+    root: rootWorld, scopes, store, backends, collector, catalogs, clientKeys,
+    auth: rootWorld.auth, imaging: rootWorld.imaging, proxy: rootWorld.proxy, policy: rootWorld.policy,
+    /** The listener a scope-aware service port uses, for the demo's own pages. */
+    route,
     /** The catalog in use. Its `allStudies` is for the demo's displays and tests. */
     get catalog() { return catalogFor(current); },
-    get catalogSource() { return current === "orthanc" ? "orthanc" as const : "archive" as const; },
+    get catalogSource() { return shared.catalogSource(); },
     get backend() { return current; },
     setBackend(n: BackendName) { current = n; },
-    setTruncateAfter(n: number | undefined) { truncateAfter = n; },
+    setTruncateAfter: rootWorld.setTruncateAfter,
     selfTest,
-    stop() { clearInterval(purgeTimer); servers.forEach(s => s.stop(true)); proxyServer.stop(); gatewayServer?.stop(); stores.close(); collector.close(); catalogs.archive.close(); catalogs.orthanc.close(); },
-    /** Replaces the signing key, then tells the proxy over HTTP, so it stops trusting the old one now. A proxy that isn't told learns within its TTL. */
-    async rotateSigningKey() {
-      const kid = imaging.rotateSigningKey();
-      const told = await tfetch("demo", "tell the proxy to refetch signing keys", `http://127.0.0.1:${PORTS.proxy}/internal/keys/refresh`, { method: "POST", headers: { Authorization: `Bearer ${serviceSecret}` } }).then(r => r.ok, () => false);
-      return { kid, proxyTold: told };
-    },
-    /** The Imaging Server's view of why a study is or isn't released, asked with the service credential. */
-    explain(q: { client: string; user?: string; fhirUser?: string; patient: string }) {
-      return policy.explain(Object.fromEntries(Object.entries(q).filter(e => !!e[1])) as typeof q);
-    },
-    useStore,
+    stop() { clearInterval(purgeTimer); servers.forEach(s => s.stop(true)); proxyServer.stop(); gatewayServer?.stop(); scopes.close(); store.close(); collector.close(); catalogs.archive.close(); catalogs.orthanc.close(); },
+    rotateSigningKey: rootWorld.rotateSigningKey,
+    explain: rootWorld.explain,
     purgeTokens,
-    /** Resets the scratch store. The saved store isn't touched, and the active store doesn't change. */
-    async resetScratch() {
-      await policy.withStore("scratch").reset({ tokens: true });
-      offsets.scratch = 0;
-      if (stores.activeName === "scratch") { resetClock(); clearRuntime(); }
-    },
-    /** Resets saved policy to the guardians on file. Saved tokens and the signing key stay. */
-    async resetSaved() { await policy.withStore("saved").reset(); },
-    /** Where every flow starts: the scratch store, holding only the guardians on file, with the clock at zero. */
-    async resetAll() { useStore("scratch"); await policy.withStore("scratch").reset({ tokens: true }); resetClock(); clearRuntime(); },
+    /** Resets the root's policy to the guardians on file. Its tokens and signing key stay. */
+    async resetSaved() { await rootWorld.policy.reset(); },
+    /** Clears the root's in-memory state: sign-ins in progress, decisions, and the proxy's cache and log. */
+    clearRuntime: rootWorld.clearRuntime,
+    /** The root as it starts: the guardians on file, no tokens, the clock at zero, nothing in memory. The signing key stays. */
+    async resetAll() { await rootWorld.policy.reset({ tokens: true }); demoClock.reset(); rootWorld.clearRuntime(); },
   };
 }
 export type Stack = Awaited<ReturnType<typeof startStack>>;

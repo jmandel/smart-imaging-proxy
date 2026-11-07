@@ -62,7 +62,7 @@ describe("over HTTP", () => {
   const RULE = { id: "keep", when: { client: "c" }, allow: { all: true } };
   const DELEGATION = { patient: "josh-example", grantedBy: "josh", delegate: "sam-caregiver", relationship: "caregiver", sites: ["Lakeside Imaging"] };
   const GRANT = { client: "portal-app", user: "josh", patient: "josh-example" };
-  const fingerprint = () => JSON.stringify({ saved: stack.stores.saved.getPolicy(), settings: stack.stores.saved.getSettings(), scratch: stack.stores.scratch.getPolicy(), active: stack.stores.activeName, backend: stack.backend, outage: stack.imaging.outage, kid: stack.imaging.signingKid });
+  const fingerprint = () => JSON.stringify({ saved: stack.store.getPolicy(), settings: stack.store.getSettings(), scopes: stack.scopes.size, backend: stack.backend, outage: stack.imaging.outage, kid: stack.imaging.signingKid });
 
   beforeAll(async () => {
     stack = await startStack(root);
@@ -74,9 +74,9 @@ describe("over HTTP", () => {
   });
   afterAll(() => { stack.stop(); rmSync(dir, { recursive: true, force: true }); });
   beforeEach(async () => {
-    stack.useStore("saved");
+
     await stack.resetSaved();
-    stack.stores.saved.setPolicy({ rules: [RULE], delegations: [DELEGATION], appGrants: [GRANT] });
+    stack.store.setPolicy({ rules: [RULE], delegations: [DELEGATION], appGrants: [GRANT] });
     stack.imaging.setOutage(false);
     resetClock();
     stack.setBackend("static-files");
@@ -88,12 +88,11 @@ describe("over HTTP", () => {
   const stillIntact = () => {
     expect(readFileSync(canary, "utf8")).toBe("untouched");
     expect(existsSync(bait)).toBe(false);
-    expect(stack.stores.saved.rules()).toEqual([RULE]);
+    expect(stack.store.rules()).toEqual([RULE]);
   };
 
   /** Every write route that takes a field: where it lives, the field, and a value that's a real choice. */
   const FIELDS: [string, string, string, unknown][] = [
-    ["POST", "/api/admin/store/activate", "store", "saved"],
     ["POST", "/api/admin/store/reset-saved", "confirm", undefined],
     ["POST", "/api/admin/rule-set", "id", "no-extra-rules"],
     ...Object.entries(SETTING_CHOICES).map(([k, v]) => ["PUT", "/api/admin/settings", k, v[0]!.value] as [string, string, string, unknown]),
@@ -131,9 +130,9 @@ describe("over HTTP", () => {
   });
   test("the clock takes only one named action", async () => {
     for (const body of [{ reset: true, advanceSeconds: 60 }, { reset: true, path: bait }, { advanceSeconds: 61 }, {}]) expect((await send("POST", "/api/admin/clock", body)).status).toBe(400);
-    expect(stack.stores.active.getPolicy() && (await (await send("GET", "/api/admin/status")).json() as any).clock.offsetSeconds).toBe(0);
+    expect(stack.store.getPolicy() && (await (await send("GET", "/api/admin/status")).json() as any).clock.offsetSeconds).toBe(0);
   });
-  for (const path of ["/store/reset-scratch", "/tokens/revoke-all", "/proxy/flush", "/signing-key/rotate"]) {
+  for (const path of ["/tokens/revoke-all", "/proxy/flush", "/signing-key/rotate"]) {
     test(`POST /api/admin${path} takes no input at all`, async () => {
       const before = fingerprint();
       for (const body of [{ path: bait }, { file: canary }, { store: "'; DROP TABLE rules; --" }, "../../etc/passwd", "[1]"]) expect((await send("POST", `/api/admin${path}`, body)).status).toBe(400);
@@ -158,15 +157,14 @@ describe("over HTTP", () => {
     stillIntact();
   });
   test("no route accepts a path, and the replaced routes are gone", async () => {
-    for (const [method, path] of [["PUT", "/api/admin/rules"], ["POST", "/api/admin/rules"], ["PUT", "/api/admin/rule-set"], ["POST", "/api/admin/settings"], ["PUT", "/api/admin/clock"], ["POST", "/api/admin/store/path"], ["PUT", "/api/admin/store"], ["POST", "/api/admin/store/open"], ["POST", "/api/admin/catalog"], ["POST", "/api/admin/export"], ["POST", "/api/admin/import"], ["POST", "/api/admin/../../etc/passwd"]] as const) {
+    for (const [method, path] of [["PUT", "/api/admin/rules"], ["POST", "/api/admin/rules"], ["PUT", "/api/admin/rule-set"], ["POST", "/api/admin/settings"], ["PUT", "/api/admin/clock"], ["POST", "/api/admin/store/path"], ["PUT", "/api/admin/store"], ["POST", "/api/admin/store/open"], ["POST", "/api/admin/store/activate"], ["POST", "/api/admin/store/reset-scratch"], ["POST", "/api/admin/catalog"], ["POST", "/api/admin/export"], ["POST", "/api/admin/import"], ["POST", "/api/admin/../../etc/passwd"]] as const) {
       expect((await send(method, path, { path: bait, rules: [] })).status).toBe(404);
     }
     stillIntact();
   });
   test("the status shows store and catalog paths, read-only", async () => {
     const s: any = await (await send("GET", "/api/admin/status")).json();
-    expect(s.store.saved.path).toBe(":memory:");
-    expect(s.store.scratch.path).toBe(":memory:");
+    expect(s.store.path).toBe(":memory:");
     expect(s.catalog.path).toBe(":memory:");
     const js = await (await send("GET", "/admin.js")).text();
     expect(js).toContain('row("Path", x => x.path)');
@@ -184,13 +182,14 @@ describe("over HTTP", () => {
     expect(stack.backend).toBe("static-files");
     stillIntact();
   });
-  test("/api/policy is refused while saved policy is active, whatever it holds", async () => {
+  test("/api/policy is refused at the root, whatever it holds", async () => {
     for (const body of [{ rules: [] }, { path: bait }, "'; DROP TABLE rules; --"]) expect((await send("PUT", "/api/policy", body)).status).toBe(409);
     stillIntact();
   });
-  test("/api/policy on flow scratch keeps strict validation, with no path-like field", async () => {
-    stack.useStore("scratch");
-    for (const body of [{ path: bait }, { rules: [], file: canary }, { rules: [{ id: "a", when: {}, allow: {}, path: bait }] }]) expect((await send("PUT", "/api/policy", body)).status).toBe(400);
+  test("/api/policy in a scope keeps strict validation, with no path-like field", async () => {
+    const { base } = await (await send("POST", "/api/scopes")).json() as any;
+    for (const body of [{ path: bait }, { rules: [], file: canary }, { rules: [{ id: "a", when: {}, allow: {}, path: bait }] }]) expect((await send("PUT", `${base}/api/policy`, body)).status).toBe(400);
+    expect((await (await send("GET", `${base}/api/policy`)).json() as any).rules).toEqual([]);
     stillIntact();
   });
 });

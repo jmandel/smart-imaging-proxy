@@ -1,9 +1,11 @@
+/** The scope this page is in, if any: every request it makes stays there. */
+const BASE = location.pathname.match(/^\/s\/[^/]+/)?.[0] ?? "";
 // The Browse page. The demo server holds the token and does every request: this page sends choices,
 // and shows what comes back.
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const call = async (method, path, body) => {
-  const r = await fetch(`/api/browse${path}`, { method, ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }) });
+  const r = await fetch(`${BASE}/api/browse${path}`, { method, ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }) });
   const b = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(b.error ?? `HTTP ${r.status}`);
   return b;
@@ -27,14 +29,6 @@ function keepFocus(fid) {
   if (el && !el.disabled) el.focus(); else $("#h-results").focus({ preventScroll: true });
 }
 
-function showStore(store) {
-  const b = $("#store-badge");
-  b.textContent = store.label;
-  b.className = `store-badge ${store.active}`;
-  const note = $("#store-note");
-  note.hidden = store.active === "saved";
-  note.textContent = store.active === "saved" ? "" : "Flow scratch is active. Picking someone here switches the demo to saved policy, which is what this page works on.";
-}
 
 function renderPick() {
   const busy = !!view?.running;
@@ -119,7 +113,6 @@ function syncPopup() {
 }
 
 function apply(r) {
-  if (r.store) showStore(r.store);
   if (r.backend && $("#backend")) $("#backend").value = r.backend;
   if (r.session !== undefined) view = r.session;
   syncPopup();
@@ -171,7 +164,6 @@ function renderView() {
       <p class="note">${heading}</p>${asked}
       ${v.detail ? `<p>${esc(v.detail)}</p>` : ""}
       ${v.explain ? `<p><b>Why this list:</b> ${esc(v.explain.chain)}.</p>` : ""}
-      ${v.switchedStore ? `<p class="note">Starting this session switched the demo from flow scratch to saved policy.</p>` : ""}
       ${signIn}
       <p class="links">${trace}${v.accounts.map(a => `<a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.label)} ↗</a>`).join("")}</p>
       ${v.ruleHelp ? `<p>${esc(v.ruleHelp.text)}</p><p class="links"><a href="${esc(v.ruleHelp.url)}">Rules on the admin screen</a></p>` : ""}
@@ -211,12 +203,12 @@ function studies() {
     </dl>
     ${s.withheld.length ? `<p class="withheld-note">${s.withheld.length} series withheld from this client. The hatched frames show what policy holds back, which only this demo's view of the server can see.</p>` : ""}
     ${s.context ? `<p class="context"><b>Signed context:</b> ${esc(s.context.plain)}.</p>` : ""}
-    ${s.retrievable ? `<div class="actions"><button class="secondary" data-retrieve="${esc(s.id)}" data-zstd="1" data-fid="z-${esc(s.id)}">Retrieve with zstd</button><button class="secondary" data-retrieve="${esc(s.id)}" data-zstd="0" data-fid="i-${esc(s.id)}">Retrieve without zstd</button><a href="/api/browse/metadata?study=${encodeURIComponent(s.id)}" target="_blank" rel="noopener">View metadata ↗</a></div>` : `<p class="note">This study has no Endpoint, so there's nothing to retrieve yet.</p>`}
+    ${s.retrievable ? `<div class="actions"><button class="secondary" data-retrieve="${esc(s.id)}" data-zstd="1" data-fid="z-${esc(s.id)}">Retrieve with zstd</button><button class="secondary" data-retrieve="${esc(s.id)}" data-zstd="0" data-fid="i-${esc(s.id)}">Retrieve without zstd</button><a href="${BASE}/api/browse/metadata?study=${encodeURIComponent(s.id)}" target="_blank" rel="noopener">View metadata ↗</a></div>` : `<p class="note">This study has no Endpoint, so there's nothing to retrieve yet.</p>`}
     <div class="slot" data-slot="${esc(s.id)}"></div>
     </div>
   </article>`;
   return `${pager}${p.studies.map(study).join("")}${p.studies.length > 2 ? pager.replace(/data-fid="[^"]*"/g, "").replace('id="page-size"', 'data-page-size') : ""}
-    <details class="raw panel" id="raw"><summary>Raw FHIR Bundle for this page</summary><p class="links"><a href="/api/browse/bundle" target="_blank" rel="noopener">Open in a new tab ↗</a></p><pre id="raw-text">Loading…</pre></details>`;
+    <details class="raw panel" id="raw"><summary>Raw FHIR Bundle for this page</summary><p class="links"><a href="${BASE}/api/browse/bundle" target="_blank" rel="noopener">Open in a new tab ↗</a></p><pre id="raw-text">Loading…</pre></details>`;
 }
 
 function steps() {
@@ -305,7 +297,7 @@ document.addEventListener("change", async e => {
     catch (err) { pageError = err.message; shown = ""; render(); }
   } else if (t.id === "backend") {
     try {
-      const r = await fetch("/api/backend", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ backend: t.value }) });
+      const r = await fetch(`${BASE}/api/backend`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ backend: t.value }) });
       if (!r.ok) throw new Error((await r.json()).error);
       if (view?.status === "results") apply(await call("POST", "/page", { to: "again" }));
       await loadOptions();
@@ -317,7 +309,7 @@ document.addEventListener("toggle", async e => {
   if (e.target.id === "options") optionsOpen = e.target.open;
   if (e.target.id !== "raw" || !e.target.open || e.target.dataset.loaded) return;
   e.target.dataset.loaded = "1";
-  const r = await fetch("/api/browse/bundle");
+  const r = await fetch(`${BASE}/api/browse/bundle`);
   $("#raw-text").textContent = await r.text();
 }, true);
 // Someone may have shared on an account page in another tab, which changes whose records a person holds.
@@ -325,7 +317,7 @@ addEventListener("focus", () => { if (!timer) call("GET", "/session").then(apply
 
 (async () => {
   try {
-    const [s, b] = await Promise.all([call("GET", "/session"), fetch("/api/backends").then(r => r.json())]);
+    const [s, b] = await Promise.all([call("GET", "/session"), fetch(`${BASE}/api/backends`).then(r => r.json())]);
     await loadOptions();
     $("#backend").innerHTML = b.backends.map(x => `<option value="${esc(x.name)}" ${x.name === b.current ? "selected" : ""}>${esc(x.name)}${x.ok ? "" : " (unavailable)"}</option>`).join("");
     apply(s);

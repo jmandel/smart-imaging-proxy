@@ -53,11 +53,23 @@ Everything is at one origin, port 4605: the demo's pages, the live trace at `/tr
 | 4610 | S3 store (RustFS) | Loopback only |
 | 4611 | Orthanc | Loopback only |
 
-- **Flow player:** 15 flows, each a series of steps showing real requests and responses, on any backend. Flows run against a scratch policy store that goes back to the guardians on file when a flow starts.
-- **Browse:** pick an account or a backend client, and, for a person holding more than one record, whose records. The demo server runs a real launch or token request, then a real paged search, holding the token itself. Starting a session switches to saved policy. A panel shows the Imaging Server's reason for each study, which a real app would never see.
-- **Admin:** policy store, guardians on file, delegations and app grants, rule sets, settings, demo clock, backend, decision outage, token revocation, decision flush, and key rotation.
+`/s/{scope}` in front of any of these paths, on any of these ports, reaches a [policy scope](#policy-scopes) instead.
+
+- **Flow player:** 15 flows, each a series of steps showing real requests and responses, on any backend. Every run mints a scope of its own, starting from the guardians on file, and the page moves to that scope's URL, so a reload comes back to the run.
+- **Browse:** pick an account or a backend client, and, for a person holding more than one record, whose records. The demo server runs a real launch or token request, then a real paged search, holding the token itself. At `/browse`, it works on saved policy, and at `/s/{scope}/browse`, on that scope's. A panel shows the Imaging Server's reason for each study, which a real app would never see.
+- **Admin:** saved policy, guardians on file, delegations and app grants, rule sets, settings, demo clock, backend, decision outage, token revocation, decision flush, and key rotation.
 - **Account page:** at `/account`, a patient or guardian picks whose records to share, shares sites with a related person, and revokes people and apps.
 - **Live trace:** spans from every service, with inline previews. They're kept in SQLite and survive a restart.
+
+## Policy scopes
+
+With no prefix, every service uses saved policy, the one real policy database. `/s/{scope}/` in front of any path gives a scratch world: its own Authorization Server, Imaging Server and proxy, with their own policy store in memory, signing key, credentials, tokens, decision cache, and demo clock. Their URLs carry the prefix, so discovery, redirects, `Endpoint.address`, signed contexts, `next` links and bulk data links all stay in the scope. Only the catalog, the backends and the trace collector are shared. A token, code or signed URL from one world fails in every other, and a policy change in one is invisible in the rest.
+
+Each service's listener sends a scoped path to that scope's own instance of the same service, with the prefix taken off, and the one origin forwards the prefix through, so scopes work the same with `DEMO_ONE_ORIGIN=0`. A scope's pages are the flow player, Browse, its account page, and its live trace at `/s/{scope}/trace/`, which lists only its own sessions.
+
+- **A minted id:** `POST /api/scopes` returns `{ scope, base, urls }`, with a random 22-character id, seeded from the guardians on file. So does starting a flow.
+- **An inline seed:** `/s/~{seed}/`, where the seed is deflate-raw compressed JSON, base64url encoded: the policy API's policy document, `{ rules, delegations, guardians, appGrants, contextLifetimeSeconds, maxSeriesInContext }`, any part of it, with the guardians on file when it names none. The first request builds the world from it, and later ones reuse it, along with any changes made there. A seed is at most 4,096 characters, and 64 KiB of JSON. One that doesn't validate gets a `400` saying why. `encodeSeed` in `src/scopes.ts` makes one.
+- **Lifetimes:** a scope sits idle for 30 minutes at most, and at most 64 are live, the least recently used going first. An unknown or dropped minted id gets a `404` saying so. A dropped seed builds again from its document. A restart drops every scope.
 
 ## Connecting a browser app
 
@@ -165,16 +177,18 @@ Then restart `bun run start`.
 | Path | Purpose |
 |---|---|
 | `packages/core/` | The core package: the proxy and its backends, the archive and ingest, the catalog, the Imaging Server, the policy store, and the policy API and its client. See [its README](packages/core/README.md) |
-| `src/main.ts`, `src/roles.ts`, `src/stack.ts` | Startup, all at once or by `--role`, and how the demo builds core's services and joins them |
+| `src/main.ts`, `src/roles.ts`, `src/stack.ts` | Startup, all at once or by `--role`, and the listeners that send each world its own requests |
 | `src/config.ts` | Ports, addresses, storage paths, the Host check, and backend credentials |
-| `src/stores.ts` | The saved and scratch policy stores, and the guardians on file, from `data/patient.json` |
+| `src/stores.ts` | Saved policy's store, and the guardians on file, from `data/patient.json` |
+| `src/world.ts` | One world: an Authorization Server, Imaging Server and proxy, with their own policy, keys and clock |
+| `src/scopes.ts` | Policy scopes: minting, inline seeds, idling out, and the `/s/{scope}` prefix |
 | `src/gateway.ts`, `src/cors.ts` | The one origin apps are given, and the services' CORS |
 | `src/auth-server.ts` | SMART launch and Backend Services, sign-in, consent, account page, introspection |
 | `src/flows/` | The flows, shared by the web page and tests, and the launch client |
 | `src/browse.ts` | The Browse page's sessions and API |
 | `src/admin-api.ts`, `src/rule-presets.ts` | The admin API, and its named rule sets |
 | `src/trace.ts`, `src/trace-collector.ts`, `src/trace-store.ts` | Spans and redaction, the observer core reports to, the live stream, and SQLite storage |
-| `src/clock.ts` | The demo clock, which core's services are given |
+| `src/clock.ts` | Demo clocks: the root's, which the admin screen moves, and one for each scope |
 | `scripts/` | Fetch, synthetic study generation, ingest, load, catalog builds, the backends, and deploying |
 | `deploy/` | The installer for a Linux machine with systemd |
 | `data/` | Source list with checksums, patient links, and Orthanc's per-study settings |
@@ -227,7 +241,7 @@ PROXY_BACKEND=s3 bun src/main.ts --role proxy
 | `PROXY_BACKEND` | `static-files` | `static-files`, `s3`, or `orthanc`. Set `orthanc` on `imaging` too, to use Orthanc's catalog |
 | `JWKS_TTL_SECONDS` | `60` | How long a split proxy trusts its copy of the keys |
 
-Split services have no flow player, Browse, or admin screen. `auth` registers the demo's Backend Services clients with keys derived from `SERVICE_SECRET` (`derivedBackendClient` in `src/auth-server.ts`), so anyone holding that secret can act as them.
+Split services serve saved policy only, with no scopes, flow player, Browse, or admin screen. `auth` registers the demo's Backend Services clients with keys derived from `SERVICE_SECRET` (`derivedBackendClient` in `src/auth-server.ts`), so anyone holding that secret can act as them.
 
 ## Real and simulated
 
@@ -283,7 +297,7 @@ Sam Example's and Riley Example's are invented people, and they're the only ones
 **Tradeoffs and restarts:**
 
 - A revoked token keeps working on signed URLs and cached decisions for the windows under [Ending access](#ending-access).
-- A restart loses sign-ins in progress, Browse and account sessions, and the proxy's cached decisions.
+- A restart loses sign-ins in progress, Browse and account sessions, the proxy's cached decisions, and every scope.
 - A restart also changes the paging key, so older `next` links get a `400`.
 
 ## Tests

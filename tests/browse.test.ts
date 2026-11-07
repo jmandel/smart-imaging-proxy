@@ -30,14 +30,14 @@ beforeAll(async () => {
   demo = createDemoServer(stack, registerClients(stack), root);
 });
 afterAll(() => { stack.stop(); globalThis.fetch = realFetch; });
-beforeEach(async () => { stack.useStore("saved"); await stack.resetSaved(); resetClock(); stack.setBackend("static-files"); });
+beforeEach(async () => { await stack.resetSaved(); resetClock(); stack.setBackend("static-files"); });
 
-/** One browser: its cookie, and everything it has been sent. */
-function browser() {
+/** One browser: its cookie, and everything it has been sent. With `base`, it's on that scope's pages. */
+function browser(base = "") {
   let cookie = "";
   const seen: string[] = [];
   const call = async (method: string, path: string, body?: unknown) => {
-    const r = await demo.fetch(new Request(`${CONFIG.demoUrl}${path}`, { method, headers: { host: new URL(CONFIG.demoUrl).host, "content-type": "application/json", ...(cookie ? { cookie } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }));
+    const r = await demo.fetch(new Request(`${CONFIG.demoUrl}${base}${path}`, { method, headers: { host: new URL(CONFIG.demoUrl).host, "content-type": "application/json", ...(cookie ? { cookie } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }));
     const set = r.headers.get("set-cookie");
     if (set) { cookie = set.split(";")[0]!; seen.push(set); }
     const text = await r.text();
@@ -205,7 +205,7 @@ describe("explain", () => {
     if (ONE_ORIGIN) expect((await realFetch(`${CONFIG.imagingUrl}${q}`)).status).toBe(404);
   });
   test("matches search for every person and client, for every study", async () => {
-    stack.stores.active.setPolicy({
+    stack.store.setPolicy({
       delegations: [{ patient: "josh-example", grantedBy: "josh", delegate: "sam-caregiver", relationship: "caregiver", sites: SHARE }],
       rules: [rule("hand-referral-service", { modalities: ["CR"] }), rule("outside-release-service", { studies: ["ct-abdomen-pelvis-2012"] }), rule("research-donation", { since: "2020-01-01" })],
     });
@@ -234,7 +234,7 @@ describe("backend clients", () => {
   test("with a rule, what it allows, withheld series included", async () => {
     const ct = stack.catalog.allStudies().find(x => x.id === "ct-abdomen-pelvis-2012")!;
     const withhold = [ct.series[0]!.uid];
-    stack.stores.active.setPolicy({ rules: [rule("outside-release-service", { studies: [ct.id] }, { withholdSeries: withhold })] });
+    stack.store.setPolicy({ rules: [rule("outside-release-service", { studies: [ct.id] }, { withholdSeries: withhold })] });
     const b = browser();
     const s = await b.start({ client: "outside-release-service", patient: "josh-example", count: 5 });
     expect(s.status).toBe("results");
@@ -249,7 +249,7 @@ describe("backend clients", () => {
     await expectExplainMatchesSearch(b, s);
   }, 120000);
   test("a rule's restricted form shows, and the proxy asks and then uses its cache", async () => {
-    stack.stores.active.setPolicy({ rules: [rule("research-donation", { studies: [SMALL] }, { contextForm: "restricted" })] });
+    stack.store.setPolicy({ rules: [rule("research-donation", { studies: [SMALL] }, { contextForm: "restricted" })] });
     const b = browser();
     const s = await b.start({ client: "research-donation", patient: "josh-example", count: 5 });
     expect(s.page.studies[0].context.form).toBe("restricted");
@@ -287,7 +287,7 @@ describe("a real window", () => {
   }, 60000);
   test("someone else signing in shows as that person", async () => {
     const b = browser();
-    stack.stores.active.setPolicy({ delegations: [{ patient: "josh-example", grantedBy: "josh", delegate: "sam-caregiver", relationship: "caregiver", sites: ["Lakeside Imaging"] }] });
+    stack.store.setPolicy({ delegations: [{ patient: "josh-example", grantedBy: "josh", delegate: "sam-caregiver", relationship: "caregiver", sites: ["Lakeside Imaging"] }] });
     await b.call("POST", "/api/browse/start", { user: "josh", client: "portal-app", mode: "window", count: 5 });
     const waiting = await b.settled(s => s.status === "waiting-for-you");
     const back = await submitConsent(waiting.authUrl, { user: "sam-caregiver", patient: "josh-example" });
@@ -337,73 +337,78 @@ describe("a real window", () => {
   }, 60000);
 });
 
-describe("the saved store", () => {
+describe("saved policy and scopes", () => {
   const flow = (path: string, body: unknown = {}) => demo.fetch(new Request(`${CONFIG.demoUrl}${path}`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host, "content-type": "application/json" }, body: JSON.stringify(body) }));
-  test("a session activates saved policy, and says so when it had to", async () => {
-    stack.useStore("scratch");
-    stack.stores.scratch.resetPolicy();
+  test("a session at the root works on saved policy", async () => {
     const b = browser();
-    expect((await b.call("GET", "/api/browse/session")).json().store.active).toBe("scratch"); // Loading changes nothing.
     const s = await b.pick("josh");
-    expect(s.switchedStore).toBe(true);
-    expect(stack.stores.activeName).toBe("saved");
-    expect(stack.stores.saved.appGrants().some(g => g.user === "josh")).toBe(true);
-    expect(stack.stores.scratch.appGrants()).toEqual([]);
-    expect((await browser().pick("josh")).switchedStore).toBe(false);
+    expect(s.status).toBe("results");
+    expect(stack.store.appGrants().some(g => g.user === "josh")).toBe(true);
+    expect((await b.call("GET", "/api/browse/session")).json().scope).toBeNull();
   }, 60000);
-  test("a flow switching to scratch makes the token stop working, and signing in again recovers", async () => {
+  test("a session in a scope works on that scope's policy, and its token is no good at the root", async () => {
+    const { base, scope } = await (await flow("/api/scopes")).json() as any;
+    const world = (stack.scopes.resolve(scope) as any).world;
+    const b = browser(base);
+    const s = await b.pick("josh", { count: 2 });
+    expect(s.status).toBe("results");
+    expect(s.liveUrl.startsWith(`${world.urls.trace}/`)).toBe(true);
+    expect((await b.call("GET", "/api/browse/session")).json().scope).toEqual({ id: scope, base });
+    expect(world.store.appGrants().some((g: any) => g.user === "josh")).toBe(true);
+    expect(stack.store.appGrants()).toEqual([]);
+    // The root's Browse doesn't know this session's cookie.
+    const root = browser();
+    expect((await root.call("GET", "/api/browse/session")).json().session).toBeNull();
+  }, 60000);
+  test("starting a flow leaves a Browse session alone: its token keeps working", async () => {
     const b = browser();
     await b.pick("josh", { count: 2 });
     expect((await flow("/api/flows/patient-sites/start")).status).toBe(200);
-    expect(stack.stores.activeName).toBe("scratch");
     const s = await b.page({ to: "next" });
-    expect(s.status).toBe("token-rejected");
-    expect(s.headline).toContain("401");
-    expect(s.detail).toContain("flow scratch");
-    expect(s.page.studies).toEqual([]);
-    const again = await b.pick("josh", { count: 2 });
-    expect(again.status).toBe("results");
-    expect(again.switchedStore).toBe(true);
-    expect(stack.stores.activeName).toBe("saved");
+    expect(s.status).toBe("results");
+    expect(s.page.studies.length).toBeGreaterThan(0);
   }, 60000);
   test("a revoked token says so", async () => {
     const b = browser();
     await b.pick("josh");
-    stack.stores.saved.revokeAllTokens();
+    stack.store.revokeAllTokens();
     const s = await b.page({ to: "again" });
     expect(s.status).toBe("token-rejected");
     expect(s.detail).toContain("expired or was revoked");
   }, 60000);
-  test("sharing writes saved policy, and a flow can't start in the middle of a scripted sign-in", async () => {
+  test("sharing writes saved policy, and a flow starting meanwhile changes nothing of it", async () => {
     const b = browser();
     await b.call("POST", "/api/browse/start", { user: "sam-caregiver", client: "portal-app", mode: "scripted", count: 5, share: { delegate: "sam-caregiver", sites: SHARE } });
-    expect((await flow("/api/flows/patient-sites/start")).status).toBe(409);
-    expect((await flow("/api/admin/store/activate", { store: "scratch" })).status).toBe(409);
+    const started = await flow("/api/flows/patient-sites/start");
+    expect(started.status).toBe(200);
     const s = await b.settled();
     expect(s.status).toBe("results");
-    expect(stack.stores.saved.delegations().map(d => d.delegate)).toEqual(["sam-caregiver"]);
+    expect(stack.store.delegations().map(d => d.delegate)).toEqual(["sam-caregiver"]);
+    const scope = (await started.json() as any).scope.id;
+    expect((stack.scopes.resolve(scope) as any).world.store.delegations()).toEqual([]);
   }, 60000);
-  test("a flow starting ends a sign-in waiting on a window", async () => {
+  test("a sign-in waiting on a window waits on through a flow starting", async () => {
     const b = browser();
     await b.call("POST", "/api/browse/start", { user: "josh", client: "portal-app", mode: "window", count: 5 });
     await b.settled(s => s.status === "waiting-for-you");
     expect((await flow("/api/flows/patient-sites/start")).status).toBe(200);
-    const s = await b.settled();
-    expect(s.status).toBe("failed");
-    expect(s.detail).toContain("moved the demo off saved policy");
+    expect((await b.session()).status).toBe("waiting-for-you");
+    await b.call("POST", "/api/browse/cancel", {});
+    await b.settled();
   }, 60000);
-  test("a flow step running holds a Browse session back with a 409", async () => {
+  test("a flow step running doesn't hold a Browse session back, and each redirect reaches its own", async () => {
     const b = browser();
-    await flow("/api/flows/patient-sites/start");
-    const running = flow("/api/flows/patient-sites/steps/consent", { inputs: { mode: "window", sites: SHARE } });
+    const { scope } = await (await flow("/api/flows/patient-sites/start")).json() as any;
+    const running = flow(`${scope.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "window", sites: SHARE } });
     let pending: string | null = null;
-    for (let i = 0; i < 400 && !pending; i++) { pending = (await b.call("GET", "/api/pending-authorization")).json().url; if (!pending) await Bun.sleep(25); }
+    for (let i = 0; i < 400 && !pending; i++) { pending = (await browser(scope.base).call("GET", "/api/pending-authorization")).json().url; if (!pending) await Bun.sleep(25); }
     const r = await b.call("POST", "/api/browse/start", { user: "josh", client: "portal-app", mode: "scripted", count: 5 });
-    expect(r.status).toBe(409);
-    expect(r.json().error).toContain("still running");
-    expect(stack.stores.activeName).toBe("scratch");
-    // Finishing the flow's window: its redirect goes to the flow, and not to any Browse session.
-    await demo.fetch(new Request((await submitConsent(pending!, { user: "josh", sites: SHARE })).toString()));
+    expect(r.status).toBe(202);
+    expect((await b.settled()).status).toBe("results");
+    // Finishing the flow's window: its redirect goes to the flow's scope, and not to any Browse session.
+    const back = await submitConsent(pending!, { user: "josh", sites: SHARE });
+    expect(back.pathname).toBe(`${scope.base}/oauth/callback`);
+    await demo.fetch(new Request(back.toString(), { headers: { host: new URL(CONFIG.demoUrl).host } }));
     expect((await running).status).toBe(200);
   }, 60000);
   test("writes from another origin or host are refused", async () => {
@@ -427,7 +432,7 @@ describe("the token stays on the server", () => {
     await b.call("GET", "/api/browse/options");
     await b.call("GET", "/api/browse/session");
     await b.pick("alex-neighbor");
-    stack.stores.active.setPolicy({ rules: [rule("research-donation")] });
+    stack.store.setPolicy({ rules: [rule("research-donation")] });
     await b.start({ client: "research-donation", patient: "josh-example", count: 5 });
     await b.start({ client: "hand-referral-service", patient: "josh-example", count: 5 });
     for (const path of ["/browse", "/browse.js", "/styles.css", "/"]) await b.call("GET", path);

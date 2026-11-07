@@ -1,8 +1,8 @@
 // The policy API: version 1, under /policy/v1 on the Imaging Server. It's how an Authorization Server,
 // an account page, or an operator's tools change who may see what: guardians, delegations, app grants,
 // backend-client rules, and settings. JSON in and out. Every call carries the policy credential as
-// its bearer token, which the proxy never holds, and the API belongs on an internal address only. A deployment holding more than one policy store names one with `?store=`; without
-// it, a call acts on the store search and decisions use.
+// its bearer token, which the proxy never holds, and the API belongs on an internal address only.
+// Every call acts on the one store search and decisions use.
 import { sameSecret } from "./jws";
 import { PolicyValidationError, type AppGrant, type Delegation, type Guardian, type Policy, type PolicyStore, type Rule, type Settings } from "./policy-store";
 import type { Observer } from "./observer";
@@ -38,15 +38,13 @@ const isTextList = (v: unknown): v is string[] => Array.isArray(v) && v.every(x 
 const isObject = (v: unknown): v is Record<string, any> => typeof v === "object" && v !== null && !Array.isArray(v);
 const bearerOf = (req: Request) => req.headers.get("authorization")?.match(/^bearer +(.+)$/i)?.[1];
 
-export function createPolicyApi(deps: { policySecret: string; store: () => PolicyStore; namedStore?: (name: string) => PolicyStore | undefined; check: Observer["check"]; model: PolicyModel }) {
+export function createPolicyApi(deps: { policySecret: string; store: () => PolicyStore; check: Observer["check"]; model: PolicyModel }) {
   const { check, model } = deps;
   const body = async (req: Request): Promise<unknown> => { const t = await req.text(); if (!t.trim()) return undefined; try { return JSON.parse(t); } catch { throw new SyntaxError("the request body must be JSON"); } };
 
   return async function policyApi(req: Request, url: URL): Promise<Response> {
     if (!sameSecret(bearerOf(req), deps.policySecret)) return none(401);
-    const named = url.searchParams.get("store");
-    const store = named === null ? deps.store() : deps.namedStore?.(named);
-    if (!store) return json({ error: `no policy store named "${named}"` }, 404);
+    const store = deps.store();
     const p = url.pathname.slice(POLICY_API_PATH.length), m = req.method;
     const q = (k: string) => url.searchParams.get(k) ?? undefined;
     try {

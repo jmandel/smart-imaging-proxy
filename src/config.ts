@@ -84,3 +84,13 @@ export function localUrl(url: string): string {
 /** The origin people and apps use, for the one origin's own checks. */
 export const PUBLIC_ORIGIN = origin;
 
+
+/** The public URLs of one policy world. A scope's add `/s/{scope}` after each service's origin. */
+export interface WorldUrls { demo: string; auth: string; imaging: string; proxy: string; trace: string; clinicalFhir: string; callback: string; }
+export function urlsFor(prefix = ""): WorldUrls {
+  const at = (u: string) => { const x = new URL(u); return `${x.origin}${prefix}${x.pathname.replace(/\/$/, "")}`; };
+  const demo = at(CONFIG.demoUrl), auth = at(CONFIG.authUrl);
+  return { demo, auth, imaging: at(CONFIG.imagingUrl), proxy: at(CONFIG.proxyUrl), trace: at(CONFIG.traceUrl), clinicalFhir: `${auth}/fhir`, callback: `${demo}/oauth/callback` };
+}
+/** The root's: the one real policy database. */
+export const ROOT_URLS = urlsFor();

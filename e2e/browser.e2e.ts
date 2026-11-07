@@ -25,7 +25,6 @@ afterAll(async () => { await browser?.close(); server?.stop(true); stack?.stop()
 beforeEach(async () => {
   problems.length = 0;
   await stack.resetAll();
-  await fetch(`${DEMO}/api/admin/store/activate`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ store: "saved" }) });
 });
 afterEach(async () => { await context?.close(); context = undefined; });
 
@@ -262,7 +261,7 @@ describe("whose records, as Sam", () => {
     });
     test(`${name}: the account page shares the chosen person's records, and says what stops at Sam`, async () => {
       await fetch(`${DEMO}/api/browse/start`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ user: SAM, client: "portal-app", mode: "scripted", count: 5, share: { delegate: SAM, sites: ["Lakeside Imaging"] } }) });
-      const shared = async () => { for (let i = 0; i < 400; i++) { if (stack.stores.saved.delegations().length) return; await Bun.sleep(25); } throw new Error("Josh never shared"); };
+      const shared = async () => { for (let i = 0; i < 400; i++) { if (stack.store.delegations().length) return; await Bun.sleep(25); } throw new Error("Josh never shared"); };
       await shared();
       const page = await open(`${CONFIG.authUrl}/account?login_hint=${SAM}`, { viewport });
       await page.locator(`input[name=username][value=${SAM}]`).check();
@@ -282,7 +281,7 @@ describe("whose records, as Sam", () => {
       expect(await page.locator('input[name="sites@riley-example"][value="Northside Pathology"]').count()).toBe(0);
       await page.getByRole("button", { name: "Share", exact: true }).click();
       await page.getByText("Riley Example's records: Lakeside Imaging").waitFor();
-      expect(stack.stores.saved.delegations().find(d => d.delegate === "alex-neighbor")).toMatchObject({ patient: "riley-example", sites: ["Lakeside Imaging"], asGuardian: true });
+      expect(stack.store.delegations().find(d => d.delegate === "alex-neighbor")).toMatchObject({ patient: "riley-example", sites: ["Lakeside Imaging"], asGuardian: true });
       expect(await overflow(page)).toBe(0);
       expect(problems).toEqual([]);
     });

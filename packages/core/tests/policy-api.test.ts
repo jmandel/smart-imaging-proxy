@@ -1,5 +1,4 @@
-// The policy API, through its client and as raw HTTP, against one Imaging Server with a saved and a
-// second named store.
+// The policy API, through its client and as raw HTTP, against one Imaging Server and its store.
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { createCatalog, createImagingServer, createPolicyClient, PolicyApiError, PolicyStore, type Guardian } from "../src";
 import { put, recordingObserver } from "./support";
@@ -18,7 +17,7 @@ const recorder = recordingObserver();
 const imaging = createImagingServer({
   base: "http://imaging.test/fhir", clinicalFhirBase: "http://clinical.test/fhir", proxyBase: () => "http://proxy.test", introspect: async () => ({ active: false }),
   patientOf: u => ({ pat: "pat", kid: "kid" } as Record<string, string>)[u], serviceSecret: SECRET, policySecret: POLICY_SECRET, catalog: () => catalog, keyStore: main, store: () => main,
-  namedStore: name => name === "other" ? other : undefined, observer: recorder.observer,
+  observer: recorder.observer,
 });
 const http = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: imaging.fetch });
 const base = `http://127.0.0.1:${http.port}`;
@@ -42,12 +41,12 @@ describe("the policy API", () => {
     await client.removeDelegations({ grantedBy: "pat", delegate: "kid", patient: "" }).catch(() => {});
     expect(new URL(sent[0]!).searchParams.has("patient")).toBe(false);
   });
-  test("acts on the store in use, or the one `store` names", async () => {
-    await policy.withStore("other").setRules([{ id: "r", when: { client: "c" }, allow: { all: true } }]);
-    expect(other.rules().map(r => r.id)).toEqual(["r"]);
-    expect(main.rules()).toEqual([]);
-    expect((await raw("/policy?store=nowhere")).status).toBe(404);
-    expect((await policy.withStore("other").info()).counts.rules).toBe(1);
+  test("acts on the one store it was given, whatever the query names", async () => {
+    await policy.setRules([{ id: "r", when: { client: "c" }, allow: { all: true } }]);
+    expect(main.rules().map(r => r.id)).toEqual(["r"]);
+    expect(other.rules()).toEqual([]);
+    expect((await (await raw("/policy?store=other")).json()).rules.map((r: any) => r.id)).toEqual(["r"]);
+    expect((await policy.info()).counts.rules).toBe(1);
   });
   test("refuses a bad policy whole, naming each problem", async () => {
     const e = await policy.setPolicy({ rules: [{ id: "" } as any], contextLifetimeSeconds: 0 }).catch(x => x);

@@ -84,27 +84,27 @@ describe("Discovery and search", () => {
     const backendToken = async () => ((await (await fetch(stack.auth.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "client_credentials", scope: "system/ImagingStudy.rs", client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: clientAssertion(c, stack.auth.tokenUrl) }).toString() })).json()) as any).access_token as string;
     const t = await backendToken();
     const none = await searchFor(t, "patient=josh-example");
-    stack.stores.active.setPolicy({ rules: [{ id: "hand-referral", when: { client: "hand-referral-service", patient: "josh-example" }, allow: { modalities: ["CR"] } }] });
+    stack.store.setPolicy({ rules: [{ id: "hand-referral", when: { client: "hand-referral-service", patient: "josh-example" }, allow: { modalities: ["CR"] } }] });
     try {
       const allowed: any = await (await searchFor(t, "patient=josh-example")).json();
       expect(allowed.total).toBeGreaterThan(0);
-      stack.stores.active.updateRule("hand-referral", { withdrawn: true });
+      stack.store.updateRule("hand-referral", { withdrawn: true });
       const withdrawn = await searchFor(t, "patient=josh-example");
       expect(withdrawn.status).toBe(403);
       expect(await withdrawn.json()).toEqual(await none.json());
       const seen = await stack.explain({ client: "hand-referral-service", patient: "josh-example" });
       expect(seen.searchAllowed).toBe(false);
       expect(seen.rule).toBeUndefined();
-    } finally { stack.stores.active.setPolicy({ rules: [] }); }
+    } finally { stack.store.setPolicy({ rules: [] }); }
   });
   test("a user's token sees a withdrawn rule as omitted studies, within the patient they can see", async () => {
     says("SHALL omit studies and included Endpoints");
-    stack.stores.active.setPolicy({ rules: [{ id: "gone", when: { client: "portal-app" }, allow: { all: true }, withdrawn: true }] });
+    stack.store.setPolicy({ rules: [{ id: "gone", when: { client: "portal-app" }, allow: { all: true }, withdrawn: true }] });
     try {
       const r = await searchFor(token, "patient=josh-example");
       expect(r.status).toBe(200);
       expect(((await r.json()) as any).total).toBe(0);
-    } finally { stack.stores.active.setPolicy({ rules: [] }); }
+    } finally { stack.store.setPolicy({ rules: [] }); }
   });
   test("real search filters: nothing is silently ignored", async () => {
     const total = async (q: string) => { const r = await searchFor(token, `patient=josh-example&${q}`); return r.status === 200 ? ((await r.json()) as any).total : r.status; };

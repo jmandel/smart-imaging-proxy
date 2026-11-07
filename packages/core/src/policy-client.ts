@@ -17,8 +17,6 @@ export interface PolicyClientOptions {
   base: string;
   /** The policy API's credential, which the Imaging Server's `policySecret` names. */
   policySecret: string;
-  /** The store to act on, by the name the server knows it by. Without it, the one in use. */
-  store?: string;
   /** Makes each request. The platform's fetch by default. */
   fetch?: (operation: PolicyOperation, url: string, init: RequestInit & { headers: Record<string, string> }) => Promise<Response>;
 }
@@ -27,7 +25,7 @@ export function createPolicyClient(opts: PolicyClientOptions) {
   const send = opts.fetch ?? ((_op, url, init) => fetch(url, init));
   async function call(op: PolicyOperation, method: string, path: string, query: Record<string, string | undefined> = {}, body?: unknown): Promise<Response> {
     // An empty value means no filter, as an absent one does.
-    const q = new URLSearchParams(Object.entries({ ...query, store: opts.store }).filter((e): e is [string, string] => e[1] !== undefined && e[1] !== ""));
+    const q = new URLSearchParams(Object.entries(query).filter((e): e is [string, string] => e[1] !== undefined && e[1] !== ""));
     const url = `${opts.base}${POLICY_API_PATH}${path}${q.size ? `?${q}` : ""}`;
     const headers: Record<string, string> = { Authorization: `Bearer ${opts.policySecret}`, ...(body !== undefined ? { "content-type": "application/json" } : {}) };
     return send(op, url, { method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
@@ -65,8 +63,6 @@ export function createPolicyClient(opts: PolicyClientOptions) {
     /** Clears delegations, app grants, rules and settings, and puts the guardians on file back. `tokens` clears token records too. */
     reset: async (o: { tokens?: boolean } = {}) => done(await call("reset", "POST", "/reset", {}, o)),
     info: async () => read<ReturnType<PolicyStore["info"]>>(await call("info", "GET", "/store")),
-    /** The same client, acting on another named store. */
-    withStore: (store: string) => createPolicyClient({ ...opts, store }),
   };
 }
 export type PolicyClient = ReturnType<typeof createPolicyClient>;

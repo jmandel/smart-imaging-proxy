@@ -67,7 +67,7 @@ for (const backend of BACKENDS) {
         expect(got.status).toBe(200);
         expect(got.bytes).toBeGreaterThan(s.numberOfInstances * 256 * 256 * 2);
       }
-      expect(stack.stores.active.getPolicy().delegations).toEqual([]);
+      expect(stack.store.getPolicy().delegations).toEqual([]);
     }, 60000);
     test("Sam's sites differ, so narrowing means something", () => {
       expect(stack.catalog.sitesFor("sam-example")).toEqual(["Lakeside Imaging", "Riverside Hospital"]);
@@ -108,8 +108,7 @@ describe("the guardian", () => {
     expect(STANDING_GUARDIANS).toEqual([{ patient: "riley-example", guardian: SAM_ACCOUNT, relationship: "guardian", excludedStudies: [CONFIDENTIAL] }]);
     expect((await fetch(`${AUTH}/account/signin`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "username=riley", redirect: "manual" })).status).toBe(401);
   });
-  test("survives every reset, in saved and in scratch, and a reset still clears what people chose", async () => {
-    stack.useStore("saved");
+  test("survives every reset, and is in every new scope, and a reset still clears what people chose", async () => {
     await shareFromJosh(["Lakeside Imaging"]);
     await launchFor("riley-example");
     const res = await demo.fetch(new Request(`${CONFIG.demoUrl}/api/admin/store/reset-saved`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host, "content-type": "application/json" }, body: JSON.stringify({ confirm: true }) }));
@@ -117,17 +116,17 @@ describe("the guardian", () => {
     expect(status.policy.guardians).toEqual([riley]);
     expect(status.policy.delegations).toEqual([]);
     expect(status.policy.appGrants).toEqual([]);
-    expect(status.store.saved.counts).toMatchObject({ guardians: 1, delegations: 0, appGrants: 0 });
+    expect(status.store.counts).toMatchObject({ guardians: 1, delegations: 0, appGrants: 0 });
     expect((await search((await launchFor("riley-example")).access_token, "riley-example")).ids).toEqual(RILEY);
     await stack.resetSaved();
     await stack.resetAll();
-    expect(stack.stores.scratch.guardians()).toEqual([riley]);
-    expect(stack.stores.saved.guardians()).toEqual([riley]);
+    expect(stack.scopes.mint().store.guardians()).toEqual([riley]);
+    expect(stack.store.guardians()).toEqual([riley]);
   }, 60000);
   test("is real policy: taking it away ends Sam's access at once, and a reset puts it back", async () => {
     const t = await launchFor("riley-example");
     expect((await search(t.access_token, "riley-example")).ids).toEqual(RILEY);
-    stack.stores.active.setPolicy({ guardians: [] });
+    stack.store.setPolicy({ guardians: [] });
     expect((await search(t.access_token, "riley-example")).ids).toEqual([]);
     expect((await launchFor("riley-example")).error).toBe("access_denied");
     await stack.resetAll();
@@ -145,42 +144,38 @@ describe("the guardian", () => {
     expect(STANDING_GUARDIANS[0]!.excludedStudies).toEqual([CONFIDENTIAL]);
   }, 60000);
   test("a confidential study stays out however a share from the guardian is written, and pages don't name its site", async () => {
-    stack.useStore("scratch");
-    stack.stores.active.setPolicy({ delegations: [{ patient: "riley-example", grantedBy: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging", "Northside Pathology"] }] });
+    stack.store.setPolicy({ delegations: [{ patient: "riley-example", grantedBy: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging", "Northside Pathology"] }] });
     const t = await launchFor("riley-example", "alex-neighbor");
     expect((await search(t.access_token, "riley-example")).ids).toEqual(RILEY);
     expect((await wado(CONFIG.proxyUrl + "/wado/-", uidOf(CONFIDENTIAL), t.access_token)).status).toBe(404);
     expect((await accountPage(SAM_ACCOUNT)).html).not.toContain("Northside Pathology");
     expect((await accountPage("alex-neighbor")).html).not.toContain("Northside Pathology");
-    stack.useStore("saved");
+
   }, 60000);
   test("only the patient or a guardian can grant, however a row is written", async () => {
-    stack.useStore("scratch");
     const share = (grantedBy: string) => ({ patient: "riley-example", grantedBy, delegate: "robin", relationship: "x", sites: ["Northside Pathology", "Lakeside Imaging"] });
     for (const grantedBy of ["alex-neighbor", "SAM-CAREGIVER", "sam-caregiver ", "riley-example", "josh"]) {
-      stack.stores.active.setPolicy({ delegations: [share(grantedBy)] });
+      stack.store.setPolicy({ delegations: [share(grantedBy)] });
       expect([grantedBy, (await launchFor("riley-example", "robin")).error]).toEqual([grantedBy, "access_denied"]);
     }
-    stack.stores.active.setPolicy({ delegations: [{ ...share("sam-caregiver") }] });
+    stack.store.setPolicy({ delegations: [{ ...share("sam-caregiver") }] });
     const t = await launchFor("riley-example", "robin");
     expect((await search(t.access_token, "riley-example")).ids).toEqual(RILEY);
     expect((await wado(CONFIG.proxyUrl + "/wado/-", uidOf(CONFIDENTIAL), t.access_token)).status).toBe(404);
-    stack.useStore("saved");
+
   }, 60000);
   test("an account page doesn't name a confidential study's site, through someone's app grant either", async () => {
-    stack.useStore("scratch");
-    stack.stores.active.setPolicy({ delegations: [{ patient: "riley-example", grantedBy: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"], asGuardian: true }], appGrants: [{ client: "portal-app", user: "alex-neighbor", patient: "riley-example", sites: ["Northside Pathology"] }] });
+    stack.store.setPolicy({ delegations: [{ patient: "riley-example", grantedBy: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"], asGuardian: true }], appGrants: [{ client: "portal-app", user: "alex-neighbor", patient: "riley-example", sites: ["Northside Pathology"] }] });
     expect((await accountPage("alex-neighbor")).html).not.toContain("Northside Pathology");
-    stack.useStore("saved");
+
   }, 30000);
   test("pages don't name a confidential study's site, from a grant or a row that grants nothing", async () => {
-    stack.useStore("scratch");
-    stack.stores.active.setPolicy({ delegations: [], appGrants: [{ client: "portal-app", user: "alex-neighbor", patient: "riley-example", sites: ["Northside Pathology"] }] });
-    const scratchPage = (await accountPage("alex-neighbor")).html;
-    expect(scratchPage).not.toContain("Northside Pathology");
-    expect(scratchPage).toContain("no sites");
-    stack.useStore("saved");
-    const saved = stack.stores.saved;
+    stack.store.setPolicy({ delegations: [], appGrants: [{ client: "portal-app", user: "alex-neighbor", patient: "riley-example", sites: ["Northside Pathology"] }] });
+    const page = (await accountPage("alex-neighbor")).html;
+    expect(page).not.toContain("Northside Pathology");
+    expect(page).toContain("no sites");
+
+    const saved = stack.store;
     saved.setPolicy({ delegations: [{ patient: "riley-example", grantedBy: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"], asGuardian: true }], appGrants: [{ client: "portal-app", user: "alex-neighbor", patient: "riley-example", sites: ["Northside Pathology"] }] });
     const granted = await stack.explain({ client: "portal-app", user: "alex-neighbor", fhirUser: "RelatedPerson/alex-neighbor", patient: "riley-example" });
     expect(granted.appGrant.sites).toEqual([]);
@@ -203,11 +198,11 @@ describe("the guardian", () => {
     expect(orthanc).toEqual(await hash("static-files", instance));
   }, 60000);
   test("a guardian's share written while they aren't the guardian isn't kept", () => {
-    const riley = stack.stores.active.getPolicy().guardians;
-    stack.stores.active.setPolicy({ guardians: [] });
-    stack.stores.active.setPolicy({ delegations: [{ patient: "riley-example", grantedBy: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"], asGuardian: true }] });
-    stack.stores.active.setPolicy({ guardians: riley });
-    expect(stack.stores.active.getPolicy().delegations).toEqual([]);
+    const riley = stack.store.getPolicy().guardians;
+    stack.store.setPolicy({ guardians: [] });
+    stack.store.setPolicy({ delegations: [{ patient: "riley-example", grantedBy: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"], asGuardian: true }] });
+    stack.store.setPolicy({ guardians: riley });
+    expect(stack.store.getPolicy().delegations).toEqual([]);
   });
   test("Orthanc serves the bulk links its metadata lists, nested ones too, and only those", async () => {
     const row = stack.catalogs.orthanc.allStudies().find(s => s.id === "xr-hand-right-2012")!;
@@ -220,26 +215,26 @@ describe("the guardian", () => {
   }, 30000);
   test("a guardian can't share what's confidential from them, even by naming its site", async () => {
     await submitDelegation(accountUrl(SAM_ACCOUNT), { user: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging", "Northside Pathology"], patient: "riley-example" });
-    expect(stack.stores.active.getPolicy().delegations[0]!.sites).toEqual(["Lakeside Imaging"]);
-    stack.stores.active.setPolicy({ delegations: [{ patient: "riley-example", grantedBy: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging", "Northside Pathology"], asGuardian: true }] });
+    expect(stack.store.getPolicy().delegations[0]!.sites).toEqual(["Lakeside Imaging"]);
+    stack.store.setPolicy({ delegations: [{ patient: "riley-example", grantedBy: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging", "Northside Pathology"], asGuardian: true }] });
     const t = await launchFor("riley-example", "alex-neighbor");
     expect((await search(t.access_token, "riley-example")).ids).toEqual(RILEY);
   }, 60000);
   test("a share made as guardian doesn't come back with the guardian", async () => {
-    const riley = stack.stores.active.getPolicy().guardians;
+    const riley = stack.store.getPolicy().guardians;
     await submitDelegation(accountUrl(SAM_ACCOUNT), { user: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"], patient: "riley-example" });
     const t = await launchFor("riley-example", "alex-neighbor");
-    stack.stores.active.setPolicy({ guardians: [] });
-    expect(stack.stores.active.getPolicy().delegations).toEqual([]);
-    stack.stores.active.setPolicy({ guardians: riley });
+    stack.store.setPolicy({ guardians: [] });
+    expect(stack.store.getPolicy().delegations).toEqual([]);
+    stack.store.setPolicy({ guardians: riley });
     expect((await search(t.access_token, "riley-example")).ids).toEqual([]);
   }, 60000);
   test("what a guardian shared lasts only while they're the guardian", async () => {
     await submitDelegation(accountUrl(SAM_ACCOUNT), { user: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"], patient: "riley-example" });
-    expect(stack.stores.active.getPolicy().delegations[0]).toMatchObject({ patient: "riley-example", grantedBy: SAM_ACCOUNT, asGuardian: true });
+    expect(stack.store.getPolicy().delegations[0]).toMatchObject({ patient: "riley-example", grantedBy: SAM_ACCOUNT, asGuardian: true });
     const t = await launchFor("riley-example", "alex-neighbor");
     expect((await search(t.access_token, "riley-example")).ids).toEqual(["syn-riley-knee-mr-2022"]);
-    stack.stores.active.setPolicy({ guardians: [] });
+    stack.store.setPolicy({ guardians: [] });
     expect((await search(t.access_token, "riley-example")).ids).toEqual([]);
   }, 60000);
   test("a store from before guardians gains them when it opens, keeping what's in it", () => {
@@ -290,10 +285,10 @@ describe("each link only narrows", () => {
   test("Sam shares part of their own record, and Alex's app gets no more than that", async () => {
     await submitDelegation(accountUrl(SAM_ACCOUNT), { user: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging", "Northside Pathology"], patient: "sam-example" });
     // Sam has nothing at Northside, so it isn't recorded.
-    expect(stack.stores.active.getPolicy().delegations).toEqual([{ patient: "sam-example", grantedBy: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"] }]);
+    expect(stack.store.getPolicy().delegations).toEqual([{ patient: "sam-example", grantedBy: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"] }]);
     const wide = await launchFor("sam-example", "alex-neighbor", { sites: ["Lakeside Imaging", "Riverside Hospital"] });
     expect((await search(wide.access_token, "sam-example")).ids).toEqual(["syn-sam-ct-sinus-2024"]);
-    expect(stack.stores.active.getPolicy().appGrants[0]!.sites).toEqual(["Lakeside Imaging"]);
+    expect(stack.store.getPolicy().appGrants[0]!.sites).toEqual(["Lakeside Imaging"]);
     const none = await launchFor("sam-example", "alex-neighbor", { sites: [] });
     expect((await search(none.access_token, "sam-example")).ids).toEqual([]);
     expect((await drained(await wado(`${CONFIG.proxyUrl}/wado/-`, uidOf("syn-sam-chest-xr-2021"), wide.access_token))).status).toBe(404);
@@ -314,11 +309,11 @@ describe("each link only narrows", () => {
   test("revoking one person's share or app leaves another's", async () => {
     for (const patient of ["sam-example", "riley-example"]) await submitDelegation(accountUrl(SAM_ACCOUNT), { user: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"], patient });
     await submitRevocation(accountUrl(SAM_ACCOUNT), { user: SAM_ACCOUNT, delegate: "alex-neighbor", patient: "sam-example" });
-    expect(stack.stores.active.getPolicy().delegations.map(d => d.patient)).toEqual(["riley-example"]);
+    expect(stack.store.getPolicy().delegations.map(d => d.patient)).toEqual(["riley-example"]);
     await launchFor("sam-example"); await launchFor("riley-example");
     const { cookie } = await accountPage(SAM_ACCOUNT);
     await fetch(`${AUTH}/account/apps/revoke`, { method: "POST", headers: { cookie, "content-type": "application/x-www-form-urlencoded" }, body: "client=portal-app&patient=sam-example", redirect: "manual" });
-    expect(stack.stores.active.getPolicy().appGrants.filter(g => g.user === SAM_ACCOUNT).map(g => g.patient)).toEqual(["riley-example"]);
+    expect(stack.store.getPolicy().appGrants.filter(g => g.user === SAM_ACCOUNT).map(g => g.patient)).toEqual(["riley-example"]);
   }, 60000);
 });
 
@@ -352,7 +347,7 @@ describe("choosing on the Authorization Server's pages", () => {
     form.append("sites@sam-example", "Lakeside Imaging");
     const r = await fetch(decision, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: form.toString(), redirect: "manual" });
     expect(new URL(r.headers.get("location")!).searchParams.get("code")).toBeTruthy();
-    expect(stack.stores.active.getPolicy().appGrants).toEqual([{ client: "portal-app", user: SAM_ACCOUNT, patient: "riley-example", sites: ["Lakeside Imaging"] }]);
+    expect(stack.store.getPolicy().appGrants).toEqual([{ client: "portal-app", user: SAM_ACCOUNT, patient: "riley-example", sites: ["Lakeside Imaging"] }]);
   });
   test("a person holding one record sees the plain form", async () => {
     const html = (await accountPage("josh")).html;
@@ -391,7 +386,7 @@ describe("Browse", () => {
     return { call, pick };
   };
   const ids = (s: any) => s.page.studies.map((x: any) => x.id).sort();
-  beforeEach(async () => { stack.useStore("saved"); await stack.resetSaved(); });
+  beforeEach(async () => { await stack.resetSaved(); });
   test("Sam's choices are who Sam holds, and Josh joins them once he shares", async () => {
     const b = browser();
     const sam = async () => (await b.call("GET", "/api/browse/options")).people.find((p: any) => p.id === SAM_ACCOUNT);

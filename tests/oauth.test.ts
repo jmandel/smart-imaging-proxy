@@ -72,8 +72,8 @@ describe("Authorization request", () => {
     expect(new URL(r.headers.get("location")!).searchParams.get("error")).toBe("invalid_scope");
   });
   test("a user's token with a system scope and no patient gets nothing, even where a rule names its client", async () => {
-    const store = stack.stores.active;
-    stack.stores.active.setPolicy({ rules: [{ id: "names-client", when: { client: "separate-viewer" }, allow: { all: true } }] });
+    const store = stack.store;
+    stack.store.setPolicy({ rules: [{ id: "names-client", when: { client: "separate-viewer" }, allow: { all: true } }] });
     store.putToken("user-system-token", "access", { client_id: "separate-viewer", scope: "system/ImagingStudy.rs", sub: "robin", fhirUser: "RelatedPerson/robin" }, Math.floor(Date.now() / 1000) + 300);
     const r = await fetch(`${CONFIG.imagingUrl}/fhir/ImagingStudy?patient=josh-example`, { headers: { Authorization: "Bearer user-system-token" } });
     expect(r.status).toBe(403);
@@ -105,7 +105,7 @@ describe("Consent", () => {
     await stack.resetAll();
     const t = await scriptedLaunch("josh", "portal-app", { sites: ["Lakeside Imaging"] });
     expect(t.scope).toBe("launch/patient patient/ImagingStudy.rs online_access");
-    expect(stack.stores.active.getPolicy().appGrants[0]!.sites).toEqual(["Lakeside Imaging"]);
+    expect(stack.store.getPolicy().appGrants[0]!.sites).toEqual(["Lakeside Imaging"]);
     const b: any = await (await fetch(`${conf.associated_endpoints[0].url}/ImagingStudy?patient=josh-example`, { headers: { Authorization: `Bearer ${t.access_token}` } })).json();
     expect(b.total).toBe(1);
     await stack.resetAll();
@@ -283,12 +283,12 @@ describe("Account picker", () => {
     const cookie = res.headers.get("set-cookie")!.split(";")[0]!;
     const acct = await (await fetch(`${CLINICAL_FHIR.replace("/fhir", "")}/account`, { headers: { cookie } })).text();
     expect(acct).toContain("No imaging studies on file");
-    expect(acct).toContain("Policy in use: Flow scratch: reset when a flow starts");
+    expect(acct).not.toContain("Policy in use");
     expect(acct).not.toContain('name="delegate"');
   });
   test("a window launch reports who actually signed in, not who was hinted", async () => {
     await stack.resetAll();
-    const c = new Ctx(stack, {});
+    const c = new Ctx(stack.root, {});
     const launching = c.launch("josh", "portal-app", { window: true });
     while (!c.pendingAuthUrl) await Bun.sleep(5);
     expect(new URL(c.pendingAuthUrl).searchParams.get("login_hint")).toBe("josh");
@@ -381,7 +381,7 @@ describe("Delegation: patient to related person to app", () => {
     await stack.resetAll();
     await share(["Lakeside Imaging"]);
     const t = await scriptedLaunch("sam-caregiver", "portal-app", { sites: ["Lakeside Imaging", "Northside Pathology"], patient: "josh-example" });
-    expect(stack.stores.active.getPolicy().appGrants[0]!.sites).toEqual(["Lakeside Imaging"]);
+    expect(stack.store.getPolicy().appGrants[0]!.sites).toEqual(["Lakeside Imaging"]);
     expect(sitesOf(await search(t.access_token))).toBe(1);
   });
   test("only a patient or their guardian can delegate", async () => {
@@ -390,7 +390,7 @@ describe("Delegation: patient to related person to app", () => {
     await share(["Lakeside Imaging"]);
     const r = await submitDelegation(accountUrl("sam-caregiver"), { user: "sam-caregiver", delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"], patient: "josh-example" });
     expect(r.status).toBe(403);
-    expect(stack.stores.active.getPolicy().delegations.map(d => d.delegate)).toEqual(["sam-caregiver"]);
+    expect(stack.store.getPolicy().delegations.map(d => d.delegate)).toEqual(["sam-caregiver"]);
   });
   test("revoking the delegation ends what the related person's app can find", async () => {
     await stack.resetAll();
@@ -487,7 +487,7 @@ describe("Token responses can't be cached", () => {
 describe("Refresh tokens", () => {
   const refresh = (token: string, client?: string) => post(new URLSearchParams({ grant_type: "refresh_token", refresh_token: token, ...(client ? { client_id: client } : {}) }).toString());
   const launch = async () => { await stack.resetAll(); return scriptedLaunch("josh"); };
-  const liveAccess = (token: string) => !stack.stores.active.getToken(token, "access")!.revoked;
+  const liveAccess = (token: string) => !stack.store.getToken(token, "access")!.revoked;
 
   test("only the client it was issued to can use one, and a refused try doesn't spend it", async () => {
     const t = await launch();
@@ -526,19 +526,19 @@ describe("Refresh tokens", () => {
   });
   test("a used one is purged when it expires, and rotation keeps working", async () => {
     const t = await launch();
-    stack.stores.active.setSettings({ refreshTokenLifetimeSeconds: 100 });
+    stack.store.setSettings({ refreshTokenLifetimeSeconds: 100 });
     const next: any = await (await refresh(t.refresh_token, "portal-app")).json();
-    expect(stack.stores.active.getToken(t.refresh_token, "refresh")!.revoked).toBe(true);
+    expect(stack.store.getToken(t.refresh_token, "refresh")!.revoked).toBe(true);
     advance(30 * 86400 + 1);
     stack.purgeTokens();
-    expect(stack.stores.active.getToken(t.refresh_token, "refresh")).toBeUndefined();
-    expect(stack.stores.active.getToken(next.refresh_token, "refresh")).toBeUndefined();
+    expect(stack.store.getToken(t.refresh_token, "refresh")).toBeUndefined();
+    expect(stack.store.getToken(next.refresh_token, "refresh")).toBeUndefined();
     resetClock();
   });
   test("a family's id doesn't appear in anything a client or service reads", async () => {
     const t = await launch();
-    expect(stack.stores.active.getToken(t.access_token, "access")!.family).toBeTruthy();
-    expect(JSON.stringify(t)).not.toContain(stack.stores.active.getToken(t.access_token, "access")!.family!);
+    expect(stack.store.getToken(t.access_token, "access")!.family).toBeTruthy();
+    expect(JSON.stringify(t)).not.toContain(stack.store.getToken(t.access_token, "access")!.family!);
     expect(t.family).toBeUndefined();
   });
   test("replay detection survives a restart, in SQLite, holding only hashes", async () => {
@@ -606,7 +606,7 @@ describe("The Clinical FHIR Server's Patient", () => {
     const c = stack.auth.registerBackendClient("patient-read-test", ["system/ImagingStudy.rs"]);
     const backend: any = await (await post(new URLSearchParams({ grant_type: "client_credentials", scope: "system/ImagingStudy.rs", client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: clientAssertion(c, conf.token_endpoint) }).toString())).json();
     expect((await read("josh-example", backend.access_token)).status).toBe(403);
-    stack.stores.active.revokeToken(josh.access_token);
+    stack.store.revokeToken(josh.access_token);
     expect((await read("josh-example", josh.access_token)).status).toBe(401);
     const later = await scriptedLaunch("josh");
     advance(3601);

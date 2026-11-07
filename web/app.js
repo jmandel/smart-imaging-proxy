@@ -3,59 +3,27 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "
 const api = async (path, opts) => { const r = await fetch(path, opts); const b = await r.json(); if (!r.ok) throw new Error(b.error ?? r.statusText); return b; };
 const post = (path, body) => api(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) });
 
-let flows = [], services = {}, current = null, stepsDone = {}, flowStatus = {}, shownStore;
+let flows = [], services = {}, current = null, stepsDone = {}, flowStatus = {};
 const BADGE = { instant: "instant: no network call", asked: "asked can_i", cached: "cached decision" };
 
-function showStore(store) {
-  const b = $("#store-badge");
-  b.textContent = store.label;
-  b.className = `store-badge ${store.active}`;
-  const t = $("#policy-store");
-  if (t) t.textContent = store.label;
-  $("#back-to-saved").hidden = store.active === "saved";
-  const saved = store.active === "saved";
-  const text = $("#policy-text");
-  if (text) {
-    text.readOnly = saved;
-    $("#apply-policy").disabled = saved;
-    $("#policy-note").textContent = saved
-      ? "Read-only now, because saved policy is active. This panel changes only flow scratch, and saved rules change through the named rule sets on the admin screen. Running a flow step goes back to flow scratch."
-      : "Known only to the Imaging Server. The proxy never receives it. Edit it and apply to change what later steps do. This panel changes only flow scratch.";
-  }
-}
-/** Another tab can change the active store, so a flow page checks when it's looked at again. */
-async function refreshStore() {
-  if (!$("#policy-text")) return;
-  const store = await api("/api/store");
-  const changed = store.active !== shownStore;
-  showStore(store);
-  shownStore = store.active;
-  if (changed) setPolicy(await api("/api/policy"));
-}
-async function backToSaved() {
-  const status = await post("/api/admin/store/activate", { store: "saved" });
-  showStore(status.store);
-  current = null;
-  renderNav();
-  renderIntro(services);
-}
+/** The scope this page is in, if any. A flow run moves the page into the scope it mints. */
+let BASE = location.pathname.match(/^\/s\/[^/]+/)?.[0] ?? "";
+const at = path => `${BASE}${path}`;
 async function init() {
   const returning = location.hash === "#flow";
-  const data = await api("/api/flows");
+  const data = await api(at("/api/flows"));
   flows = data.flows;
   services = data.services;
-  $("#back-to-saved").onclick = backToSaved;
-  showStore(data.store);
   renderNav();
   renderIntro(data.services);
   // A flow in progress comes back as it was. Loading this page changes nothing on the server.
-  const state = await api("/api/flow-state");
+  const state = await api(at("/api/flow-state"));
   // Only a reload or Back returns to a flow, so the Overview link always shows the overview.
-  if (state.flow && state.store.active === "scratch" && returning) restoreFlow(state);
-  const b = await api("/api/backends");
+  if (state.flow && returning) restoreFlow(state);
+  const b = await api(at("/api/backends"));
   const sel = $("#backend");
   sel.innerHTML = b.backends.map(x => `<option value="${x.name}" ${x.name === b.current ? "selected" : ""}>${x.name}${x.ok ? "" : " (unavailable)"}</option>`).join("");
-  sel.onchange = async () => { await post("/api/backend", { backend: sel.value }); if (current) openFlow(current.id); showBackend(b); };
+  sel.onchange = async () => { await post(at("/api/backend"), { backend: sel.value }); if (current) openFlow(current.id); showBackend(b); };
   showBackend(b);
 }
 function showBackend(b) {
@@ -81,7 +49,7 @@ function renderNav() {
 const firstSentence = text => text.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? text;
 function flowChooser() {
   const choice = f => `<button class="flow-choice" data-id="${f.id}"><span class="n">${f.number}</span><span class="what"><b>${esc(f.title)}</b><span>${esc(firstSentence(f.summary))}</span></span>${statusMark(f)}</button>`;
-  return `<section class="flows-section" aria-labelledby="h-flows"><h2 id="h-flows">Try a flow</h2><p>Each one runs real requests step by step, in a scratch policy that resets when the flow starts.</p>
+  return `<section class="flows-section" aria-labelledby="h-flows"><h2 id="h-flows">Try a flow</h2><p>Each one runs real requests step by step, in a policy scope of its own, which starts from the guardians on file.</p>
     <div class="flow-groups">${FLOW_GROUPS.map(([name, numbers]) => `<div><h3>${name}</h3>${flowsIn(numbers).map(choice).join("")}</div>`).join("")}</div>
     <button id="run-every" class="secondary">Run every flow</button></section>`;
 }
@@ -141,7 +109,15 @@ document.addEventListener("click", e => {
   $("#route-why").innerHTML = ROUTE_WHY[b.dataset.route];
 });
 async function openFlow(id) {
-  try { showFlow(id, await post(`/api/flows/${id}/start`)); }
+  try {
+    // Every run has a scope of its own, and the page moves there, so a reload comes back to this run.
+    const r = await post(at(`/api/flows/${id}/start`));
+    BASE = r.scope.base;
+    services = (await api(at("/api/flows"))).services;
+    document.querySelector(".live-link").href = services["live trace"];
+    history.replaceState(null, "", `${BASE}/#flow`);
+    showFlow(id, r);
+  }
   catch (e) { $("#main").innerHTML = `<p class="error" role="alert">${esc(e.message)}</p>`; }
 }
 function restoreFlow(state) {
@@ -157,11 +133,11 @@ function restoreFlow(state) {
   if (state.running) {
     const btn = $(`[data-run="${state.running}"]`);
     if (btn) { btn.disabled = true; btn.textContent = "Still running…"; }
-    setTimeout(async () => { const again = await api("/api/flow-state"); if (again.flow === state.flow) restoreFlow(again); }, 1000);
+    setTimeout(async () => { const again = await api(at("/api/flow-state")); if (again.flow === state.flow) restoreFlow(again); }, 1000);
   }
 }
 function showFlow(id, data) {
-  history.replaceState(null, "", "#flow");
+  history.replaceState(null, "", `${BASE}/#flow`);
   document.body.classList.add("in-flow");
   const f = flows.find(x => x.id === id);
   current = { ...f, steps: data.steps };
@@ -172,13 +148,11 @@ function showFlow(id, data) {
   document.querySelector('.pages a[href="/"]')?.removeAttribute("aria-current");
   $("#main").innerHTML = `<p class="back"><a href="/">All flows</a></p><h2 class="flow-title">${f.number}. ${esc(f.title)}</h2><p class="summary">${esc(f.summary)}</p><p class="shows">${esc(f.shows)}</p>
     <div class="toolbar"><button class="primary" id="run-rest">Run remaining steps</button><button class="secondary" id="restart">Start over</button></div>
-    <div id="chain" class="chain"></div><details class="policy" id="policy"><summary>Imaging Server policy</summary><div class="inner"><p class="note"><span id="policy-note"></span> Active: <b id="policy-store"></b>.</p><textarea id="policy-text" spellcheck="false" aria-label="Policy JSON"></textarea><div><button class="secondary" id="apply-policy">Apply policy</button><span class="msg" id="policy-msg" role="status"></span></div></div></details>
+    <div id="chain" class="chain"></div><details class="policy" id="policy"><summary>Imaging Server policy</summary><div class="inner"><p class="note">Known only to the Imaging Server. The proxy never receives it. Edit it and apply to change what later steps do, in this run's scope only.</p><textarea id="policy-text" spellcheck="false" aria-label="Policy JSON"></textarea><div><button class="secondary" id="apply-policy">Apply policy</button><span class="msg" id="policy-msg" role="status"></span></div></div></details>
     <div id="steps"></div>${next ? `<p class="next-flow"><button class="secondary" data-next="${next.id}">Next flow: ${next.number}. ${esc(next.title)}</button></p>` : ""}`;
   $("#restart").onclick = () => openFlow(id);
   $("#run-rest").onclick = runRemaining;
   $("#apply-policy").onclick = applyPolicy;
-  showStore(data.store);
-  shownStore = data.store.active;
   setPolicy(data.policy);
   renderSteps(data.steps);
 }
@@ -196,10 +170,10 @@ function setPolicy(p) {
 async function applyPolicy() {
   const msg = $("#policy-msg");
   try {
-    const r = await api("/api/policy", { method: "PUT", headers: { "content-type": "application/json" }, body: $("#policy-text").value });
+    const r = await api(at("/api/policy"), { method: "PUT", headers: { "content-type": "application/json" }, body: $("#policy-text").value });
     setPolicy(r);
     msg.textContent = "Applied.";
-  } catch (e) { msg.textContent = `Not applied: ${e.message}`; refreshStore().catch(() => {}); }
+  } catch (e) { msg.textContent = `Not applied: ${e.message}`; }
 }
 function inputHtml(step, i) {
   i = { ...i, default: i.clickDefault ?? i.default };
@@ -266,19 +240,17 @@ async function runStep(id, automated = false) {
   (async () => {
     let sent = false, closedPolls = 0;
     while (polling) {
-      if (!sent) { const p = await api("/api/pending-authorization"); if (p.url) { popup.location = p.url; sent = true; } }
+      if (!sent) { const p = await api(at("/api/pending-authorization")); if (p.url) { popup.location = p.url; sent = true; } }
       // Someone closed the window without finishing. Two polls, since the redirect also closes it.
-      else if (popup.closed && ++closedPolls >= 2) { await post("/api/pending-authorization/cancel"); return; }
+      else if (popup.closed && ++closedPolls >= 2) { await post(at("/api/pending-authorization/cancel")); return; }
       await new Promise(r => setTimeout(r, 250));
     }
   })();
   try {
-    const r = await post(`/api/flows/${current.id}/steps/${id}`, { inputs });
+    const r = await post(at(`/api/flows/${current.id}/steps/${id}`), { inputs });
     polling = false;
     showResult(id, el, r.result);
     setPolicy(r.policy);
-    showStore(r.store);
-    shownStore = r.store.active;
     current.steps = r.steps;
     renderSteps(r.steps);
     if (current.steps.every(s => stepsDone[s.id])) { flowStatus[current.id] = current.steps.every(s => stepsDone[s.id] === "ok"); renderNav(); }
@@ -317,5 +289,4 @@ function renderDecision(d) {
 }
 // A page restored from the browser's cache would show stale state, so it loads again.
 window.addEventListener("pageshow", e => { if (e.persisted) location.reload(); });
-window.addEventListener("focus", () => { refreshStore().catch(() => {}); });
 init();

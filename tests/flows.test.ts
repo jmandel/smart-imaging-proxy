@@ -103,14 +103,20 @@ describe("a redirect back to the app", () => {
     try {
       const post = (path: string, body: unknown = {}) => fetch(`${CONFIG.demoUrl}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       const started: any = await (await post("/api/flows/patient-sites/start")).json();
-      const stepping = post("/api/flows/patient-sites/steps/consent", { inputs: { mode: "window" } });
-      const pending = async () => ((await (await fetch(`${CONFIG.demoUrl}/api/pending-authorization`)).json()) as any).url as string | null;
+      // The run is in its own scope, and so is everything after.
+      const base = started.scope.base;
+      expect(base).toMatch(/^\/s\/[A-Za-z0-9_-]{22}$/);
+      const stepping = post(`${base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "window" } });
+      const pending = async () => ((await (await fetch(`${CONFIG.demoUrl}${base}/api/pending-authorization`)).json()) as any).url as string | null;
       let url: string | null = null;
       while (!url) { url = await pending(); await Bun.sleep(5); }
+      expect(url.startsWith(`${CONFIG.authUrl}${base}/authorize`)).toBe(true);
       for (const q of ["state=attacker&code=attacker-code", "code=attacker-code", "state=attacker&error=access_denied", "account=done"]) {
-        expect([q, (await fetch(`${CONFIG.demoUrl}/oauth/callback?${q}`)).status]).toEqual([q, 400]);
+        expect([q, (await fetch(`${CONFIG.demoUrl}${base}/oauth/callback?${q}`)).status]).toEqual([q, 400]);
         expect(await pending()).toBe(url);
       }
+      // The root's callback isn't the scope's: the run's real redirect can't land there.
+      expect((await fetch(`${CONFIG.demoUrl}/oauth/callback?state=attacker&code=attacker-code`)).status).toBe(400);
       const back = await submitConsent(url, { user: "josh" });
       expect((await fetch(back)).status).toBe(200);
       const done: any = await (await stepping).json();
@@ -120,6 +126,7 @@ describe("a redirect back to the app", () => {
       expect(spans.filter(s => s.kind === "server" && s.http?.url.endsWith("/token")).length).toBe(1);
       const forged = spans.filter(s => s.name.startsWith("Redirect back") && s.status === "denied");
       expect(forged.length).toBe(4);
+      expect(spans.every(s => s.scope === started.scope.id)).toBe(true);
       expect(JSON.stringify(spans)).not.toContain("attacker-code");
     } finally { server.stop(true); }
   });
@@ -127,12 +134,12 @@ describe("a redirect back to the app", () => {
     stack.setBackend("static-files");
     const demo = createDemoServer(stack, clients, join(import.meta.dir, ".."));
     const call = (path: string, body: unknown = {}) => demo.fetch(new Request(`${CONFIG.demoUrl}${path}`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host, "content-type": "application/json" }, body: JSON.stringify(body) }));
-    await call("/api/flows/patient-sites/start");
-    const stepping = call("/api/flows/patient-sites/steps/consent", { inputs: { mode: "window" } });
+    const { scope } = await (await call("/api/flows/patient-sites/start")).json() as any;
+    const stepping = call(`${scope.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "window" } });
     let url: string | null = null;
-    while (!url) { url = ((await (await demo.fetch(new Request(`${CONFIG.demoUrl}/api/pending-authorization`))).json()) as any).url; await Bun.sleep(5); }
+    while (!url) { url = ((await (await demo.fetch(new Request(`${CONFIG.demoUrl}${scope.base}/api/pending-authorization`, { headers: { host: new URL(CONFIG.demoUrl).host } }))).json()) as any).url; await Bun.sleep(5); }
     const back = await submitConsent(url, { user: "josh", approve: false });
-    expect((await demo.fetch(new Request(back))).status).toBe(200);
+    expect((await demo.fetch(new Request(back, { headers: { host: new URL(CONFIG.demoUrl).host } }))).status).toBe(200);
     const res = await stepping;
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: "Josh chose not to approve the app, so it has no token" });
@@ -140,16 +147,16 @@ describe("a redirect back to the app", () => {
   test("with nothing waiting, it's refused, and an account page's own redirect still ends its wait", async () => {
     const flow = flowOf("caregiver");
     const c = await startFlow(stack, clients, flow);
-    expect(c.receiveCallback(new URL(`${CALLBACK}?state=x&code=y`))).toBe(false);
+    expect(c.receiveCallback(new URL(`${c.urls.callback}?state=x&code=y`))).toBe(false);
     const running = runStep(c, flow, "delegate", { mode: "window" });
     while (!c.pendingAuthUrl) await Bun.sleep(5);
-    expect(c.receiveCallback(new URL(`${CALLBACK}?state=x&code=y`))).toBe(false);
+    expect(c.receiveCallback(new URL(`${c.urls.callback}?state=x&code=y`))).toBe(false);
     expect(c.pendingAuthUrl).toBeDefined();
-    expect(c.receiveCallback(new URL(`${CALLBACK}?account=done`))).toBe(false);
+    expect(c.receiveCallback(new URL(`${c.urls.callback}?account=done`))).toBe(false);
     expect(c.pendingAuthUrl).toBeDefined();
     // The account page's own link carries the wait's state, through its sign-in.
     const account = new URL(c.pendingAuthUrl!);
-    const signedIn = await fetch(new URL(`/account/signin${account.search}`, account), { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "username=josh", redirect: "manual" });
+    const signedIn = await fetch(new URL(`${account.pathname}/signin${account.search}`, account), { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "username=josh", redirect: "manual" });
     const page = await (await fetch(new URL(signedIn.headers.get("location")!, account), { headers: { cookie: signedIn.headers.get("set-cookie")!.split(";")[0]! } })).text();
     const link = page.match(/href="([^"]*account=done[^"]*)"/)![1]!.replaceAll("&amp;", "&");
     expect(c.receiveCallback(new URL(link))).toBe(true);

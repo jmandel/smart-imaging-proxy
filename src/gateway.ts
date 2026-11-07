@@ -8,17 +8,20 @@
 //                  which also serves the clinical FHIR base
 //   anything else  the demo's pages
 //
+// `/s/{scope}` in front of any of these goes to the same service, which hands it to that scope.
+//
 // The services keep their own ports, and add their own CORS.
 import { PORTS, PUBLIC_ORIGIN } from "./config";
+import { splitScope } from "./scopes";
 
 const at = (port: number, path: string) => `http://127.0.0.1:${port}${path}`;
 const AUTH = /^\/(fhir|authorize|account)(\/|$)|^\/(token|introspect|revoke)$/;
-function target(path: string): string {
-  if (path.startsWith("/imaging/")) return at(PORTS.imaging, path.slice("/imaging".length));
-  if (path.startsWith("/wado/")) return at(PORTS.proxy, path);
-  if (path.startsWith("/trace/")) return at(PORTS.trace, path.slice("/trace".length));
-  if (AUTH.test(path)) return at(PORTS.auth, path);
-  return at(PORTS.demo, path);
+function target(path: string, prefix: string): string {
+  if (path.startsWith("/imaging/")) return at(PORTS.imaging, prefix + path.slice("/imaging".length));
+  if (path.startsWith("/wado/")) return at(PORTS.proxy, prefix + path);
+  if (path.startsWith("/trace/")) return at(PORTS.trace, prefix + path.slice("/trace".length));
+  if (AUTH.test(path)) return at(PORTS.auth, prefix + path);
+  return at(PORTS.demo, prefix + path);
 }
 
 /** Service-to-service APIs, which callers reach on the services' own loopback ports, never through here. */
@@ -26,10 +29,12 @@ const INTERNAL = /^\/imaging\/policy(\/|$)|^\/internal\//;
 
 export async function gatewayFetch(req: Request): Promise<Response> {
   const url = new URL(req.url);
-  if (INTERNAL.test(url.pathname)) return new Response(null, { status: 404 });
+  const { scope, rest } = splitScope(url.pathname);
+  const prefix = scope ? `/s/${scope}` : "";
+  if (INTERNAL.test(rest)) return new Response(null, { status: 404 });
   // The trace's pages use relative links, so its root needs the slash.
-  if (url.pathname === "/trace") return new Response(null, { status: 308, headers: { location: `/trace/${url.search}` } });
-  const to = target(url.pathname);
+  if (rest === "/trace") return new Response(null, { status: 308, headers: { location: `${prefix}/trace/${url.search}` } });
+  const to = target(rest, prefix);
   const headers = new Headers(req.headers);
   headers.delete("host");
   // A form on this origin is same-origin to the service behind it, so the service's write guard still holds.

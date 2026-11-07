@@ -1,10 +1,12 @@
 // A SMART App Launch client: standalone launch, authorization code, PKCE S256, public client.
-// The submit functions do what a browser does on the Authorization Server's pages.
+// The submit functions do what a browser does on the Authorization Server's pages. Each takes the
+// world it acts in, the root unless given.
 import { createHash, randomBytes } from "node:crypto";
-import { CONFIG, localUrl } from "../config";
+import { localUrl, ROOT_URLS, type WorldUrls } from "../config";
 
-export const CALLBACK = `${CONFIG.demoUrl}/oauth/callback`;
-export const CLINICAL_FHIR = `${CONFIG.authUrl}/fhir`;
+export const CALLBACK = ROOT_URLS.callback;
+export const CLINICAL_FHIR = ROOT_URLS.clinicalFhir;
+type At = Pick<WorldUrls, "auth" | "callback" | "clinicalFhir">;
 export const DEFAULT_SCOPE = "launch/patient patient/ImagingStudy.rs online_access";
 const FORM = { "content-type": "application/x-www-form-urlencoded" };
 
@@ -13,26 +15,28 @@ type Trace = { traceparent: string; session: string };
 const addTrace = (q: URLSearchParams, trace?: Trace) => { if (trace) { q.set("demo_traceparent", trace.traceparent); q.set("demo_session", trace.session); } };
 
 /** Builds the authorization request. The trace fields are demo-only, so the live trace can follow a browser, and so is `patientHint`, which preselects a choice on the consent page and grants nothing. */
-export function buildAuthorization(authorizationEndpoint: string, client: string, scope = DEFAULT_SCOPE, trace?: Trace, loginHint?: string, patientHint?: string): AuthorizationRequest {
+export function buildAuthorization(authorizationEndpoint: string, client: string, scope = DEFAULT_SCOPE, trace?: Trace, loginHint?: string, patientHint?: string, at: At = ROOT_URLS): AuthorizationRequest {
   const verifier = randomBytes(32).toString("base64url");
   const state = randomBytes(16).toString("base64url");
   const q = new URLSearchParams({
-    response_type: "code", client_id: client, redirect_uri: CALLBACK, scope, state, aud: CLINICAL_FHIR,
+    response_type: "code", client_id: client, redirect_uri: at.callback, scope, state, aud: at.clinicalFhir,
     code_challenge: createHash("sha256").update(verifier).digest("base64url"), code_challenge_method: "S256",
   });
   if (loginHint) q.set("login_hint", loginHint);
   if (patientHint) q.set("demo_patient", patientHint);
   addTrace(q, trace);
-  return { url: `${authorizationEndpoint}?${q}`, state, verifier, client, redirectUri: CALLBACK };
+  return { url: `${authorizationEndpoint}?${q}`, state, verifier, client, redirectUri: at.callback };
 }
 export const tokenRequestBody = (a: AuthorizationRequest, code: string) => new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: a.redirectUri, client_id: a.client, code_verifier: a.verifier }).toString();
 
-export function accountUrl(user: string, trace?: Trace, delegate?: string) {
-  const q = new URLSearchParams({ login_hint: user, preselect: user, return: CALLBACK, return_state: randomBytes(16).toString("base64url") });
+export function accountUrl(user: string, trace?: Trace, delegate?: string, at: At = ROOT_URLS) {
+  const q = new URLSearchParams({ login_hint: user, preselect: user, return: at.callback, return_state: randomBytes(16).toString("base64url") });
   if (delegate) q.set("suggest_delegate", delegate);
   addTrace(q, trace);
-  return `${CONFIG.authUrl}/account?${q}`;
+  return `${at.auth}/account?${q}`;
 }
+/** The Authorization Server an account page URL belongs to. */
+const authOf = (url: string) => url.slice(0, url.indexOf("/account"));
 
 const formAction = (html: string, base: string) => {
   const action = html.match(/<form[^>]*action="([^"]+)"/)?.[1]?.replaceAll("&amp;", "&");
@@ -70,17 +74,18 @@ export async function submitDelegation(url: string, d: { user: string; delegate:
   const { cookie, query } = await accountSignIn(url, d.user, doFetch);
   const form = new URLSearchParams({ delegate: d.delegate, relationship: d.relationship, sites_shown: "1", ...(d.patient ? { patient: d.patient } : {}) });
   for (const s of d.sites) form.append("sites", s);
-  return post(doFetch, `${CONFIG.authUrl}/account/delegations${query}`, form, { cookie });
+  return post(doFetch, `${authOf(url)}/account/delegations${query}`, form, { cookie });
 }
 export async function submitRevocation(url: string, d: { user: string; delegate: string; patient?: string }, doFetch: typeof fetch = fetch) {
   const { cookie, query } = await accountSignIn(url, d.user, doFetch);
-  return post(doFetch, `${CONFIG.authUrl}/account/delegations/revoke${query}`, new URLSearchParams({ delegate: d.delegate, ...(d.patient ? { patient: d.patient } : {}) }), { cookie });
+  return post(doFetch, `${authOf(url)}/account/delegations/revoke${query}`, new URLSearchParams({ delegate: d.delegate, ...(d.patient ? { patient: d.patient } : {}) }), { cookie });
 }
 
 /** A complete scripted launch. */
-export async function scriptedLaunch(user: string, client = "portal-app", opts: { scope?: string; sites?: string[]; patient?: string } = {}) {
-  const config: any = await (await fetch(localUrl(`${CLINICAL_FHIR}/.well-known/smart-configuration`))).json();
-  const a = buildAuthorization(config.authorization_endpoint, client, opts.scope, undefined, user);
+export async function scriptedLaunch(user: string, client = "portal-app", opts: { scope?: string; sites?: string[]; patient?: string; at?: At } = {}) {
+  const at = opts.at ?? ROOT_URLS;
+  const config: any = await (await fetch(localUrl(`${at.clinicalFhir}/.well-known/smart-configuration`))).json();
+  const a = buildAuthorization(config.authorization_endpoint, client, opts.scope, undefined, user, undefined, at);
   const back = await submitConsent(a.url, { user, sites: opts.sites, patient: opts.patient });
   if (back.searchParams.get("state") !== a.state) throw new Error("state mismatch");
   if (!back.searchParams.get("code")) return { error: back.searchParams.get("error") } as any;

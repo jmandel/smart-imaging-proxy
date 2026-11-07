@@ -112,9 +112,9 @@ test("a window's redirect back to the app joins the flow waiting on it, with not
   try {
     const post = (path: string, body: unknown = {}) => fetch(`${CONFIG.demoUrl}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     const started: any = await (await post("/api/flows/patient-sites/start")).json();
-    const stepping = post("/api/flows/patient-sites/steps/consent", { inputs: { mode: "window", sites: [] } });
+    const stepping = post(`${started.scope.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "window", sites: [] } });
     let url: string | null = null;
-    while (!url) { url = ((await (await fetch(`${CONFIG.demoUrl}/api/pending-authorization`)).json()) as any).url; await Bun.sleep(5); }
+    while (!url) { url = ((await (await fetch(`${CONFIG.demoUrl}${started.scope.base}/api/pending-authorization`)).json()) as any).url; await Bun.sleep(5); }
     const back = await submitConsent(url, { user: "josh" });
     expect([...back.searchParams.keys()].sort()).toEqual(["code", "state"]);
     const before = stack.collector.sessions.get("unattributed")?.spans.size ?? 0;
@@ -180,15 +180,15 @@ test("no raw secret reaches a span, including a code that only ever travels in a
   try {
     const post = (path: string, body: unknown = {}) => fetch(`${CONFIG.demoUrl}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     const started: any = await (await post("/api/flows/patient-sites/start")).json();
-    const stepping = post("/api/flows/patient-sites/steps/consent", { inputs: { mode: "window", sites: [] } });
+    const stepping = post(`${started.scope.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "window", sites: [] } });
     let url: string | null = null;
-    while (!url) { url = ((await (await fetch(`${CONFIG.demoUrl}/api/pending-authorization`)).json()) as any).url; await Bun.sleep(5); }
+    while (!url) { url = ((await (await fetch(`${CONFIG.demoUrl}${started.scope.base}/api/pending-authorization`)).json()) as any).url; await Bun.sleep(5); }
     const back = await submitConsent(url, { user: "josh" });
     const code = back.searchParams.get("code")!, state = back.searchParams.get("state")!;
     expect(code.length).toBeGreaterThan(20);
     expect((await fetch(back)).status).toBe(200);
     expect((await stepping).status).toBe(200);
-    await post(`/api/flows/patient-sites/steps/search`, { inputs: {} });
+    await post(`${started.scope.base}/api/flows/patient-sites/steps/search`, { inputs: {} });
     await Bun.sleep(250);
     const text = await exported(started.session);
     const callback = stack.collector.sessions.get(started.session)!.spans;

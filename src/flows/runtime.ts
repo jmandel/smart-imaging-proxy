@@ -1,11 +1,9 @@
 // Everything a flow step does goes over HTTP to the real services, and is recorded for display.
 import { boundaryOf, readMultipart, type Rule } from "@smart-imaging-proxy/core";
 import { currentContext, startSpan, tfetch, traceparentOf, withSpan, check as traceCheck } from "../trace";
-import { accountUrl, buildAuthorization, CLINICAL_FHIR, submitConsent, submitDelegation, submitRevocation, tokenRequestBody } from "./oauth";
+import { accountUrl, buildAuthorization, submitConsent, submitDelegation, submitRevocation, tokenRequestBody } from "./oauth";
 import { clientAssertion, PATIENT_NAMES, USERS, type BackendClient } from "../auth-server";
-import { CONFIG } from "../config";
-import { advance, resetClock } from "../clock";
-import type { Stack } from "../stack";
+import type { World } from "../world";
 
 export interface Input { id: string; label: string; type: "select" | "multi" | "text"; options?: { value: string; label: string }[]; default?: any; clickDefault?: any; help?: string; }
 export interface Check { label: string; ok: boolean; detail?: string; }
@@ -46,19 +44,21 @@ export class Ctx {
   exchanges: Exchange[] = [];
   checks: Check[] = [];
   private decisionStart = 0;
-  constructor(public stack: Stack, public clients: Record<string, BackendClient>) {}
-  get backend() { return this.stack.backend; }
+  /** A flow acts in one world: its own scope, or for Browse, whichever world the page is in. */
+  constructor(public world: World, public clients: Record<string, BackendClient>) {}
+  get urls() { return this.world.urls; }
+  get backend() { return this.world.backend; }
   /** One patient's studies, Josh's unless named, from the catalog in use. For a flow's own displays and expectations. */
-  studies(patient = "josh-example") { return this.stack.catalog.allStudies().filter(s => s.patient === patient); }
+  studies(patient = "josh-example") { return this.world.catalog.allStudies().filter(s => s.patient === patient); }
   /** One study, with its full series list. */
   study(id: string): any {
-    const catalog = this.stack.catalog;
+    const catalog = this.world.catalog;
     const row = catalog.allStudies().find(s => s.id === id);
     return row && { ...row, series: catalog.hierarchies([row.pk]).get(row.pk)?.series ?? [] };
   }
   /** One patient's sites, Josh's unless named, in the catalog in use. */
   sites(patient = "josh-example") { return [...new Set(this.studies(patient).flatMap(s => s.site ? [s.site] : []))]; }
-  siteOf(id: string) { return this.stack.catalog.allStudies().find(s => s.id === id)?.site; }
+  siteOf(id: string) { return this.world.catalog.allStudies().find(s => s.id === id)?.site; }
   /** The patient the last launch asked for, if it named one. */
   private askedPatient: string | undefined;
   /** Set once a person in a window picks an account other than the one a step expects. */
@@ -83,7 +83,7 @@ export class Ctx {
     const who = this.signedIn;
     if (error !== "access_denied" || !who) return `The launch ended in ${error ?? "an error"}, so the app has no token`;
     const name = USERS[who]?.name.split(" ")[0] ?? who;
-    const policy = this.stack.stores.active.getPolicy();
+    const policy = this.world.store.getPolicy();
     const held = [...(USERS[who]?.patient ? [USERS[who]!.patient!] : []), ...policy.guardians.filter(g => g.guardian === who).map(g => g.patient), ...policy.delegations.filter(d => d.delegate === who).map(d => d.patient)];
     if (!held.length) return `No patient has shared records with ${name}, so the app has no token`;
     if (this.askedPatient && !held.includes(this.askedPatient)) return `${(PATIENT_NAMES[this.askedPatient] ?? this.askedPatient).split(" ")[0]} hasn't shared records with ${name}, so the app has no token`;
@@ -100,11 +100,11 @@ export class Ctx {
     this.accountNote = same ? undefined : `${actual ?? "No one"} signed in, and this step expected ${expected}`;
     this.check("Signed in with the account this step expects", same, this.accountNote ?? expected);
   }
-  async setRules(rules: Rule[]) { await this.stack.policy.setRules(rules); }
-  advanceClock(seconds: number) { advance(seconds); }
-  beginStep() { this.exchanges = []; this.checks = []; this.decisionStart = this.stack.imaging.decisions.length; }
+  async setRules(rules: Rule[]) { await this.world.policy.setRules(rules); }
+  advanceClock(seconds: number) { this.world.clock.advance(seconds); }
+  beginStep() { this.exchanges = []; this.checks = []; this.decisionStart = this.world.imaging.decisions.length; }
   endStep(narrative?: string): StepResult {
-    return { narrative, exchanges: this.exchanges, checks: this.checks, decisions: this.stack.imaging.decisions.slice(this.decisionStart) };
+    return { narrative, exchanges: this.exchanges, checks: this.checks, decisions: this.world.imaging.decisions.slice(this.decisionStart) };
   }
 
   async json(actor: string, title: string, url: string, init: RequestInit & { headers?: Record<string, string> } = {}) {
@@ -125,8 +125,8 @@ export class Ctx {
   async launch(user: string, client = "portal-app", opts: { sites?: string[]; window?: boolean; patient?: string } = {}) {
     const actor = client === "portal-app" ? "App" : client;
     this.askedPatient = opts.patient;
-    const conf = await this.json(actor, "Discover the authorization endpoints", `${CLINICAL_FHIR}/.well-known/smart-configuration`);
-    const a = withSpanSync("app", "Generate PKCE verifier, S256 challenge, and state", () => buildAuthorization(conf.body.authorization_endpoint, client, undefined, this.traceFields(), user, opts.patient));
+    const conf = await this.json(actor, "Discover the authorization endpoints", `${this.urls.clinicalFhir}/.well-known/smart-configuration`);
+    const a = withSpanSync("app", "Generate PKCE verifier, S256 challenge, and state", () => buildAuthorization(conf.body.authorization_endpoint, client, undefined, this.traceFields(), user, opts.patient, this.urls));
     const shown = a.url.replace(/&demo_[^&]+/g, "");
     const back = opts.window
       ? await this.inWindow(a.url)
@@ -134,7 +134,7 @@ export class Ctx {
     const redirected = `It redirected back with ${back.searchParams.get("code") ? "a single-use code" : `error ${back.searchParams.get("error")}`}.`;
     const browser: Exchange = { title: "Browser: authorization request, sign-in, and approval", actor: "User's browser", method: "GET", url: shown, requestHeaders: {}, status: back.searchParams.get("code") ? 302 : "denied", responseHeaders: {}, summary: `${opts.window ? "A person used the Authorization Server's pages in a window" : `Authorization Server's pages: ${user} signed in`}. ${redirected}` };
     this.exchanges.push(browser);
-    const signedIn = this.stack.auth.signedInFor(a.state);
+    const signedIn = this.world.auth.signedInFor(a.state);
     this.signedIn = signedIn;
     if (opts.window) {
       if (signedIn) browser.summary = `Authorization Server's pages: ${signedIn} signed in${back.searchParams.get("code") ? " and approved" : ""}. ${redirected}`;
@@ -178,33 +178,33 @@ export class Ctx {
 
   /** A patient or their guardian delegates to a related person, on the account page. A refused share reports its status. */
   async delegate(owner: string, delegate: string, relationship: string, sites: string[], opts: { window?: boolean; patient?: string } = {}) {
-    const url = accountUrl(owner, this.traceFields(), delegate);
+    const url = accountUrl(owner, this.traceFields(), delegate, this.urls);
     let status = 303;
-    if (opts.window) { await this.inWindow(url); this.checkAccount(this.stack.auth.lastAccountSignIn, owner); }
+    if (opts.window) { await this.inWindow(url); this.checkAccount(this.world.auth.lastAccountSignIn, owner); }
     else status = (await withSpan("user", "action", `Browser: ${owner} signs in and shares with ${delegate}`, { sites: sites.join(", "), patient: opts.patient }, () => submitDelegation(url, { user: owner, delegate, relationship, sites, patient: opts.patient }, browserFetch))).status;
     this.exchanges.push({ title: "Browser: sign in to the account page, and share", actor: "User's browser", method: "POST", url: url.replace(/[?&]demo_[^&]+/g, ""), requestHeaders: {}, status, responseHeaders: {}, summary: status === 303 ? `The delegation is kept at the Imaging Server, not in any token.` : `The account page refused to record this.` });
     return status;
   }
   async revokeDelegation(owner: string, delegate: string) {
-    const url = accountUrl(owner, this.traceFields());
+    const url = accountUrl(owner, this.traceFields(), undefined, this.urls);
     await withSpan("user", "action", `Browser: ${owner} revokes ${delegate}'s access`, {}, () => submitRevocation(url, { user: owner, delegate }, browserFetch));
   }
   /** SMART Backend Services: discovery, a signed assertion, and client_credentials. */
   async backendToken(clientId: string, scope = "system/ImagingStudy.rs") {
     const c = this.clients[clientId]!;
-    const conf = await this.json(clientId, "Discover the token endpoint", `${CLINICAL_FHIR}/.well-known/smart-configuration`);
-    const assertion = withSpanSync("app", "Sign a client assertion with the client's private key (ES256)", () => clientAssertion(c, conf.body.token_endpoint), (j: string) => { const [h, b] = j.split("."); return { header: JSON.parse(Buffer.from(h!, "base64url").toString()), claims: JSON.parse(Buffer.from(b!, "base64url").toString()) }; });
+    const conf = await this.json(clientId, "Discover the token endpoint", `${this.urls.clinicalFhir}/.well-known/smart-configuration`);
+    const assertion = withSpanSync("app", "Sign a client assertion with the client's private key (ES256)", () => clientAssertion(c, conf.body.token_endpoint, this.world.clock), (j: string) => { const [h, b] = j.split("."); return { header: JSON.parse(Buffer.from(h!, "base64url").toString()), claims: JSON.parse(Buffer.from(b!, "base64url").toString()) }; });
     const r = await this.json(clientId, "SMART Backend Services token request", conf.body.token_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "client_credentials", scope, client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: assertion }).toString() });
     return r.body;
   }
   async refresh(refreshToken: string | undefined, client = "portal-app") {
     this.need(refreshToken, this.noToken);
-    const r = await this.json("App", "Refresh the access token", this.stack.auth.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: client }).toString() });
+    const r = await this.json("App", "Refresh the access token", this.world.auth.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: client }).toString() });
     return r.body;
   }
   async search(token: string | undefined, query = "patient=josh-example&_include=ImagingStudy:endpoint", actor = "App") {
     this.token(token);
-    const r = await this.json(actor, "Search ImagingStudy", `${CONFIG.imagingUrl}/fhir/ImagingStudy?${query}`, { headers: { Authorization: `Bearer ${token}`, Accept: "application/fhir+json" } });
+    const r = await this.json(actor, "Search ImagingStudy", `${this.urls.imaging}/fhir/ImagingStudy?${query}`, { headers: { Authorization: `Bearer ${token}`, Accept: "application/fhir+json" } });
     const last = this.exchanges[this.exchanges.length - 1]!;
     last.body = summarizeBundle(r.body, id => this.siteOf(id));
     const studies: Record<string, { uid: string; base: string; resource: any; claims: any }> = {};
@@ -229,7 +229,7 @@ export class Ctx {
     if (r.status === 200) last.body = { ...(summarizeBundle(r.body, id => this.siteOf(id)) as any), next: r.body.link.some((l: any) => l.relation === "next") };
     return { status: r.status, body: r.body, next: r.status === 200 ? r.body.link.find((l: any) => l.relation === "next")?.url as string | undefined : undefined };
   }
-  plainBase() { return `${CONFIG.proxyUrl}/wado/-`; }
+  plainBase() { return `${this.urls.proxy}/wado/-`; }
 
   /** A WADO-RS retrieval that reads the whole multipart body, as a careful client would. `null` sends no token on purpose. */
   async retrieve(actor: string, title: string, url: string, token: string | null | undefined, accept: string | undefined = ACCEPT_ANY): Promise<Retrieval> {
@@ -258,7 +258,7 @@ export class Ctx {
       }
     } else await res.body?.cancel();
     span.end(res.ok && complete || !res.ok ? (res.ok ? "ok" : "denied") : "error", { status: res.status, parts: parts.length, closing_boundary: complete, failed });
-    const ev = this.stack.proxy.events[this.stack.proxy.events.length - 1];
+    const ev = this.world.proxy.events[this.world.proxy.events.length - 1];
     const syn = [...new Set(parts.map(p => p.syntax))].join(", ");
     const bytes = parts.reduce((n, p) => n + p.bytes, 0);
     this.exchanges.push({
@@ -294,4 +294,3 @@ export function summarizeBundle(b: any, siteOf: (id: string) => string | undefin
 }
 export const siteOptions = (c: Ctx, patient?: string) => c.sites(patient).map(s => ({ value: s, label: s }));
 export const studyOptions = (c: Ctx, patient?: string) => c.studies(patient).map(s => ({ value: s.id, label: `${(s.title ?? s.description ?? s.id).slice(0, 44)} (${s.site ?? "no site"})` }));
-export const resetDemo = async (stack: Stack) => { await stack.resetAll(); resetClock(); };

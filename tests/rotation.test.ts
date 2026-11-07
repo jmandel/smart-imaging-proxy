@@ -19,7 +19,7 @@ const WRIST = "xr-wrist-left-2012";
 let stack: Stack; let demo: ReturnType<typeof createDemoServer>;
 beforeAll(async () => { stack = await startStack(root); demo = createDemoServer(stack, registerClients(stack), root); });
 afterAll(() => stack.stop());
-beforeEach(async () => { stack.useStore("saved"); await stack.resetSaved(); stack.stores.saved.revokeAllTokens(); stack.proxy.reset(); resetClock(); });
+beforeEach(async () => { await stack.resetSaved(); stack.store.revokeAllTokens(); stack.proxy.reset(); resetClock(); });
 
 const admin = async (path: string) => {
   const r = await demo.fetch(new Request(`${CONFIG.demoUrl}/api/admin${path}`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host } }));
@@ -76,9 +76,9 @@ for (const backend of BACKENDS) {
     test("an old URL follows current policy, and stays bound to its own study", async () => {
       const { t, url } = await launchAndSearch();
       await admin("/signing-key/rotate");
-      stack.stores.active.setPolicy({ rules: [{ id: "none", when: { client: "portal-app" }, allow: { studies: [] } }] });
+      stack.store.setPolicy({ rules: [{ id: "none", when: { client: "portal-app" }, allow: { studies: [] } }] });
       expect(await get(url, t.access_token)).toEqual({ status: 404, parts: 0, authz: "asked" });
-      stack.stores.active.setPolicy({ rules: [] });
+      stack.store.setPolicy({ rules: [] });
       const other = stack.catalog.allStudies().find(s => !url.endsWith(s.uid) && url.split("/studies/")[1] !== s.uid)!.uid;
       const base = url.split("/studies/")[0];
       expect(await get(`${base}/studies/${other}`, t.access_token)).toEqual({ status: 404, parts: 0, authz: "asked" });
@@ -192,14 +192,19 @@ describe("rotation", () => {
     expect((await jwks()).keys[0].kid).not.toBe(before.keys[0].kid);
     expect((await jwks()).keys.length).toBe(1);
     expect(await get(url, t.access_token)).toMatchObject({ status: 200, authz: "asked" });
-    expect(stack.stores.saved.info().counts.retiredSigningKeys).toBeGreaterThan(0);
-    expect(stack.stores.scratch.info().counts.signingKeys).toBe(0);
+    expect(stack.store.info().counts.retiredSigningKeys).toBeGreaterThan(0);
+    // A scope signs with its own key, which the root's rotation leaves alone.
+    const scope = stack.scopes.mint();
+    const kid = scope.imaging.signingKid;
+    await admin("/signing-key/rotate");
+    expect(scope.imaging.signingKid).toBe(kid);
+    expect(scope.store.info().counts.retiredSigningKeys).toBe(0);
   });
 });
 
 test("a proxy that isn't told keeps a rotated key until its TTL, and no longer", async () => {
   stack.setBackend("static-files");
-  stack.useStore("saved");
+
   const { t, url } = await launchAndSearch();
   // A second proxy on the real JWKS, which the admin action knows nothing about. It only needs to
   // show which way it would decide, so its decision service is one that always allows.
@@ -245,7 +250,7 @@ test("a rotation survives a restart: the old key stays retired, with its private
     stack = second;
     expect(second.imaging.signingKid).toBe(newKid);
     expect(second.imaging.publicKeys.has(oldKid)).toBe(false);
-    expect(second.stores.saved.db.query("SELECT private_key FROM signing_keys WHERE kid = ?").get(oldKid)).toEqual({ private_key: "" });
+    expect(second.store.db.query("SELECT private_key FROM signing_keys WHERE kid = ?").get(oldKid)).toEqual({ private_key: "" });
     expect((await get(url, t.access_token)).authz).toBe("asked");
     second.stop();
   } finally {

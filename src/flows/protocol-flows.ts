@@ -79,7 +79,7 @@ export const protocolFlows: Flow[] = [
       } },
       { id: "outage", title: "The decision API goes down", actor: "Operations", doc: `<p>The fast path uses only a public key, so it isn't affected. A request needing a decision can't get one. The response is <code>503</code> with <code>Retry-After</code>, which the guide allows, and no data.</p>`, run: async c => {
         const s = c.found(WRIST);
-        c.stack.imaging.setOutage(true);
+        c.world.imaging.setOutage(true);
         const a = await c.retrieve("App", "Fast path during the outage", c.studyUrl(s.base, s.uid), c.state.token);
         c.check("Still served", a.status === 200 && a.authz === "instant");
         const n = await c.refresh(c.state.refresh);
@@ -88,7 +88,7 @@ export const protocolFlows: Flow[] = [
         c.check("503, no data", b.status === 503 && b.parts.length === 0, `status ${b.status}`);
       } },
       { id: "restore", title: "The decision API returns", actor: "Operations", doc: `<p>Failures aren't cached, so the next request succeeds.</p>`, run: async c => {
-        c.stack.imaging.setOutage(false);
+        c.world.imaging.setOutage(false);
         const s = c.found(WRIST);
         const r = await c.retrieve("App", "Retry", c.studyUrl(s.base, s.uid), c.state.newToken);
         c.check("Recovered", r.status === 200 && r.authz === "asked", `authorization: ${r.authz}`);
@@ -184,7 +184,7 @@ export const protocolFlows: Flow[] = [
           const r = await c.retrieve("App", "Your Accept header", c.studyUrl(s.base, s.uid), c.state.token, i.accept);
           c.check("Either a correct 406, or only labeled parts", r.status === 406 || (r.status === 200 && labelled(r)), `status ${r.status}`);
           if (c.backend === "orthanc") {
-            const raw = await c.stack.backends.orthanc.rawProbe!(`/studies/${s.uid}`, `multipart/related; type="application/dicom"; transfer-syntax=${i.accept.match(/transfer-syntax=([^;,\s]+)/)?.[1] ?? "*"}`);
+            const raw = await c.world.backends.orthanc.rawProbe!(`/studies/${s.uid}`, `multipart/related; type="application/dicom"; transfer-syntax=${i.accept.match(/transfer-syntax=([^;,\s]+)/)?.[1] ?? "*"}`);
             c.exchanges.push({ title: "What Orthanc itself returned", actor: "Proxy (for comparison)", method: "GET", url: `${CONFIG.orthanc.base}/dicom-web/studies/…`, requestHeaders: {}, status: raw.status, responseHeaders: raw.contentType ? { "content-type": raw.contentType } : {}, summary: raw.partSyntaxLabel ? `First part header: ${raw.partSyntaxLabel}` : undefined, body: raw.status >= 400 ? raw.bodyPreview : undefined });
           }
         } },
@@ -219,9 +219,9 @@ export const protocolFlows: Flow[] = [
         inputs: () => [{ id: "after", label: "Instances before failure", type: "select", options: ["5", "50", "200"].map(v => ({ value: v, label: v })), default: "50" }],
         run: async (c, i) => {
           const s = c.found(MRI);
-          c.stack.setTruncateAfter(Number(i.after));
+          c.world.setTruncateAfter(Number(i.after));
           const r = await c.retrieve("App", "Retrieve during the failure", c.studyUrl(s.base, s.uid), c.state.token);
-          c.stack.setTruncateAfter(undefined);
+          c.world.setTruncateAfter(undefined);
           c.check("The client sees it wasn't complete", !r.complete && r.failed, `${r.parts.length} parts, closing boundary: ${r.complete}`);
           c.check("Fewer parts than the manifest lists", r.parts.length < s.resource.numberOfInstances);
         } },
@@ -249,9 +249,9 @@ export const protocolFlows: Flow[] = [
         c.exchanges[c.exchanges.length - 1]!.body = { items: r.body.length, sample: { "00080018": r.body[0]["00080018"], "7FE00010": r.body[0]["7FE00010"] } };
         c.check("Returned an item per instance", r.status === 200 && r.body.length === s.resource.numberOfInstances, `${r.body.length} items`);
         c.check("No internal hostnames", !text.includes(":4611") && !text.includes(":4610") && !text.includes("bulk:"));
-        c.check("Every bulk link goes through the proxy", uris.length > 0 && uris.every(u => u.startsWith(CONFIG.proxyUrl)), `${uris.length} links`);
+        c.check("Every bulk link goes through the proxy", uris.length > 0 && uris.every(u => u.startsWith(c.urls.proxy)), `${uris.length} links`);
         if (c.backend === "orthanc") {
-          const raw = await c.stack.backends.orthanc.rawProbe!(`/studies/${s.uid}/metadata`, "application/dicom+json");
+          const raw = await c.world.backends.orthanc.rawProbe!(`/studies/${s.uid}/metadata`, "application/dicom+json");
           c.exchanges.push({ title: "What Orthanc itself returned", actor: "Proxy (for comparison)", method: "GET", url: `${CONFIG.orthanc.base}/dicom-web/studies/…/metadata`, requestHeaders: {}, status: raw.status, responseHeaders: {}, summary: "Orthanc's own BulkDataURI values are absolute internal URLs." });
         }
       } },
@@ -278,7 +278,7 @@ export const protocolFlows: Flow[] = [
         run: async (c, i) => {
           c.state.token = c.launched(await c.launch("josh"));
           c.state.count = Number(i.count);
-          c.state.query = `${CONFIG.imagingUrl}/fhir/ImagingStudy?patient=josh-example&_count=${c.state.count}`;
+          c.state.query = `${c.urls.imaging}/fhir/ImagingStudy?patient=josh-example&_count=${c.state.count}`;
           const r = await c.searchPage("First page", c.state.token, c.state.query);
           const all = c.studies().length;
           c.state.first = r;
@@ -321,7 +321,7 @@ export const protocolFlows: Flow[] = [
           c.check("The same URL follows policy again", restored.status === 200 && restored.body.total === c.studies().length && studiesOn(restored.body).length > 0, `total ${restored.body.total}`);
         } },
       { id: "tamper", title: "Tamper with the cursor", actor: "Attacker", doc: `<p>A cursor is signed with a key only the Imaging Server holds, and it carries a hash of the search's filters. An edited cursor gets <code>400</code>, and so does a valid cursor sent with different filters. A valid cursor doesn't help a caller who can't search this patient.</p>`, run: async c => {
-        const first = await c.searchPage("Get a next link", c.state.token, `${CONFIG.imagingUrl}/fhir/ImagingStudy?patient=josh-example&_count=1`);
+        const first = await c.searchPage("Get a next link", c.state.token, `${c.urls.imaging}/fhir/ImagingStudy?patient=josh-example&_count=1`);
         const next = new URL(c.need(first.next, "The search has to have a next link for its cursor to be tampered with"));
         const cursor = next.searchParams.get("_cursor")!;
         const [payload, mac] = cursor.split(".");

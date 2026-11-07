@@ -10,7 +10,6 @@
 <header class="topbar">
   <a class="mark" href="/"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="1" y="1" width="18" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><ellipse cx="10" cy="10" rx="4" ry="5.5" fill="currentColor"/></svg>SMART Imaging</a>
   <nav class="pages" aria-label="Pages"><a href="/">Overview</a><a href="/browse">Browse studies</a><a class="live-link" id="live-link" href="#" target="smart-imaging-live" rel="noopener">Live trace ↗</a><a href="/admin" aria-current="page">Admin</a></nav>
-  <div class="bar-status"><span id="store-badge" class="store-badge" role="status"></span></div>
 </header>
 <main class="admin" id="admin">
   <h1>Admin</h1>
@@ -21,17 +20,14 @@
 
   <h2 class="group">Policy</h2>
   <section aria-labelledby="h-store">
-    <div class="about"><h2 id="h-store">Policy store</h2><p>Flows work in scratch, which resets when a flow starts. Saved policy changes only when you act on it here or on the account page.</p></div>
+    <div class="about"><h2 id="h-store">Policy store</h2><p>The one real policy database. Flows run in scopes of their own, and never change it. It changes only when you act on it here or on the account page.</p></div>
     <div class="controls">
     <div id="store-table"></div>
     <div class="actions">
-      <button class="secondary" data-activate="saved">Use saved policy</button>
-      <button class="secondary" data-activate="scratch">Use flow scratch</button>
-      <button class="secondary" id="reset-scratch">Reset scratch</button>
       <button class="danger" id="reset-saved">Reset saved policy</button>
     </div>
     <p class="msg" id="store-msg" role="status"></p>
-<p class="note">Kept in the saved store: guardians on file, delegations, app grants, rules, settings, the signing key, and token records, as SHA-256 hashes. Kept only in memory: sign-ins in progress, authorization codes, account sessions, used assertion IDs, the demo clock, and backend client keys.</p>
+<p class="note">Kept in saved policy: guardians on file, delegations, app grants, rules, settings, the signing key, and token records, as SHA-256 hashes. Kept only in memory: sign-ins in progress, authorization codes, account sessions, used assertion IDs, the demo clock, and backend client keys.</p>
     </div>
   </section>
   <section aria-labelledby="h-chain">
@@ -43,7 +39,7 @@
     </div>
   </section>
   <section aria-labelledby="h-rules">
-    <div class="about"><h2 id="h-rules">Rules</h2><p>Applying a rule set replaces every rule in the active store. The first rule that matches decides.</p></div>
+    <div class="about"><h2 id="h-rules">Rules</h2><p>Applying a rule set replaces every rule in saved policy. The first rule that matches decides.</p></div>
     <div class="controls">
     <p id="rules-current"></p>
     <div class="inline-field">
@@ -63,7 +59,7 @@
     </div>
   </section>
   <section aria-labelledby="h-settings">
-    <div class="about"><h2 id="h-settings">Settings</h2><p>A choice applies to the active store as soon as you pick it.</p></div>
+    <div class="about"><h2 id="h-settings">Settings</h2><p>A choice applies to saved policy as soon as you pick it.</p></div>
     <div class="controls">
     <div class="fields">
       <label>Context lifetime <select data-setting="contextLifetimeSeconds"></select></label>
@@ -121,7 +117,7 @@
     <div class="controls">
     <p id="token-counts"></p>
     <ul class="rows acts">
-      <li><span>Ends every access and refresh token in the active store. A signed URL or cached decision already issued keeps working until it expires.</span><button class="danger" id="revoke-all">Revoke all tokens</button></li>
+      <li><span>Ends every access and refresh token in saved policy. A signed URL or cached decision already issued keeps working until it expires.</span><button class="danger" id="revoke-all">Revoke all tokens</button></li>
       <li><span>Clears every decision the proxy has cached, so its next request for each asks the Imaging Server.</span><button class="danger" id="flush-cache">Flush proxy decision cache</button></li>
       <li><span>Replaces the signing key and tells this proxy, so URLs already issued stop answering instantly. A valid token still gets what policy allows by asking. A proxy that isn't told learns within 60 seconds.</span><button class="danger" id="rotate-key">Rotate signing key</button></li>
     </ul>

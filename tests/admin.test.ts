@@ -1,5 +1,5 @@
 // The admin API, and the demo server's routes that touch policy. Requests go straight to the
-// handler. The stack's saved store is in memory.
+// handler. The stack's saved store is in memory. Flows run in scopes of their own.
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { startStack, type Stack } from "../src/stack";
@@ -14,7 +14,7 @@ const root = join(import.meta.dir, "..");
 let stack: Stack; let demo: ReturnType<typeof createDemoServer>;
 beforeAll(async () => { stack = await startStack(root); demo = createDemoServer(stack, registerClients(stack), root); });
 afterAll(() => stack.stop());
-beforeEach(async () => { stack.useStore("saved"); await stack.resetSaved(); stack.imaging.setOutage(false); resetClock(); stack.setBackend("static-files"); });
+beforeEach(async () => { await stack.resetSaved(); stack.imaging.setOutage(false); resetClock(); stack.setBackend("static-files"); });
 
 const call = (method: string, path: string, body?: unknown, headers: Record<string, string> = {}) =>
   demo.fetch(new Request(`${CONFIG.demoUrl}${path}`, { method, headers: { "content-type": "application/json", host: new URL(CONFIG.demoUrl).host, ...headers }, ...(body === undefined ? {} : { body: typeof body === "string" ? body : JSON.stringify(body) }) }));
@@ -27,6 +27,8 @@ const refused = async (method: string, path: string, body: unknown, message: str
   return b;
 };
 const RULE = { id: "r1", when: { client: "c" }, allow: { all: true } };
+/** A fresh scope's base path. */
+const mint = async () => { const r = await call("POST", "/api/scopes"); expect(r.status).toBe(201); return ((await r.json()) as any).base as string; };
 const DELEGATION = { patient: "josh-example", grantedBy: "josh", delegate: "sam-caregiver", relationship: "caregiver", sites: ["Lakeside Imaging"] };
 const GRANT = { client: "portal-app", user: "josh", patient: "josh-example" };
 
@@ -53,13 +55,11 @@ describe("status", () => {
     expect((await ok("GET", "/api/admin/status")).catalog.source).toBe("orthanc");
     expect(await (await call("GET", "/admin")).text()).toContain('id="catalog-stats"');
   });
-  test("reports both stores: mode, path, durability, schema version, and row counts", async () => {
-    stack.stores.active.setPolicy({ rules: [RULE], delegations: [DELEGATION], appGrants: [GRANT] });
+  test("reports the saved store: mode, path, durability, schema version, and row counts, and how many scopes are live", async () => {
+    stack.store.setPolicy({ rules: [RULE], delegations: [DELEGATION], appGrants: [GRANT] });
     const s = await ok("GET", "/api/admin/status");
-    expect(s.store.active).toBe("saved");
-    expect(s.store.label).toBe("Saved policy");
-    expect(s.store.saved).toMatchObject({ mode: "memory", path: ":memory:", schemaVersion: SCHEMA_VERSION, counts: { delegations: 1, appGrants: 1, rules: 1 } });
-    expect(s.store.scratch.mode).toBe("memory");
+    expect(s.store).toMatchObject({ mode: "memory", path: ":memory:", schemaVersion: SCHEMA_VERSION, counts: { delegations: 1, appGrants: 1, rules: 1 } });
+    expect(s.scopes.live).toBe(stack.scopes.size);
     expect(s.policy.rules).toEqual([RULE]);
     expect(s.settings).toEqual({ contextLifetimeSeconds: 300, maxSeriesInContext: 12, tokenLifetimeSeconds: 3600, refreshTokenLifetimeSeconds: 2592000 });
     expect(s.backend.current).toBe("static-files");
@@ -74,57 +74,75 @@ describe("status", () => {
   });
 });
 
-describe("choosing and resetting a store", () => {
-  test("activate moves between stores, and rejects anything else", async () => {
-    expect((await ok("POST", "/api/admin/store/activate", { store: "scratch" })).store.label).toBe("Flow scratch: reset when a flow starts");
-    expect((await ok("GET", "/api/store")).active).toBe("scratch");
-    expect((await ok("POST", "/api/admin/store/activate", { store: "saved" })).store.label).toBe("Saved policy");
-    await refused("POST", "/api/admin/store/activate", { store: "other" }, "store must be");
-  });
-  test("reset scratch leaves saved alone", async () => {
-    stack.stores.saved.setPolicy({ rules: [RULE] });
-    stack.stores.scratch.setPolicy({ rules: [{ ...RULE, id: "scratch-rule" }] });
-    const s = await ok("POST", "/api/admin/store/reset-scratch");
-    expect(s.store.scratch.counts.rules).toBe(0);
-    expect(s.store.saved.counts.rules).toBe(1);
+describe("resetting saved policy", () => {
+  test("there's no store to choose: the controls for one are gone", async () => {
+    for (const path of ["/api/admin/store/activate", "/api/admin/store/reset-scratch"]) expect((await call("POST", path, { store: "saved" })).status).toBe(404);
+    expect((await call("GET", "/api/store")).status).toBe(404);
   });
   test("reset saved needs confirmation, and leaves tokens and the signing key", async () => {
-    stack.stores.saved.setPolicy({ rules: [RULE], delegations: [DELEGATION] });
+    stack.store.setPolicy({ rules: [RULE], delegations: [DELEGATION] });
     const t = await scriptedLaunch("josh");
     await refused("POST", "/api/admin/store/reset-saved", {}, "confirm");
     await refused("POST", "/api/admin/store/reset-saved", { confirm: "yes" }, "confirm");
-    expect(stack.stores.saved.getPolicy().rules).toEqual([RULE]);
+    expect(stack.store.getPolicy().rules).toEqual([RULE]);
     const s = await ok("POST", "/api/admin/store/reset-saved", { confirm: true });
-    expect(s.store.saved.counts).toMatchObject({ rules: 0, delegations: 0, appGrants: 0, signingKeys: 1 });
+    expect(s.store.counts).toMatchObject({ rules: 0, delegations: 0, appGrants: 0, signingKeys: 1 });
     expect(stack.auth.grantOf(t.access_token)).toBeDefined();
   });
 });
 
-describe("flows and the saved store, over HTTP", () => {
-  test("starting a flow activates scratch, saved is untouched, and the explicit control brings it back", async () => {
-    stack.stores.saved.setPolicy({ rules: [RULE], delegations: [DELEGATION] });
+describe("flows and saved policy, over HTTP", () => {
+  test("starting a flow mints a scope that starts from the guardians on file, and saved policy is untouched", async () => {
+    stack.store.setPolicy({ rules: [RULE], delegations: [DELEGATION] });
     const started = await ok("POST", "/api/flows/patient-sites/start");
-    expect(started.store).toEqual({ active: "scratch", label: "Flow scratch: reset when a flow starts" });
+    expect(started.scope.base).toBe(`/s/${started.scope.id}`);
     expect(started.policy.rules).toEqual([]);
-    const back = await ok("POST", "/api/admin/store/activate", { store: "saved" });
-    expect(back.policy.rules).toEqual([RULE]);
-    expect(back.policy.delegations).toEqual([DELEGATION]);
+    expect(started.policy.delegations).toEqual([]);
+    expect(started.policy.guardians).toEqual(stack.store.guardians());
+    expect((await ok("GET", "/api/policy")).rules).toEqual([RULE]);
+    expect((await ok("GET", `${started.scope.base}/api/policy`)).rules).toEqual([]);
+    const again = await ok("POST", "/api/flows/patient-sites/start");
+    expect(again.scope.id).not.toBe(started.scope.id);
   });
-  test("a flow step always runs on scratch, even after the saved store was reactivated", async () => {
-    stack.stores.saved.setPolicy({ rules: [RULE] });
-    await ok("POST", "/api/flows/patient-sites/start");
-    await ok("POST", "/api/admin/store/activate", { store: "saved" });
-    const r = await ok("POST", "/api/flows/patient-sites/steps/consent", { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
-    expect(r.store.active).toBe("scratch");
+  test("a flow's steps run in its scope, and a step at the root is refused", async () => {
+    stack.store.setPolicy({ rules: [RULE] });
+    const { scope } = await ok("POST", "/api/flows/patient-sites/start");
+    expect((await call("POST", "/api/flows/patient-sites/steps/consent", { inputs: { mode: "scripted" } })).status).toBe(409);
+    const r = await ok("POST", `${scope.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
+    expect(r.scope).toEqual(scope);
     expect(r.policy.appGrants.length).toBe(1);
-    expect(stack.stores.saved.getPolicy().appGrants).toEqual([]);
-    expect(stack.stores.saved.getPolicy().rules).toEqual([RULE]);
+    expect(stack.scopes.resolve(scope.id)).toMatchObject({ world: { scope: scope.id } });
+    expect(stack.store.getPolicy().appGrants).toEqual([]);
+    expect(stack.store.getPolicy().rules).toEqual([RULE]);
+    // Another flow's steps don't run in this scope.
+    expect((await call("POST", `${scope.base}/api/flows/caregiver/steps/delegate`, {})).status).toBe(409);
+  });
+  test("the flow state is the scope's, so a reload there comes back to the run", async () => {
+    const { scope } = await ok("POST", "/api/flows/patient-sites/start");
+    await ok("POST", `${scope.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted" } });
+    const state = await ok("GET", `${scope.base}/api/flow-state`);
+    expect(state.flow).toBe("patient-sites");
+    expect(Object.keys(state.completed)).toEqual(["consent"]);
+    expect((await ok("GET", "/api/flow-state")).flow).toBeNull();
+    expect(await (await call("GET", `${scope.base}/`)).text()).toContain('src="/app.js"');
+  });
+  test("a minted scope, and an unknown one", async () => {
+    const r = await call("POST", "/api/scopes", {});
+    expect(r.status).toBe(201);
+    const made: any = await r.json();
+    expect(made.scope).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(made.urls.auth).toBe(`${new URL(CONFIG.authUrl).origin}/s/${made.scope}${new URL(CONFIG.authUrl).pathname.replace(/\/$/, "")}`);
+    expect((await ok("GET", `/s/${made.scope}/api/flow-state`)).scope.id).toBe(made.scope);
+    const gone = await call("GET", "/s/AAAAAAAAAAAAAAAAAAAAAA/api/flow-state");
+    expect(gone.status).toBe(404);
+    expect(((await gone.json()) as any).error).toContain("doesn't exist");
+    expect((await call("POST", "/api/scopes", { anything: 1 })).status).toBe(400);
   });
 });
 
 describe("delegations and app grants", () => {
   test("delete removes a row from the active store, and 404s when there's none", async () => {
-    stack.stores.active.setPolicy({ delegations: [DELEGATION, { ...DELEGATION, delegate: "alex-neighbor" }], appGrants: [GRANT] });
+    stack.store.setPolicy({ delegations: [DELEGATION, { ...DELEGATION, delegate: "alex-neighbor" }], appGrants: [GRANT] });
     const q = new URLSearchParams({ patient: "josh-example", delegate: "sam-caregiver" });
     expect((await ok("DELETE", `/api/admin/delegations?${q}`)).policy.delegations.map((d: any) => d.delegate)).toEqual(["alex-neighbor"]);
     expect((await call("DELETE", `/api/admin/delegations?${q}`)).status).toBe(404);
@@ -146,17 +164,13 @@ describe("rule sets", () => {
     expect(s.ruleSets.choices.map((c: any) => c.id)).toEqual(["no-extra-rules", "hand-wrist-referral", "outside-release", "research-donation", "all-three-services"]);
     for (const c of s.ruleSets.choices) { expect(c.label).toBeTruthy(); expect(c.description).toBeTruthy(); expect(Array.isArray(c.rules)).toBe(true); }
   });
-  test("each set applies to the active store, and is then the one in effect", async () => {
+  test("each set applies to saved policy, and is then the one in effect", async () => {
     for (const [id, rules] of [["hand-wrist-referral", ["hand-referral"]], ["outside-release", ["outside-release"]], ["research-donation", ["research-consent"]], ["all-three-services", ["hand-referral", "outside-release", "research-consent"]], ["no-extra-rules", []]] as const) {
       const s = await ok("POST", "/api/admin/rule-set", { id });
       expect(applied(s)).toEqual(rules as any);
       expect(s.ruleSets.current).toBe(id);
-      expect(stack.stores.saved.rules().map(r => r.id)).toEqual(rules as any);
+      expect(stack.store.rules().map(r => r.id)).toEqual(rules as any);
     }
-    await ok("POST", "/api/admin/store/activate", { store: "scratch" });
-    await ok("POST", "/api/admin/rule-set", { id: "research-donation" });
-    expect(stack.stores.scratch.rules().map(r => r.id)).toEqual(["research-consent"]);
-    expect(stack.stores.saved.rules()).toEqual([]);
   });
   test("the outside release set finds its series in the catalog, the way flow 4 does", async () => {
     const { policy } = await ok("POST", "/api/admin/rule-set", { id: "outside-release" });
@@ -184,22 +198,22 @@ describe("rule sets", () => {
       expect(s.ruleSets.choices.find((c: any) => c.id === "outside-release").rules).toBeNull();
       expect(s.ruleSets.current).toBe("research-donation");
     } finally { stack.catalogs.orthanc.allStudies = real; }
-    expect(stack.stores.saved.rules().map(r => r.id)).toEqual(["research-consent"]);
+    expect(stack.store.rules().map(r => r.id)).toEqual(["research-consent"]);
   });
   test("rules from elsewhere show as no named set, and a named set can replace them", async () => {
-    stack.stores.active.setPolicy({ rules: [RULE] });
+    stack.store.setPolicy({ rules: [RULE] });
     const s = await ok("GET", "/api/admin/status");
     expect(s.ruleSets.current).toBeNull();
     expect(s.policy.rules).toEqual([RULE]);
     expect(applied(await ok("POST", "/api/admin/rule-set", { id: "no-extra-rules" }))).toEqual([]);
   });
   test("a matching rule is the named set, whatever order its fields are in", async () => {
-    stack.stores.active.setPolicy({ rules: [{ allow: { all: true }, when: { patient: "josh-example", client: "research-donation" }, description: "Josh's research donation consent", id: "research-consent" }] });
+    stack.store.setPolicy({ rules: [{ allow: { all: true }, when: { patient: "josh-example", client: "research-donation" }, description: "Josh's research donation consent", id: "research-consent" }] });
     expect((await ok("GET", "/api/admin/status")).ruleSets.current).toBe("research-donation");
   });
   test("flow 4's own rule, with other series withheld, isn't the named set", async () => {
     const { policy } = await ok("POST", "/api/admin/rule-set", { id: "outside-release" });
-    stack.stores.active.setPolicy({ rules: [{ ...policy.rules[0], withholdSeries: policy.rules[0].withholdSeries.slice(0, 1) }] });
+    stack.store.setPolicy({ rules: [{ ...policy.rules[0], withholdSeries: policy.rules[0].withholdSeries.slice(0, 1) }] });
     expect((await ok("GET", "/api/admin/status")).ruleSets.current).toBeNull();
   });
   test("the page has no rules editor", async () => {
@@ -216,7 +230,7 @@ describe("settings", () => {
   test("a named value applies, and the token lifetime reaches new tokens", async () => {
     const s = await ok("PUT", "/api/admin/settings", { contextLifetimeSeconds: 60, maxSeriesInContext: 100, tokenLifetimeSeconds: 300, refreshTokenLifetimeSeconds: 86400 });
     expect(s.settings).toEqual({ contextLifetimeSeconds: 60, maxSeriesInContext: 100, tokenLifetimeSeconds: 300, refreshTokenLifetimeSeconds: 86400 });
-    expect(stack.stores.active.getPolicy().contextLifetimeSeconds).toBe(60);
+    expect(stack.store.getPolicy().contextLifetimeSeconds).toBe(60);
     const t = await scriptedLaunch("josh");
     expect(t.expires_in).toBe(300);
     expect(stack.auth.grantOf(t.access_token)).toBeDefined();
@@ -234,12 +248,12 @@ describe("settings", () => {
   ] as const) {
     test(`${name} gets a 400, and changes nothing`, async () => {
       await refused("PUT", "/api/admin/settings", { maxSeriesInContext: 100, ...body }, message);
-      expect(stack.stores.saved.getSettings().maxSeriesInContext).toBe(12);
+      expect(stack.store.getSettings().maxSeriesInContext).toBe(12);
     });
   }
   test("an empty request gets a 400", async () => { await refused("PUT", "/api/admin/settings", {}, "at least one"); });
   test("flows keep their own values through the store: the admin route alone is restricted", async () => {
-    stack.stores.active.setPolicy({ contextLifetimeSeconds: 7, maxSeriesInContext: 3 });
+    stack.store.setPolicy({ contextLifetimeSeconds: 7, maxSeriesInContext: 3 });
     const s = await ok("GET", "/api/admin/status");
     expect(s.settings).toMatchObject({ contextLifetimeSeconds: 7, maxSeriesInContext: 3 });
     expect((await ok("PUT", "/api/admin/settings", { contextLifetimeSeconds: 300 })).settings).toMatchObject({ contextLifetimeSeconds: 300, maxSeriesInContext: 3 });
@@ -291,43 +305,45 @@ describe("outage", () => {
 });
 
 describe("tokens", () => {
-  test("revoke all ends access and refresh tokens in the active store only", async () => {
+  test("revoke all ends access and refresh tokens in saved policy only", async () => {
     await stack.resetAll();
-    const scratch = await scriptedLaunch("josh");
-    stack.useStore("saved");
+    const scope = stack.scopes.mint();
+    const inScope = await scriptedLaunch("josh", "portal-app", { at: scope.urls });
+
     const t = await scriptedLaunch("josh");
     const search = () => fetch(`${CONFIG.imagingUrl}/fhir/ImagingStudy?patient=josh-example`, { headers: { Authorization: `Bearer ${t.access_token}` } });
     expect((await search()).status).toBe(200);
     const s = await ok("POST", "/api/admin/tokens/revoke-all");
-    expect(s.store.saved.counts.liveAccessTokens).toBe(0);
+    expect(s.store.counts.liveAccessTokens).toBe(0);
     expect((await search()).status).toBe(401);
     const refreshed = await fetch(stack.auth.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: t.refresh_token, client_id: "portal-app" }).toString() });
     expect(refreshed.status).toBe(400);
-    expect(stack.stores.scratch.getToken(scratch.access_token, "access")!.revoked).toBe(false);
+    expect(scope.store.getToken(inScope.access_token, "access")!.revoked).toBe(false);
   });
 });
 
 describe("/api/policy", () => {
-  test("a PUT is refused with a 409 while saved policy is active, and changes nothing", async () => {
-    stack.stores.saved.setPolicy({ rules: [RULE] });
+  test("a PUT at the root is refused with a 409, and changes nothing", async () => {
+    stack.store.setPolicy({ rules: [RULE] });
     const r = await call("PUT", "/api/policy", { rules: [] });
     expect(r.status).toBe(409);
-    expect((await r.json() as any).error).toContain("Saved policy is active");
+    expect((await r.json() as any).error).toContain("only a flow's own scope");
     expect((await call("PUT", "/api/policy", "{not json")).status).toBe(409);
-    expect(stack.stores.saved.rules()).toEqual([RULE]);
+    expect(stack.store.rules()).toEqual([RULE]);
     expect(await ok("GET", "/api/policy")).toMatchObject({ rules: [RULE] });
   });
-  test("a PUT changes flow scratch, and leaves saved policy alone", async () => {
-    stack.stores.saved.setPolicy({ rules: [RULE] });
-    stack.useStore("scratch");
-    const other = { ...RULE, id: "scratch-rule" };
-    expect((await ok("PUT", "/api/policy", { rules: [other] })).rules).toEqual([other]);
-    expect(stack.stores.scratch.rules()).toEqual([other]);
-    expect(stack.stores.saved.rules()).toEqual([RULE]);
+  test("a PUT changes its scope, and leaves saved policy and other scopes alone", async () => {
+    stack.store.setPolicy({ rules: [RULE] });
+    const base = await mint(), other = await mint();
+    const changed = { ...RULE, id: "scope-rule" };
+    expect((await ok("PUT", `${base}/api/policy`, { rules: [changed] })).rules).toEqual([changed]);
+    expect((await ok("GET", `${base}/api/policy`)).rules).toEqual([changed]);
+    expect((await ok("GET", `${other}/api/policy`)).rules).toEqual([]);
+    expect(stack.store.rules()).toEqual([RULE]);
   });
   test("a bad PUT gets a 400, and doesn't corrupt the policy", async () => {
-    stack.useStore("scratch");
-    stack.stores.active.setPolicy({ rules: [RULE] });
+    const base = await mint();
+    await ok("PUT", `${base}/api/policy`, { rules: [RULE] });
     const cases: [unknown, string][] = [
       ["{not json", "valid JSON"],
       [[RULE], "JSON object"],
@@ -337,17 +353,18 @@ describe("/api/policy", () => {
       [{ rules: [], delegations: [{ patient: "p" }] }, "delegations[0]"],
       [{ rules: [], whatever: 1 }, 'unknown field "whatever"'],
     ];
-    for (const [body, message] of cases) await refused("PUT", "/api/policy", body, message);
-    expect(stack.stores.active.getPolicy().rules).toEqual([RULE]);
-    // Search keeps working on what's there.
-    const t = await scriptedLaunch("josh");
-    expect((await fetch(`${CONFIG.imagingUrl}/fhir/ImagingStudy?patient=josh-example`, { headers: { Authorization: `Bearer ${t.access_token}` } })).status).toBe(200);
+    for (const [body, message] of cases) await refused("PUT", `${base}/api/policy`, body, message);
+    expect((await ok("GET", `${base}/api/policy`)).rules).toEqual([RULE]);
+    // Search in that scope keeps working on what's there.
+    const world = (stack.scopes.resolve(base.slice(3)) as any).world;
+    const t = await scriptedLaunch("josh", "portal-app", { at: world.urls });
+    expect((await fetch(`${world.urls.imaging}/fhir/ImagingStudy?patient=josh-example`, { headers: { Authorization: `Bearer ${t.access_token}` } })).status).toBe(200);
   });
   test("what GET returns can be sent back by PUT", async () => {
-    stack.useStore("scratch");
-    stack.stores.active.setPolicy({ rules: [RULE], delegations: [DELEGATION], appGrants: [GRANT] });
-    const p = await ok("GET", "/api/policy");
-    expect(await ok("PUT", "/api/policy", p)).toEqual(p);
+    const base = await mint();
+    await ok("PUT", `${base}/api/policy`, { rules: [RULE], delegations: [DELEGATION], appGrants: [GRANT] });
+    const p = await ok("GET", `${base}/api/policy`);
+    expect(await ok("PUT", `${base}/api/policy`, p)).toEqual(p);
   });
 });
 
@@ -356,7 +373,7 @@ describe("writes from another web origin", () => {
     const evil = { origin: "https://evil.example" };
     expect((await call("POST", "/api/admin/store/reset-saved", { confirm: true }, evil)).status).toBe(403);
     expect((await call("PUT", "/api/policy", { rules: [] }, evil)).status).toBe(403);
-    expect((await call("POST", "/api/admin/store/activate", { store: "saved" }, { origin: CONFIG.demoUrl })).status).toBe(200);
+    expect((await call("POST", "/api/admin/store/reset-saved", { confirm: true }, { origin: CONFIG.demoUrl })).status).toBe(200);
   });
 });
 
@@ -367,19 +384,21 @@ describe("writes naming another Host, over real HTTP", () => {
   const send = (path: string, host: string | undefined, init: RequestInit = { method: "POST", body: "{}" }) => fetch(`http://127.0.0.1:${PORTS.demo}${path}`, { ...init, headers: { "content-type": "application/json", ...(host ? { host } : {}) } });
 
   test("are refused with a 403 and change nothing", async () => {
-    stack.stores.saved.setPolicy({ rules: [RULE] });
+    stack.store.setPolicy({ rules: [RULE] });
     for (const host of ["evil.example", `evil.example:${PORTS.demo}`, "127.0.0.1", `127.0.0.1:${PORTS.demo + 1}`, `127.0.0.1.evil.example:${PORTS.demo}`, `10.0.0.5:${PORTS.demo}`]) {
-      expect((await send("/api/admin/store/reset-scratch", host)).status).toBe(403);
+      expect((await send("/api/admin/store/reset-saved", host, { method: "POST", body: JSON.stringify({ confirm: true }) })).status).toBe(403);
+      expect((await send("/api/scopes", host)).status).toBe(403);
       expect((await send("/api/admin/signing-key/rotate", host)).status).toBe(403);
       expect((await send("/api/policy", host, { method: "PUT", body: JSON.stringify({ rules: [] }) })).status).toBe(403);
     }
-    expect(stack.stores.saved.rules()).toEqual([RULE]);
+    expect(stack.store.rules()).toEqual([RULE]);
   });
   test("this server's own address and port are accepted, with or without naming it", async () => {
-    stack.useStore("scratch");
-    expect((await send("/api/policy", undefined, { method: "PUT", body: JSON.stringify({ maxSeriesInContext: 7 }) })).status).toBe(200);
-    expect((await send("/api/policy", `localhost:${PORTS.demo}`, { method: "PUT", body: JSON.stringify({ maxSeriesInContext: 8 }) })).status).toBe(200);
-    expect(stack.stores.active.getPolicy().maxSeriesInContext).toBe(8);
+    const base = await mint();
+    expect((await send(`${base}/api/policy`, undefined, { method: "PUT", body: JSON.stringify({ maxSeriesInContext: 7 }) })).status).toBe(200);
+    expect((await send(`${base}/api/policy`, `localhost:${PORTS.demo}`, { method: "PUT", body: JSON.stringify({ maxSeriesInContext: 8 }) })).status).toBe(200);
+    expect((await ok("GET", `${base}/api/policy`)).maxSeriesInContext).toBe(8);
+    expect(stack.store.getPolicy().maxSeriesInContext).toBe(12);
   });
   test("the admin status is refused under another Host too, and answers with no Host named", async () => {
     expect((await send("/api/admin/status", "evil.example", { method: "GET" })).status).toBe(403);
@@ -390,54 +409,64 @@ describe("writes naming another Host, over real HTTP", () => {
 });
 
 describe("loading pages", () => {
-  test("nothing a page loads changes the active store or the flow", async () => {
-    await ok("POST", "/api/flows/patient-sites/start");
-    await ok("POST", "/api/flows/patient-sites/steps/consent", { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
-    for (const path of ["/", "/app.js", "/styles.css", "/admin", "/admin.js", "/api/flows", "/api/store", "/api/flow-state", "/api/session", "/api/admin/status", "/api/policy"]) {
+  test("nothing a page loads changes saved policy or the flow", async () => {
+    const { scope } = await ok("POST", "/api/flows/patient-sites/start");
+    await ok("POST", `${scope.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
+    const saved = JSON.stringify(stack.store.getPolicy());
+    for (const path of ["/", "/app.js", "/styles.css", "/admin", "/admin.js", "/api/flows", "/api/flow-state", "/api/session", "/api/admin/status", "/api/policy"]) {
       expect((await call("GET", path)).status).toBe(200);
     }
-    expect(stack.stores.activeName).toBe("scratch");
-    const state = await ok("GET", "/api/flow-state");
+    for (const path of ["/", "/api/flows", "/api/flow-state", "/api/session", "/api/policy"]) expect((await call("GET", `${scope.base}${path}`)).status).toBe(200);
+    expect(JSON.stringify(stack.store.getPolicy())).toBe(saved);
+    const state = await ok("GET", `${scope.base}/api/flow-state`);
     expect(state.flow).toBe("patient-sites");
     expect(Object.keys(state.completed)).toEqual(["consent"]);
     expect(state.completed.consent.result.checks.every((c: any) => c.ok)).toBe(true);
     expect(state.completed.consent.inputs.sites).toEqual(["Lakeside Imaging"]);
     expect(state.policy.appGrants.length).toBe(1);
-    expect(state.store.label).toBe("Flow scratch: reset when a flow starts");
+    expect(state.scope).toEqual(scope);
   });
   test("the home page script sends nothing on load except reads", async () => {
     const js = await (await call("GET", "/app.js")).text();
     const init = js.slice(js.indexOf("async function init()"), js.indexOf("function showBackend"));
-    expect(init).not.toContain("activate");
     expect(init.slice(0, init.indexOf("sel.onchange"))).not.toContain("post(");
-    expect(js).toContain("backToSaved");
-    expect(await (await call("GET", "/")).text()).toContain("Back to saved policy");
+    expect(js).not.toContain("store/activate");
+    expect(await (await call("GET", "/")).text()).not.toContain("Back to saved policy");
   });
-  test("a flow is restored after going back to saved and returning", async () => {
-    await ok("POST", "/api/flows/patient-sites/start");
-    await ok("POST", "/api/flows/patient-sites/steps/consent", { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
-    expect((await ok("POST", "/api/admin/store/activate", { store: "saved" })).store.active).toBe("saved");
-    const search = await ok("POST", "/api/flows/patient-sites/steps/search", {});
-    expect(search.store.active).toBe("scratch");
+  test("a flow carries on from its scope after the root was used", async () => {
+    const { scope } = await ok("POST", "/api/flows/patient-sites/start");
+    await ok("POST", `${scope.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
+    await scriptedLaunch("josh");
+    await ok("POST", "/api/admin/rule-set", { id: "research-donation" });
+    const search = await ok("POST", `${scope.base}/api/flows/patient-sites/steps/search`, {});
+    expect(search.scope).toEqual(scope);
     expect(search.result.checks.every((c: any) => c.ok)).toBe(true);
   });
 });
 
 describe("a second tab", () => {
   test("can't rerun a finished step, or disturb a flow by running a step of another", async () => {
-    await ok("POST", "/api/flows/patient-sites/start");
-    await ok("POST", "/api/flows/patient-sites/steps/consent", { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
-    expect((await call("POST", "/api/flows/patient-sites/steps/consent", { inputs: {} })).status).toBe(409);
-    expect((await call("POST", "/api/flows/caregiver/steps/delegate", { inputs: {} })).status).toBe(409);
-    const state = await ok("GET", "/api/flow-state");
+    const { scope } = await ok("POST", "/api/flows/patient-sites/start");
+    await ok("POST", `${scope.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
+    expect((await call("POST", `${scope.base}/api/flows/patient-sites/steps/consent`, { inputs: {} })).status).toBe(409);
+    expect((await call("POST", `${scope.base}/api/flows/caregiver/steps/delegate`, { inputs: {} })).status).toBe(409);
+    const state = await ok("GET", `${scope.base}/api/flow-state`);
     expect(state.flow).toBe("patient-sites");
     expect(state.policy.appGrants[0].sites).toEqual(["Lakeside Imaging"]);
   });
   test("can't start a step while another is running", async () => {
-    await ok("POST", "/api/flows/patient-sites/start");
-    const first = call("POST", "/api/flows/patient-sites/steps/consent", { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
-    const second = await call("POST", "/api/flows/patient-sites/steps/search", {});
+    const { scope } = await ok("POST", "/api/flows/patient-sites/start");
+    const first = call("POST", `${scope.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
+    const second = await call("POST", `${scope.base}/api/flows/patient-sites/steps/search`, {});
     expect(second.status).toBe(409);
     expect((await first).status).toBe(200);
+  });
+  test("starting the same flow again gets a new scope, and the first run keeps its own", async () => {
+    const a = (await ok("POST", "/api/flows/patient-sites/start")).scope;
+    await ok("POST", `${a.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
+    const b = (await ok("POST", "/api/flows/patient-sites/start")).scope;
+    expect(b.id).not.toBe(a.id);
+    expect(Object.keys((await ok("GET", `${a.base}/api/flow-state`)).completed)).toEqual(["consent"]);
+    expect((await ok("GET", `${b.base}/api/flow-state`)).completed).toEqual({});
   });
 });

@@ -2,8 +2,8 @@
 // and users manage apps, SMART App Launch (authorization code with PKCE), Backend Services
 // (signed client assertions), refresh, revocation, introspection, and SMART discovery.
 import { createECDH, createHash, createPrivateKey, createPublicKey, generateKeyPairSync, hkdfSync, randomBytes, sign, verify, type KeyObject } from "node:crypto";
-import { ath, b64url, type PolicyStore } from "@smart-imaging-proxy/core";
-import { now } from "./clock";
+import { ath, b64url, type Clock, type PolicyStore } from "@smart-imaging-proxy/core";
+import { demoClock } from "./clock";
 import { refuseWrite } from "./admin-api";
 import { PORTS } from "./config";
 import { check, traced } from "./trace";
@@ -89,9 +89,8 @@ const PAGE_CSS = `
 @media (prefers-color-scheme:dark){:root{--bg:#0a1822;--panel:#10232f;--ink:#e4edf2;--muted:#9ab0bd;--line:#27404f;--accent:#6cbfe8;--accent-soft:#17384c;--bad:#ff9d92;--bad-soft:#42201d;--warn:#f2c55c;--warn-soft:#3a2f10;--code:#1b3241}}
 *{box-sizing:border-box}
 body{margin:0;padding:1.5rem 1rem 2rem;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-.brand,.store-line{max-width:560px;margin:0 auto;color:var(--muted);font-size:.8rem}
+.brand{max-width:560px;margin:0 auto;color:var(--muted);font-size:.8rem}
 .brand{margin-bottom:.5rem;font-weight:600;letter-spacing:.02em}
-.store-line{margin-top:.6rem}
 main{max-width:560px;margin:0 auto;padding:1.4rem 1.5rem;background:var(--panel);border:1px solid var(--line);border-radius:10px}
 h1{font-size:1.25rem;line-height:1.3;margin:0 0 .35rem}
 h2{font-size:.98rem;margin:0 0 .4rem}
@@ -137,10 +136,18 @@ button.primary:hover{background:var(--accent);filter:brightness(1.1)}
 form.inline{display:inline}
 .rows form.inline button{padding:.15rem .6rem;font-size:.84rem}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-@media (max-width:480px){body{padding:.75rem 0 1.5rem}.brand,.store-line{padding:0 1rem}main{border-radius:0;border-width:1px 0;padding:1.1rem 1rem}}
+@media (max-width:480px){body{padding:.75rem 0 1.5rem}.brand{padding:0 1rem}main{border-radius:0;border-width:1px 0;padding:1.1rem 1rem}}
 `;
 
-export function createAuthServer(opts: { issuer: string; imagingFhirBase: string; serviceSecret: string; redirectUri: string; directory: Directory; store: () => PolicyStore; storeLabel: () => string }) {
+/**
+ * Every URL it issues starts at `issuer`, including the paths in its own pages and redirects, so it can
+ * be served under a prefix. It answers requests with the prefix already taken off.
+ */
+export function createAuthServer(opts: { issuer: string; imagingFhirBase: string; serviceSecret: string; redirectUri: string; directory: Directory; store: () => PolicyStore; clock?: Clock }) {
+  const clock = opts.clock ?? demoClock;
+  const now = () => clock.now();
+  /** The path the issuer adds, which every path this server writes into a page or a redirect starts with. */
+  const P = new URL(opts.issuer).pathname.replace(/\/$/, "");
   const PUBLIC_CLIENTS = table<{ name: string; redirectUris: string[] }>({
     "portal-app": { name: APP_NAMES["portal-app"]!, redirectUris: [opts.redirectUri] },
     "separate-viewer": { name: APP_NAMES["separate-viewer"]!, redirectUris: [opts.redirectUri] },
@@ -193,7 +200,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     return ok ? { client_id: claims.iss as string, scopes: reg!.scopes } : undefined;
   }
 
-  const page = (title: string, body: string, status = 200, showStore = false) => new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)}</title><style>${PAGE_CSS}</style></head><body><p class="brand">Authorization Server</p><main>${body}</main>${showStore ? `<p class="store-line">Policy in use: ${esc(opts.storeLabel())}</p>` : ""}</body></html>`, { status, headers: { "content-type": "text/html; charset=utf-8" } });
+  const page = (title: string, body: string, status = 200) => new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)}</title><style>${PAGE_CSS}</style></head><body><p class="brand">Authorization Server</p><main>${body}</main></body></html>`, { status, headers: { "content-type": "text/html; charset=utf-8" } });
   const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 
   const demoQuery = (url: URL) => { const q = new URLSearchParams(); for (const k of ["demo_traceparent", "demo_session", "return", "return_state", "preselect", "suggest_delegate"]) if (url.searchParams.get(k)) q.set(k, url.searchParams.get(k)!); const s = q.toString(); return s ? `&${s}` : ""; };
@@ -257,7 +264,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     if (!check("authorization-server", "scope has no system-level access, which only Backend Services clients get", !scope.split(" ").some(s => s.startsWith("system/")), { scope })) return back("invalid_scope");
     const id = randomBytes(16).toString("base64url");
     txns.set(id, { client_id: q.get("client_id")!, redirect_uri: q.get("redirect_uri")!, state: q.get("state")!, scope, code_challenge: q.get("code_challenge")!, exp: now() + 600, login_hint: q.get("login_hint") ?? undefined, patient_hint: q.get("demo_patient") ?? undefined });
-    return page("Sign in", `<h1>Sign in to continue to ${esc(client!.name)}</h1><p class="who">This page belongs to the Authorization Server, not the app.</p>${await signInForm(`/authorize/signin?txn=${id}${demoQuery(url)}`, q.get("login_hint") ?? "")}`);
+    return page("Sign in", `<h1>Sign in to continue to ${esc(client!.name)}</h1><p class="who">This page belongs to the Authorization Server, not the app.</p>${await signInForm(`${P}/authorize/signin?txn=${id}${demoQuery(url)}`, q.get("login_hint") ?? "")}`);
   }
 
   const txnOf = (url: URL) => {
@@ -272,9 +279,9 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     if (!t) return expired();
     const user = signIn(new URLSearchParams(await req.text()));
     const client = PUBLIC_CLIENTS[t.txn.client_id]!;
-    if (!user) return page("Sign in", `<h1>Sign in to continue to ${esc(client.name)}</h1>${await signInForm(`/authorize/signin?txn=${t.id}${demoQuery(url)}`, t.txn.login_hint ?? "", NOT_AN_ACCOUNT)}`, 401);
+    if (!user) return page("Sign in", `<h1>Sign in to continue to ${esc(client.name)}</h1>${await signInForm(`${P}/authorize/signin?txn=${t.id}${demoQuery(url)}`, t.txn.login_hint ?? "", NOT_AN_ACCOUNT)}`, 401);
     t.txn.user = user;
-    return redirectTo(`/authorize/consent?txn=${t.id}${demoQuery(url)}`);
+    return redirectTo(`${P}/authorize/consent?txn=${t.id}${demoQuery(url)}`);
   }
 
   async function consentPage(url: URL): Promise<Response> {
@@ -284,8 +291,8 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     const user = USERS[t.txn.user!]!;
     const client = PUBLIC_CLIENTS[t.txn.client_id]!;
     const access = await opts.directory.access(t.txn.user!, user.fhirUser);
-    const action = `/authorize/decision?txn=${t.id}${demoQuery(url)}`;
-    if (!access.records.length) return page("No records", `<h1>No records are shared with you</h1><p>${esc(user.name)} is signed in, but no patient has delegated access to this account, so there's nothing to share with ${esc(client.name)}.</p><form method="post" action="${esc(action)}"><div class="buttons"><button name="decision" value="deny">Return to the app</button></div></form>`, 200, true);
+    const action = `${P}/authorize/decision?txn=${t.id}${demoQuery(url)}`;
+    if (!access.records.length) return page("No records", `<h1>No records are shared with you</h1><p>${esc(user.name)} is signed in, but no patient has delegated access to this account, so there's nothing to share with ${esc(client.name)}.</p><form method="post" action="${esc(action)}"><div class="buttons"><button name="decision" value="deny">Return to the app</button></div></form>`, 200);
     const selected = access.records.find(r => r.patient === t.txn.patient_hint)?.patient ?? access.records[0]!.patient;
     const grantFor = (r: Held) => access.apps.find(a => a.client === t.txn.client_id && a.patient === r.patient);
     const sites = whoseSites(access.records, r => `Sites this app can see in ${esc(nameOf(r.patient))}'s records`, r => grantFor(r)?.sites ?? r.sites, r => `${r.via === "delegation" ? "You can share only what was shared with you. " : ""}SMART scopes can't express this choice. It's kept as Imaging Server policy, and the token's scope doesn't change.`);
@@ -296,7 +303,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
         <fieldset><legend>Requested permissions</legend><ul class="scopes">${t.txn.scope.split(" ").map(s => `<li><code>${esc(s)}</code></li>`).join("")}</ul></fieldset>
         ${sites}
         <div class="buttons"><button class="primary" name="decision" value="approve">Approve</button><button name="decision" value="deny">Deny</button></div>
-      </form>`, 200, true);
+      </form>`, 200);
   }
 
   async function decide(url: URL, req: Request): Promise<Response> {
@@ -336,7 +343,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     const name = hint && signedIn !== hint ? undefined : signedIn;
     const q = demoQuery(url).replace(/^&/, "?");
     const returnTo = url.searchParams.get("return") === opts.redirectUri ? opts.redirectUri : undefined;
-    if (!name) return page("Sign in", `<h1>Sign in to your account</h1>${await signInForm(`/account/signin${q}${hint ? `${q ? "&" : "?"}login_hint=${encodeURIComponent(hint)}` : ""}`, hint || (url.searchParams.get("preselect") ?? ""))}`);
+    if (!name) return page("Sign in", `<h1>Sign in to your account</h1>${await signInForm(`${P}/account/signin${q}${hint ? `${q ? "&" : "?"}login_hint=${encodeURIComponent(hint)}` : ""}`, hint || (url.searchParams.get("preselect") ?? ""))}`);
     const user = USERS[name]!;
     const access = await opts.directory.access(name, user.fhirUser);
     const others = Object.entries(USERS).filter(([id]) => id !== name);
@@ -346,7 +353,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     const shareable = access.records.filter(r => r.via !== "delegation");
     const canShare = shareable.filter(r => r.sites.length);
     const passedOn = access.records.filter(r => r.via === "delegation");
-    const shareForm = canShare.length ? `<form method="post" action="/account/delegations${q}">
+    const shareForm = canShare.length ? `<form method="post" action="${P}/account/delegations${q}">
         <fieldset><legend>Share with a related person</legend>
           ${canShare.length > 1 ? `<fieldset class="accounts"><legend>Whose records</legend>${whoseRadios(canShare, canShare[0]!.patient)}</fieldset>` : `<input type="hidden" name="patient" value="${esc(canShare[0]!.patient)}">`}
           <label class="field">Person <select name="delegate">${others.map(([id, u]) => `<option value="${esc(id)}" ${id === url.searchParams.get("suggest_delegate") ? "selected" : ""}>${esc(u.name)}</option>`).join("")}</select></label>
@@ -357,14 +364,14 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
       </form>` : `<p class="note">You have no imaging studies on file, so there's nothing to share yet.</p>`;
     const whoseShare = (patient: string) => access.records.length > 1 ? `, ${esc(nameOf(patient))}'s records` : "";
     const people = shareable.length ? `<section><h2>People who can sign in and see ${shareable.length > 1 ? "records you hold" : "your records"}</h2>
-      ${access.delegations.length ? `<ul class="rows">${access.delegations.map(d => `<li><span><b>${esc(USERS[d.delegate]?.name ?? d.delegate)}</b> (${esc(d.relationship)})${whoseShare(d.patient)}: ${esc(d.sites.join(", ") || "no sites")}</span><form class="inline" method="post" action="/account/delegations/revoke${q}"><input type="hidden" name="delegate" value="${esc(d.delegate)}"><input type="hidden" name="patient" value="${esc(d.patient)}"><button>Revoke</button></form></li>`).join("")}</ul>` : `<p class="note">No one yet.</p>`}
+      ${access.delegations.length ? `<ul class="rows">${access.delegations.map(d => `<li><span><b>${esc(USERS[d.delegate]?.name ?? d.delegate)}</b> (${esc(d.relationship)})${whoseShare(d.patient)}: ${esc(d.sites.join(", ") || "no sites")}</span><form class="inline" method="post" action="${P}/account/delegations/revoke${q}"><input type="hidden" name="delegate" value="${esc(d.delegate)}"><input type="hidden" name="patient" value="${esc(d.patient)}"><button>Revoke</button></form></li>`).join("")}</ul>` : `<p class="note">No one yet.</p>`}
       ${shareForm}${passedOn.length ? `<p class="note">${esc(passedOn.map(r => nameOf(r.patient)).join(" and "))} shared with you, so you can give an app part of that, and can't pass it on to another person.</p>` : ""}</section>` : "";
-    const apps = access.apps.length ? `<ul class="rows">${access.apps.map(a => `<li><span><b>${esc(appName(a.client))}</b>, ${esc(nameOf(a.patient))}'s records: ${esc((a.sites && (a.sites.join(", ") || "no sites")) ?? "everything you can see")}</span><form class="inline" method="post" action="/account/apps/revoke${q}"><input type="hidden" name="client" value="${esc(a.client)}"><input type="hidden" name="patient" value="${esc(a.patient)}"><button>Revoke</button></form></li>`).join("")}</ul>` : `<p class="note">None yet. An app appears here after you approve it during its sign-in.</p>`;
+    const apps = access.apps.length ? `<ul class="rows">${access.apps.map(a => `<li><span><b>${esc(appName(a.client))}</b>, ${esc(nameOf(a.patient))}'s records: ${esc((a.sites && (a.sites.join(", ") || "no sites")) ?? "everything you can see")}</span><form class="inline" method="post" action="${P}/account/apps/revoke${q}"><input type="hidden" name="client" value="${esc(a.client)}"><input type="hidden" name="patient" value="${esc(a.patient)}"><button>Revoke</button></form></li>`).join("")}</ul>` : `<p class="note">None yet. An app appears here after you approve it during its sign-in.</p>`;
     return page("Your account", `<div class="profile"><span class="avatar" aria-hidden="true">${esc(initials(user.name))}</span><div><h1>${esc(user.name)}</h1><p class="who">${esc(roleOf(user, access.records.filter(r => r.via !== "self")))}. Signed in as <code>${esc(name)}</code>, <code>${esc(user.fhirUser)}</code>.</p></div></div>
       <section><h2>Records you can access</h2>${records}</section>
       ${people}
       <section><h2>Apps you've authorized</h2>${apps}<p class="note">Anyone with access can authorize an app, for one person's records at a time, and can give it only part of what they hold.</p></section>
-      <div class="buttons">${returnTo ? `<a class="button" href="${esc(returnTo)}?account=done&amp;state=${encodeURIComponent(url.searchParams.get("return_state") ?? "")}">Done, back to the demo</a>` : ""}<form class="inline" method="post" action="/account/signout${q}"><button>Sign out</button></form></div>`, 200, true);
+      <div class="buttons">${returnTo ? `<a class="button" href="${esc(returnTo)}?account=done&amp;state=${encodeURIComponent(url.searchParams.get("return_state") ?? "")}">Done, back to the demo</a>` : ""}<form class="inline" method="post" action="${P}/account/signout${q}"><button>Sign out</button></form></div>`, 200);
   }
 
   async function accountPost(url: URL, req: Request): Promise<Response> {
@@ -372,15 +379,15 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     const f = new URLSearchParams(await req.text());
     if (url.pathname === "/account/signin") {
       const name = signIn(f);
-      if (!name) return page("Sign in", `<h1>Sign in to your account</h1>${await signInForm(`/account/signin${q}`, url.searchParams.get("login_hint") ?? "", NOT_AN_ACCOUNT)}`, 401);
+      if (!name) return page("Sign in", `<h1>Sign in to your account</h1>${await signInForm(`${P}/account/signin${q}`, url.searchParams.get("login_hint") ?? "", NOT_AN_ACCOUNT)}`, 401);
       const id = randomBytes(24).toString("base64url");
       accountSessions.set(id, name);
       lastAccountSignIn = name;
-      return new Response(null, { status: 303, headers: { Location: `/account${q}`, "Set-Cookie": `account_session=${id}; HttpOnly; SameSite=Lax; Path=/` } });
+      return new Response(null, { status: 303, headers: { Location: `${P}/account${q}`, "Set-Cookie": `account_session=${id}; HttpOnly; SameSite=Lax; Path=${P || "/"}` } });
     }
     if (url.pathname === "/account/signout") {
       accountSessions.delete(req.headers.get("cookie")?.match(/account_session=([^;]+)/)?.[1] ?? "");
-      return new Response(null, { status: 303, headers: { Location: `/account${url.search}`, "Set-Cookie": "account_session=; Max-Age=0; Path=/" } });
+      return new Response(null, { status: 303, headers: { Location: `${P}/account${url.search}`, "Set-Cookie": `account_session=; Max-Age=0; Path=${P || "/"}` } });
     }
     const name = accountUser(req);
     if (!check("authorization-server", "account session is signed in", !!name)) return page("Sign in", "<h1>Sign in first</h1>", 401);
@@ -395,7 +402,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     } else if (url.pathname === "/account/delegations/revoke") await opts.directory.revokeDelegation(name!, f.get("delegate") ?? "", f.get("patient") ?? undefined);
     else if (url.pathname === "/account/apps/revoke") await opts.directory.revokeApp(f.get("client") ?? "", name!, f.get("patient") ?? undefined);
     else return new Response("not found", { status: 404 });
-    return redirectTo(`/account${q}`);
+    return redirectTo(`${P}/account${q}`);
   }
 
   const fetchHandler = traced("authorization-server", async (req: Request): Promise<Response> => {
@@ -509,9 +516,10 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
   };
 }
 
-export function clientAssertion(c: BackendClient, aud: string): string {
+/** Signed by `clock`, which is the clock of the deployment it goes to. */
+export function clientAssertion(c: BackendClient, aud: string, clock: Clock = demoClock): string {
   const head = b64url(JSON.stringify({ alg: "ES256", kid: c.kid, typ: "JWT" }));
-  const claims = b64url(JSON.stringify({ iss: c.client_id, sub: c.client_id, aud, jti: randomBytes(8).toString("hex"), exp: now() + 300 }));
+  const claims = b64url(JSON.stringify({ iss: c.client_id, sub: c.client_id, aud, jti: randomBytes(8).toString("hex"), exp: clock.now() + 300 }));
   const sig = sign("sha256", Buffer.from(`${head}.${claims}`), { key: c.privateKey, dsaEncoding: "ieee-p1363" });
   return `${head}.${claims}.${b64url(sig)}`;
 }

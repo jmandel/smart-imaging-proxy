@@ -44,30 +44,40 @@ function spanProblem(r: unknown) {
 }
 const decodable = (path: string) => { try { decodeURIComponent(path); return true; } catch { return false; } };
 
-/** With no store config, traces are in memory: only src/main.ts reads the TRACE_* settings. */
+/**
+ * With no store config, traces are in memory: only src/main.ts reads the TRACE_* settings. Served for a
+ * scope, it shows only that scope's sessions, and takes no spans.
+ */
 export function createCollector(root: string, config: TraceStoreConfig = { mode: "memory" }) {
   const store = new TraceStore(config);
-  const clients = new Set<{ session?: string; send: (s: string) => void }>();
+  const clients = new Set<{ session?: string; scope?: string; send: (s: string) => void }>();
+  // Which scope each session belongs to. Scopes live in memory, so this does too.
+  const scopeOf = new Map<string, string>();
   let seq = store.maxSeq();
-  const broadcast = (event: string, data: unknown) => { for (const c of clients) c.send(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
+  const broadcast = (event: string, data: unknown, session?: string) => { for (const c of clients) if (!c.scope || (session !== undefined && scopeOf.get(session) === c.scope)) c.send(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
   store.onRemoved = ids => broadcast("removed", ids);
 
   function ingest(records: SpanRecord[]) {
     for (const r of records) {
-      if (!store.knows(r.session)) broadcast("session", { id: r.session, startedAt: r.start, lastAt: r.start, spans: 0 });
+      if (r.scope && !scopeOf.has(r.session)) scopeOf.set(r.session, r.scope);
+      if (!store.knows(r.session)) broadcast("session", { id: r.session, startedAt: r.start, lastAt: r.start, spans: 0 }, r.session);
       r.seq = ++seq;
       const summary = JSON.stringify(summaryOf(r));
       store.put(r, summary);
-      for (const c of clients) if (!c.session || c.session === r.session) c.send(`event: span\ndata: ${summary}\n\n`);
+      for (const c of clients) if ((!c.session || c.session === r.session) && (!c.scope || scopeOf.get(r.session) === c.scope)) c.send(`event: span\ndata: ${summary}\n\n`);
     }
   }
-  const list = () => store.sessions().map(publicSession);
+  const list = (scope?: string) => store.sessions().filter(s => !scope || scopeOf.get(s.id) === scope).map(publicSession);
 
   const page = (file: string) => new Response(Bun.file(join(root, file)), { headers: { "cache-control": "no-cache" } });
-  const fetchHandler = async (req: Request): Promise<Response> => {
+  const fetchHandler = async (req: Request, scope?: string): Promise<Response> => {
     const url = new URL(req.url);
     const p = url.pathname;
     if (!ownHost(req)) return new Response("this service answers only at its own addresses", { status: 403 });
+    // A scope's view reads only its own sessions, and changes nothing.
+    if (scope && (p === "/v1/spans" || req.method !== "GET")) return new Response("not found", { status: 404 });
+    const session = p.match(/^\/api\/sessions\/([^/]+)\//)?.[1];
+    if (scope && session && decodable(session) && scopeOf.get(decodeURIComponent(session)) !== scope) return new Response("not found", { status: 404 });
     if (p === "/v1/spans" && req.method === "POST") {
       // Services send spans. A browser always names an origin, and has no reason to send any.
       if (req.headers.get("origin")) return new Response(null, { status: 403 });
@@ -90,7 +100,7 @@ export function createCollector(root: string, config: TraceStoreConfig = { mode:
       broadcast("cleared", {});
       return new Response(null, { status: 204 });
     }
-    if (p === "/api/sessions") return Response.json(list());
+    if (p === "/api/sessions") return Response.json(list(scope));
     if (p.startsWith("/api/sessions/") && !decodable(p)) return bad("that session name isn't valid percent-encoding");
     const m = p.match(/^\/api\/sessions\/([^/]+)\/spans$/);
     if (m) return json(store.summariesJson(decodeURIComponent(m[1]!)));
@@ -112,14 +122,14 @@ export function createCollector(root: string, config: TraceStoreConfig = { mode:
     }
     if (p === "/stream") {
       const session = url.searchParams.get("session") ?? undefined;
-      let client: { session?: string; send: (s: string) => void };
+      let client: { session?: string; scope?: string; send: (s: string) => void };
       let ping: ReturnType<typeof setInterval>;
       const body = new ReadableStream({
         start(c) {
           const enc = new TextEncoder();
-          client = { session, send: s => { try { c.enqueue(enc.encode(s)); } catch { clients.delete(client); } } };
+          client = { session, scope, send: s => { try { c.enqueue(enc.encode(s)); } catch { clients.delete(client); } } };
           clients.add(client);
-          client.send(`event: hello\ndata: ${JSON.stringify(list())}\n\n`);
+          client.send(`event: hello\ndata: ${JSON.stringify(list(scope))}\n\n`);
           ping = setInterval(() => client.send(": ping\n\n"), 15000);
         },
         cancel() { clients.delete(client); clearInterval(ping); },
@@ -136,5 +146,5 @@ export function createCollector(root: string, config: TraceStoreConfig = { mode:
     },
     has: (id: string) => !!store.session(id),
   };
-  return { fetch: fetchHandler, sessions, list, store, close: () => store.close() };
+  return { fetch: fetchHandler, sessions, list, scopeOf: (session: string) => scopeOf.get(session), store, close: () => store.close() };
 }

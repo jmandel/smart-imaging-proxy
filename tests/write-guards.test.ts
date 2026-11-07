@@ -61,7 +61,7 @@ test("a delegation takes only an offered relationship", async () => {
   await stack.resetAll();
   const r = await submitDelegation(accountUrl("josh"), { user: "josh", delegate: "sam-caregiver", relationship: "<script>x</script>", sites: ["Lakeside Imaging"] });
   expect(r.status).toBe(400);
-  expect(stack.stores.active.delegations()).toEqual([]);
+  expect(stack.store.delegations()).toEqual([]);
   expect((await submitDelegation(accountUrl("josh"), { user: "josh", delegate: "sam-caregiver", relationship: "spouse", sites: ["Lakeside Imaging"] })).status).toBe(303);
 });
 
@@ -88,13 +88,13 @@ describe("the Authorization Server's forms", () => {
     await stack.resetAll();
     const cookie = await signedIn();
     expect((await form("/account/delegations", { cookie }, delegation)).status).toBe(303);
-    const before = JSON.stringify(stack.stores.active.getPolicy());
+    const before = JSON.stringify(stack.store.getPolicy());
     for (const headers of FOREIGN) {
       for (const [path, body] of [["/account/delegations", "delegate=alex-neighbor&relationship=neighbor&sites=Lakeside+Imaging"], ["/account/delegations/revoke", "delegate=sam-caregiver"], ["/account/apps/revoke", "client=portal-app"], ["/account/signout", ""]] as const) {
         expect((await form(path, { ...headers, cookie }, body)).status).toBe(403);
       }
     }
-    expect(JSON.stringify(stack.stores.active.getPolicy())).toBe(before);
+    expect(JSON.stringify(stack.store.getPolicy())).toBe(before);
     // The session outlived the refused sign-outs.
     expect((await form("/account/delegations", { cookie }, delegation)).status).toBe(303);
   });
@@ -134,12 +134,12 @@ describe("the Authorization Server's forms", () => {
   });
 });
 
-test("a refused store switch changes nothing", async () => {
-  const before = stack.stores.activeName;
-  const send = (body: string) => fetch(`${CONFIG.demoUrl}/api/admin/store/activate`, { method: "POST", headers: { "content-type": "application/json" }, body });
+test("a refused scope mint makes no scope", async () => {
+  const before = stack.scopes.size;
+  const send = (body: string, headers: Record<string, string> = {}) => fetch(`${CONFIG.demoUrl}/api/scopes`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body });
   expect((await send('{"store":"elsewhere"}')).status).toBe(400);
-  expect((await send("not json")).status).toBe(400);
-  expect(stack.stores.activeName).toBe(before);
+  expect((await send("{}", { origin: "https://evil.example" })).status).toBe(403);
+  expect(stack.scopes.size).toBe(before);
 });
 
 test("the demo's pages and read APIs answer only at its own addresses", async () => {
@@ -175,8 +175,8 @@ test("the Bearer scheme is case-insensitive on the Clinical FHIR Server, and an 
 });
 
 test("a malformed step request isn't a server error", async () => {
-  await fetch(`http://127.0.0.1:${PORTS.demo}/api/flows/patient-sites/start`, { method: "POST" });
-  const step = (name: string, body: string) => fetch(`http://127.0.0.1:${PORTS.demo}/api/flows/patient-sites/steps/${name}`, { method: "POST", headers: { "content-type": "application/json" }, body });
+  const { scope } = await (await fetch(`http://127.0.0.1:${PORTS.demo}/api/flows/patient-sites/start`, { method: "POST" })).json() as any;
+  const step = (name: string, body: string) => fetch(`http://127.0.0.1:${PORTS.demo}${scope.base}/api/flows/patient-sites/steps/${name}`, { method: "POST", headers: { "content-type": "application/json" }, body });
   expect((await step("constructor", "{}")).status).toBe(404);
   const nulled = await step("consent", "null");
   expect(nulled.status).toBeLessThan(500);
@@ -201,11 +201,12 @@ test("the proxy answers odd Hosts and request targets without a 500", async () =
 test("a step's input has to be one of its choices", async () => {
   const start = await fetch(`http://127.0.0.1:${PORTS.demo}/api/flows/caregiver/start`, { method: "POST" });
   expect(start.status).toBe(200);
-  const step = (name: string, inputs: unknown) => fetch(`http://127.0.0.1:${PORTS.demo}/api/flows/caregiver/steps/${name}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ inputs }) });
+  const { scope } = await start.json() as any;
+  const step = (name: string, inputs: unknown) => fetch(`http://127.0.0.1:${PORTS.demo}${scope.base}/api/flows/caregiver/steps/${name}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ inputs }) });
   for (const inputs of [{ sites: null }, { sites: "notalist" }, "text", null]) expect((await step("delegate", inputs)).status).toBeLessThan(500);
   expect((await step("sam-launch", { whose: ["x"] })).status).toBe(400);
   expect((await step("sam-launch", { whose: "robin-example" })).status).toBe(400);
   expect((await step("delegate", { sites: ["Not A Site"] })).status).toBe(400);
-  const broken = await fetch(`http://127.0.0.1:${PORTS.demo}/api/flows/caregiver/steps/delegate`, { method: "POST", headers: { "content-type": "application/json" }, body: "{" });
+  const broken = await fetch(`http://127.0.0.1:${PORTS.demo}${scope.base}/api/flows/caregiver/steps/delegate`, { method: "POST", headers: { "content-type": "application/json" }, body: "{" });
   expect(broken.status).toBe(400);
 });

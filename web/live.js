@@ -129,7 +129,7 @@ const clearShown = () => { spans.clear(); kids = undefined; items.clear(); secti
 function showExport() {
   const id = activeSession(), a = $("#export");
   a.hidden = !id;
-  if (id) { setAttr(a, "href", `/api/sessions/${encodeURIComponent(id)}/export`); setAttr(a, "title", `Download ${id} as JSON, with its full exchanges`); }
+  if (id) { setAttr(a, "href", `api/sessions/${encodeURIComponent(id)}/export`); setAttr(a, "title", `Download ${id} as JSON, with its full exchanges`); }
 }
 async function showStorage() {
   try {

@@ -108,8 +108,6 @@ export interface ImagingServerOptions {
   keyStore: PolicyStore;
   /** The policy that search and decisions use. */
   store: () => PolicyStore;
-  /** Other stores the policy API can name with `?store=`. */
-  namedStore?: (name: string) => PolicyStore | undefined;
   /** Signs paging cursors. Several processes behind one address have to share it. */
   cursorKey?: Uint8Array;
   pageBytes?: number;
@@ -509,7 +507,7 @@ export function createImagingServer(opts: ImagingServerOptions) {
   }
 
   const policyApi = createPolicyApi({
-    policySecret: opts.policySecret, store: opts.store, namedStore: opts.namedStore, check,
+    policySecret: opts.policySecret, store: opts.store, check,
     model: { access: accessFor, explain, guardianSites, sitesFor: patient => opts.catalog().sitesFor(patient) },
   });
 

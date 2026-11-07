@@ -17,11 +17,16 @@ export interface SpanRecord {
   session: string; trace: string; span: string; parent?: string;
   service: Service; kind: Kind; name: string; start: number; end?: number;
   status?: typeof STATUSES[number]; attrs: Record<string, unknown>; seq?: number; http?: HttpCapture;
+  /** The policy scope whose services or flow recorded this, if any. */
+  scope?: string;
 }
 export interface CapturedMessage { headers: Record<string, string>; body?: string; encoding?: "text" | "hex"; bytes?: number; truncated?: boolean; }
 export interface HttpCapture { method: string; url: string; status?: number; request: CapturedMessage; response?: CapturedMessage; }
-interface Current { session: string; trace: string; span: string; }
+interface Current { session: string; trace: string; span: string; scope?: string; }
 const als = new AsyncLocalStorage<Current>();
+/** The scope a request was routed to, for spans that start outside any trace context. */
+const scopes = new AsyncLocalStorage<string | undefined>();
+export const inScope = <T>(scope: string | undefined, fn: () => T) => scopes.run(scope, fn);
 
 let buffer: SpanRecord[] = [];
 let timer: ReturnType<typeof setTimeout> | undefined;
@@ -116,10 +121,11 @@ export interface SpanHandle { record: SpanRecord; ctx: Current; end(status?: Spa
 
 export function startSpan(service: Service, kind: Kind, name: string, attrs: Record<string, unknown> = {}, ctx?: Partial<Current>): SpanHandle {
   const p = ctx ?? als.getStore();
-  const record: SpanRecord = { session: p?.session ?? "unattributed", trace: p?.trace ?? hex(16), span: hex(8), parent: p?.span, service, kind, name, start: nowMs(), attrs };
+  const scope = p?.scope ?? scopes.getStore();
+  const record: SpanRecord = { session: p?.session ?? "unattributed", trace: p?.trace ?? hex(16), span: hex(8), parent: p?.span, service, kind, name, start: nowMs(), attrs, ...(scope ? { scope } : {}) };
   emit(record);
   return {
-    record, ctx: { session: record.session, trace: record.trace, span: record.span },
+    record, ctx: { session: record.session, trace: record.trace, span: record.span, ...(scope ? { scope } : {}) },
     set(a) { Object.assign(record.attrs, a); },
     update() { emit(record); },
     end(status = "ok", a) { if (record.end) return; record.end = nowMs(); record.status = status; if (a) Object.assign(record.attrs, a); emit(record); },
@@ -142,7 +148,7 @@ export function check(service: Service, name: string, ok: boolean, attrs: Record
   return ok;
 }
 
-export const runInSession = <T>(session: string, fn: () => T) => als.run({ session, trace: hex(16), span: "" }, fn);
+export const runInSession = <T>(session: string, fn: () => T) => { const scope = scopes.getStore(); return als.run({ session, trace: hex(16), span: "", ...(scope ? { scope } : {}) }, fn); };
 export const currentContext = () => als.getStore();
 /** Runs `fn` as part of a span, for work a stream does long after its handler returned. */
 export const inSpan = <T>(ctx: Current, fn: () => T) => als.run(ctx, fn);

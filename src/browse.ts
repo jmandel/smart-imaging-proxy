@@ -5,11 +5,11 @@ import { randomBytes } from "node:crypto";
 import { APP_NAMES, PATIENT_NAMES, roleOf, USERS, type BackendClient } from "./auth-server";
 import { refuseWrite, readJson } from "./admin-api";
 import { ruleSetFor } from "./rule-presets";
-import { CONFIG } from "./config";
 import { accountUrl, submitDelegation } from "./flows/oauth";
 import { ACCEPT_ANY, browserFetch, Ctx } from "./flows/runtime";
 import { boundaryOf, readMultipart } from "@smart-imaging-proxy/core";
 import type { Stack } from "./stack";
+import type { World } from "./world";
 import { flushTraces, runInSession, tfetch, withSpan } from "./trace";
 
 export const PAGE_SIZES = [2, 5, 20];
@@ -34,7 +34,7 @@ interface RetrievalView {
   parts: number; syntaxes: string[]; wireBytes: number; decodedBytes: number; dicomBytes: number; encoding?: string; contentLength?: number; complete: boolean; ms?: number; traceUrl?: string;
 }
 interface Session {
-  id: string; name: string; start: Start; switchedStore: boolean; c: Ctx; launching: boolean;
+  id: string; name: string; start: Start; c: Ctx; launching: boolean;
   token?: string; signedIn?: string; patient?: string; fhirUser?: string;
   status: Status; headline?: string; detail?: string; steps: { title: string; status: string | number; ms?: number }[];
   pages: { url: string; offset: number }[]; pageIndex: number; nextUrl?: string; count: number; total?: number;
@@ -81,17 +81,18 @@ function contextForm(address: string) {
   } catch { return { form: "unknown", plain: "This URL has no signed context the demo can read" }; }
 }
 
-export function createBrowse(stack: Stack, clients: Record<string, BackendClient>, hooks: { flowRunning: () => string | undefined }) {
+/** Browse in one world: the root, or a scope, whose sign-ins, searches and shares all stay in it. */
+export function createBrowse(world: World, clients: Record<string, BackendClient>, stack: Stack) {
   const sessions = new Map<string, Session>();
   const json = (b: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(b, { status, headers });
-  const storeStatus = () => ({ active: stack.stores.activeName, label: stack.stores.activeLabel });
-  const liveUrl = (name: string) => `${CONFIG.traceUrl}/?session=${encodeURIComponent(name)}`;
-  const logUrl = (name: string, trace: string) => `${CONFIG.traceUrl}/log.html?session=${encodeURIComponent(name)}&trace=${trace}`;
+  const scope = world.scope ? { id: world.scope, base: world.prefix } : null;
+  const liveUrl = (name: string) => `${world.urls.trace}/?session=${encodeURIComponent(name)}`;
+  const logUrl = (name: string, trace: string) => `${world.urls.trace}/log.html?session=${encodeURIComponent(name)}&trace=${trace}`;
   /** The account page, for that account. Its traffic joins this session's trace. */
   const accountLink = (s: Session, user: string) => {
     let link = s.accountLinks.get(user);
     if (!link) {
-      const url = new URL(accountUrl(user, { traceparent: `00-${hex(16)}-0000000000000000-01`, session: s.name }));
+      const url = new URL(accountUrl(user, { traceparent: `00-${hex(16)}-0000000000000000-01`, session: s.name }, undefined, world.urls));
       url.searchParams.delete("return"); // This opens in its own tab, and the Browse page stays open.
       link = { label: `${firstName(user)}'s account page`, url: url.toString() };
       s.accountLinks.set(user, link);
@@ -123,13 +124,13 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
     const u = USERS[id]!;
     const out: { patient: string; name: string; via: "self" | "guardian" | "delegation"; relationship?: string; sites: string[] }[] = [];
     if (u.patient) out.push({ patient: u.patient, name: PATIENT_NAMES[u.patient] ?? u.patient, via: "self", sites: stack.catalog.sitesFor(u.patient) });
-    const guardians = stack.stores.saved.guardians();
+    const guardians = world.store.guardians();
     for (const g of guardians) if (g.guardian === id && g.patient !== u.patient) out.push({ patient: g.patient, name: PATIENT_NAMES[g.patient] ?? g.patient, via: "guardian", relationship: g.relationship, sites: guardianSites(g) });
-    for (const d of stack.stores.saved.delegations()) if (d.delegate === id && !out.some(r => r.patient === d.patient) && (USERS[d.grantedBy]?.patient === d.patient || guardians.some(g => g.guardian === d.grantedBy && g.patient === d.patient))) out.push({ patient: d.patient, name: PATIENT_NAMES[d.patient] ?? d.patient, via: "delegation", relationship: d.relationship, sites: (() => { const g = guardians.find(x => x.guardian === d.grantedBy && x.patient === d.patient); if (!g?.excludedStudies?.length) return d.sites; const open = guardianSites(g); return d.sites.filter(x => open.includes(x)); })() });
+    for (const d of world.store.delegations()) if (d.delegate === id && !out.some(r => r.patient === d.patient) && (USERS[d.grantedBy]?.patient === d.patient || guardians.some(g => g.guardian === d.grantedBy && g.patient === d.patient))) out.push({ patient: d.patient, name: PATIENT_NAMES[d.patient] ?? d.patient, via: "delegation", relationship: d.relationship, sites: (() => { const g = guardians.find(x => x.guardian === d.grantedBy && x.patient === d.patient); if (!g?.excludedStudies?.length) return d.sites; const open = guardianSites(g); return d.sites.filter(x => open.includes(x)); })() });
     return out;
   };
   function options() {
-    const rules = stack.stores.saved.rules();
+    const rules = world.store.rules();
     const held = stack.catalog.allStudies();
     return {
       people: Object.entries(USERS).map(([id, u]) => {
@@ -143,7 +144,7 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
       }),
       apps: Object.entries(APP_NAMES).map(([id, name]) => ({ id, name })),
       patients: stack.catalog.linkedPatients().map(id => ({ id, name: PATIENT_NAMES[id] ?? id })),
-      pageSizes: PAGE_SIZES, traceUrl: CONFIG.traceUrl, store: storeStatus(), backend: stack.backend,
+      pageSizes: PAGE_SIZES, traceUrl: world.urls.trace, scope, backend: stack.backend,
     };
   }
 
@@ -167,7 +168,7 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
     const whoseName = whoseId ? PATIENT_NAMES[whoseId] ?? whoseId : undefined;
     const whose = !whoseId ? undefined : { patient: whoseId, name: whoseName, via: held?.via, plain: !who ? `${whoseName}'s records, for ${s.start.client}` : held?.via === "self" ? `${whoseName}'s own records` : held?.via === "guardian" ? `${whoseName}'s records, which ${firstName(who)} holds as ${held.relationship ?? "guardian"}` : held ? `${whoseName}'s records, shared with ${firstName(who)} as ${held.relationship ?? "a related person"}` : `${whoseName}'s records, which ${firstName(who)} doesn't hold` };
     return {
-      name: s.name, liveUrl: liveUrl(s.name), status: s.status === "signing-in" && s.c.pendingAuthUrl ? "waiting-for-you" as Status : s.status, running: s.launching, searching: s.searching, headline: s.headline, detail: s.detail, switchedStore: s.switchedStore,
+      name: s.name, liveUrl: liveUrl(s.name), status: s.status === "signing-in" && s.c.pendingAuthUrl ? "waiting-for-you" as Status : s.status, running: s.launching, searching: s.searching, headline: s.headline, detail: s.detail,
       authUrl: s.c.pendingAuthUrl ?? null, mode: s.start.mode,
       start: { user: s.start.user, client: s.start.client, patient: s.start.patient, count: s.count },
       who: who ? { id: who, name: USERS[who]?.name ?? who, first: firstName(who), app: appName(s.start.client), asked: s.start.user } : { id: s.start.client, name: s.start.client, app: s.start.client, patient: s.start.patient },
@@ -193,7 +194,7 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
     if (r.status === 401) {
       s.status = "token-rejected";
       s.headline = "The Imaging Server answered 401: this token no longer works";
-      s.detail = stack.stores.activeName === "saved" ? "The token has expired or was revoked. Sign in again to get a new one." : "A flow moved the demo to flow scratch, and this token belongs to saved policy. Signing in again goes back to saved policy.";
+      s.detail = "The token has expired or was revoked. Sign in again to get a new one.";
       s.explain = undefined; s.endpoints.clear();
       return;
     }
@@ -248,7 +249,7 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
     const who = s.signedIn ?? s.start.user;
     drainSteps(s);
     try {
-      const x = await stack.explain({ client: s.start.client, patient, ...(who ? { user: who, fhirUser: USERS[who]?.fhirUser ?? "" } : {}) });
+      const x = await world.explain({ client: s.start.client, patient, ...(who ? { user: who, fhirUser: USERS[who]?.fhirUser ?? "" } : {}) });
       s.explain = {
         patient, patientName: PATIENT_NAMES[patient] ?? patient, chain: plainChain(x), level: x.level,
         appGrant: x.appGrant,
@@ -265,7 +266,7 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
     try {
       await act(s, user ? `Browse: ${firstName(user)} signs in to the ${appName(client)}` : `Browse: ${client} gets a token and searches`, { user, client, patient, mode }, async () => {
         if (share) {
-          const url = accountUrl(SHARED_BY, undefined);
+          const url = accountUrl(SHARED_BY, undefined, undefined, world.urls);
           const res = await withSpan("user", "action", `Browser: ${firstName(SHARED_BY)} signs in and shares with ${firstName(share.delegate)}`, { sites: share.sites.join(", ") }, () => submitDelegation(url, { user: SHARED_BY, delegate: share.delegate, relationship: RELATIONSHIPS[share.delegate]!, sites: share.sites }, browserFetch));
           s.steps.push({ title: `${firstName(SHARED_BY)} shares on the account page: ${list(share.sites)}`, status: res.status });
           if (res.status !== 303) throw new Error(`the account page answered ${res.status}`);
@@ -291,12 +292,12 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
             return;
           }
           s.token = t.access_token;
-          const grant = stack.auth.grantOf(t.access_token);
+          const grant = world.auth.grantOf(t.access_token);
           s.signedIn = grant?.sub ?? s.signedIn;
           s.patient = t.patient;
         }
         const q = new URLSearchParams({ patient: s.patient!, _include: "ImagingStudy:endpoint", _count: String(s.count) });
-        await searchPage(s, `${CONFIG.imagingUrl}/fhir/ImagingStudy?${q}`, 0, 0);
+        await searchPage(s, `${world.urls.imaging}/fhir/ImagingStudy?${q}`, 0, 0);
       });
     } catch (e) {
       s.status = "failed";
@@ -306,8 +307,6 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
   }
 
   function begin(body: any) {
-    const running = hooks.flowRunning();
-    if (running) return { error: `The flow step "${running}" is still running. Try again when it finishes.`, status: 409 };
     const user = typeof body.user === "string" ? body.user : undefined;
     const client = String(body.client ?? "");
     const count = Number(body.count ?? 5);
@@ -323,15 +322,12 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
     if (body.sites !== undefined && !strings(body.sites)) return { error: "sites must be a list", status: 400 };
     if (body.share !== undefined && (!Object.hasOwn(RELATIONSHIPS, body.share?.delegate) || !strings(body.share?.sites) || body.share.delegate !== user)) return { error: "that share isn't one this page offers", status: 400 };
 
-    // Nothing above has yielded, so no flow step can have started since the check.
-    const switchedStore = stack.stores.activeName !== "saved";
-    stack.useStore("saved");
     const id = randomBytes(24).toString("base64url");
-    const c = new Ctx(stack, clients);
+    const c = new Ctx(world, clients);
     const name = `browse-${user ?? client}-${hex(3)}`;
     c.session = name;
     const s: Session = {
-      id, name, c, switchedStore, launching: true, status: "signing-in", steps: [], pages: [], pageIndex: 0, count, studies: [], endpoints: new Map(), searching: false, retrievals: new Map(), retrieving: false, abort: new AbortController(), accountLinks: new Map(),
+      id, name, c, launching: true, status: "signing-in", steps: [], pages: [], pageIndex: 0, count, studies: [], endpoints: new Map(), searching: false, retrievals: new Map(), retrieving: false, abort: new AbortController(), accountLinks: new Map(),
       // A share is Josh's, so the sign-in after it is for Josh.
       start: { user, client, patient: body.patient ?? (body.share ? SHARED_PATIENT : undefined), mode, count, ...(body.sites ? { sites: body.sites } : {}), ...(body.share ? { share: body.share } : {}) },
     };
@@ -351,7 +347,7 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
         r.traceUrl = logUrl(s.name, s.lastTrace!);
         const res = await tfetch("app", "GET WADO-RS", url, { headers: { Authorization: `Bearer ${s.token}`, Accept: ACCEPT_ANY, "Accept-Encoding": zstd ? "zstd" : "identity" }, decompress: false, signal: s.abort.signal } as any, { study });
         r.status = res.status;
-        const ev = stack.proxy.events.findLast(e => e.path === new URL(url).pathname);
+        const ev = world.proxy.events.findLast(e => e.path === new URL(url).pathname);
         r.authz = ev?.authz; r.authzPlain = ev?.authz ? AUTHZ[ev.authz] ?? ev.authz : undefined; r.denial = ev?.denial; r.note = ev?.note;
         r.encoding = res.headers.get("content-encoding") ?? "identity";
         const length = res.headers.get("content-length");
@@ -393,24 +389,12 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
     /** A redirect back from the Authorization Server, if a Browse sign-in is waiting for it. */
     receiveCallback(url: URL) { const s = waiting(url); s?.c.resolveCallback?.(url); return !!s; },
     callbackContext(url: URL) { return waiting(url)?.c.callbackContext; },
-    /**
-     * Called before something moves the demo off saved policy. A sign-in waiting on a person ends now,
-     * and one already running holds the move back for the moment it takes, by returning why.
-     */
-    holdStore(): string | undefined {
-      for (const s of sessions.values()) {
-        if (!s.launching) continue;
-        if (s.c.pendingAuthUrl) s.c.cancelWindow?.("A flow or the admin screen moved the demo off saved policy, so this sign-in stopped. Sign in again to go back to saved policy.");
-        else return "A Browse sign-in is running. Try again in a moment.";
-      }
-      return undefined;
-    },
     async fetch(req: Request, url: URL): Promise<Response> {
       const p = url.pathname.slice("/api/browse".length);
       if (req.method === "GET") {
         if (p === "/options") return json(options());
         const s = sessionOf(req);
-        if (p === "/session") return json({ session: s ? view(s) : null, store: storeStatus(), backend: stack.backend });
+        if (p === "/session") return json({ session: s ? view(s) : null, scope, backend: stack.backend });
         if (p === "/bundle") return s?.bundle ? new Response(JSON.stringify(s.bundle, null, 2), { headers: { "content-type": "application/json" } }) : gone();
         if (p === "/metadata") {
           const ep = s?.endpoints.get(url.searchParams.get("study") ?? "");
@@ -432,7 +416,7 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
       if (p === "/start") {
         const r = begin(body);
         if ("error" in r) return json({ error: r.error }, r.status);
-        return json({ session: view(r.session), store: storeStatus(), backend: stack.backend }, 202, { "Set-Cookie": `${COOKIE}=${r.session.id}; HttpOnly; SameSite=Strict; Path=/api/browse` });
+        return json({ session: view(r.session), scope, backend: stack.backend }, 202, { "Set-Cookie": `${COOKIE}=${r.session.id}; HttpOnly; SameSite=Strict; Path=${world.prefix}/api/browse` });
       }
       const s = sessionOf(req);
       if (!s) return gone();
@@ -448,14 +432,14 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
           if (size !== undefined) s.count = size;
           await act(s, `Browse: ${to === "next" ? "follow the next link" : to === "previous" ? "go back a page" : to === "again" ? "search again" : "search from the first page"}`, { to, count: s.count }, async () => {
             s.steps = [];
-            const first = () => `${CONFIG.imagingUrl}/fhir/ImagingStudy?${new URLSearchParams({ patient: s.patient!, _include: "ImagingStudy:endpoint", _count: String(s.count) })}`;
+            const first = () => `${world.urls.imaging}/fhir/ImagingStudy?${new URLSearchParams({ patient: s.patient!, _include: "ImagingStudy:endpoint", _count: String(s.count) })}`;
             if (to === "next" && s.nextUrl) await searchPage(s, s.nextUrl, s.pages[s.pageIndex]!.offset + s.studies.length, s.pageIndex + 1);
             else if (to === "previous" && s.pageIndex > 0) await searchPage(s, s.pages[s.pageIndex - 1]!.url, s.pages[s.pageIndex - 1]!.offset, s.pageIndex - 1);
             else if (to === "again" && s.pages[s.pageIndex]) await searchPage(s, s.pages[s.pageIndex]!.url, s.pages[s.pageIndex]!.offset, s.pageIndex);
             else await searchPage(s, first(), 0, 0);
           });
         } finally { s.searching = false; }
-        return json({ session: view(s), store: storeStatus(), backend: stack.backend });
+        return json({ session: view(s), scope, backend: stack.backend });
       }
       if (p === "/retrieve") {
         const study = String(body.study ?? "");
