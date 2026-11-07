@@ -13,13 +13,14 @@ import { createExplore } from "./explore";
 import { createTours } from "./tours";
 import { eventQueryOf } from "./trace-collector";
 import { scopeOfSession } from "./trace";
-import { VIEWER_KIT_DIR, VIEWER_KIT_FILES } from "./vendor";
+import { loadViewerKit, VIEWER_KIT_FILES } from "./vendor";
 import { panelOf, splitPanel } from "./stores";
 import type { World } from "./world";
 
 const json = (b: unknown, status = 200) => Response.json(b, { status });
 
-export function createDemoServer(stack: Stack, clients: Record<string, BackendClient>, root: string) {
+/** `viewerKitDir` is where viewer-kit was downloaded, `$DEMO_STORAGE/vendor/{tag}` unless given. */
+export function createDemoServer(stack: Stack, clients: Record<string, BackendClient>, root: string, options: { viewerKitDir?: string } = {}) {
   const perWorld = new WeakMap<World, ReturnType<typeof worldServer>>();
   const serverOf = (w: World) => { let s = perWorld.get(w); if (!s) perWorld.set(w, s = worldServer(w)); return s; };
   const file = (name: string) => new Response(Bun.file(join(root, "web", name)));
@@ -174,12 +175,17 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
 
   // The same files in every world: the pages work out their scope from their own URL.
   const STATIC: Record<string, string> = Object.fromEntries(["styles.css", "page.js", "cards.js", "explore.js", "tours.js", "activity.js", "thumbs.js", "fonts/atkinson-next.woff2", "fonts/atkinson-mono.woff2"].map(f => [`/${f}`, f]));
-  /** viewer-kit's files, from the pinned download, never from the repository. */
-  const vendor = async (name: string) => {
-    if (!VIEWER_KIT_FILES.includes(name)) return new Response("not found", { status: 404 });
-    const f = Bun.file(join(VIEWER_KIT_DIR, name));
+  /**
+   * viewer-kit's files, from the pinned download, never from the repository: checked once, here at
+   * startup, and served only as the bytes that were checked. With none that check out, every one is a
+   * 404, and the thumbnails keep their placeholders.
+   */
+  const kit = loadViewerKit(options.viewerKitDir);
+  const vendor = (name: string) => {
+    const bytes = kit?.get(name);
+    if (!bytes) return new Response(kit || !VIEWER_KIT_FILES.includes(name) ? "not found" : "viewer-kit isn't downloaded, or doesn't match its pin: run bun run viewer-kit", { status: 404 });
     const type = name.endsWith(".wasm") ? "application/wasm" : name.endsWith(".js") ? "text/javascript; charset=utf-8" : "text/plain; charset=utf-8";
-    return await f.exists() ? new Response(f, { headers: { "content-type": type, "cache-control": "public, max-age=86400" } }) : new Response("viewer-kit isn't downloaded: run bun run viewer-kit", { status: 404 });
+    return new Response(bytes, { headers: { "content-type": type, "cache-control": "public, max-age=86400" } });
   };
   const routed = stack.route(w => req => serverOf(w).fetch(req));
   async function fetch(req: Request): Promise<Response> {
@@ -187,8 +193,8 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     if (foreign) return foreign;
     const p = new URL(req.url).pathname;
     if (STATIC[p]) return file(STATIC[p]!);
-    const kit = p.match(/^\/vendor\/viewer-kit\/([^/]+)$/);
-    if (kit) return vendor(kit[1]!);
+    const vendored = p.match(/^\/vendor\/viewer-kit\/([^/]+)$/);
+    if (vendored) return vendor(vendored[1]!);
     return routed(req);
   }
   return { fetch };

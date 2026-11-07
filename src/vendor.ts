@@ -1,6 +1,7 @@
 // viewer-kit, the browser's DICOM decoder, which draws the film sheets' thumbnails. A pinned release of
 // github.com/jmandel/shlink-dicom (Apache-2.0), downloaded once into $DEMO_STORAGE/vendor by
-// scripts/viewer-kit.ts and served at /vendor/viewer-kit/. It's never committed.
+// scripts/viewer-kit.ts, checked when the demo starts, and served at /vendor/viewer-kit/ from the
+// checked bytes held in memory. It's never committed.
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -17,28 +18,46 @@ export const VIEWER_KIT_FILES = ["viewer-kit.js", "decoder-worker.js", "shl_dico
 
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
-/** Checks every file SHA256SUMS lists, and that it lists every file the pages load. Throws on any mismatch. */
-export function verifySums(dir: string) {
+/**
+ * Checks every file SHA256SUMS lists, and that it lists every file the pages load. Throws on any
+ * mismatch. Gives the bytes of the files the pages load, as they were checked.
+ */
+export function verifySums(dir: string): Map<string, Uint8Array> {
   const sums = readFileSync(join(dir, "SHA256SUMS"), "utf8").trim().split("\n").map(l => l.match(/^([0-9a-f]{64})\s+\*?(.+)$/)).map(m => { if (!m) throw new Error("viewer-kit: SHA256SUMS has a line that isn't a hash and a name"); return { sha: m[1]!, name: m[2]! }; });
   for (const f of VIEWER_KIT_FILES) if (!sums.some(s => s.name === f)) throw new Error(`viewer-kit: SHA256SUMS doesn't list ${f}`);
+  const checked = new Map<string, Uint8Array>();
   for (const { sha, name } of sums) {
     if (name.includes("/") || name.startsWith(".")) throw new Error(`viewer-kit: SHA256SUMS names ${name}, outside the release`);
     const path = join(dir, name);
     if (!existsSync(path)) throw new Error(`viewer-kit: ${name} is missing`);
-    const got = sha256(readFileSync(path));
+    const bytes = new Uint8Array(readFileSync(path));
+    const got = sha256(bytes);
     if (got !== sha) throw new Error(`viewer-kit: ${name} has SHA-256 ${got}, and SHA256SUMS says ${sha}`);
+    if (VIEWER_KIT_FILES.includes(name)) checked.set(name, bytes);
   }
+  return checked;
+}
+
+/** Whether `dir` holds the pinned release: unpacked from a tarball with the pinned hash. */
+const isPinned = (dir: string, sha: string) => existsSync(join(dir, ".tarball.sha256")) && readFileSync(join(dir, ".tarball.sha256"), "utf8") === sha;
+
+/**
+ * The files the pages load, read once from `dir` and checked against the pin and SHA256SUMS, or
+ * undefined if anything there doesn't check out. The demo serves only these bytes.
+ */
+export function loadViewerKit(dir: string = VIEWER_KIT_DIR, sha: string = VIEWER_KIT.sha256): Map<string, Uint8Array> | undefined {
+  try { return isPinned(dir, sha) ? verifySums(dir) : undefined; } catch { return undefined; }
 }
 
 /**
- * Downloads and unpacks the release into `dir`, unless it's there and checks out. The tarball has to
- * match its pinned hash and every file its SHA256SUMS, or nothing is kept, and this throws.
+ * Downloads and unpacks the release into `dir`, unless it's there and checks out. A directory there
+ * that doesn't check out is removed first, so it's never left in place. The tarball has to match its
+ * pinned hash and every file its SHA256SUMS, or nothing is kept, and this throws.
  */
 export async function fetchViewerKit(o: { url?: string; sha256?: string; dir?: string; fetch?: typeof fetch } = {}) {
   const url = o.url ?? VIEWER_KIT.url, sha = o.sha256 ?? VIEWER_KIT.sha256, dir = o.dir ?? VIEWER_KIT_DIR;
-  if (existsSync(join(dir, "SHA256SUMS")) && existsSync(join(dir, ".tarball.sha256")) && readFileSync(join(dir, ".tarball.sha256"), "utf8") === sha) {
-    try { verifySums(dir); return dir; } catch { /* Fetch it again. */ }
-  }
+  if (loadViewerKit(dir, sha)) return dir;
+  rmSync(dir, { recursive: true, force: true });
   const res = await (o.fetch ?? fetch)(url);
   if (!res.ok) throw new Error(`viewer-kit: ${url}: HTTP ${res.status}`);
   const bytes = new Uint8Array(await res.arrayBuffer());
@@ -56,7 +75,6 @@ export async function fetchViewerKit(o: { url?: string; sha256?: string; dir?: s
     const unpacked = join(work, top, "..");
     verifySums(unpacked);
     await Bun.write(join(unpacked, ".tarball.sha256"), sha);
-    rmSync(dir, { recursive: true, force: true });
     renameSync(unpacked, dir);
   } finally { rmSync(work, { recursive: true, force: true }); }
   return dir;
