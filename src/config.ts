@@ -1,4 +1,5 @@
-// DEMO_PORT_OFFSET lets a second copy of the stack run beside the first. MinIO and Orthanc are shared.
+// DEMO_PORT_OFFSET lets a second copy of the stack run beside the first. MinIO and Orthanc are shared,
+// unless MINIO_PORT and ORTHANC_PORT point it at its own.
 const offset = Number(process.env.DEMO_PORT_OFFSET ?? 0);
 export const PORTS = { demo: 4600 + offset, proxy: 4601 + offset, imaging: 4602 + offset, auth: 4603 + offset, trace: 4604 + offset };
 
@@ -41,7 +42,7 @@ export const CONFIG = {
   imagingUrl: `${host}:${PORTS.imaging}`,
   authUrl: `${host}:${PORTS.auth}`,
   traceUrl: `${host}:${PORTS.trace}`,
-  minio: { endpoint: "http://127.0.0.1:4610", accessKey: "demo-minio", secretKey: "demo-minio-secret" },
+  minio: { endpoint: `http://127.0.0.1:${process.env.MINIO_PORT ?? 4610}`, accessKey: "demo-minio", secretKey: "demo-minio-secret" },
   archive: { dir: process.env.ARCHIVE_DIR ?? "/tmp/smart-imaging-demo/archive", bucket: "smart-imaging-archive" },
-  orthanc: { base: "http://127.0.0.1:4611", user: "demo-proxy", password: "demo-orthanc-secret" },
+  orthanc: { base: `http://127.0.0.1:${process.env.ORTHANC_PORT ?? 4611}`, user: "demo-proxy", password: "demo-orthanc-secret" },
 };

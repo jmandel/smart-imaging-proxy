@@ -2,7 +2,7 @@
 import { boundaryOf, readMultipart } from "../multipart";
 import { currentContext, startSpan, tfetch, traceparentOf, withSpan, check as traceCheck } from "../trace";
 import { accountUrl, buildAuthorization, CLINICAL_FHIR, submitConsent, submitDelegation, submitRevocation, tokenRequestBody } from "./oauth";
-import { clientAssertion, USERS, type BackendClient } from "../auth-server";
+import { clientAssertion, PATIENT_NAMES, USERS, type BackendClient } from "../auth-server";
 import { CONFIG } from "../config";
 import { advance, resetClock } from "../clock";
 import type { Rule } from "../imaging-server";
@@ -49,17 +49,19 @@ export class Ctx {
   private decisionStart = 0;
   constructor(public stack: Stack, public clients: Record<string, BackendClient>) {}
   get backend() { return this.stack.backend; }
-  /** Every study, from the catalog in use. For a flow's own displays and expectations. */
-  studies() { return this.stack.catalog.allStudies(); }
+  /** One patient's studies, Josh's unless named, from the catalog in use. For a flow's own displays and expectations. */
+  studies(patient = "josh-example") { return this.stack.catalog.allStudies().filter(s => s.patient === patient); }
   /** One study, with its full series list. */
   study(id: string): any {
     const catalog = this.stack.catalog;
-    const row = this.studies().find(s => s.id === id);
+    const row = catalog.allStudies().find(s => s.id === id);
     return row && { ...row, series: catalog.hierarchies([row.pk]).get(row.pk)?.series ?? [] };
   }
-  /** Every site in the catalog in use. */
-  sites() { return [...new Set(this.studies().flatMap(s => s.site ? [s.site] : []))]; }
-  siteOf(id: string) { return this.studies().find(s => s.id === id)?.site; }
+  /** One patient's sites, Josh's unless named, in the catalog in use. */
+  sites(patient = "josh-example") { return [...new Set(this.studies(patient).flatMap(s => s.site ? [s.site] : []))]; }
+  siteOf(id: string) { return this.stack.catalog.allStudies().find(s => s.id === id)?.site; }
+  /** The patient the last launch asked for, if it named one. */
+  private askedPatient: string | undefined;
   /** Set once a person in a window picks an account other than the one a step expects. */
   accountNote: string | undefined;
   /** Why no token is held, for any step that goes on to need one. */
@@ -82,8 +84,11 @@ export class Ctx {
     const who = this.signedIn;
     if (error !== "access_denied" || !who) return `The launch ended in ${error ?? "an error"}, so the app has no token`;
     const name = USERS[who]?.name.split(" ")[0] ?? who;
-    const holds = !!USERS[who]?.patient || this.stack.imaging.getPolicy().delegations.some(d => d.delegate === who);
-    return holds ? `${name} chose not to approve the app, so it has no token` : `No patient has shared records with ${name}, so the app has no token`;
+    const policy = this.stack.imaging.getPolicy();
+    const held = [...(USERS[who]?.patient ? [USERS[who]!.patient!] : []), ...policy.guardians.filter(g => g.guardian === who).map(g => g.patient), ...policy.delegations.filter(d => d.delegate === who).map(d => d.patient)];
+    if (!held.length) return `No patient has shared records with ${name}, so the app has no token`;
+    if (this.askedPatient && !held.includes(this.askedPatient)) return `${(PATIENT_NAMES[this.askedPatient] ?? this.askedPatient).split(" ")[0]} hasn't shared records with ${name}, so the app has no token`;
+    return `${name} chose not to approve the app, so it has no token`;
   }
   check(label: string, ok: boolean, detail?: string) {
     // A failure after someone chose another account reads as the result of that choice.
@@ -115,12 +120,14 @@ export class Ctx {
 
   /**
    * A real SMART standalone launch: discovery, authorization request with PKCE, consent, redirect,
-   * and code exchange. With `window`, a person approves in a real browser window.
+   * and code exchange. With `window`, a person approves in a real browser window, and `patient` is
+   * only what the consent page preselects for them.
    */
   async launch(user: string, client = "portal-app", opts: { sites?: string[]; window?: boolean; patient?: string } = {}) {
     const actor = client === "portal-app" ? "App" : client;
+    this.askedPatient = opts.patient;
     const conf = await this.json(actor, "Discover the authorization endpoints", `${CLINICAL_FHIR}/.well-known/smart-configuration`);
-    const a = withSpanSync("app", "Generate PKCE verifier, S256 challenge, and state", () => buildAuthorization(conf.body.authorization_endpoint, client, undefined, this.traceFields(), user));
+    const a = withSpanSync("app", "Generate PKCE verifier, S256 challenge, and state", () => buildAuthorization(conf.body.authorization_endpoint, client, undefined, this.traceFields(), user, opts.patient));
     const shown = a.url.replace(/&demo_[^&]+/g, "");
     const back = opts.window
       ? await this.inWindow(a.url)
@@ -170,12 +177,14 @@ export class Ctx {
   }
   private traceFields() { const x = currentContext(); return x ? { traceparent: traceparentOf(x), session: x.session } : undefined; }
 
-  /** A patient delegates to a related person, on the account page. */
-  async delegate(owner: string, delegate: string, relationship: string, sites: string[], opts: { window?: boolean } = {}) {
+  /** A patient or their guardian delegates to a related person, on the account page. A refused share reports its status. */
+  async delegate(owner: string, delegate: string, relationship: string, sites: string[], opts: { window?: boolean; patient?: string } = {}) {
     const url = accountUrl(owner, this.traceFields());
+    let status = 303;
     if (opts.window) { await this.inWindow(url); this.checkAccount(this.stack.auth.lastAccountSignIn, owner); }
-    else await withSpan("user", "action", `Browser: ${owner} signs in and shares with ${delegate}`, { sites: sites.join(", ") }, () => submitDelegation(url, { user: owner, delegate, relationship, sites }, browserFetch));
-    this.exchanges.push({ title: "Browser: sign in to the account page, and share", actor: "User's browser", method: "POST", url: url.replace(/[?&]demo_[^&]+/g, ""), requestHeaders: {}, status: 303, responseHeaders: {}, summary: `The delegation is kept at the Imaging Server, not in any token.` });
+    else status = (await withSpan("user", "action", `Browser: ${owner} signs in and shares with ${delegate}`, { sites: sites.join(", "), patient: opts.patient }, () => submitDelegation(url, { user: owner, delegate, relationship, sites, patient: opts.patient }, browserFetch))).status;
+    this.exchanges.push({ title: "Browser: sign in to the account page, and share", actor: "User's browser", method: "POST", url: url.replace(/[?&]demo_[^&]+/g, ""), requestHeaders: {}, status, responseHeaders: {}, summary: status === 303 ? `The delegation is kept at the Imaging Server, not in any token.` : `The account page refused to record this.` });
+    return status;
   }
   async revokeDelegation(owner: string, delegate: string) {
     const url = accountUrl(owner, this.traceFields());
@@ -284,6 +293,6 @@ export function summarizeBundle(b: any, siteOf: (id: string) => string | undefin
     })),
   };
 }
-export const siteOptions = (c: Ctx) => c.sites().map(s => ({ value: s, label: s }));
-export const studyOptions = (c: Ctx) => c.studies().map(s => ({ value: s.id, label: `${(s.title ?? s.description ?? s.id).slice(0, 44)} (${s.site ?? "no site"})` }));
+export const siteOptions = (c: Ctx, patient?: string) => c.sites(patient).map(s => ({ value: s, label: s }));
+export const studyOptions = (c: Ctx, patient?: string) => c.studies(patient).map(s => ({ value: s.id, label: `${(s.title ?? s.description ?? s.id).slice(0, 44)} (${s.site ?? "no site"})` }));
 export const resetDemo = (stack: Stack) => { stack.resetAll(); resetClock(); };

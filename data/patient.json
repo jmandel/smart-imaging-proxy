@@ -1,5 +1,5 @@
 {
-  "_note": "Josh Example is the de-identified name of the real patient whose studies are published in github.com/jmandel/my-health-data/imaging. The birth date keeps only the year, as in the DICOM headers. The whole-slide study is rewritten to this patient.",
+  "_note": "Josh Example is the de-identified name of the real patient whose studies are published in github.com/jmandel/my-health-data/imaging. The birth date keeps only the year, as in the DICOM headers. The whole-slide study is rewritten to this patient. Sam Example and Riley Example are invented, and their studies are fully synthetic: scripts/generate-synthetic.ts makes them, and no person's images are in them.",
   "id": "josh-example",
   "family": "Example",
   "given": ["Josh"],
@@ -8,6 +8,8 @@
   "gender": "male",
   "mrn": "JEXAMPLE01",
   "otherPatients": [
-    { "id": "robin-example", "mrn": "REXAMPLE01", "_note": "Robin has an account and a Patient ID, and no studies link to it, so Robin's search is a real empty result." }
+    { "id": "robin-example", "mrn": "REXAMPLE01", "_note": "Robin has an account and a Patient ID, and no studies link to it, so Robin's search is a real empty result." },
+    { "id": "sam-example", "mrn": "SEXAMPLE01", "_note": "Invented. Sam has an account, fully synthetic studies, and cares for Riley." },
+    { "id": "riley-example", "mrn": "RYEXAMPLE01", "guardians": [{ "account": "sam-caregiver", "relationship": "guardian" }], "_note": "Invented. Riley is Sam's child, with fully synthetic studies and no account. The guardian on file is standing Imaging Server policy, which a policy reset puts back." }
   ]
 }

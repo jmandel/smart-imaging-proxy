@@ -1,5 +1,5 @@
 {
-  "_note": "Read by scripts/fetch-data.ts, which downloads the sources, and scripts/ingest.ts, which builds the archive from them. The DICOM studies are Josh Mandel's own, de-identified as \"Josh Example\" and published in github.com/jmandel/my-health-data (imaging/, made by imaging/deid.py there); ingest takes them unchanged. The whole-slide study is a CC BY 4.0 slide from the NCI Imaging Data Commons, rewritten here to the same patient. Sources are pinned by SHA-256.",
+  "_note": "Read by scripts/fetch-data.ts, which downloads the sources, and scripts/ingest.ts, which builds the archive from them. The DICOM studies are Josh Mandel's own, de-identified as \"Josh Example\" and published in github.com/jmandel/my-health-data (imaging/, made by imaging/deid.py there); ingest takes them unchanged. The whole-slide study is a CC BY 4.0 slide from the NCI Imaging Data Commons, rewritten here to the same patient. Sources are pinned by SHA-256. Studies marked \"synthetic\" have no source and no person behind them: scripts/generate-synthetic.ts makes their files, and ingest calls it.",
   "_sources": "The my-health-data archives are pinned to commit 911ee41, except the reconstructed series, which point at master until they are pushed; the SHA-256 pins hold either way.",
   "sources": [
     {
@@ -563,6 +563,154 @@
         "priority": "routine",
         "reason": "Lung nodule."
       }
+    },
+    {
+      "id": "syn-sam-chest-xr-2021",
+      "site": "Riverside Hospital",
+      "synthetic": true,
+      "patient": {
+        "id": "sam-example",
+        "mrn": "SEXAMPLE01",
+        "dicomName": "Example^Sam",
+        "birthDate": "1985-01-01",
+        "sex": "O"
+      },
+      "accession": "SYNSAM2021",
+      "studyDate": "2021-03-14",
+      "studyTime": "09:20:00",
+      "description": "SYNTHETIC: Chest X-ray, 2 views",
+      "report": {
+        "title": "SYNTHETIC CHEST X-RAY, 2 VIEWS"
+      },
+      "series": [
+        {
+          "number": 1,
+          "modality": "CR",
+          "sopClass": "1.2.840.10008.5.1.4.1.1.1",
+          "description": "SYNTHETIC: Chest PA",
+          "bodyPart": "CHEST",
+          "instances": 1
+        },
+        {
+          "number": 2,
+          "modality": "CR",
+          "sopClass": "1.2.840.10008.5.1.4.1.1.1",
+          "description": "SYNTHETIC: Chest lateral",
+          "bodyPart": "CHEST",
+          "instances": 1
+        }
+      ]
+    },
+    {
+      "id": "syn-sam-ct-sinus-2024",
+      "site": "Lakeside Imaging",
+      "synthetic": true,
+      "patient": {
+        "id": "sam-example",
+        "mrn": "SEXAMPLE01",
+        "dicomName": "Example^Sam",
+        "birthDate": "1985-01-01",
+        "sex": "O"
+      },
+      "accession": "SYNSAM2024",
+      "studyDate": "2024-09-02",
+      "studyTime": "14:05:00",
+      "description": "SYNTHETIC: CT sinuses without contrast",
+      "report": {
+        "title": "SYNTHETIC CT SINUSES WITHOUT CONTRAST"
+      },
+      "series": [
+        {
+          "number": 1,
+          "modality": "CT",
+          "sopClass": "1.2.840.10008.5.1.4.1.1.2",
+          "description": "SYNTHETIC: Axial bone",
+          "bodyPart": "HEAD",
+          "instances": 4
+        },
+        {
+          "number": 2,
+          "modality": "CT",
+          "sopClass": "1.2.840.10008.5.1.4.1.1.2",
+          "description": "SYNTHETIC: Coronal soft tissue",
+          "bodyPart": "HEAD",
+          "instances": 3
+        }
+      ]
+    },
+    {
+      "id": "syn-riley-knee-mr-2022",
+      "site": "Lakeside Imaging",
+      "synthetic": true,
+      "patient": {
+        "id": "riley-example",
+        "mrn": "RYEXAMPLE01",
+        "dicomName": "Example^Riley",
+        "birthDate": "2016-01-01",
+        "sex": "O"
+      },
+      "accession": "SYNRILEY2022",
+      "studyDate": "2022-06-21",
+      "studyTime": "11:40:00",
+      "description": "SYNTHETIC: MRI left knee without contrast",
+      "report": {
+        "title": "SYNTHETIC MRI LEFT KNEE WITHOUT CONTRAST"
+      },
+      "series": [
+        {
+          "number": 1,
+          "modality": "MR",
+          "sopClass": "1.2.840.10008.5.1.4.1.1.4",
+          "description": "SYNTHETIC: Sagittal T1",
+          "bodyPart": "KNEE",
+          "instances": 3
+        },
+        {
+          "number": 2,
+          "modality": "MR",
+          "sopClass": "1.2.840.10008.5.1.4.1.1.4",
+          "description": "SYNTHETIC: Sagittal PD fat suppressed",
+          "bodyPart": "KNEE",
+          "instances": 3
+        },
+        {
+          "number": 3,
+          "modality": "MR",
+          "sopClass": "1.2.840.10008.5.1.4.1.1.4",
+          "description": "SYNTHETIC: Coronal T2",
+          "bodyPart": "KNEE",
+          "instances": 2
+        }
+      ]
+    },
+    {
+      "id": "syn-riley-skin-slide-2023",
+      "site": "Northside Pathology",
+      "synthetic": true,
+      "patient": {
+        "id": "riley-example",
+        "mrn": "RYEXAMPLE01",
+        "dicomName": "Example^Riley",
+        "birthDate": "2016-01-01",
+        "sex": "O"
+      },
+      "accession": "SYNRILEY2023",
+      "studyDate": "2023-11-08",
+      "studyTime": "16:15:00",
+      "description": "SYNTHETIC: Skin biopsy, slide photo",
+      "report": {
+        "title": "SYNTHETIC SKIN BIOPSY, SLIDE PHOTO"
+      },
+      "series": [
+        {
+          "number": 1,
+          "modality": "SM",
+          "sopClass": "1.2.840.10008.5.1.4.1.1.7",
+          "description": "SYNTHETIC: Slide photo",
+          "bodyPart": "SKIN",
+          "instances": 2
+        }
+      ]
     }
   ]
 }

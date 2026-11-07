@@ -65,7 +65,7 @@ function showBackend(b) {
 }
 // Grouped by the question each flow answers. Flow numbers stay as the docs cite them.
 const FLOW_GROUPS = [
-  ["Who can see what", [1, 2, 3, 4, 6]],
+  ["Who can see what", [1, 2, 15, 3, 4, 6]],
   ["How the proxy decides", [5, 7, 8, 9, 10]],
   ["What comes back", [11, 12, 13, 14]],
 ];
@@ -185,8 +185,10 @@ function setPolicy(p) {
   const box = $("#chain");
   if (!box) return;
   const sites = s => s?.length ? s.join(", ") : s ? "no sites" : "everything they can see";
-  const lines = [...p.delegations.map(d => `${d.grantedBy} → ${d.delegate} (${d.relationship}): ${sites(d.sites)}`), ...p.appGrants.map(g => `${g.user} → app ${g.client}: ${sites(g.sites)}`)];
-  box.innerHTML = lines.length ? `<h3>Current delegations</h3><ul>${lines.map(l => `<li>${esc(l)}</li>`).join("")}</ul>` : "";
+  // Guardians are on file in every flow, and matter only where someone acts for another person.
+  const standing = (current?.number === 2 || current?.number === 15 ? p.guardians ?? [] : []).map(g => `${g.guardian} is ${g.patient}'s ${g.relationship}, on file: the whole record`);
+  const lines = [...standing, ...p.delegations.map(d => `${d.grantedBy} → ${d.delegate} (${d.relationship}), ${d.patient}: ${sites(d.sites)}`), ...p.appGrants.map(g => `${g.user} → app ${g.client}, ${g.patient}: ${sites(g.sites)}`)];
+  box.innerHTML = lines.length ? `<h3>Who holds what</h3><ul>${lines.map(l => `<li>${esc(l)}</li>`).join("")}</ul>` : "";
 }
 async function applyPolicy() {
   const msg = $("#policy-msg");

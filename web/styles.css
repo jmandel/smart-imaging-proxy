@@ -192,7 +192,6 @@ ul.checks li { padding:.12rem 0; } ul.checks .ok { color:var(--good); font-weigh
 .store-note { background:var(--warn-soft); color:var(--warn); border-radius:5px; padding:.45rem .65rem; font-size:.88rem; margin:0 0 .7rem; }
 .who-list { list-style:none; margin:0; padding:0; display:grid; gap:.1rem; }
 .who-list .note { display:block; padding:.1rem .6rem .4rem; }
-.who-list select { width:100%; font-size:.86rem; margin-top:.2rem; }
 button.who { display:block; width:100%; text-align:left; background:none; border:0; border-radius:5px; padding:.42rem .6rem; }
 button.who:hover:not(:disabled) { background:var(--code); }
 button.who[aria-current=true], button.who[aria-current=true]:hover:not(:disabled) { background:var(--film); color:var(--on-film); }
@@ -200,6 +199,18 @@ button.who[aria-current=true] .role { color:var(--on-film-dim); }
 button.who:disabled:not([aria-current=true]) { opacity:.55; }
 button.who b { display:block; overflow-wrap:anywhere; }
 button.who .role { display:block; color:var(--muted); font-size:.86rem; line-height:1.3; }
+/* Whose records a person opens, right under that person. */
+.whose { margin:.05rem 0 .6rem .6rem; padding-left:.6rem; border-left:3px solid var(--accent); }
+.whose-label { display:block; color:var(--muted); font-size:.82rem; font-weight:700; margin-bottom:.2rem; }
+.whose-choices { display:grid; gap:.25rem; }
+button.whose-choice { display:block; width:100%; min-height:2.75rem; text-align:left; background:var(--plate); border:1px solid var(--line); border-radius:5px; padding:.28rem .6rem; line-height:1.25; }
+button.whose-choice:hover:not(:disabled) { background:var(--code); }
+button.whose-choice[aria-current=true], button.whose-choice[aria-current=true]:hover:not(:disabled) { background:var(--film); border-color:var(--film); color:var(--on-film); }
+button.whose-choice b { display:block; overflow-wrap:anywhere; }
+button.whose-choice span:not(.sr-only) { display:block; color:var(--muted); font-size:.84rem; }
+button.whose-choice[aria-current=true] span:not(.sr-only) { color:var(--on-film-dim); }
+button.whose-missing { display:block; min-height:2.75rem; background:none; border:0; padding:.25rem 0; color:var(--accent); font-size:.86rem; text-align:left; text-decoration:underline; text-underline-offset:.15em; }
+.whose-line { margin:0 0 .1rem; color:var(--accent); font-weight:700; font-size:.97rem; overflow-wrap:anywhere; }
 .options { font-size:.92rem; margin:0 0 .4rem; }
 .options > summary { cursor:pointer; color:var(--muted); }
 .options .inner { padding:.5rem 0 .2rem; }
@@ -325,6 +336,7 @@ details.raw > summary, details.steps > summary { cursor:pointer; font-weight:700
   .in-flow #flow-list { display:none; }
   #main, .in-flow #main { padding:1rem; }
   .browse { padding:1rem; } .pick { margin-bottom:1.5rem; }
+  .whose-choices { grid-template-columns:repeat(auto-fit,minmax(9.5rem,1fr)); }
   .narrowing { grid-template-columns:minmax(0,1fr); }
 }
 @media (max-width:720px) {

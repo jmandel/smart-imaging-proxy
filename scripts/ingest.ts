@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { ingestStudies, runTool, QUARANTINE_REPORT_KEY, type StudyInput } from "../src/archive/ingest";
 import { fileStore } from "../src/archive/sources";
 import { CONFIG } from "../src/config";
+import { syntheticStudies, writeSynthetic } from "./generate-synthetic";
 
 const root = join(import.meta.dir, "..");
 const def = await Bun.file(join(root, "data/studies.source.json")).json();
@@ -36,10 +37,14 @@ async function rewriteSlide(file: string, study: any) {
   }
 }
 
+const SYNTHETIC_DIR = join(root, "data/sources/synthetic");
+await writeSynthetic(SYNTHETIC_DIR, syntheticStudies(def));
+
 const inputs: StudyInput[] = [];
 for (const study of def.studies) {
   const files: string[] = [];
-  if (study.archives) for (const a of study.archives) files.push(...await walk(join(root, "data/sources/unpacked", a.replace(/\.tgz$/, ""))));
+  if (study.synthetic) files.push(...await walk(join(SYNTHETIC_DIR, study.id)));
+  else if (study.archives) for (const a of study.archives) files.push(...await walk(join(root, "data/sources/unpacked", a.replace(/\.tgz$/, ""))));
   else for (const f of study.files) files.push(join(root, "data/sources/raw", f));
   inputs.push({
     id: study.id, title: study.report?.title ?? study.id, site: study.site, files,

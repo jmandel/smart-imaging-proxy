@@ -63,7 +63,7 @@ export function adminStatus(stack: Stack) {
   const policy = stores.active.getPolicy();
   return {
     store: { active: stores.activeName, label: stores.activeLabel, saved: stores.saved.info(), scratch: stores.scratch.info() },
-    policy: { rules: policy.rules, delegations: policy.delegations, appGrants: policy.appGrants },
+    policy: { rules: policy.rules, delegations: policy.delegations, guardians: policy.guardians, appGrants: policy.appGrants },
     settings: stores.active.getSettings(),
     settingChoices: SETTING_CHOICES,
     clockChoices: CLOCK_CHOICES,

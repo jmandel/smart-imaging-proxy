@@ -39,7 +39,10 @@ function showStore(store) {
 function renderPick() {
   const busy = !!view?.running;
   const current = view && (view.start.user ?? view.start.client);
-  const person = p => `<li><button class="who" data-user="${esc(p.id)}" data-fid="who-${esc(p.id)}" aria-current="${current === p.id}" ${busy ? "disabled" : ""}><b>${esc(p.name)}</b><span class="role">${esc(p.role)}${p.detail ? `. ${esc(p.detail)}` : ""}</span><span class="sr-only">Sign in and see studies</span></button>${p.records.length > 1 ? `<label class="note">Whose records <select data-records="${esc(p.id)}">${p.records.map(r => `<option value="${esc(r.patient)}" ${choices.records[p.id] === r.patient ? "selected" : ""}>${esc(r.name)}${r.via === "self" ? ": their own" : ""}</option>`).join("")}</select></label>` : ""}</li>`;
+  const viaWords = r => r.via === "self" ? "Own records" : r.via === "guardian" ? `As ${r.relationship ?? "guardian"}` : `Shared, as ${r.relationship ?? "a related person"}`;
+  const whoseChoice = (p, r) => `<button class="whose-choice" data-whose="${esc(r.patient)}" data-for="${esc(p.id)}" data-fid="whose-${esc(p.id)}-${esc(r.patient)}" aria-current="${current === p.id && view?.patient === r.patient}" ${busy ? "disabled" : ""}><b>${esc(r.name)}</b><span>${esc(viaWords(r))}</span><span class="sr-only">Sign in again, and search these records</span></button>`;
+  const whose = p => p.records.length > 1 ? `<div class="whose" role="group" aria-label="Whose records ${esc(p.first)} opens" data-records="${esc(p.id)}"><span class="whose-label">Whose records</span><div class="whose-choices">${p.records.map(r => whoseChoice(p, r)).join("")}</div>${p.unshared ? `<button class="whose-missing" data-whose-unshared="${esc(p.unshared.patient)}" data-for="${esc(p.id)}" data-fid="whose-${esc(p.id)}-unshared" ${busy ? "disabled" : ""}>${esc(p.unshared.name)} hasn't shared with ${esc(p.first)}</button>` : ""}</div>` : "";
+  const person = p => `<li><button class="who" data-user="${esc(p.id)}" data-fid="who-${esc(p.id)}" aria-current="${current === p.id}" ${busy ? "disabled" : ""}><b>${esc(p.name)}</b><span class="role">${esc(p.role)}${p.detail ? `. ${esc(p.detail)}` : ""}</span><span class="sr-only">Sign in and see studies</span></button>${whose(p)}</li>`;
   const client = c => `<li><button class="who" data-client="${esc(c.id)}" data-fid="who-${esc(c.id)}" aria-current="${current === c.id}" ${busy ? "disabled" : ""}><b>${esc(c.id)}</b><span class="role">${esc(c.role)}</span><span class="sr-only">Get a token and search</span></button></li>`;
   const focused = document.activeElement?.dataset?.fid;
   const appName = options.apps.find(a => a.id === choices.app)?.name ?? "";
@@ -78,7 +81,7 @@ async function begin(body) {
   wantFocus = true;
   shown = "";
   $("#result").innerHTML = '<div class="panel outcome"><h3><span class="spinner" aria-hidden="true"></span>Starting…</h3></div>';
-  document.querySelectorAll("button.who").forEach(b => { b.disabled = true; });
+  document.querySelectorAll("button.who, button.whose-choice, button.whose-missing").forEach(b => { b.disabled = true; });
   try { apply(await call("POST", "/start", body)); poll(); }
   catch (e) {
     popup?.close();
@@ -142,7 +145,7 @@ const EMPTY = '<div class="viewbox-empty"><p>Pick someone, and their studies go 
 const WAITING_TEXT = "Discovery, PKCE, sign-in, consent, and the code exchange are running against the real services.";
 function renderView() {
   const v = view;
-  const heading = v.who.asked !== undefined || v.start.user ? `${esc(v.who.name)}, through the ${esc(v.who.app)}` : `${esc(v.who.name)}, for ${esc(v.patient ?? "")}`;
+  const heading = v.who.asked !== undefined || v.start.user ? `${esc(v.who.name)}, through the ${esc(v.who.app)}${v.whose ? `, for ${esc(v.whose.name)}` : ""}` : `${esc(v.who.name)}, for ${esc(v.whose?.name ?? v.patient ?? "")}`;
   const trace = `<a href="${esc(v.liveUrl)}" target="smart-imaging-live" rel="noopener">Live trace of this session ↗</a>`;
   if (v.status === "signing-in") return `<div class="panel outcome"><h3><span class="spinner" aria-hidden="true"></span>Working on ${heading}</h3><p class="note">${v.start.user ? WAITING_TEXT : "The token request and the search are running against the real services."}</p><p class="links">${trace}</p></div>`;
   if (v.status === "waiting-for-you") return `<div class="panel outcome"><h3><span class="spinner" aria-hidden="true"></span>Waiting for you in the other window</h3>
@@ -161,6 +164,7 @@ function renderView() {
   const signIn = v.status === "token-rejected" ? `<div class="actions"><button class="primary" id="again" data-fid="again">Sign in again</button></div>` : v.status === "failed" || v.status === "forbidden" || v.status === "denied" ? `<div class="actions"><button class="secondary" id="again" data-fid="again">${v.start.user ? "Sign in again" : "Request a token and search again"}</button></div>` : "";
 
   return `<div class="panel outcome ${esc(v.status)}">
+      ${v.whose ? `<p class="whose-line" data-whose-shown="${esc(v.whose.patient)}">${esc(v.whose.plain)}</p>` : ""}
       <h3>${esc(v.headline ?? "")}</h3>
       <p class="note">${heading}</p>${asked}
       ${v.detail ? `<p>${esc(v.detail)}</p>` : ""}
@@ -272,8 +276,10 @@ document.addEventListener("click", async e => {
   if (!t || t.disabled || t.getAttribute("aria-disabled") === "true") return;
   try {
     if (t.dataset.user) startUser(t.dataset.user);
+    else if (t.dataset.whose) { choices.records[t.dataset.for] = t.dataset.whose; startUser(t.dataset.for); }
+    else if (t.dataset.whoseUnshared) startUser(t.dataset.for, { patient: t.dataset.whoseUnshared });
     else if (t.dataset.client) startClient(t.dataset.client);
-    else if (t.dataset.share) { const d = t.dataset.share; startUser(d, { share: { delegate: d, sites: ticked("share-sites") } }); }
+    else if (t.dataset.share) { const d = t.dataset.share; choices.records[d] = view.share.patient; startUser(d, { share: { delegate: d, sites: ticked("share-sites") } }); }
     else if (t.id === "again") again();
     else if (t.id === "narrow") again({ sites: ticked("app-sites") });
     else if (t.id === "cancel") { popup?.close(); popup = null; apply(await call("POST", "/cancel", { stopped: true })); }
@@ -292,7 +298,6 @@ document.addEventListener("change", async e => {
   else if (t.id === "app") { choices.app = t.value; renderPick(); }
   else if (t.id === "count") { choices.count = Number(t.value); renderPick(); }
   else if (t.id === "patient") choices.patient = t.value;
-  else if (t.dataset.records) choices.records[t.dataset.records] = t.value;
   else if (t.id === "page-size" || t.dataset.pageSize !== undefined) {
     try { apply(await call("POST", "/page", { count: Number(t.value) })); }
     catch (err) { pageError = err.message; shown = ""; render(); }
@@ -313,7 +318,8 @@ document.addEventListener("toggle", async e => {
   const r = await fetch("/api/browse/bundle");
   $("#raw-text").textContent = await r.text();
 }, true);
-addEventListener("focus", () => { if (!timer) call("GET", "/session").then(apply).catch(() => {}); });
+// Someone may have shared on an account page in another tab, which changes whose records a person holds.
+addEventListener("focus", () => { if (!timer) call("GET", "/session").then(apply).then(loadOptions).catch(() => {}); });
 
 (async () => {
   try {

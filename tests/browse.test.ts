@@ -109,9 +109,9 @@ for (const backend of BACKENDS) {
       expect(s.explain.studies[0].reason).toBe("Alex has no delegation from the patient");
       expect(s.share.offers.map((o: any) => o.label)).toEqual(["Have Josh share with Alex", "Have Josh share with Sam"]);
     }, 60000);
-    test("Sam sees nothing, then what Josh shared, then what Sam gave the app", async () => {
+    test("Sam sees nothing of Josh's, then what Josh shared, then what Sam gave the app", async () => {
       const b = browser();
-      const before = await b.pick("sam-caregiver");
+      const before = await b.pick("sam-caregiver", { patient: "josh-example" });
       expect(before.status).toBe("denied");
       expect(before.share.offers.map((o: any) => o.label)).toEqual(["Have Josh share with Sam"]);
       expect(before.share.sites.filter((x: any) => x.ticked).map((x: any) => x.name)).toEqual(SHARE);
@@ -125,7 +125,7 @@ for (const backend of BACKENDS) {
       expect(slide.reason).toBe("the delegation to Sam doesn't include Northside Pathology");
       await expectExplainMatchesSearch(b, shared);
 
-      const narrowed = await b.pick("sam-caregiver", { sites: ["Lakeside Imaging"] });
+      const narrowed = await b.pick("sam-caregiver", { patient: "josh-example", sites: ["Lakeside Imaging"] });
       expect(b.ids(narrowed)).toEqual(["mri-brain-2020"]);
       expect(narrowed.explain.chain).toBe("Josh shared Lakeside Imaging and Riverside Hospital with Sam; Sam gave the Health Records App Lakeside Imaging");
       const riverside = narrowed.explain.studies.find((r: any) => r.id === "xr-wrist-left-2012");
@@ -209,7 +209,7 @@ describe("explain", () => {
       rules: [rule("hand-referral-service", { modalities: ["CR"] }), rule("outside-release-service", { studies: ["ct-abdomen-pelvis-2012"] }), rule("research-donation", { since: "2020-01-01" })],
     });
     const b = browser();
-    for (const user of ["josh", "sam-caregiver"]) await expectExplainMatchesSearch(b, await b.pick(user, { count: 2 }));
+    for (const user of ["josh", "sam-caregiver"]) await expectExplainMatchesSearch(b, await b.pick(user, { count: 2, patient: "josh-example" }));
     for (const client of ["hand-referral-service", "outside-release-service", "research-donation"]) await expectExplainMatchesSearch(b, await b.start({ client, patient: "josh-example", count: 2 }));
   }, 120000);
 });
@@ -261,9 +261,10 @@ describe("backend clients", () => {
     expect((await b.call("POST", "/api/browse/start", { client: "research-donation", count: 5 })).status).toBe(400);
     expect((await b.call("POST", "/api/browse/start", { user: "mallory", client: "portal-app", count: 5 })).status).toBe(400);
     const o = (await b.call("GET", "/api/browse/options")).json();
-    expect(o.patients.map((p: any) => p.id)).toEqual(["josh-example", "robin-example"]);
+    expect(o.patients.map((p: any) => p.id)).toEqual(["josh-example", "riley-example", "robin-example", "sam-example"]);
     expect(o.people.map((p: any) => p.id)).toEqual(["josh", "robin", "sam-caregiver", "alex-neighbor"]);
-    expect(o.people.find((p: any) => p.id === "sam-caregiver").role).toBe("Related person, nothing shared yet");
+    expect(o.people.find((p: any) => p.id === "sam-caregiver").role).toBe("Patient, and guardian for Riley Example");
+    expect(o.people.find((p: any) => p.id === "alex-neighbor").role).toBe("Related person, nothing shared yet");
     expect(o.clients.map((c: any) => c.id)).toEqual(["hand-referral-service", "outside-release-service", "research-donation"]);
   });
 });
@@ -288,7 +289,7 @@ describe("a real window", () => {
     stack.imaging.setPolicy({ delegations: [{ patient: "josh-example", grantedBy: "josh", delegate: "sam-caregiver", relationship: "caregiver", sites: ["Lakeside Imaging"] }] });
     await b.call("POST", "/api/browse/start", { user: "josh", client: "portal-app", mode: "window", count: 5 });
     const waiting = await b.settled(s => s.status === "waiting-for-you");
-    const back = await submitConsent(waiting.authUrl, { user: "sam-caregiver" });
+    const back = await submitConsent(waiting.authUrl, { user: "sam-caregiver", patient: "josh-example" });
     await demo.fetch(new Request(back.toString()));
     const s = await b.settled();
     expect(s.who).toMatchObject({ id: "sam-caregiver", asked: "josh" });
@@ -461,7 +462,7 @@ describe("the token stays on the server", () => {
 describe("the account page", () => {
   test("a Browse link for an account asks for that account, whoever is signed in", async () => {
     const b = browser();
-    const s = await b.pick("sam-caregiver");
+    const s = await b.pick("sam-caregiver", { patient: "josh-example" });
     const links = s.accounts.map((a: any) => a.label);
     expect(links).toEqual(["Sam's account page", "Josh's account page"]);
     const url = s.accounts[1].url;

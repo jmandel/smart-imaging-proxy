@@ -61,8 +61,8 @@ export function buildAuthServer(stores: Stores, serviceSecret: string) {
       access: async (user, fhirUser) => (await policyApi("look up the user's access", `/internal/access?user=${encodeURIComponent(user)}&fhirUser=${encodeURIComponent(fhirUser)}`)).json() as any,
       recordConsent: async c => { await policyApi("record the app authorization at the Imaging Server", "/internal/consents", "POST", c); },
       delegate: async d => { await policyApi("record the delegation at the Imaging Server", "/internal/delegations", "POST", d); },
-      revokeDelegation: async (grantedBy, delegate) => { await policyApi("revoke the delegation at the Imaging Server", `/internal/delegations?grantedBy=${encodeURIComponent(grantedBy)}&delegate=${encodeURIComponent(delegate)}`, "DELETE"); },
-      revokeApp: async (client, user) => { await policyApi("revoke the app authorization at the Imaging Server", `/internal/consents?client=${encodeURIComponent(client)}&user=${encodeURIComponent(user)}`, "DELETE"); },
+      revokeDelegation: async (grantedBy, delegate, patient) => { await policyApi("revoke the delegation at the Imaging Server", `/internal/delegations?${new URLSearchParams({ grantedBy, delegate, ...(patient ? { patient } : {}) })}`, "DELETE"); },
+      revokeApp: async (client, user, patient) => { await policyApi("revoke the app authorization at the Imaging Server", `/internal/consents?${new URLSearchParams({ client, user, ...(patient ? { patient } : {}) })}`, "DELETE"); },
     },
   });
 }
@@ -172,15 +172,15 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
     },
     useStore,
     purgeTokens,
-    /** Empties the scratch store. The saved store isn't touched, and the active store doesn't change. */
+    /** Resets the scratch store. The saved store isn't touched, and the active store doesn't change. */
     resetScratch() {
       stores.scratch.resetAll();
       offsets.scratch = 0;
       if (stores.activeName === "scratch") { resetClock(); clearRuntime(); }
     },
-    /** Clears saved policy. Saved tokens and the signing key stay. */
+    /** Resets saved policy to the guardians on file. Saved tokens and the signing key stay. */
     resetSaved() { stores.saved.resetPolicy(); },
-    /** Where every flow starts: the scratch store, empty, with the clock at zero. */
+    /** Where every flow starts: the scratch store, holding only the guardians on file, with the clock at zero. */
     resetAll() { useStore("scratch"); stores.scratch.resetAll(); resetClock(); clearRuntime(); },
   };
 }

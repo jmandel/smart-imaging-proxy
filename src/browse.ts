@@ -18,6 +18,7 @@ const COOKIE = "browse_session";
 /** Who a one-click share reaches, and as what. */
 const RELATIONSHIPS: Record<string, string> = { "sam-caregiver": "caregiver", "alex-neighbor": "neighbor" };
 const SHARED_BY = "josh";
+const SHARED_PATIENT = USERS[SHARED_BY]!.patient!;
 /** What a one-click share starts with ticked. It leaves one site out, so narrowing shows. */
 const DEFAULT_SHARED_SITES = ["Lakeside Imaging", "Riverside Hospital"];
 const AUTHZ: Record<string, string> = {
@@ -49,9 +50,9 @@ const list = (items: string[]) => items.length < 2 ? items.join("") : `${items.s
 /** The Imaging Server's reasons name accounts and clients by ID. */
 function plainWords(text: string) {
   let out = text;
+  for (const id of Object.keys(PATIENT_NAMES)) out = out.replaceAll(id, PATIENT_NAMES[id]!);
   for (const id of Object.keys(USERS).sort((a, b) => b.length - a.length)) out = out.replaceAll(id, firstName(id));
   for (const id of Object.keys(APP_NAMES)) out = out.replaceAll(id, `the ${appName(id)}`);
-  for (const id of Object.keys(PATIENT_NAMES)) out = out.replaceAll(id, PATIENT_NAMES[id]!);
   return out;
 }
 const releaseLabel = (r: any, seriesCount: number) => r === "none" ? "Not released" : r === "study" ? "Released: whole study" : `Released: ${r.series.length} of ${seriesCount} series`;
@@ -61,6 +62,7 @@ function plainChain(x: any) {
   if (x.level === "system") return x.rule ? `${x.client} is pre-authorized for ${PATIENT_NAMES[x.patient] ?? x.patient} by the rule "${x.rule.description ?? x.rule.id}"` : `No rule in saved policy pre-authorizes ${x.client} for ${PATIENT_NAMES[x.patient] ?? x.patient}`;
   const who = firstName(x.user), links: string[] = [];
   if (x.fhirUser === `Patient/${x.patient}`) links.push(`${who} is the patient`);
+  else if (x.guardian) links.push(`${who} is ${patientFirst(x.patient)}'s ${x.guardian.relationship}, on file for the whole record`);
   else if (x.delegation) links.push(`${firstName(x.delegation.grantedBy)} shared ${x.delegation.sites.length ? list(x.delegation.sites) : "no sites"} with ${who}`);
   else return `${patientFirst(x.patient)} hasn't shared anything with ${who}`;
   if (x.appGrant) links.push(`${who} gave the ${appName(x.client)} ${x.appGrant.sites ? (x.appGrant.sites.length ? list(x.appGrant.sites) : "no sites") : `everything ${who} can see`}`);
@@ -117,9 +119,11 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
   // Everyone a person holds, by the saved store: what a Browse sign-in will use.
   const recordsOf = (id: string) => {
     const u = USERS[id]!;
-    const out: { patient: string; name: string; via: "self" | "delegation"; relationship?: string; sites: string[] }[] = [];
+    const out: { patient: string; name: string; via: "self" | "guardian" | "delegation"; relationship?: string; sites: string[] }[] = [];
     if (u.patient) out.push({ patient: u.patient, name: PATIENT_NAMES[u.patient] ?? u.patient, via: "self", sites: stack.catalog.sitesFor(u.patient) });
-    for (const d of stack.stores.saved.delegations()) if (d.delegate === id) out.push({ patient: d.patient, name: PATIENT_NAMES[d.patient] ?? d.patient, via: "delegation", relationship: d.relationship, sites: d.sites });
+    const guardians = stack.stores.saved.guardians();
+    for (const g of guardians) if (g.guardian === id && g.patient !== u.patient) out.push({ patient: g.patient, name: PATIENT_NAMES[g.patient] ?? g.patient, via: "guardian", relationship: g.relationship, sites: stack.catalog.sitesFor(g.patient) });
+    for (const d of stack.stores.saved.delegations()) if (d.delegate === id && !out.some(r => r.patient === d.patient) && (!d.asGuardian || guardians.some(g => g.guardian === d.grantedBy && g.patient === d.patient))) out.push({ patient: d.patient, name: PATIENT_NAMES[d.patient] ?? d.patient, via: "delegation", relationship: d.relationship, sites: d.sites });
     return out;
   };
   function options() {
@@ -129,7 +133,7 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
       people: Object.entries(USERS).map(([id, u]) => {
         const records = recordsOf(id);
         const own = u.patient ? held.filter(s => s.patient === u.patient).length : undefined;
-        return { id, name: u.name, first: firstName(id), fhirUser: u.fhirUser, role: roleOf(u, records.filter(r => r.via === "delegation")), detail: own === undefined ? "" : own ? `${own} ${own === 1 ? "study" : "studies"} on file` : "No studies on file", records: records.map(r => ({ patient: r.patient, name: r.name, via: r.via, relationship: r.relationship })) };
+        return { id, name: u.name, first: firstName(id), fhirUser: u.fhirUser, role: roleOf(u, records.filter(r => r.via !== "self")), detail: own === undefined ? "" : own ? `${own} ${own === 1 ? "study" : "studies"} on file` : "No studies on file", records: records.map(r => ({ patient: r.patient, name: r.name, via: r.via, relationship: r.relationship })), unshared: id !== SHARED_BY && records.length > 0 && !records.some(r => r.patient === SHARED_PATIENT) ? { patient: SHARED_PATIENT, name: PATIENT_NAMES[SHARED_PATIENT]! } : undefined };
       }),
       clients: Object.keys(clients).map(id => {
         const mine = rules.filter(r => r.when.client === id);
@@ -151,23 +155,27 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
 
   function view(s: Session) {
     const who = s.signedIn ?? s.start.user;
-    const held = who ? recordsOf(who).find(r => r.patient === (s.patient ?? s.start.patient)) : undefined;
-    const related = !!who && !USERS[who]?.patient;
+    const whoseId = s.patient ?? s.start.patient;
+    const held = who && whoseId ? recordsOf(who).find(r => r.patient === whoseId) : undefined;
+    // Someone with no record of their own, or who asked for Josh's: Josh is who could share.
+    const lookingToJosh = !!who && who !== SHARED_BY && (!USERS[who]?.patient || whoseId === SHARED_PATIENT);
     const empty = s.status === "denied" || (s.status === "results" && s.total === 0);
-    const delegates = related && empty ? (who === "alex-neighbor" ? ["alex-neighbor", "sam-caregiver"] : who && RELATIONSHIPS[who] ? [who] : []) : [];
+    const delegates = lookingToJosh && empty ? (who === "alex-neighbor" ? ["alex-neighbor", "sam-caregiver"] : who && RELATIONSHIPS[who] ? [who] : []) : [];
     const page = s.pages[s.pageIndex];
+    const whoseName = whoseId ? PATIENT_NAMES[whoseId] ?? whoseId : undefined;
+    const whose = !whoseId ? undefined : { patient: whoseId, name: whoseName, via: held?.via, plain: !who ? `${whoseName}'s records, for ${s.start.client}` : held?.via === "self" ? `${whoseName}'s own records` : held?.via === "guardian" ? `${whoseName}'s records, which ${firstName(who)} holds as ${held.relationship ?? "guardian"}` : held ? `${whoseName}'s records, shared with ${firstName(who)} as ${held.relationship ?? "a related person"}` : `${whoseName}'s records, which ${firstName(who)} doesn't hold` };
     return {
       name: s.name, liveUrl: liveUrl(s.name), status: s.status === "signing-in" && s.c.pendingAuthUrl ? "waiting-for-you" as Status : s.status, running: s.launching, searching: s.searching, headline: s.headline, detail: s.detail, switchedStore: s.switchedStore,
       authUrl: s.c.pendingAuthUrl ?? null, mode: s.start.mode,
       start: { user: s.start.user, client: s.start.client, patient: s.start.patient, count: s.count },
       who: who ? { id: who, name: USERS[who]?.name ?? who, first: firstName(who), app: appName(s.start.client), asked: s.start.user } : { id: s.start.client, name: s.start.client, app: s.start.client, patient: s.start.patient },
-      patient: s.patient ?? s.start.patient,
+      patient: whoseId, whose,
       steps: s.steps,
       page: { studies: s.studies, total: s.total, count: s.count, number: s.pageIndex + 1, first: page && s.studies.length ? page.offset + 1 : 0, last: page ? page.offset + s.studies.length : 0, hasNext: !!s.nextUrl, hasPrevious: s.pageIndex > 0 },
       explain: s.explain, explainError: s.explainError,
       appSites: held && s.status === "results" ? { sites: held.sites, granted: s.explain?.appGrant?.sites ?? held.sites } : undefined,
-      share: delegates.length ? { from: firstName(SHARED_BY), sites: stack.catalog.sitesFor(USERS[SHARED_BY]!.patient!).map(name => ({ name, ticked: DEFAULT_SHARED_SITES.includes(name) })), offers: delegates.map(d => ({ delegate: d, label: `Have ${firstName(SHARED_BY)} share with ${firstName(d)}` })) } : undefined,
-      accounts: who ? [accountLink(s, who), ...(related ? [accountLink(s, SHARED_BY)] : [])] : [],
+      share: delegates.length ? { from: firstName(SHARED_BY), patient: SHARED_PATIENT, sites: stack.catalog.sitesFor(USERS[SHARED_BY]!.patient!).map(name => ({ name, ticked: DEFAULT_SHARED_SITES.includes(name) })), offers: delegates.map(d => ({ delegate: d, label: `Have ${firstName(SHARED_BY)} share with ${firstName(d)}` })) } : undefined,
+      accounts: who ? [accountLink(s, who), ...(lookingToJosh ? [accountLink(s, SHARED_BY)] : [])] : [],
       retrievals: [...s.retrievals.values()], retrieving: s.retrieving, hasBundle: !!s.bundle,
       ruleHelp: s.status === "forbidden" && !who ? ruleHelp(s.start.client, s.patient ?? s.start.patient!) : undefined,
     };
@@ -277,7 +285,7 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
             const why = t.error !== "access_denied" ? "" : missing ? ` ${firstName(who)} doesn't hold ${PATIENT_NAMES[missing] ?? missing}'s records, so there was nothing to approve.` : records.length ? ` ${firstName(who)} chose not to approve the app.` : ` No patient has shared records with ${firstName(who)}.`;
             s.headline = t.error === "access_denied" ? `${firstName(who)}'s sign-in ended in access_denied` : `The sign-in ended in ${t.error ?? "an error"}`;
             s.detail = `The Authorization Server redirected back with error=${t.error ?? "unknown"} and issued no token, so no search ran.${why}`;
-            await explainFor(s, patient ?? recordsOf(who)[0]?.patient ?? stack.catalog.allStudies()[0]?.patient ?? "josh-example");
+            await explainFor(s, patient ?? recordsOf(who)[0]?.patient ?? SHARED_PATIENT);
             return;
           }
           s.token = t.access_token;
@@ -322,7 +330,8 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
     c.session = name;
     const s: Session = {
       id, name, c, switchedStore, launching: true, status: "signing-in", steps: [], pages: [], pageIndex: 0, count, studies: [], endpoints: new Map(), searching: false, retrievals: new Map(), retrieving: false, abort: new AbortController(), accountLinks: new Map(),
-      start: { user, client, patient: body.patient, mode, count, ...(body.sites ? { sites: body.sites } : {}), ...(body.share ? { share: body.share } : {}) },
+      // A share is Josh's, so the sign-in after it is for Josh.
+      start: { user, client, patient: body.patient ?? (body.share ? SHARED_PATIENT : undefined), mode, count, ...(body.sites ? { sites: body.sites } : {}), ...(body.share ? { share: body.share } : {}) },
     };
     sessions.set(id, s);
     for (const k of sessions.keys()) { if (sessions.size <= MAX_SESSIONS) break; const old = sessions.get(k)!; if (old.launching) continue; old.abort.abort(); sessions.delete(k); }

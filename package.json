@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "fetch-data": "bun scripts/fetch-data.ts",
+    "generate-synthetic": "bun scripts/generate-synthetic.ts",
     "ingest": "bun scripts/ingest.ts",
     "load": "bun scripts/load-backends.ts",
     "build-catalog": "bun scripts/build-catalog.ts",

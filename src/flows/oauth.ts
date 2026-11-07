@@ -12,8 +12,8 @@ export interface AuthorizationRequest { url: string; state: string; verifier: st
 type Trace = { traceparent: string; session: string };
 const addTrace = (q: URLSearchParams, trace?: Trace) => { if (trace) { q.set("demo_traceparent", trace.traceparent); q.set("demo_session", trace.session); } };
 
-/** Builds the authorization request. The trace fields are demo-only, so the live trace can follow a browser. */
-export function buildAuthorization(authorizationEndpoint: string, client: string, scope = DEFAULT_SCOPE, trace?: Trace, loginHint?: string): AuthorizationRequest {
+/** Builds the authorization request. The trace fields are demo-only, so the live trace can follow a browser, and so is `patientHint`, which preselects a choice on the consent page and grants nothing. */
+export function buildAuthorization(authorizationEndpoint: string, client: string, scope = DEFAULT_SCOPE, trace?: Trace, loginHint?: string, patientHint?: string): AuthorizationRequest {
   const verifier = randomBytes(32).toString("base64url");
   const state = randomBytes(16).toString("base64url");
   const q = new URLSearchParams({
@@ -21,6 +21,7 @@ export function buildAuthorization(authorizationEndpoint: string, client: string
     code_challenge: createHash("sha256").update(verifier).digest("base64url"), code_challenge_method: "S256",
   });
   if (loginHint) q.set("login_hint", loginHint);
+  if (patientHint) q.set("demo_patient", patientHint);
   addTrace(q, trace);
   return { url: `${authorizationEndpoint}?${q}`, state, verifier, client, redirectUri: CALLBACK };
 }
@@ -64,22 +65,22 @@ async function accountSignIn(url: string, user: string, doFetch: typeof fetch) {
   if (res.status !== 303) throw new Error(`sign-in failed (HTTP ${res.status})`);
   return { cookie: res.headers.get("set-cookie")!.split(";")[0]!, query: new URL(url).search };
 }
-export async function submitDelegation(url: string, d: { user: string; delegate: string; relationship: string; sites: string[] }, doFetch: typeof fetch = fetch) {
+export async function submitDelegation(url: string, d: { user: string; delegate: string; relationship: string; sites: string[]; patient?: string }, doFetch: typeof fetch = fetch) {
   const { cookie, query } = await accountSignIn(url, d.user, doFetch);
-  const form = new URLSearchParams({ delegate: d.delegate, relationship: d.relationship, sites_shown: "1" });
+  const form = new URLSearchParams({ delegate: d.delegate, relationship: d.relationship, sites_shown: "1", ...(d.patient ? { patient: d.patient } : {}) });
   for (const s of d.sites) form.append("sites", s);
   return post(doFetch, `${CONFIG.authUrl}/account/delegations${query}`, form, { cookie });
 }
-export async function submitRevocation(url: string, d: { user: string; delegate: string }, doFetch: typeof fetch = fetch) {
+export async function submitRevocation(url: string, d: { user: string; delegate: string; patient?: string }, doFetch: typeof fetch = fetch) {
   const { cookie, query } = await accountSignIn(url, d.user, doFetch);
-  return post(doFetch, `${CONFIG.authUrl}/account/delegations/revoke${query}`, new URLSearchParams({ delegate: d.delegate }), { cookie });
+  return post(doFetch, `${CONFIG.authUrl}/account/delegations/revoke${query}`, new URLSearchParams({ delegate: d.delegate, ...(d.patient ? { patient: d.patient } : {}) }), { cookie });
 }
 
 /** A complete scripted launch. */
-export async function scriptedLaunch(user: string, client = "portal-app", opts: { scope?: string; sites?: string[] } = {}) {
+export async function scriptedLaunch(user: string, client = "portal-app", opts: { scope?: string; sites?: string[]; patient?: string } = {}) {
   const config: any = await (await fetch(`${CLINICAL_FHIR}/.well-known/smart-configuration`)).json();
   const a = buildAuthorization(config.authorization_endpoint, client, opts.scope, undefined, user);
-  const back = await submitConsent(a.url, { user, sites: opts.sites });
+  const back = await submitConsent(a.url, { user, sites: opts.sites, patient: opts.patient });
   if (back.searchParams.get("state") !== a.state) throw new Error("state mismatch");
   if (!back.searchParams.get("code")) return { error: back.searchParams.get("error") } as any;
   const res = await fetch(config.token_endpoint, { method: "POST", headers: FORM, body: tokenRequestBody(a, back.searchParams.get("code")!) });

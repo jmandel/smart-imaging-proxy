@@ -56,13 +56,18 @@ function render(s) {
   const row = (name, f) => `<tr><th scope="row">${esc(name)}</th><td${col("saved")}>${esc(f(saved))}</td><td${col("scratch")}>${esc(f(scratch))}</td></tr>`;
   $("#store-table").innerHTML = `<table><thead><tr><th></th><th scope="col"${col("saved")}>Saved policy${active === "saved" ? " (active)" : ""}</th><th scope="col"${col("scratch")}>Flow scratch${active === "scratch" ? " (active)" : ""}</th></tr></thead><tbody>
     ${row("Mode", x => x.mode)}${row("Path", x => x.path)}${row("Durability", x => x.mode === "file" ? x.durability : "none: in memory")}${row("Journal", x => x.journal)}${row("Schema version", x => x.schemaVersion)}
-    ${row("Delegations", x => x.counts.delegations)}${row("App grants", x => x.counts.appGrants)}${row("Rules", x => x.counts.rules)}${row("Settings changed", x => x.counts.settings)}${row("Live access tokens", x => x.counts.liveAccessTokens)}${row("Refresh tokens", x => x.counts.refreshTokens)}${row("Signing keys", x => x.counts.signingKeys)}${row("Retired signing keys", x => x.counts.retiredSigningKeys)}
+    ${row("Guardians on file", x => x.counts.guardians)}${row("Delegations", x => x.counts.delegations)}${row("App grants", x => x.counts.appGrants)}${row("Rules", x => x.counts.rules)}${row("Settings changed", x => x.counts.settings)}${row("Live access tokens", x => x.counts.liveAccessTokens)}${row("Refresh tokens", x => x.counts.refreshTokens)}${row("Signing keys", x => x.counts.signingKeys)}${row("Retired signing keys", x => x.counts.retiredSigningKeys)}
   </tbody></table>`;
 
   const sites = v => v === undefined ? "everything they can see" : v.length ? v.join(", ") : "no sites";
-  const d = s.policy.delegations, g = s.policy.appGrants;
+  const d = s.policy.delegations, g = s.policy.appGrants, standing = s.policy.guardians;
   $("#chain-list").innerHTML = `<p class="note">In ${esc(label)}</p>
+    <h3>Guardians on file</h3>
+    <ul class="rows" id="guardians">${standing.map(x => `<li data-guardian="${esc(x.guardian)}"><span><b>${esc(x.guardian)}</b> is the ${esc(x.relationship)} of patient ${esc(x.patient)}: the whole record</span></li>`).join("") || '<li><span class="note">No guardians.</span></li>'}</ul>
+    <p class="note">Standing policy the Imaging Server evaluates, seeded from <code>data/patient.json</code>. No one chose it by sharing, so there's no one to revoke it here, and a policy reset puts it back.</p>
+    <h3>Delegations</h3>
     <ul class="rows">${d.map(x => `<li><span><b>${esc(x.grantedBy)}</b> to <b>${esc(x.delegate)}</b> (${esc(x.relationship)}), patient ${esc(x.patient)}: ${esc(sites(x.sites))}</span><button class="secondary small" data-del-delegation="${esc(JSON.stringify({ patient: x.patient, delegate: x.delegate }))}">Delete</button></li>`).join("") || '<li><span class="note">No delegations.</span></li>'}</ul>
+    <h3>App grants</h3>
     <ul class="rows">${g.map(x => `<li><span><b>${esc(x.user)}</b> authorized app <b>${esc(x.client)}</b>, patient ${esc(x.patient)}: ${esc(sites(x.sites))}</span><button class="secondary small" data-del-grant="${esc(JSON.stringify({ client: x.client, user: x.user, patient: x.patient }))}">Delete</button></li>`).join("") || '<li><span class="note">No app grants.</span></li>'}</ul>`;
 
   if (lastActive !== undefined && lastActive !== active) ruleSetPick = null;
@@ -104,10 +109,10 @@ document.addEventListener("click", e => {
   const ahead = e.target.closest("[data-advance]");
   if (ahead) act($("#clock-msg"), `Clock advanced ${ahead.textContent.replace("Advance ", "")}.`, () => call("POST", "/clock", { advanceSeconds: Number(ahead.dataset.advance) }));
 });
-$("#reset-scratch").onclick = () => act($("#store-msg"), "Flow scratch is empty.", () => call("POST", "/store/reset-scratch"));
+$("#reset-scratch").onclick = () => act($("#store-msg"), "Flow scratch is reset, with only the guardians on file.", () => call("POST", "/store/reset-scratch"));
 $("#reset-saved").onclick = () => {
-  if (!confirm("Delete all saved delegations, app grants, rules and settings? This can't be undone.")) return;
-  act($("#store-msg"), "Saved policy is reset. Saved tokens and the signing key were kept.", () => call("POST", "/store/reset-saved", { confirm: true }));
+  if (!confirm("Delete all saved delegations, app grants, rules and settings? This can't be undone. Guardians on file stay.")) return;
+  act($("#store-msg"), "Saved policy is reset. Guardians on file, saved tokens and the signing key were kept.", () => call("POST", "/store/reset-saved", { confirm: true }));
 };
 $("#rule-set-select").onchange = e => { ruleSetPick = e.target.value; renderRuleSets(); };
 $("#apply-rule-set").onclick = () => {

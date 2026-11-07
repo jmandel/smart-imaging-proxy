@@ -956,7 +956,9 @@ describe("Local files and MinIO", () => {
   describe("the real archive", () => {
     const dirStore = () => fileStore(CONFIG.archive.dir);
     const bucketStore = () => s3Store(client(CONFIG.archive.bucket));
-    const SITES = () => Bun.file(join(import.meta.dir, "../data/studies.source.json")).json().then((d: any) => Object.fromEntries(d.studies.map((s: any) => [s.id, s.site])));
+    const SOURCE = () => Bun.file(join(import.meta.dir, "../data/studies.source.json")).json().then((d: any) => d.studies as any[]);
+    const SITES = () => SOURCE().then(studies => Object.fromEntries(studies.map(s => [s.id, s.site])));
+    const PATIENT_IDS = () => SOURCE().then(studies => Object.fromEntries(studies.map(s => [s.id, s.patient?.mrn ?? "JEXAMPLE01"])));
     const manifest = async () => {
       const reader = new ArchiveReader(dirStore());
       const uids = (await listAll(dirStore())).filter(k => k.endsWith("/current.json")).map(k => k.split("/")[1]!);
@@ -966,7 +968,7 @@ describe("Local files and MinIO", () => {
     test("the bucket holds exactly what the directory holds", async () => {
       const a = dirStore(), b = bucketStore();
       const keys = await listAll(a);
-      expect(keys.filter(k => k.endsWith("current.json"))).toHaveLength(6);
+      expect(keys.filter(k => k.endsWith("current.json"))).toHaveLength(10);
       expect(await listAll(b)).toEqual(keys);
       for (const k of keys) {
         if (k.startsWith("content/")) expect(await b.size(k)).toBe((await a.size(k))!);
@@ -977,10 +979,11 @@ describe("Local files and MinIO", () => {
     test("studies say where they came from, and who the images say they're of", async () => {
       const m = await manifest();
       const sites: any = await SITES();
+      const patientIds: any = await PATIENT_IDS();
       const reader = new ArchiveReader(dirStore());
       for (const s of m.studies) {
         const doc = await reader.study(s.uid, await reader.currentVersion(s.uid));
-        expect(doc).toMatchObject({ format: ARCHIVE_FORMAT, id: s.id, uid: s.uid, site: sites[s.id], sourcePatientId: "JEXAMPLE01", accession: s.accession });
+        expect(doc).toMatchObject({ format: ARCHIVE_FORMAT, id: s.id, uid: s.uid, site: sites[s.id], sourcePatientId: patientIds[s.id], accession: s.accession });
         expect(doc.series.map(x => x.uid)).toEqual(s.series.map((x: any) => x.uid));
       }
     });

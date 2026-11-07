@@ -6,6 +6,10 @@
     "EXCR2012A": { "id": "xr-wrist-left-2012", "title": "XR WRIST LEFT, 3 VIEWS", "site": "Riverside Hospital" },
     "EXCR2012B": { "id": "xr-hand-wrist-right-2012", "title": "XR HAND AND WRIST RIGHT, 3 VIEWS", "site": "Riverside Hospital" },
     "EXCR2012C": { "id": "xr-hand-right-2012", "title": "XR HAND RIGHT, 3 VIEWS, PORTABLE", "site": "Riverside Hospital" },
-    "EXSL2023": { "id": "slide-lung-2023", "title": "LUNG, DIGITAL SLIDE, H&E", "site": "Northside Pathology" }
+    "EXSL2023": { "id": "slide-lung-2023", "title": "LUNG, DIGITAL SLIDE, H&E", "site": "Northside Pathology" },
+    "SYNSAM2021": { "id": "syn-sam-chest-xr-2021", "title": "SYNTHETIC CHEST X-RAY, 2 VIEWS", "site": "Riverside Hospital" },
+    "SYNSAM2024": { "id": "syn-sam-ct-sinus-2024", "title": "SYNTHETIC CT SINUSES WITHOUT CONTRAST", "site": "Lakeside Imaging" },
+    "SYNRILEY2022": { "id": "syn-riley-knee-mr-2022", "title": "SYNTHETIC MRI LEFT KNEE WITHOUT CONTRAST", "site": "Lakeside Imaging" },
+    "SYNRILEY2023": { "id": "syn-riley-skin-slide-2023", "title": "SYNTHETIC SKIN BIOPSY, SLIDE PHOTO", "site": "Northside Pathology" }
   }
 }

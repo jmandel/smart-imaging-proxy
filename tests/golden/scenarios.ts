@@ -105,8 +105,8 @@ export async function runScenarios(stack: any, clients: any) {
   // Related people.
   fresh();
   stack.imaging.setPolicy({ delegations: [{ patient: "josh-example", grantedBy: "josh", delegate: "sam-caregiver", relationship: "caregiver", sites: ["Lakeside Imaging", "Riverside Hospital"] }] });
-  await record("sam: holds two sites, app given everything", (await scriptedLaunch("sam-caregiver")).access_token, ALL);
-  await record("sam: app given one held and one unheld site", (await scriptedLaunch("sam-caregiver", "portal-app", { sites: ["Lakeside Imaging", "Northside Pathology"] })).access_token, ALL);
+  await record("sam: holds two sites, app given everything", (await scriptedLaunch("sam-caregiver", "portal-app", { patient: "josh-example" })).access_token, ALL);
+  await record("sam: app given one held and one unheld site", (await scriptedLaunch("sam-caregiver", "portal-app", { sites: ["Lakeside Imaging", "Northside Pathology"], patient: "josh-example" })).access_token, ALL);
   fresh();
   out["alex: no delegation"] = await scriptedLaunch("alex-neighbor");
 
@@ -181,6 +181,28 @@ export async function runScenarios(stack: any, clients: any) {
   fresh();
   stack.imaging.setPolicy({ rules: [{ id: "hide", when: { client: "outside-release-service", patient: "josh-example" }, allow: { studies: ["ct-abdomen-pelvis-2012"] }, withholdSeries: hideSome }] });
   await askFor("can_i: series subset", await backendToken("outside-release-service"), ct);
+
+  // Several patients, and one person choosing among them.
+  const SAM = "patient=sam-example&_include=ImagingStudy:endpoint", RILEY = "patient=riley-example&_include=ImagingStudy:endpoint";
+  const sam = (patient: string, sites?: string[]) => scriptedLaunch("sam-caregiver", "portal-app", { patient, sites });
+  fresh();
+  const samOwn = (await sam("sam-example")).access_token;
+  await record("sam: own records", samOwn, SAM);
+  await record("sam: own token, riley's records", samOwn, RILEY);
+  await record("sam: own token, josh's records", samOwn, ALL);
+  const samRiley = (await sam("riley-example")).access_token;
+  await record("sam: riley's records, as guardian", samRiley, RILEY);
+  await record("sam: riley's token, josh's records", samRiley, ALL);
+  await record("sam: riley's token, own records", samRiley, SAM);
+  await record("sam: riley's records, app given one site", (await sam("riley-example", ["Northside Pathology"])).access_token, RILEY);
+  out["sam: josh's records with no delegation"] = await sam("josh-example");
+  fresh();
+  stack.imaging.setPolicy({ delegations: [{ patient: "sam-example", grantedBy: "sam-caregiver", delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"] }] });
+  await record("alex: part of sam's own records, shared by sam", (await scriptedLaunch("alex-neighbor", "portal-app", { patient: "sam-example" })).access_token, SAM);
+  out["alex: riley's records, not shared"] = await scriptedLaunch("alex-neighbor", "portal-app", { patient: "riley-example" });
+  fresh();
+  stack.imaging.setPolicy({ rules: [{ id: "hand", when: { client: "hand-referral-service", patient: "josh-example" }, allow: { modalities: ["CR"] } }] });
+  await record("backend: a rule for josh, asking for riley", await backendToken("hand-referral-service"), RILEY);
   fresh();
   return out;
 }

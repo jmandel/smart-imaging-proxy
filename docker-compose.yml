@@ -6,7 +6,7 @@ services:
     environment:
       MINIO_ROOT_USER: demo-minio
       MINIO_ROOT_PASSWORD: demo-minio-secret
-    ports: ["127.0.0.1:4610:9000"]
+    ports: ["127.0.0.1:${MINIO_PORT:-4610}:9000"]
     volumes: ["${DEMO_STORAGE:-/tmp/smart-imaging-demo}/minio:/data"]
   orthanc:
     image: orthancteam/orthanc:latest
@@ -16,5 +16,5 @@ services:
       ORTHANC__REGISTERED_USERS: '{"demo-proxy":"demo-orthanc-secret"}'
       ORTHANC__DICOM_WEB__ENABLE: "true"
       ORTHANC__DICOM_WEB__ROOT: /dicom-web/
-    ports: ["127.0.0.1:4611:8042"]
+    ports: ["127.0.0.1:${ORTHANC_PORT:-4611}:8042"]
     volumes: ["${DEMO_STORAGE:-/tmp/smart-imaging-demo}/orthanc:/var/lib/orthanc/db"]

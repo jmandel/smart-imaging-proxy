@@ -1,9 +1,13 @@
 import { CONFIG } from "../config";
+import { PATIENT_NAMES } from "../auth-server";
 import { siteOptions, studyOptions, type Flow, type Ctx } from "./runtime";
 
 const WRIST = "xr-wrist-left-2012", SLIDE = "slide-lung-2023", MRI = "mri-brain-2020", CT = "ct-abdomen-pelvis-2012";
 const SEARCH_DOC = `<p>Search follows the guide's <code>ImagingStudy?patient=...&amp;_include=ImagingStudy:endpoint</code>. Each returned study has a response-local Endpoint, whose <code>address</code> carries a signed context. The app treats it as an opaque base URL.</p>`;
 const FAST_DOC = `<p>The proxy verifies the signature with a public key, checks expiry, checks the study and any requested series are in the context, and compares the token's hash to <code>ath</code>. No network call is needed, so the label reads <b>instant</b>.</p>`;
+const JOSH = "josh-example", SAM = "sam-example", RILEY = "riley-example", SAM_ACCOUNT = "sam-caregiver";
+const firstOf = (patient: string) => (PATIENT_NAMES[patient] ?? patient).split(" ")[0]!;
+const searchOf = (patient: string) => `patient=${patient}&_include=ImagingStudy:endpoint`;
 const ASK_DOC = `<p>The proxy can't answer from the URL, so it calls <code>POST /access/v1/evaluation</code> on the Imaging Server, an <a href="https://openid.net/specs/authorization-api-1_0.html">AuthZEN</a> Access Evaluation. A denial becomes a <code>404</code>, the same as a study that doesn't exist.</p>`;
 
 export const policyFlows: Flow[] = [
@@ -62,7 +66,7 @@ export const policyFlows: Flow[] = [
   },
   {
     id: "caregiver", number: 2, group: "policy", title: "Related person, then app",
-    summary: "Josh signs in and shares some sites with Sam, his caregiver. Sam signs in as Sam and gives an app some of what they hold.",
+    summary: "Josh signs in and shares some sites with Sam, his caregiver. Sam signs in as Sam, chooses whose records to act on, and gives an app some of what they hold.",
     shows: "Each link in patient, related person, app can only narrow access. All of it stays at the Imaging Server, and the proxy never learns any of it.",
     steps: [
       {
@@ -86,32 +90,43 @@ export const policyFlows: Flow[] = [
         },
       },
       {
-        id: "sam-launch", title: "Sam signs in and authorizes an app", actor: "Related person", doc: `<p>Sam runs a real SMART launch with their own account. The patient picker offers Josh, because of the delegation. Sam can give the app part of what they hold, and can't give it more: any site outside the delegation is dropped, even if a form submits it.</p>`,
+        id: "sam-launch", title: "Sam signs in, chooses whose records, and authorizes an app", actor: "Related person", doc: `<p>Sam runs a real SMART launch with their own account. The consent page offers Sam's own records, Riley's as guardian, and Josh's because of the delegation, and the token is for the one Sam picks. Sam can give the app part of what they hold, and can't give it more: any site outside what Sam holds is dropped, even if a form submits it.</p>`,
         inputs: c => [
+          { id: "whose", label: "Whose records Sam acts on", type: "select", options: [{ value: JOSH, label: "Josh Example, shared by Josh (this flow's comparison)" }, { value: SAM, label: "Sam Example, Sam's own" }, { value: RILEY, label: "Riley Example, as guardian" }], default: JOSH, help: "A choice other than Josh shows that this token reaches only that person, and that Josh's choices don't touch it." },
           { id: "mode", label: "Who signs in and approves", type: "select", options: [{ value: "window", label: "You, in a real window (Sam Example is preselected)" }, { value: "scripted", label: "Scripted, with the sites below" }], default: "scripted", clickDefault: "window" },
           { id: "sites", label: "Sites for the app, when scripted. Tick one Sam doesn't hold to see it dropped.", type: "multi", options: siteOptions(c), default: ["Lakeside Imaging", "Northside Pathology"] },
         ],
         run: async (c, i) => {
-          const t = await c.launch("sam-caregiver", "portal-app", i.mode === "window" ? { window: true } : { sites: i.sites });
+          const t = await c.launch(SAM_ACCOUNT, "portal-app", i.mode === "window" ? { window: true, patient: i.whose } : { sites: i.sites, patient: i.whose });
           c.state.sam = c.launched(t);
+          c.state.samPatient = t.patient;
           c.state.delegated ??= [];
-          const g = c.stack.imaging.getPolicy().appGrants.find(x => x.user === "sam-caregiver");
-          c.state.appSites = g?.sites ?? c.state.delegated;
-          c.check("The app holds no more than Sam was given", c.state.appSites.every((s: string) => c.state.delegated.includes(s)), c.state.appSites.join(", "));
-          c.check("The token names Josh as the patient, and no sites", t.patient === "josh-example" && !/site/i.test(t.scope ?? ""), t.scope);
+          // What Sam holds for this person: what Josh shared, or all of a record Sam doesn't owe to Josh.
+          const held = t.patient === JOSH ? c.state.delegated : c.sites(t.patient);
+          const g = c.stack.imaging.getPolicy().appGrants.find(x => x.user === SAM_ACCOUNT && x.patient === t.patient);
+          c.state.appSites = g?.sites ?? held;
+          c.check("The app holds no more than Sam was given", c.state.appSites.every((s: string) => held.includes(s)), c.state.appSites.join(", "));
+          c.check(`The token names ${firstOf(i.whose)} as the patient, and no sites`, t.patient === i.whose && !/site/i.test(t.scope ?? ""), t.patient === i.whose ? t.scope : `Sam approved ${firstOf(t.patient)}'s records in the window, and this step had ${firstOf(i.whose)} selected`);
         },
       },
       {
-        id: "searches", title: "Josh's app and Sam's app search", actor: "App", doc: `${SEARCH_DOC}<p>Both tokens have the same patient and scope. The results differ because the chain differs.</p>`,
+        id: "searches", title: "Josh's app and Sam's app search", actor: "App", doc: `${SEARCH_DOC}<p>With Josh chosen, both tokens have the same patient and scope, and the results differ because the chain differs. With someone else chosen, Sam's token reaches only that person.</p>`,
         run: async c => {
           c.token(c.state.sam);
           c.state.josh = c.launched(await c.launch("josh"));
           const j = await c.search(c.state.josh, undefined, "App (Josh)");
-          const s = await c.search(c.state.sam, undefined, "App (Sam)");
+          const s = await c.search(c.state.sam, searchOf(c.state.samPatient), "App (Sam)");
           c.state.joshStudies = j.studies;
           c.state.samStudies = s.studies;
           c.check("Josh sees every study", Object.keys(j.studies).length === c.studies().length);
-          c.check("Sam's app sees only sites in both links", Object.keys(s.studies).every(id => c.state.appSites.includes(c.siteOf(id)) && c.state.delegated.includes(c.siteOf(id))) && Object.keys(s.studies).length < Object.keys(j.studies).length, Object.keys(s.studies).join(", "));
+          if (c.state.samPatient === JOSH) {
+            c.check("Sam's app sees only sites in both links", Object.keys(s.studies).every(id => c.state.appSites.includes(c.siteOf(id)) && c.state.delegated.includes(c.siteOf(id))) && Object.keys(s.studies).length < Object.keys(j.studies).length, Object.keys(s.studies).join(", "));
+            return;
+          }
+          const name = firstOf(c.state.samPatient);
+          c.check(`Sam's app sees only ${name}'s records, at the sites Sam gave it`, Object.keys(s.studies).every(id => c.study(id).patient === c.state.samPatient && c.state.appSites.includes(c.siteOf(id))), `Sam chose ${name} at the last step, so this isn't a comparison with Josh: ${Object.keys(s.studies).join(", ") || "no studies"}`);
+          const other = await c.search(c.state.sam, searchOf(JOSH), "App (Sam)");
+          c.check(`That token asking for Josh gets 403, because it's for ${name}`, other.status === 403, `status ${other.status}`);
         },
       },
       {
@@ -121,18 +136,24 @@ export const policyFlows: Flow[] = [
           if (!id) { c.check("Sam's app can see everything Josh's can, so no URL of Josh's is out of its reach", true); return; }
           const s = c.state.joshStudies[id];
           const r = await c.retrieve("App (Sam)", "Use Josh's URL with Sam's token", c.studyUrl(s.base, s.uid), c.state.sam);
-          c.check("Denied, after asking", r.status === 404 && r.authz === "asked", `status ${r.status}, authorization: ${r.authz}`);
+          c.check("Denied, after asking", r.status === 404 && r.authz === "asked", `status ${r.status}, authorization: ${r.authz}${c.state.samPatient === JOSH ? "" : `. This token is for ${firstOf(c.state.samPatient)}, so Josh's records are out of its reach whatever Josh shares`}`);
           const own = await c.retrieve("App (Josh)", "Josh uses the same URL", c.studyUrl(s.base, s.uid), c.state.josh);
           c.check("Josh still gets it, instantly", own.status === 200 && own.authz === "instant", `authorization: ${own.authz}`);
         },
       },
       {
-        id: "revoke", title: "Josh revokes Sam", actor: "Patient", doc: `<p>Josh revokes the delegation on the account page. Search changes at once. A URL Sam already holds works until it expires, then the proxy asks and is refused. Removing one link ends everything after it, including Sam's app.</p>`,
+        id: "revoke", title: "Josh revokes Sam", actor: "Patient", doc: `<p>Josh revokes the delegation on the account page. Search changes at once. A URL Sam already holds works until it expires, then the proxy asks and is refused. Removing one link ends everything after it, including Sam's app. Josh's revocation reaches only what Josh shared, so a token Sam holds for someone else carries on.</p>`,
         run: async c => {
-          const before = await c.search(c.state.sam, undefined, "App (Sam)");
-          const s = Object.values(before.studies)[0];
-          await c.revokeDelegation("josh", "sam-caregiver");
-          const after = await c.search(c.state.sam, undefined, "App (Sam)");
+          c.token(c.state.sam);
+          const whose = c.state.samPatient;
+          const before = await c.search(c.state.sam, searchOf(whose), "App (Sam)");
+          const s: any = Object.values(before.studies)[0];
+          await c.revokeDelegation("josh", SAM_ACCOUNT);
+          const after = await c.search(c.state.sam, searchOf(whose), "App (Sam)");
+          if (whose !== JOSH) {
+            c.check(`${firstOf(whose)}'s records don't depend on Josh, so Sam's app sees the same studies`, Object.keys(after.studies).length === Object.keys(before.studies).length, `${Object.keys(after.studies).length} before and after. Sam chose ${firstOf(whose)} earlier in this flow`);
+            return;
+          }
           c.check("Search reflects it immediately", Object.keys(after.studies).length === 0);
           if (!s) { c.check("Sam's app held no URL, so there's no revocation window to show", true); return; }
           const inside = await c.retrieve("App (Sam)", "A URL Sam already holds", c.studyUrl(s.base, s.uid), c.state.sam);
@@ -342,6 +363,119 @@ export const policyFlows: Flow[] = [
           c.advanceClock(c.state.lifetime + 5);
           const g = await c.retrieve("research-donation", "Retrieve after expiry", c.studyUrl(c.state.s.base, c.state.s.uid), c.state.token);
           c.check("Access has ended", g.status === 404 && g.authz === "asked", `status ${g.status}, authorization: ${g.authz}`);
+        },
+      },
+    ],
+  },
+  {
+    id: "whose-records", number: 15, group: "policy", title: "Caregiver picks whose records",
+    summary: "Sam opens their own records, then Riley's as guardian, then Josh's once Josh shares. Each is a new authorization for one patient.",
+    shows: "A token is for one patient. Holding several people's records doesn't widen any token, and an app can be given just one of them.",
+    steps: [
+      {
+        id: "own", title: "Sam opens their own records", actor: "Patient", doc: `<p>Sam signs in with their own account, which is also <code>Patient/sam-example</code>, and picks their own records on the consent page. This is a real launch and a real search. These images are synthetic.</p>`,
+        inputs: () => [{ id: "mode", label: "Who signs in and approves", type: "select", options: [{ value: "window", label: "You, in a real window (Sam Example and their own records are preselected)" }, { value: "scripted", label: "Scripted" }], default: "scripted", clickDefault: "window" }],
+        run: async (c, i) => {
+          const t = await c.launch(SAM_ACCOUNT, "portal-app", { window: i.mode === "window", patient: SAM });
+          c.state.own = c.launched(t);
+          c.check("The token is for Sam's own record", t.patient === SAM, t.patient === SAM ? t.patient : `Sam approved ${firstOf(t.patient)}'s records in the window, and this step had Sam's own selected`);
+          const r = await c.search(c.state.own, searchOf(t.patient));
+          c.state.ownStudies = r.studies;
+          c.check("The search returns that person's studies, and no one else's", Object.keys(r.studies).length === c.studies(t.patient).length && Object.keys(r.studies).every(id => c.study(id).patient === t.patient), Object.keys(r.studies).join(", "));
+        },
+      },
+      {
+        id: "guardian", title: "Sam opens Riley's records, as guardian", actor: "Guardian", doc: `<p>Riley is Sam's child, and has no account. Sam is Riley's guardian on file at the Imaging Server, so nobody has to share anything first. Choosing Riley is a new authorization with its own token and app grant. Riley's images are synthetic too.</p>`,
+        inputs: () => [{ id: "mode", label: "Who signs in and approves", type: "select", options: [{ value: "window", label: "You, in a real window (Sam Example and Riley's records are preselected)" }, { value: "scripted", label: "Scripted" }], default: "scripted", clickDefault: "window" }],
+        run: async (c, i) => {
+          const policy = c.stack.imaging.getPolicy();
+          c.check("The guardian is on file, and nobody has shared anything", policy.guardians.some(g => g.patient === RILEY && g.guardian === SAM_ACCOUNT) && !policy.delegations.some(d => d.patient === RILEY), policy.guardians.map(g => `${g.guardian} for ${g.patient}: ${g.relationship}`).join(", "));
+          const t = await c.launch(SAM_ACCOUNT, "portal-app", { window: i.mode === "window", patient: RILEY });
+          c.state.riley = c.launched(t);
+          c.state.rileyPatient = t.patient;
+          c.check("The token is for Riley", t.patient === RILEY, t.patient === RILEY ? t.patient : `Sam approved ${firstOf(t.patient)}'s records in the window, and this step had Riley's selected`);
+          const r = await c.search(c.state.riley, searchOf(t.patient));
+          c.state.rileyStudies = r.studies;
+          c.check("The search returns that person's studies, and no one else's", Object.keys(r.studies).length === c.studies(t.patient).length && Object.keys(r.studies).every(id => c.study(id).patient === t.patient), Object.keys(r.studies).join(", "));
+          const grants = c.stack.imaging.getPolicy().appGrants.filter(g => g.user === SAM_ACCOUNT && g.client === "portal-app").map(g => g.patient);
+          c.check("Sam has a separate app grant for each person", new Set(grants).size === grants.length && grants.includes(t.patient), grants.join(", "));
+          const s: any = Object.values(r.studies)[0];
+          if (!s) return;
+          const got = await c.retrieve("App", "Retrieve one of those studies", c.studyUrl(s.base, s.uid), c.state.riley);
+          c.check("Served through the proxy, with no decision call", got.status === 200 && got.authz === "instant" && got.complete, `authorization: ${got.authz}`);
+        },
+      },
+      {
+        id: "josh", title: "Josh shares, and Sam opens Josh's records", actor: "Patient, then related person", doc: `<p>Josh isn't Sam's to open until Josh says so. Sam tries first and gets <code>access_denied</code>. Josh then shares on the account page, and Sam signs in again and picks Josh. Sam sees only what Josh shared.</p>`,
+        inputs: c => [{ id: "sites", label: "Sites Josh shares with Sam", type: "multi", options: siteOptions(c), default: ["Lakeside Imaging", "Riverside Hospital"] }],
+        run: async (c, i) => {
+          const before = await c.launch(SAM_ACCOUNT, "portal-app", { patient: JOSH });
+          c.check("Before Josh shares, Sam's sign-in for Josh gets no token", before.error === "access_denied" && !before.access_token, before.error);
+          await c.delegate("josh", SAM_ACCOUNT, "caregiver", i.sites);
+          const t = await c.launch(SAM_ACCOUNT, "portal-app", { patient: JOSH });
+          c.state.joshToken = c.launched(t);
+          c.check("After Josh shares, the token is for Josh", t.patient === JOSH, t.patient);
+          const r = await c.search(c.state.joshToken, searchOf(JOSH));
+          c.state.joshStudies = r.studies;
+          const expected = c.studies().filter(s => i.sites.includes(s.site));
+          c.check("Sam sees only the sites Josh shared", Object.keys(r.studies).length === expected.length && Object.keys(r.studies).every(id => i.sites.includes(c.siteOf(id))), i.sites.length ? `${Object.keys(r.studies).length} of ${c.studies().length} studies` : "Josh shared no sites, so Sam's app finds none");
+        },
+      },
+      {
+        id: "cross", title: "Sam's token for Riley tries Josh's records", actor: "App (Sam, for Riley)", doc: `<p>Sam holds all three people's records, and that doesn't widen a token. The search gets <code>403</code>, because the patient doesn't match the token. Retrieving gets <code>404</code>, the same as a study that doesn't exist, and the same token still reads Riley's.</p>`,
+        run: async c => {
+          const token = c.token(c.state.riley);
+          const search = await c.search(token, searchOf(JOSH), "App (Sam, for Riley)");
+          c.check("Searching for Josh with Riley's token gets 403", search.status === 403, `status ${search.status}`);
+          const josh = c.need(c.study(WRIST), `There's no study ${WRIST}`);
+          const plain = await c.retrieve("App (Sam, for Riley)", "Request one of Josh's studies by UID", c.studyUrl(c.plainBase(), josh.uid), token);
+          c.check("Retrieving Josh's study with Riley's token gets 404, after asking", plain.status === 404 && plain.authz === "asked", `status ${plain.status}, authorization: ${plain.authz}`);
+          const signed: any = Object.values(c.state.joshStudies ?? {})[0];
+          if (signed) {
+            const r = await c.retrieve("App (Sam, for Riley)", "Use a URL issued for Josh's records", c.studyUrl(signed.base, signed.uid), token);
+            c.check("A URL signed for Sam's token for Josh doesn't help Riley's token", r.status === 404 && r.authz === "asked", `status ${r.status}, authorization: ${r.authz}`);
+          }
+          const own = await c.search(token, searchOf(c.state.rileyPatient), "App (Sam, for Riley)");
+          c.check("The same token still reads Riley's records", own.status === 200 && Object.keys(own.studies).length === c.studies(c.state.rileyPatient).length, `${Object.keys(own.studies).length} studies`);
+        },
+      },
+      {
+        id: "one-patient", title: "Sam gives another app just one person", actor: "Guardian", doc: `<p>Sam authorizes the Separate Image Viewer for one person, here Riley. It gets that person's token and a grant for that person only. It can't read anyone else Sam holds, because Sam didn't give it those.</p>`,
+        inputs: () => [{ id: "whose", label: "Whose records the viewer gets", type: "select", options: [{ value: RILEY, label: "Riley Example, as guardian" }, { value: SAM, label: "Sam Example, Sam's own" }, { value: JOSH, label: "Josh Example, if Josh has shared" }], default: RILEY }],
+        run: async (c, i) => {
+          const t = await c.launch(SAM_ACCOUNT, "separate-viewer", { patient: i.whose });
+          const token = c.launched(t);
+          c.check(`The viewer's token is for ${firstOf(i.whose)}`, t.patient === i.whose, t.patient);
+          const grants = c.stack.imaging.getPolicy().appGrants.filter(g => g.user === SAM_ACCOUNT && g.client === "separate-viewer");
+          c.check("Sam gave the viewer one person", grants.length === 1 && grants[0]!.patient === i.whose, grants.map(g => g.patient).join(", "));
+          for (const other of [RILEY, SAM, JOSH].filter(p => p !== i.whose)) {
+            const r = await c.search(token, searchOf(other), "separate-viewer");
+            c.check(`The viewer asking for ${firstOf(other)} gets 403`, r.status === 403, `status ${r.status}`);
+          }
+          const r = await c.search(token, searchOf(i.whose), "separate-viewer");
+          c.check(`The viewer can read ${firstOf(i.whose)}'s records`, r.status === 200, `${Object.keys(r.studies).length} studies`);
+        },
+      },
+      {
+        id: "share", title: "Sam shares records with Alex", actor: "Patient", doc: `<p>Sam can share their own records, and Riley's as guardian, and each link only narrows: Alex sees no more than Sam shared. What Josh shared stops at Sam, so the account page refuses to pass on Josh's.</p>`,
+        inputs: c => [
+          { id: "whose", label: "Whose records Sam shares", type: "select", options: [{ value: SAM, label: "Sam Example, Sam's own" }, { value: RILEY, label: "Riley Example, as guardian" }, { value: JOSH, label: "Josh Example, which Sam can't pass on" }], default: SAM },
+          { id: "sites", label: "Sites Alex can see", type: "multi", options: siteOptions(c), default: ["Lakeside Imaging"] },
+        ],
+        run: async (c, i) => {
+          const status = await c.delegate(SAM_ACCOUNT, "alex-neighbor", "neighbor", i.sites, { patient: i.whose });
+          if (i.whose === JOSH) {
+            c.check("The account page refuses: what Josh shared stops at Sam", status === 403, `status ${status}`);
+            const t = await c.launch("alex-neighbor", "portal-app", { patient: JOSH });
+            c.check("Alex still has nothing of Josh's", !t.access_token, t.error);
+            return;
+          }
+          c.check("The share is recorded", status === 303, `status ${status}`);
+          const t = await c.launch("alex-neighbor", "portal-app", { patient: i.whose });
+          const token = c.launched(t);
+          const r = await c.search(token, searchOf(i.whose), "App (Alex)");
+          const expected = c.studies(i.whose).filter(s => i.sites.includes(s.site));
+          c.check("Alex sees only what Sam shared", Object.keys(r.studies).length === expected.length && Object.keys(r.studies).every(id => i.sites.includes(c.siteOf(id))), `${Object.keys(r.studies).length} of ${c.studies(i.whose).length} studies${expected.length ? "" : `. ${firstOf(i.whose)} has nothing at the sites ticked`}`);
         },
       },
     ],

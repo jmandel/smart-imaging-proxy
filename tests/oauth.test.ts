@@ -204,21 +204,21 @@ describe("Account picker", () => {
     let html = await signInPage();
     expect(roleOn(html, "josh")).toBe("Patient");
     expect(roleOn(html, "robin")).toBe("Patient");
-    expect(roleOn(html, "sam-caregiver")).toBe("Related person, nothing shared yet");
+    expect(roleOn(html, "sam-caregiver")).toBe("Patient, and guardian for Riley Example");
     expect(roleOn(html, "alex-neighbor")).toBe("Related person, nothing shared yet");
     expect(html).not.toContain("Caregiver");
     expect(html).not.toContain("Neighbor of");
 
     await submitDelegation(accountUrl("josh"), { user: "josh", delegate: "sam-caregiver", relationship: "caregiver", sites: ["Lakeside Imaging"] });
     html = await signInPage();
-    expect(roleOn(html, "sam-caregiver")).toBe("Caregiver for Josh Example");
+    expect(roleOn(html, "sam-caregiver")).toBe("Patient, and guardian for Riley Example, caregiver for Josh Example");
     expect(roleOn(html, "alex-neighbor")).toBe("Related person, nothing shared yet");
 
     await submitDelegation(accountUrl("josh"), { user: "josh", delegate: "robin", relationship: "spouse", sites: ["Lakeside Imaging"] });
-    expect(roleOn(await signInPage(), "robin")).toBe("Patient");
+    expect(roleOn(await signInPage(), "robin")).toBe("Patient, and spouse for Josh Example");
 
     await submitRevocation(accountUrl("josh"), { user: "josh", delegate: "sam-caregiver" });
-    expect(roleOn(await signInPage(), "sam-caregiver")).toBe("Related person, nothing shared yet");
+    expect(roleOn(await signInPage(), "sam-caregiver")).toBe("Patient, and guardian for Riley Example");
     stack.resetAll();
   });
   test("the account page's role line comes from the same state", async () => {
@@ -229,9 +229,10 @@ describe("Account picker", () => {
       return html.match(/<p class="who">([^.]*)\. Signed in as/)![1];
     };
     expect(await accountRole("josh")).toBe("Patient");
-    expect(await accountRole("sam-caregiver")).toBe("Related person, nothing shared yet");
+    expect(await accountRole("alex-neighbor")).toBe("Related person, nothing shared yet");
+    expect(await accountRole("sam-caregiver")).toBe("Patient, and guardian for Riley Example");
     await submitDelegation(accountUrl("josh"), { user: "josh", delegate: "sam-caregiver", relationship: "adult child", sites: ["Lakeside Imaging"] });
-    expect(await accountRole("sam-caregiver")).toBe("Adult child for Josh Example");
+    expect(await accountRole("sam-caregiver")).toBe("Patient, and guardian for Riley Example, adult child for Josh Example");
     stack.resetAll();
   });
   test("login_hint preselects the account, and nothing is selected without one", async () => {
@@ -275,7 +276,7 @@ describe("Account picker", () => {
     const action = page.match(/action="([^"]+)"/)![1]!.replaceAll("&amp;", "&");
     const signedIn = await fetch(new URL(action, conf.authorization_endpoint), { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "username=robin", redirect: "manual" });
     const consent = await (await fetch(new URL(signedIn.headers.get("location")!, conf.authorization_endpoint))).text();
-    expect(consent).toContain("Robin Example: your own records");
+    expect(consent).toContain('<b>Robin Example</b><span class="role">your own records</span>');
     expect(consent).toContain("No imaging studies are on file");
     expect(consent).not.toContain('name="sites"');
     const res = await fetch(`${CLINICAL_FHIR.replace("/fhir", "")}/account/signin`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "username=robin", redirect: "manual" });
@@ -356,14 +357,17 @@ describe("Delegation: patient to related person to app", () => {
 
   test("signing in isn't enough: a user with no delegation gets no code", async () => {
     stack.resetAll();
-    const t = await scriptedLaunch("sam-caregiver");
+    const t = await scriptedLaunch("alex-neighbor");
     expect(t.error).toBe("access_denied");
     expect(t.access_token).toBeUndefined();
+    const sam = await scriptedLaunch("sam-caregiver", "portal-app", { patient: "josh-example" });
+    expect(sam.error).toBe("access_denied");
+    expect(sam.access_token).toBeUndefined();
   });
   test("a related person signs in with their own login, and sees the subset", async () => {
     stack.resetAll();
     expect((await share(["Lakeside Imaging"])).status).toBe(303);
-    const t = await scriptedLaunch("sam-caregiver");
+    const t = await scriptedLaunch("sam-caregiver", "portal-app", { patient: "josh-example" });
     expect(t.patient).toBe("josh-example");
     expect(t.scope).toBe("launch/patient patient/ImagingStudy.rs online_access");
     expect(sitesOf(await search(t.access_token))).toBe(1);
@@ -371,26 +375,28 @@ describe("Delegation: patient to related person to app", () => {
   test("a related person's app holds only what both links allow", async () => {
     stack.resetAll();
     await share(["Lakeside Imaging", "Riverside Hospital"]);
-    const t = await scriptedLaunch("sam-caregiver", "portal-app", { sites: ["Riverside Hospital"] });
+    const t = await scriptedLaunch("sam-caregiver", "portal-app", { sites: ["Riverside Hospital"], patient: "josh-example" });
     expect(sitesOf(await search(t.access_token))).toBe(4);
   });
   test("a related person can't give an app more than they hold", async () => {
     stack.resetAll();
     await share(["Lakeside Imaging"]);
-    const t = await scriptedLaunch("sam-caregiver", "portal-app", { sites: ["Lakeside Imaging", "Northside Pathology"] });
+    const t = await scriptedLaunch("sam-caregiver", "portal-app", { sites: ["Lakeside Imaging", "Northside Pathology"], patient: "josh-example" });
     expect(stack.imaging.getPolicy().appGrants[0]!.sites).toEqual(["Lakeside Imaging"]);
     expect(sitesOf(await search(t.access_token))).toBe(1);
   });
-  test("only a patient can delegate", async () => {
+  test("only a patient or their guardian can delegate", async () => {
     stack.resetAll();
-    const r = await submitDelegation(accountUrl("sam-caregiver"), { user: "sam-caregiver", delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"] });
+    expect((await submitDelegation(accountUrl("alex-neighbor"), { user: "alex-neighbor", delegate: "sam-caregiver", relationship: "neighbor", sites: ["Lakeside Imaging"] })).status).toBe(403);
+    await share(["Lakeside Imaging"]);
+    const r = await submitDelegation(accountUrl("sam-caregiver"), { user: "sam-caregiver", delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"], patient: "josh-example" });
     expect(r.status).toBe(403);
-    expect(stack.imaging.getPolicy().delegations).toEqual([]);
+    expect(stack.imaging.getPolicy().delegations.map(d => d.delegate)).toEqual(["sam-caregiver"]);
   });
   test("revoking the delegation ends what the related person's app can find", async () => {
     stack.resetAll();
     await share(["Lakeside Imaging"]);
-    const t = await scriptedLaunch("sam-caregiver");
+    const t = await scriptedLaunch("sam-caregiver", "portal-app", { patient: "josh-example" });
     expect((await submitRevocation(accountUrl("josh"), { user: "josh", delegate: "sam-caregiver" })).status).toBe(303);
     expect(sitesOf(await search(t.access_token))).toBe(0);
   });

@@ -1,4 +1,4 @@
-// Authorization Server: user sign-in, the account page where patients delegate to related people
+// Authorization Server: user sign-in, the account page where patients and guardians delegate to related people
 // and users manage apps, SMART App Launch (authorization code with PKCE), Backend Services
 // (signed client assertions), refresh, revocation, introspection, and SMART discovery.
 import { createECDH, createHash, createPrivateKey, createPublicKey, generateKeyPairSync, hkdfSync, randomBytes, sign, verify, type KeyObject } from "node:crypto";
@@ -36,24 +36,24 @@ export interface DemoUser { name: string; fhirUser: string; patient?: string; }
 export const USERS = table<DemoUser>({
   josh: { name: "Josh Example", fhirUser: "Patient/josh-example", patient: "josh-example" },
   robin: { name: "Robin Example", fhirUser: "Patient/robin-example", patient: "robin-example" },
-  "sam-caregiver": { name: "Sam Example", fhirUser: "RelatedPerson/sam-caregiver" },
+  "sam-caregiver": { name: "Sam Example", fhirUser: "Patient/sam-example", patient: "sam-example" },
   "alex-neighbor": { name: "Alex Neighbor", fhirUser: "RelatedPerson/alex-neighbor" },
 });
 const userOf = (name: string): DemoUser | undefined => Object.hasOwn(USERS, name) ? USERS[name] : undefined;
-export const PATIENT_NAMES = table<string>({ "josh-example": "Josh Example", "robin-example": "Robin Example" });
+export const PATIENT_NAMES = table<string>({ "josh-example": "Josh Example", "robin-example": "Robin Example", "sam-example": "Sam Example", "riley-example": "Riley Example" });
 export const APP_NAMES = table<string>({ "portal-app": "Health Records App", "separate-viewer": "Separate Image Viewer" });
 /** Describes an account by what's in place now: "Patient", the delegations it holds, or neither. */
 export const RELATIONSHIPS = ["caregiver", "spouse", "adult child", "neighbor"];
 
 export function roleOf(u: DemoUser, held: { patient: string; relationship?: string }[]) {
-  if (u.patient) return "Patient";
-  if (!held.length) return "Related person, nothing shared yet";
   const line = held.map(r => `${r.relationship ?? "related person"} for ${PATIENT_NAMES[r.patient] ?? r.patient}`).join(", ");
+  if (u.patient) return line ? `Patient, and ${line}` : "Patient";
+  if (!held.length) return "Related person, nothing shared yet";
   return line[0]!.toUpperCase() + line.slice(1);
 }
 
 export interface AccessSummary {
-  records: { patient: string; via: "self" | "delegation"; relationship?: string; sites: string[] }[];
+  records: { patient: string; via: "self" | "guardian" | "delegation"; relationship?: string; sites: string[] }[];
   delegations: { patient: string; delegate: string; relationship: string; sites: string[] }[];
   apps: { client: string; patient: string; sites?: string[] }[];
 }
@@ -63,8 +63,8 @@ export interface Directory {
   access(user: string, fhirUser: string): Promise<AccessSummary>;
   recordConsent(c: { client: string; user: string; fhirUser: string; patient: string; sites?: string[] }): Promise<void>;
   delegate(d: { patient: string; grantedBy: string; fhirUser: string; delegate: string; relationship: string; sites: string[] }): Promise<void>;
-  revokeDelegation(grantedBy: string, delegate: string): Promise<void>;
-  revokeApp(client: string, user: string): Promise<void>;
+  revokeDelegation(grantedBy: string, delegate: string, patient?: string): Promise<void>;
+  revokeApp(client: string, user: string, patient?: string): Promise<void>;
 }
 
 const PAGE_CSS = `
@@ -91,6 +91,9 @@ fieldset label{display:block;padding:.2rem 0}
 .legend{font-weight:600;margin:.6rem 0 .1rem}
 label.field{display:block;padding:.25rem 0;font-weight:600;font-size:.9rem}
 select{display:block;width:100%;font:inherit;font-weight:400;color:inherit;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:.4rem .5rem;margin-top:.15rem}
+.tag{display:inline-block;font-size:.76rem;font-weight:700;border-radius:4px;padding:.02rem .4rem;background:var(--code);white-space:nowrap}
+.tag.self{background:var(--accent-soft);color:var(--accent)}
+.people-group{color:var(--muted);font-size:.85rem;font-weight:600;margin:.5rem 0 .3rem}
 .scopes{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:.3rem .5rem}
 .accounts{border:0;padding:0;margin:0}
 .accounts legend{padding:0;margin-bottom:.45rem}
@@ -125,7 +128,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     "portal-app": { name: APP_NAMES["portal-app"]!, redirectUris: [opts.redirectUri] },
     "separate-viewer": { name: APP_NAMES["separate-viewer"]!, redirectUris: [opts.redirectUri] },
   });
-  const txns = new Map<string, { client_id: string; redirect_uri: string; state: string; scope: string; code_challenge: string; exp: number; user?: string; login_hint?: string }>();
+  const txns = new Map<string, { client_id: string; redirect_uri: string; state: string; scope: string; code_challenge: string; exp: number; user?: string; login_hint?: string; patient_hint?: string }>();
   const accountSessions = new Map<string, string>();
   const decidedBy = new Map<string, string>();
   let lastAccountSignIn: string | undefined;
@@ -196,7 +199,29 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     return check("authorization-server", "demo sign-in: account selected, no credential checked", !!userOf(name), { user: name }) ? name : undefined;
   };
   const NOT_AN_ACCOUNT = "That isn't one of the demo accounts. Choose one below.";
-  const siteBoxes = (sites: string[], checked: string[] = sites) => `<input type="hidden" name="sites_shown" value="1">${sites.map(s => `<label><input type="checkbox" name="sites" value="${esc(s)}" ${checked.includes(s) ? "checked" : ""}> ${esc(s)}</label>`).join("")}`;
+  /** `field` keeps one person's site choices apart from another's on a form offering several. */
+  const siteBoxes = (sites: string[], checked: string[] = sites, field = "sites") => `<input type="hidden" name="${esc(field === "sites" ? "sites_shown" : `sites_shown@${field.slice("sites@".length)}`)}" value="1">${sites.map(s => `<label><input type="checkbox" name="${esc(field)}" value="${esc(s)}" ${checked.includes(s) ? "checked" : ""}> ${esc(s)}</label>`).join("")}`;
+  const nameOf = (patient: string) => PATIENT_NAMES[patient] ?? patient;
+  type Held = AccessSummary["records"][number];
+  const whoseTag = (r: Held) => r.via === "self" ? `<span class="tag self">You</span>` : r.via === "guardian" ? `<span class="tag">${esc(((r.relationship ?? "guardian")[0] ?? "").toUpperCase() + (r.relationship ?? "guardian").slice(1))}</span>` : `<span class="tag">Shared with you</span>`;
+  const whoseWords = (r: Held) => r.via === "self" ? "your own records" : r.via === "guardian" ? `you're their ${esc(r.relationship ?? "guardian")}, on file with the Imaging Server` : `shared with you as ${esc(r.relationship ?? "a related person")}`;
+  /** One radio for each person, with the signed-in person apart from the others. */
+  const whoseRadios = (records: Held[], selected: string) => {
+    const card = (r: Held) => `<label class="account"><input type="radio" name="patient" value="${esc(r.patient)}" ${r.patient === selected ? "checked" : ""}><span class="avatar" aria-hidden="true">${esc(initials(nameOf(r.patient)))}</span><span class="account-text"><b>${esc(nameOf(r.patient))}</b><span class="role">${whoseWords(r)}</span></span></label>`;
+    const own = records.filter(r => r.via === "self"), others = records.filter(r => r.via !== "self");
+    if (!own.length || !others.length) return records.map(card).join("");
+    return `<p class="people-group">You</p>${own.map(card).join("")}<p class="people-group">People you hold records for</p>${others.map(card).join("")}`;
+  };
+  /**
+   * Each person's sites, with only the chosen person's on show. A browser without :has shows them all,
+   * and each still says whose it is. Their fields are named for the person, so only the chosen person's count.
+   */
+  const whoseSites = (records: Held[], legend: (r: Held) => string, checked: (r: Held) => string[], note: (r: Held) => string) => records.map(r => {
+    const several = records.length > 1, field = several ? `sites@${r.patient}` : "sites";
+    const body = r.sites.length ? `<fieldset data-sites-for="${esc(r.patient)}"><legend>${legend(r)}</legend>${siteBoxes(r.sites, checked(r), field)}<p class="note">${note(r)}</p></fieldset>` : `<p class="note" data-sites-for="${esc(r.patient)}">No imaging studies are on file for ${esc(nameOf(r.patient))}, so there's nothing to choose.</p>`;
+    return `${several ? `<style>form:has(input[name=patient][value="${esc(r.patient)}"]:not(:checked)) [data-sites-for="${esc(r.patient)}"]{display:none}</style>` : ""}${body}`;
+  }).join("");
+  const chosenSites = (f: URLSearchParams, patient: string) => ({ shown: !!(f.get("sites_shown") || f.get(`sites_shown@${patient}`)), sites: [...f.getAll("sites"), ...f.getAll(`sites@${patient}`)] });
 
   async function authorize(url: URL): Promise<Response> {
     const q = url.searchParams;
@@ -213,7 +238,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     if (!check("authorization-server", "scope is requested", scope.length > 0, { scope })) return back("invalid_scope");
     if (!check("authorization-server", "scope has no system-level access, which only Backend Services clients get", !scope.split(" ").some(s => s.startsWith("system/")), { scope })) return back("invalid_scope");
     const id = randomBytes(16).toString("base64url");
-    txns.set(id, { client_id: q.get("client_id")!, redirect_uri: q.get("redirect_uri")!, state: q.get("state")!, scope, code_challenge: q.get("code_challenge")!, exp: now() + 600, login_hint: q.get("login_hint") ?? undefined });
+    txns.set(id, { client_id: q.get("client_id")!, redirect_uri: q.get("redirect_uri")!, state: q.get("state")!, scope, code_challenge: q.get("code_challenge")!, exp: now() + 600, login_hint: q.get("login_hint") ?? undefined, patient_hint: q.get("demo_patient") ?? undefined });
     return page("Sign in", `<h1>Sign in to continue to ${esc(client!.name)}</h1><p class="who">This page belongs to the Authorization Server, not the app.</p>${await signInForm(`/authorize/signin?txn=${id}${demoQuery(url)}`, q.get("login_hint") ?? "")}`);
   }
 
@@ -243,17 +268,13 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     const access = await opts.directory.access(t.txn.user!, user.fhirUser);
     const action = `/authorize/decision?txn=${t.id}${demoQuery(url)}`;
     if (!access.records.length) return page("No records", `<h1>No records are shared with you</h1><p>${esc(user.name)} is signed in, but no patient has delegated access to this account, so there's nothing to share with ${esc(client.name)}.</p><form method="post" action="${esc(action)}"><div class="buttons"><button name="decision" value="deny">Return to the app</button></div></form>`, 200, true);
-    const record = access.records[0]!;
-    const existing = access.apps.find(a => a.client === t.txn.client_id && a.patient === record.patient);
-    const describe = (r: AccessSummary["records"][number]) => r.via === "self" ? `${esc(PATIENT_NAMES[r.patient] ?? r.patient)}: your own records` : `${esc(PATIENT_NAMES[r.patient] ?? r.patient)}: shared with you as ${esc(r.relationship ?? "a related person")}`;
-    const choosable = [...new Set(access.records.flatMap(r => r.sites))];
-    const sites = choosable.length
-      ? `<fieldset><legend>Sites this app can see</legend>${siteBoxes(choosable, existing?.sites ?? choosable)}<p class="note">${record.via === "delegation" ? "You can share only what was shared with you. " : ""}SMART scopes can't express this choice. It's kept as Imaging Server policy, and the token's scope doesn't change.</p></fieldset>`
-      : `<p class="note">No imaging studies are on file for you, so this app will find none.</p>`;
+    const selected = access.records.find(r => r.patient === t.txn.patient_hint)?.patient ?? access.records[0]!.patient;
+    const grantFor = (r: Held) => access.apps.find(a => a.client === t.txn.client_id && a.patient === r.patient);
+    const sites = whoseSites(access.records, r => `Sites this app can see in ${esc(nameOf(r.patient))}'s records`, r => grantFor(r)?.sites ?? r.sites, r => `${r.via === "delegation" ? "You can share only what was shared with you. " : ""}SMART scopes can't express this choice. It's kept as Imaging Server policy, and the token's scope doesn't change.`);
     return page("Authorize app", `<h1>Let ${esc(client.name)} access imaging records?</h1>
       <p class="who">Signed in as ${esc(user.name)} (<code>${esc(user.fhirUser)}</code>).</p>
       <form method="post" action="${esc(action)}">
-        <fieldset><legend>Whose records</legend>${access.records.map((r, i) => `<label><input type="radio" name="patient" value="${esc(r.patient)}" ${i === 0 ? "checked" : ""}> ${describe(r)}</label>`).join("")}</fieldset>
+        <fieldset class="accounts"><legend>Whose records</legend>${whoseRadios(access.records, selected)}${access.records.length > 1 ? `<p class="note">This app gets one person's records. Choosing someone else later is a new authorization, with its own approval.</p>` : ""}</fieldset>
         <fieldset><legend>Requested permissions</legend><ul class="scopes">${t.txn.scope.split(" ").map(s => `<li><code>${esc(s)}</code></li>`).join("")}</ul></fieldset>
         ${sites}
         <div class="buttons"><button class="primary" name="decision" value="approve">Approve</button><button name="decision" value="deny">Deny</button></div>
@@ -276,12 +297,13 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     const access = await opts.directory.access(txn.user!, user.fhirUser);
     const record = access.records.find(r => r.patient === (f.get("patient") ?? access.records[0]?.patient));
     if (!check("authorization-server", "user has access to the chosen patient", !!record, { user: txn.user, patient: f.get("patient"), via: record?.via })) return deny();
-    await opts.directory.recordConsent({ client: txn.client_id, user: txn.user!, fhirUser: user.fhirUser, patient: record!.patient, ...(f.get("sites_shown") ? { sites: f.getAll("sites") } : {}) });
+    const chosen = chosenSites(f, record!.patient);
+    await opts.directory.recordConsent({ client: txn.client_id, user: txn.user!, fhirUser: user.fhirUser, patient: record!.patient, ...(chosen.shown ? { sites: chosen.sites } : {}) });
     const grant: Grant = { client_id: txn.client_id, scope: txn.scope, sub: txn.user!, fhirUser: user.fhirUser };
     if (/(^| )launch\/patient( |$)/.test(txn.scope)) grant.patient = record!.patient;
     const code = randomBytes(24).toString("base64url");
     codes.set(code, { grant, client_id: txn.client_id, redirect_uri: txn.redirect_uri, code_challenge: txn.code_challenge, exp: now() + 60 });
-    check("authorization-server", "issue single-use authorization code", true, { lifetime_seconds: 60, patient: grant.patient, user: grant.sub, sites: f.getAll("sites").join(", ") || undefined });
+    check("authorization-server", "issue single-use authorization code", true, { lifetime_seconds: 60, patient: grant.patient, user: grant.sub, sites: chosen.sites.join(", ") || undefined });
     back.searchParams.set("code", code);
     return new Response(null, { status: 302, headers: { Location: back.toString() } });
   }
@@ -300,25 +322,30 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     const user = USERS[name]!;
     const access = await opts.directory.access(name, user.fhirUser);
     const others = Object.entries(USERS).filter(([id]) => id !== name);
-    const held = (r: AccessSummary["records"][number]) => r.sites.length ? r.sites.join(", ") : r.via === "self" ? "No imaging studies on file" : "No sites";
-    const records = access.records.length ? `<ul class="rows">${access.records.map(r => `<li><span><b>${esc(PATIENT_NAMES[r.patient] ?? r.patient)}</b>: ${r.via === "self" ? "your own records" : `shared with you as ${esc(r.relationship ?? "a related person")}`}. ${esc(held(r))}.</span></li>`).join("")}</ul>` : `<p class="note">Nothing yet. A patient has to delegate access to this account.</p>`;
-    const ownSites = access.records.find(r => r.via === "self")?.sites ?? [];
-    const shareForm = ownSites.length ? `<form method="post" action="/account/delegations${q}">
+    const held = (r: Held) => r.sites.length ? r.sites.join(", ") : r.via === "delegation" ? "No sites" : "No imaging studies on file";
+    const records = access.records.length ? `<ul class="rows">${access.records.map(r => `<li data-record="${esc(r.patient)}"><span>${whoseTag(r)} <b>${esc(nameOf(r.patient))}</b>: ${whoseWords(r)}. ${esc(held(r))}.</span></li>`).join("")}</ul>` : `<p class="note">Nothing yet. A patient has to delegate access to this account.</p>`;
+    // A person can pass on their own record and one they're guardian for. What was shared with them stops at them.
+    const shareable = access.records.filter(r => r.via !== "delegation");
+    const canShare = shareable.filter(r => r.sites.length);
+    const passedOn = access.records.filter(r => r.via === "delegation");
+    const shareForm = canShare.length ? `<form method="post" action="/account/delegations${q}">
         <fieldset><legend>Share with a related person</legend>
+          ${canShare.length > 1 ? `<fieldset class="accounts"><legend>Whose records</legend>${whoseRadios(canShare, canShare[0]!.patient)}</fieldset>` : `<input type="hidden" name="patient" value="${esc(canShare[0]!.patient)}">`}
           <label class="field">Person <select name="delegate">${others.map(([id, u]) => `<option value="${esc(id)}">${esc(u.name)}</option>`).join("")}</select></label>
           <label class="field">Relationship <select name="relationship">${RELATIONSHIPS.map(r => `<option>${esc(r)}</option>`).join("")}</select></label>
-          <p class="legend">Sites they can see</p>${siteBoxes(ownSites)}
+          ${whoseSites(canShare, r => `Sites they can see in ${esc(nameOf(r.patient))}'s records`, r => r.sites, () => "They can see no more than this, and can give an app no more than they see.")}
           <div class="buttons"><button class="primary">Share</button></div>
         </fieldset>
       </form>` : `<p class="note">You have no imaging studies on file, so there's nothing to share yet.</p>`;
-    const people = user.patient ? `<section><h2>People who can sign in and see your records</h2>
-      ${access.delegations.length ? `<ul class="rows">${access.delegations.map(d => `<li><span><b>${esc(USERS[d.delegate]?.name ?? d.delegate)}</b> (${esc(d.relationship)}): ${esc(d.sites.join(", ") || "no sites")}</span><form class="inline" method="post" action="/account/delegations/revoke${q}"><input type="hidden" name="delegate" value="${esc(d.delegate)}"><button>Revoke</button></form></li>`).join("")}</ul>` : `<p class="note">No one yet.</p>`}
-      ${shareForm}</section>` : "";
-    const apps = access.apps.length ? `<ul class="rows">${access.apps.map(a => `<li><span><b>${esc(appName(a.client))}</b>: ${esc(a.sites?.join(", ") ?? "everything you can see")}</span><form class="inline" method="post" action="/account/apps/revoke${q}"><input type="hidden" name="client" value="${esc(a.client)}"><button>Revoke</button></form></li>`).join("")}</ul>` : `<p class="note">None yet. An app appears here after you approve it during its sign-in.</p>`;
-    return page("Your account", `<div class="profile"><span class="avatar" aria-hidden="true">${esc(initials(user.name))}</span><div><h1>${esc(user.name)}</h1><p class="who">${esc(roleOf(user, access.records.filter(r => r.via === "delegation")))}. Signed in as <code>${esc(name)}</code>, <code>${esc(user.fhirUser)}</code>.</p></div></div>
+    const whoseShare = (patient: string) => access.records.length > 1 ? `, ${esc(nameOf(patient))}'s records` : "";
+    const people = shareable.length ? `<section><h2>People who can sign in and see ${shareable.length > 1 ? "records you hold" : "your records"}</h2>
+      ${access.delegations.length ? `<ul class="rows">${access.delegations.map(d => `<li><span><b>${esc(USERS[d.delegate]?.name ?? d.delegate)}</b> (${esc(d.relationship)})${whoseShare(d.patient)}: ${esc(d.sites.join(", ") || "no sites")}</span><form class="inline" method="post" action="/account/delegations/revoke${q}"><input type="hidden" name="delegate" value="${esc(d.delegate)}"><input type="hidden" name="patient" value="${esc(d.patient)}"><button>Revoke</button></form></li>`).join("")}</ul>` : `<p class="note">No one yet.</p>`}
+      ${shareForm}${passedOn.length ? `<p class="note">${esc(passedOn.map(r => nameOf(r.patient)).join(" and "))} shared with you, so you can give an app part of that, and can't pass it on to another person.</p>` : ""}</section>` : "";
+    const apps = access.apps.length ? `<ul class="rows">${access.apps.map(a => `<li><span><b>${esc(appName(a.client))}</b>, ${esc(nameOf(a.patient))}'s records: ${esc(a.sites?.join(", ") ?? "everything you can see")}</span><form class="inline" method="post" action="/account/apps/revoke${q}"><input type="hidden" name="client" value="${esc(a.client)}"><input type="hidden" name="patient" value="${esc(a.patient)}"><button>Revoke</button></form></li>`).join("")}</ul>` : `<p class="note">None yet. An app appears here after you approve it during its sign-in.</p>`;
+    return page("Your account", `<div class="profile"><span class="avatar" aria-hidden="true">${esc(initials(user.name))}</span><div><h1>${esc(user.name)}</h1><p class="who">${esc(roleOf(user, access.records.filter(r => r.via !== "self")))}. Signed in as <code>${esc(name)}</code>, <code>${esc(user.fhirUser)}</code>.</p></div></div>
       <section><h2>Records you can access</h2>${records}</section>
       ${people}
-      <section><h2>Apps you've authorized</h2>${apps}<p class="note">Anyone with access can authorize an app, and can give it only part of what they hold.</p></section>
+      <section><h2>Apps you've authorized</h2>${apps}<p class="note">Anyone with access can authorize an app, for one person's records at a time, and can give it only part of what they hold.</p></section>
       <div class="buttons">${returnTo ? `<a class="button" href="${esc(returnTo)}?account=done&amp;state=${encodeURIComponent(url.searchParams.get("return_state") ?? "")}">Done, back to the demo</a>` : ""}<form class="inline" method="post" action="/account/signout"><button>Sign out</button></form></div>`, 200, true);
   }
 
@@ -343,10 +370,12 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     if (url.pathname === "/account/delegations") {
       const delegate = f.get("delegate") ?? "";
       if (!check("authorization-server", "relationship is one of the offered choices", RELATIONSHIPS.includes(f.get("relationship") ?? ""), { relationship: f.get("relationship") })) return page("Not allowed", "<h1>Pick a relationship from the list</h1>", 400);
-      if (!check("authorization-server", "user can delegate: they're the patient, and the delegate has an account", !!user.patient && !!userOf(delegate) && delegate !== name, { user: name, delegate })) return page("Not allowed", "<h1>Only a patient can delegate their records</h1>", 403);
-      await opts.directory.delegate({ patient: user.patient!, grantedBy: name!, fhirUser: user.fhirUser, delegate, relationship: f.get("relationship") || "related person", sites: f.getAll("sites") });
-    } else if (url.pathname === "/account/delegations/revoke") await opts.directory.revokeDelegation(name!, f.get("delegate") ?? "");
-    else if (url.pathname === "/account/apps/revoke") await opts.directory.revokeApp(f.get("client") ?? "", name!);
+      const patient = f.get("patient") || user.patient || "";
+      const record = (await opts.directory.access(name!, user.fhirUser)).records.find(r => r.patient === patient);
+      if (!check("authorization-server", "user can delegate: they're the patient or the guardian, and the delegate has an account", !!record && record.via !== "delegation" && !!userOf(delegate) && delegate !== name, { user: name, delegate, patient, via: record?.via })) return page("Not allowed", "<h1>Only a patient or their guardian can delegate their records</h1>", 403);
+      await opts.directory.delegate({ patient, grantedBy: name!, fhirUser: user.fhirUser, delegate, relationship: f.get("relationship") || "related person", sites: chosenSites(f, patient).sites });
+    } else if (url.pathname === "/account/delegations/revoke") await opts.directory.revokeDelegation(name!, f.get("delegate") ?? "", f.get("patient") ?? undefined);
+    else if (url.pathname === "/account/apps/revoke") await opts.directory.revokeApp(f.get("client") ?? "", name!, f.get("patient") ?? undefined);
     else return new Response("not found", { status: 404 });
     return redirectTo(`/account${q}`);
   }
@@ -437,8 +466,8 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
       const t = bearer ? opts.store().getToken(bearer, "access") : undefined;
       if (!check("authorization-server", "patient read has a live access token", !!t && !t.revoked && t.exp! > now(), { token_hash: bearer && ath(bearer).slice(0, 10) })) return new Response(null, { status: 401, headers: { "WWW-Authenticate": bearer ? 'Bearer error="invalid_token"' : "Bearer" } });
       if (!check("authorization-server", "the token's patient context is this patient", t!.patient === id, { patient: id, patient_context: t!.patient })) return new Response(null, { status: 403, headers: { "WWW-Authenticate": 'Bearer error="insufficient_scope"' } });
-      if (id !== "josh-example" && id !== "robin-example") return new Response(null, { status: 404 });
-      return Response.json({ resourceType: "Patient", id, name: [{ family: "Example", given: [id === "josh-example" ? "Josh" : "Robin"] }] });
+      if (!Object.hasOwn(PATIENT_NAMES, id)) return new Response(null, { status: 404 });
+      return Response.json({ resourceType: "Patient", id, name: [{ family: "Example", given: [PATIENT_NAMES[id]!.split(" ")[0]] }] });
     }
     return new Response("not found", { status: 404 });
   });

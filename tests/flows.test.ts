@@ -191,8 +191,8 @@ describe("choices other than the defaults", () => {
       later.push(await stopped(runStep(c, flow, "shared-url", {})));
       return { launch, later };
     });
-    expect(out.launch).toBe("No patient has shared records with Sam, so the app has no token");
-    expect(out.later).toEqual(["No patient has shared records with Sam, so the app has no token", "No patient has shared records with Sam, so the app has no token", "Josh's app and Sam's app have to search first"]);
+    expect(out.launch).toBe("Josh hasn't shared records with Sam, so the app has no token");
+    expect(out.later).toEqual(["Josh hasn't shared records with Sam, so the app has no token", "Josh hasn't shared records with Sam, so the app has no token", "Josh's app and Sam's app have to search first"]);
     expect(sent.filter(a => a.includes("undefined"))).toEqual([]);
   });
   test("Alex signing in for Sam names who it was", async () => {

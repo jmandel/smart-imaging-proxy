@@ -6,6 +6,7 @@ import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { createPrivateKey, createPublicKey, randomBytes, type KeyObject } from "node:crypto";
 import { generateEd25519, sha, type KeyPair } from "./jws";
+import people from "../data/patient.json";
 
 export interface Rule {
   id: string;
@@ -17,12 +18,16 @@ export interface Rule {
   contextForm?: "auto" | "restricted";
   withdrawn?: boolean;
 }
-/** A patient lets a related person sign in and see some of their records. */
-export interface Delegation { patient: string; grantedBy: string; delegate: string; relationship: string; sites: string[]; }
+/** A patient, or a patient's guardian, lets a related person sign in and see some of the patient's records. `asGuardian` makes it last only while the grantor is the guardian. */
+export interface Delegation { patient: string; grantedBy: string; delegate: string; relationship: string; sites: string[]; asGuardian?: boolean; }
+/** An account on file as able to act for a patient, covering their whole record. No one chose it by sharing. */
+export interface Guardian { patient: string; guardian: string; relationship: string; }
+/** The guardians on file in `data/patient.json`, which stands in for a registration office. */
+export const STANDING_GUARDIANS: Guardian[] = people.otherPatients.flatMap((p: { id: string; guardians?: { account: string; relationship: string }[] }) => (p.guardians ?? []).map(g => ({ patient: p.id, guardian: g.account, relationship: g.relationship })));
 /** A signed-in user lets an app act for them. No `sites` means everything that user can see. */
 export interface AppGrant { client: string; user: string; patient: string; sites?: string[]; }
-export interface Policy { rules: Rule[]; delegations: Delegation[]; appGrants: AppGrant[]; contextLifetimeSeconds: number; maxSeriesInContext: number; }
-export const defaultPolicy = (): Policy => ({ rules: [], delegations: [], appGrants: [], contextLifetimeSeconds: 300, maxSeriesInContext: 12 });
+export interface Policy { rules: Rule[]; delegations: Delegation[]; guardians: Guardian[]; appGrants: AppGrant[]; contextLifetimeSeconds: number; maxSeriesInContext: number; }
+export const defaultPolicy = (): Policy => ({ rules: [], delegations: [], guardians: STANDING_GUARDIANS, appGrants: [], contextLifetimeSeconds: 300, maxSeriesInContext: 12 });
 
 export interface Settings { contextLifetimeSeconds: number; maxSeriesInContext: number; tokenLifetimeSeconds: number; refreshTokenLifetimeSeconds: number; }
 const REFRESH_DEFAULT = 30 * 86400;
@@ -33,7 +38,7 @@ export type TokenKind = "access" | "refresh";
 /** `family` is shared by every token descended from one refresh token. It isn't derived from any token. */
 export interface TokenRecord { client_id: string; scope: string; patient?: string; sub?: string; fhirUser?: string; family?: string; exp?: number; revoked: boolean; }
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 export type Durability = "off" | "normal" | "full";
 const SYNCHRONOUS: Record<Durability, number> = { off: 0, normal: 1, full: 2 };
 export const DEFAULT_POLICY_DB = "/tmp/smart-imaging-demo/policy.sqlite";
@@ -101,7 +106,7 @@ export function validateSetting(name: keyof Settings, v: unknown, errors: string
 export function validatePolicy(p: unknown): string[] {
   const errors: string[] = [];
   if (!isObject(p)) return ["policy must be a JSON object"];
-  unknownKeys(p, ["rules", "delegations", "appGrants", "contextLifetimeSeconds", "maxSeriesInContext"], "policy", errors);
+  unknownKeys(p, ["rules", "delegations", "guardians", "appGrants", "contextLifetimeSeconds", "maxSeriesInContext"], "policy", errors);
   if (p.rules !== undefined) {
     if (!Array.isArray(p.rules)) errors.push("rules must be an array");
     else { p.rules.forEach((r, i) => validateRule(r, `rules[${i}]`, errors)); duplicates(p.rules, r => `id ${r.id}`, "rules", errors); }
@@ -112,11 +117,24 @@ export function validatePolicy(p: unknown): string[] {
       p.delegations.forEach((d, i) => {
         const at = `delegations[${i}]`;
         if (!isObject(d)) { errors.push(`${at} must be an object`); return; }
-        unknownKeys(d, ["patient", "grantedBy", "delegate", "relationship", "sites"], at, errors);
+        unknownKeys(d, ["patient", "grantedBy", "delegate", "relationship", "sites", "asGuardian"], at, errors);
         for (const k of ["patient", "grantedBy", "delegate", "relationship"]) if (!isText(d[k])) errors.push(`${at}.${k} must be a non-empty string`);
         if (!isTextList(d.sites)) errors.push(`${at}.sites must be a list of strings`);
+        if (d.asGuardian !== undefined && typeof d.asGuardian !== "boolean") errors.push(`${at}.asGuardian must be true or false`);
       });
       duplicates(p.delegations, d => `patient ${d.patient} and delegate ${d.delegate}`, "delegations", errors);
+    }
+  }
+  if (p.guardians !== undefined) {
+    if (!Array.isArray(p.guardians)) errors.push("guardians must be an array");
+    else {
+      p.guardians.forEach((g, i) => {
+        const at = `guardians[${i}]`;
+        if (!isObject(g)) { errors.push(`${at} must be an object`); return; }
+        unknownKeys(g, ["patient", "guardian", "relationship"], at, errors);
+        for (const k of ["patient", "guardian", "relationship"]) if (!isText(g[k])) errors.push(`${at}.${k} must be a non-empty string`);
+      });
+      duplicates(p.guardians, g => `patient ${g.patient} and guardian ${g.guardian}`, "guardians", errors);
     }
   }
   if (p.appGrants !== undefined) {
@@ -138,8 +156,11 @@ export function validatePolicy(p: unknown): string[] {
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS delegations (
-    patient TEXT NOT NULL, delegate TEXT NOT NULL, granted_by TEXT NOT NULL, relationship TEXT NOT NULL, sites TEXT NOT NULL,
+    patient TEXT NOT NULL, delegate TEXT NOT NULL, granted_by TEXT NOT NULL, relationship TEXT NOT NULL, sites TEXT NOT NULL, as_guardian INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (patient, delegate));
+  CREATE TABLE IF NOT EXISTS guardians (
+    patient TEXT NOT NULL, guardian TEXT NOT NULL, relationship TEXT NOT NULL,
+    PRIMARY KEY (patient, guardian));
   CREATE TABLE IF NOT EXISTS app_grants (
     client TEXT NOT NULL, user TEXT NOT NULL, patient TEXT NOT NULL, sites TEXT,
     PRIMARY KEY (client, user, patient));
@@ -174,6 +195,11 @@ export class PolicyStore {
         this.db.exec("ALTER TABLE signing_keys ADD COLUMN retired INTEGER NOT NULL DEFAULT 0");
         this.db.run("UPDATE tokens SET exp = ? WHERE kind = 'refresh' AND exp IS NULL", [Math.floor(Date.now() / 1000) + REFRESH_DEFAULT]);
       }
+      if (found === 1 || found === 2) {
+        this.db.exec("ALTER TABLE delegations ADD COLUMN as_guardian INTEGER NOT NULL DEFAULT 0");
+        this.db.exec("CREATE TABLE guardians (patient TEXT NOT NULL, guardian TEXT NOT NULL, relationship TEXT NOT NULL, PRIMARY KEY (patient, guardian))");
+      }
+      this.seedGuardians();
       this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     });
   }
@@ -185,13 +211,16 @@ export class PolicyStore {
 
   getPolicy(): Policy {
     const s = this.getSettings();
-    return { rules: this.rules(), delegations: this.delegations(), appGrants: this.appGrants(), contextLifetimeSeconds: s.contextLifetimeSeconds, maxSeriesInContext: s.maxSeriesInContext };
+    return { rules: this.rules(), delegations: this.delegations(), guardians: this.guardians(), appGrants: this.appGrants(), contextLifetimeSeconds: s.contextLifetimeSeconds, maxSeriesInContext: s.maxSeriesInContext };
   }
   rules(): Rule[] { return (this.db.query("SELECT body FROM rules ORDER BY position").all() as any[]).map(r => JSON.parse(r.body)); }
   delegations(): Delegation[] {
-    return (this.db.query("SELECT patient, granted_by, delegate, relationship, sites FROM delegations ORDER BY rowid").all() as any[])
-      .map(d => ({ patient: d.patient, grantedBy: d.granted_by, delegate: d.delegate, relationship: d.relationship, sites: JSON.parse(d.sites) }));
+    return (this.db.query("SELECT patient, granted_by, delegate, relationship, sites, as_guardian FROM delegations ORDER BY rowid").all() as any[])
+      .map(d => ({ patient: d.patient, grantedBy: d.granted_by, delegate: d.delegate, relationship: d.relationship, sites: JSON.parse(d.sites), ...(d.as_guardian ? { asGuardian: true } : {}) }));
   }
+  guardians(): Guardian[] { return this.db.query("SELECT patient, guardian, relationship FROM guardians ORDER BY rowid").all() as Guardian[]; }
+  private putGuardian(g: Guardian) { this.db.run("INSERT OR REPLACE INTO guardians (patient, guardian, relationship) VALUES (?, ?, ?)", [g.patient, g.guardian, g.relationship]); }
+  private seedGuardians() { for (const g of STANDING_GUARDIANS) this.putGuardian(g); }
   appGrants(): AppGrant[] {
     return (this.db.query("SELECT client, user, patient, sites FROM app_grants ORDER BY rowid").all() as any[])
       .map(g => ({ client: g.client, user: g.user, patient: g.patient, ...(g.sites === null ? {} : { sites: JSON.parse(g.sites) }) }));
@@ -210,6 +239,10 @@ export class PolicyStore {
         this.db.run("DELETE FROM delegations");
         for (const d of p.delegations) this.putDelegation(d);
       }
+      if (p.guardians) {
+        this.db.run("DELETE FROM guardians");
+        for (const g of p.guardians) this.putGuardian(g);
+      }
       if (p.appGrants) {
         this.db.run("DELETE FROM app_grants");
         for (const g of p.appGrants) this.putAppGrant(g);
@@ -227,7 +260,7 @@ export class PolicyStore {
   putDelegation(d: Delegation) {
     this.tx(() => {
       this.db.run("DELETE FROM delegations WHERE patient = ? AND delegate = ?", [d.patient, d.delegate]);
-      this.db.run("INSERT INTO delegations (patient, delegate, granted_by, relationship, sites) VALUES (?, ?, ?, ?, ?)", [d.patient, d.delegate, d.grantedBy, d.relationship, JSON.stringify(d.sites)]);
+      this.db.run("INSERT INTO delegations (patient, delegate, granted_by, relationship, sites, as_guardian) VALUES (?, ?, ?, ?, ?, ?)", [d.patient, d.delegate, d.grantedBy, d.relationship, JSON.stringify(d.sites), d.asGuardian ? 1 : 0]);
     });
   }
   /** Removes delegations matching every field given, and returns how many. */
@@ -310,9 +343,12 @@ export class PolicyStore {
 
   // Maintenance
 
-  /** Clears delegations, grants, rules and settings. Tokens and the signing key stay. */
-  resetPolicy() { this.tx(() => { for (const t of ["delegations", "app_grants", "rules", "settings"]) this.db.run(`DELETE FROM ${t}`); }); }
-  /** Clears policy and tokens. The signing key stays. */
+  /**
+   * Clears what people chose: delegations, grants, rules and settings. Guardians go back to the ones on
+   * file, since no one here chose those. Tokens and the signing key stay.
+   */
+  resetPolicy() { this.tx(() => { for (const t of ["delegations", "guardians", "app_grants", "rules", "settings"]) this.db.run(`DELETE FROM ${t}`); this.seedGuardians(); }); }
+  /** Resets policy and clears tokens. The signing key stays. */
   resetAll() { this.tx(() => { this.resetPolicy(); this.db.run("DELETE FROM tokens"); }); }
 
   info() {
@@ -325,7 +361,7 @@ export class PolicyStore {
       journal: (this.db.query("PRAGMA journal_mode").get() as any).journal_mode as string,
       schemaVersion: this.schemaVersion(),
       counts: {
-        delegations: count("delegations"), appGrants: count("app_grants"), rules: count("rules"), settings: count("settings"), signingKeys: count("signing_keys WHERE retired = 0"), retiredSigningKeys: count("signing_keys WHERE retired = 1"),
+        delegations: count("delegations"), guardians: count("guardians"), appGrants: count("app_grants"), rules: count("rules"), settings: count("settings"), signingKeys: count("signing_keys WHERE retired = 0"), retiredSigningKeys: count("signing_keys WHERE retired = 1"),
         accessTokens: count("tokens WHERE kind = 'access'"), liveAccessTokens: count("tokens WHERE kind = 'access' AND revoked = 0"),
         refreshTokens: count("tokens WHERE kind = 'refresh' AND revoked = 0"),
       },

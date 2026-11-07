@@ -765,7 +765,7 @@ describe("the real stack", () => {
       seedPatientLinks(c, await Bun.file(join(root, "data/patient.json")).json());
       const report = await catalogFromOrthanc(c, { ...CONFIG.orthanc, base: `http://127.0.0.1:${upstream.port}` }, await Bun.file(join(root, "data/orthanc-catalog.json")).json());
       upstream.stop(true);
-      expect(report.published.length).toBe(6);
+      expect(report.published.length).toBe(10);
       expect(report.unlinked).toEqual([]);
       expect(paths.every(p => p.method === "GET")).toBe(true);
       expect(paths.every(p => /^\/dicom-web\/studies(\/[0-9.]+\/series(\/[0-9.]+\/instances)?)?$/.test(p.path))).toBe(true);
@@ -775,8 +775,8 @@ describe("the real stack", () => {
       const unlinked = createCatalog();
       const r = await catalogFromOrthanc(unlinked, CONFIG.orthanc, { studies: {} });
       expect(r.published).toEqual([]);
-      expect(r.unlinked.length).toBe(6);
-      expect(r.unlinked[0]!.sourcePatientId).toBe("JEXAMPLE01");
+      expect(r.unlinked.length).toBe(10);
+      expect(new Set(r.unlinked.map(u => u.sourcePatientId))).toEqual(new Set(["JEXAMPLE01", "SEXAMPLE01", "RYEXAMPLE01"]));
       expect(unlinked.stats().studies).toBe(0);
       unlinked.close();
       const c = createCatalog();

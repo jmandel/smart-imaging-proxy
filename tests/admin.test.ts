@@ -45,7 +45,7 @@ describe("pages", () => {
 describe("status", () => {
   test("reports the catalog in use: its source, path, counts and bytes", async () => {
     const s = await ok("GET", "/api/admin/status");
-    expect(s.catalog).toMatchObject({ source: "archive", path: ":memory:", studies: 6 });
+    expect(s.catalog).toMatchObject({ source: "archive", path: ":memory:", studies: 10 });
     expect(s.catalog.series).toBeGreaterThan(6);
     expect(s.catalog.hierarchyBytes).toBeGreaterThan(0);
     expect(s.catalog.hierarchyRawBytes).toBeGreaterThan(s.catalog.hierarchyBytes);

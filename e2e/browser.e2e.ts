@@ -86,7 +86,7 @@ describe("overview", () => {
   test("flows are grouped with what each does, and a phone moves between them without the list", async () => {
     const page = await open("/", { viewport: PHONE });
     expect(await page.locator(".flow-groups h3").allInnerTexts()).toEqual(["Who can see what", "How the proxy decides", "What comes back"]);
-    expect(await page.locator(".flow-choice").count()).toBe(14);
+    expect(await page.locator(".flow-choice").count()).toBe(15);
     expect(await page.locator(".flow-choice .what span").first().innerText()).toContain("Josh picks");
     expect(await page.locator("#flow-list").isVisible()).toBe(false);
     expect(await overflow(page)).toBe(0);
@@ -96,6 +96,20 @@ describe("overview", () => {
     expect(await page.locator("#flow-list").isVisible()).toBe(false);
     await page.getByRole("link", { name: "All flows" }).click();
     await page.locator(".hero").waitFor();
+  });
+  test("the route's dot fades out when its run ends, on both routes, after a real wait", async () => {
+    for (const viewport of [DESKTOP, PHONE]) {
+      const page = await open("/", { viewport });
+      const route = viewport === DESKTOP ? ".route.wide" : ".route.tall";
+      const dot = (name: string) => page.locator(`${route} .${name}-pulse`).evaluate(el => { const a = el.getAnimations()[0]; return { opacity: getComputedStyle(el).opacity, state: a?.playState, distance: getComputedStyle(el).offsetDistance }; });
+      await page.waitForTimeout(2000);
+      expect(await dot("instant")).toEqual({ opacity: "0", state: "finished", distance: "100%" });
+      await page.getByRole("button", { name: "Anything else" }).click();
+      await page.waitForTimeout(3000);
+      expect(await dot("asked")).toEqual({ opacity: "0", state: "finished", distance: "100%" });
+      expect((await dot("instant")).opacity).toBe("0");
+      await context!.close(); context = undefined;
+    }
   });
   test("the link shows the overview during a flow, and a reload returns to the flow", async () => {
     const page = await open("/");
@@ -162,6 +176,157 @@ describe("browse", () => {
       expect(await focusName(page)).toBe(fid!);
       void encoding;
     }
+    expect(problems).toEqual([]);
+  });
+});
+
+describe("whose records, as Sam", () => {
+  const SAM = "sam-caregiver";
+  beforeEach(() => { stack.resetSaved(); });
+  const choice = (page: Page, patient: string) => page.locator(`[data-records=${SAM}] [data-whose=${patient}]`);
+  const shown = (page: Page) => page.locator("article.study").evaluateAll(all => all.map(a => (a as HTMLElement).dataset.study).sort());
+  const whose = (page: Page, patient: string) => page.locator(`.whose-line[data-whose-shown=${patient}]`).waitFor();
+  const choices = (page: Page) => page.locator(`[data-records=${SAM}] [data-whose]`).evaluateAll(all => all.map(b => (b as HTMLElement).dataset.whose));
+  for (const [name, viewport] of [["desktop", DESKTOP], ["phone", PHONE]] as const) {
+    test(`${name}: picks directly, each pick a new sign-in, and Josh joins once he shares`, async () => {
+      const page = await open("/browse", { viewport });
+      await choice(page, "sam-example").waitFor();
+      expect(await choices(page)).toEqual(["sam-example", "riley-example"]);
+      expect(await page.locator("[data-records=josh]").count()).toBe(0);
+      // The choice is on show under Sam, with no menu to open, and big enough to tap.
+      const box = await choice(page, "riley-example").boundingBox();
+      expect(box!.height).toBeGreaterThanOrEqual(44);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width);
+
+      await choice(page, "riley-example").click();
+      await whose(page, "riley-example");
+      await page.locator("article.study").first().waitFor();
+      expect(await shown(page)).toEqual(["syn-riley-knee-mr-2022", "syn-riley-skin-slide-2023"]);
+      expect(await page.locator(".whose-line").innerText()).toBe("Riley Example's records, which Sam holds as guardian");
+      expect(await page.locator(".outcome").innerText()).toContain("Sam is Riley's guardian, on file for the whole record");
+      expect(await choice(page, "riley-example").getAttribute("aria-current")).toBe("true");
+      expect(await page.locator("article.study h3").first().innerText()).toStartWith("SYNTHETIC");
+      const first: any = await page.evaluate(async () => (await (await fetch("/api/browse/session")).json()).session.name);
+
+      await choice(page, "sam-example").click();
+      await whose(page, "sam-example");
+      await page.locator('article.study[data-study="syn-sam-ct-sinus-2024"]').waitFor();
+      expect(await shown(page)).toEqual(["syn-sam-chest-xr-2021", "syn-sam-ct-sinus-2024"]);
+      expect(await page.evaluate(async () => (await (await fetch("/api/browse/session")).json()).session.name)).not.toBe(first);
+      expect(await choice(page, "riley-example").getAttribute("aria-current")).toBe("false");
+      expect(await overflow(page)).toBe(0);
+
+      await page.locator(`[data-records=${SAM}] [data-whose-unshared=josh-example]`).click();
+      await page.locator(".outcome.denied").waitFor();
+      expect(await page.locator(".outcome").innerText()).toContain("Sam doesn't hold Josh Example's records");
+      await page.locator(`[data-share=${SAM}]`).click();
+      await whose(page, "josh-example");
+      await page.locator("article.study").first().waitFor();
+      expect(await page.locator(".whose-line").innerText()).toBe("Josh Example's records, shared with Sam as caregiver");
+      await choice(page, "josh-example").waitFor();
+      expect(await choices(page)).toEqual(["sam-example", "riley-example", "josh-example"]);
+      expect(await page.locator("[data-whose-unshared]").count()).toBe(0);
+      expect(await choice(page, "josh-example").getAttribute("aria-current")).toBe("true");
+      expect(await overflow(page)).toBe(0);
+      expect(problems).toEqual([]);
+    });
+    test(`${name}: in a real window, the consent page has the pick selected, and a different pick there is what counts`, async () => {
+      const page = await open("/browse", { viewport });
+      await choice(page, "riley-example").waitFor();
+      await page.locator("#options summary").click();
+      await page.locator("input[name=mode][value=window]").check();
+      const [popup] = await Promise.all([context!.waitForEvent("page"), choice(page, "riley-example").click()]);
+      await popup.waitForURL(/\/authorize/);
+      await popup.setViewportSize(viewport);
+      await popup.locator(`input[name=username][value=${SAM}]`).check();
+      await popup.getByRole("button", { name: "Continue" }).click();
+      const radio = (patient: string) => popup.locator(`input[name=patient][value=${patient}]`);
+      await radio("riley-example").waitFor();
+      expect(await radio("riley-example").isChecked()).toBe(true);
+      expect(await popup.getByText("People you hold records for").isVisible()).toBe(true);
+      expect(await popup.locator("[data-sites-for=riley-example]").isVisible()).toBe(true);
+      expect(await popup.locator("[data-sites-for=sam-example]").isVisible()).toBe(false);
+      expect(await popup.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBe(0);
+      await radio("sam-example").check();
+      expect(await popup.locator("[data-sites-for=sam-example]").isVisible()).toBe(true);
+      expect(await popup.locator("[data-sites-for=riley-example]").isVisible()).toBe(false);
+      await popup.getByRole("button", { name: "Approve" }).click();
+      await whose(page, "sam-example");
+      await page.locator("article.study").first().waitFor();
+      expect(await shown(page)).toEqual(["syn-sam-chest-xr-2021", "syn-sam-ct-sinus-2024"]);
+      expect(await choice(page, "sam-example").getAttribute("aria-current")).toBe("true");
+      expect(problems).toEqual([]);
+    });
+    test(`${name}: the account page shares the chosen person's records, and says what stops at Sam`, async () => {
+      await fetch(`${DEMO}/api/browse/start`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ user: SAM, client: "portal-app", mode: "scripted", count: 5, share: { delegate: SAM, sites: ["Lakeside Imaging"] } }) });
+      const shared = async () => { for (let i = 0; i < 400; i++) { if (stack.stores.saved.delegations().length) return; await Bun.sleep(25); } throw new Error("Josh never shared"); };
+      await shared();
+      const page = await open(`${CONFIG.authUrl}/account?login_hint=${SAM}`, { viewport });
+      await page.locator(`input[name=username][value=${SAM}]`).check();
+      await page.getByRole("button", { name: "Continue" }).click();
+      await page.locator("[data-record=riley-example]").waitFor();
+      expect(await page.locator("[data-record=sam-example]").innerText()).toContain("your own records");
+      expect(await page.locator("[data-record=riley-example]").innerText()).toContain("you're their guardian");
+      expect(await page.locator("[data-record=josh-example]").innerText()).toContain("shared with you as caregiver");
+      expect(await page.getByText("can't pass it on").isVisible()).toBe(true);
+      expect(await page.locator("input[type=radio][name=patient][value=josh-example]").count()).toBe(0);
+      expect(await page.locator("[data-sites-for=sam-example]").isVisible()).toBe(true);
+      expect(await page.locator("[data-sites-for=riley-example]").isVisible()).toBe(false);
+      await page.locator("input[name=patient][value=riley-example]").check();
+      expect(await page.locator("[data-sites-for=sam-example]").isVisible()).toBe(false);
+      await page.locator("select[name=delegate]").selectOption("alex-neighbor");
+      await page.locator("select[name=relationship]").selectOption("neighbor");
+      await page.locator('input[name="sites@riley-example"][value="Northside Pathology"]').uncheck();
+      await page.getByRole("button", { name: "Share", exact: true }).click();
+      await page.getByText("Riley Example's records: Lakeside Imaging").waitFor();
+      expect(stack.stores.saved.delegations().find(d => d.delegate === "alex-neighbor")).toMatchObject({ patient: "riley-example", sites: ["Lakeside Imaging"], asGuardian: true });
+      expect(await overflow(page)).toBe(0);
+      expect(problems).toEqual([]);
+    });
+  }
+  test("the admin screen shows the guardian on file, and a reset leaves it", async () => {
+    const page = await open("/admin");
+    const row = page.locator(`#guardians [data-guardian=${SAM}]`);
+    await row.waitFor();
+    expect(await row.innerText()).toContain("guardian of patient riley-example");
+    page.on("dialog", d => d.accept());
+    await page.locator("#reset-saved").click();
+    await page.locator("#store-msg", { hasText: "Guardians on file" }).waitFor();
+    await row.waitFor();
+    expect(problems).toEqual([]);
+  });
+  for (const [name, viewport] of [["desktop", DESKTOP], ["phone", PHONE]] as const) test(`${name}: flow 15 runs through, in its group, with every check passing`, async () => {
+    const page = await open("/", { viewport });
+    const groups = page.locator(".flow-groups > div");
+    expect(await groups.first().locator(".flow-choice b").allInnerTexts()).toContain("Caregiver picks whose records");
+    await groups.first().locator(".flow-choice", { hasText: "Caregiver picks whose records" }).click();
+    await page.locator(".flow-title", { hasText: "15. Caregiver" }).waitFor();
+    await page.locator("[data-run=own]").waitFor();
+    await page.locator('[data-step=own] select[data-input=mode]').selectOption("scripted");
+    await page.locator("[data-run=own]").click();
+    await page.locator("[data-run=guardian]").waitFor({ timeout: 30000 });
+    await page.locator('[data-step=guardian] select[data-input=mode]').selectOption("scripted");
+    await page.locator("#run-rest").click();
+    await page.locator("[data-step=share] ul.checks").waitFor({ timeout: 60000 });
+    expect(await page.locator("ul.checks .bad").count()).toBe(0);
+    expect(await page.locator("ul.checks .ok").count()).toBeGreaterThan(15);
+    expect(await page.locator("#chain").innerText()).toContain("riley-example's guardian");
+    expect(await overflow(page)).toBe(0);
+    expect(problems).toEqual([]);
+  });
+  test("flow 2 offers whose records Sam acts on, and a different choice explains itself", async () => {
+    const page = await open("/");
+    await page.locator(".flow-choice", { hasText: "Related person, then app" }).click();
+    await page.locator('[data-step=delegate] select[data-input=mode]').selectOption("scripted");
+    await page.locator("[data-run=delegate]").click();
+    await page.locator("[data-run=unrelated]").click();
+    await page.locator("[data-step=sam-launch] select[data-input=whose]").selectOption("riley-example");
+    await page.locator('[data-step=sam-launch] select[data-input=mode]').selectOption("scripted");
+    await page.locator("#run-rest").click();
+    await page.locator("[data-step=revoke] ul.checks").waitFor({ timeout: 60000 });
+    expect(await page.locator("ul.checks .bad").count()).toBe(0);
+    expect(await page.locator("[data-step=searches]").innerText()).toContain("Sam's app sees only Riley's records");
+    expect(await page.locator("[data-step=revoke]").innerText()).toContain("Riley's records don't depend on Josh");
     expect(problems).toEqual([]);
   });
 });

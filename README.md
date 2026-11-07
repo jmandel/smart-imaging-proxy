@@ -1,14 +1,14 @@
 # SMART Imaging Proxy Demo
 
-A working prototype of a SMART Imaging deployment: an Authorization Server, an Imaging Server holding policy and a study catalog, and a WADO-RS proxy that enforces study-level policy without holding any of it. It runs on six studies. It implements the `spec-clarity-organization` branch of the [SMART Imaging Access guide](https://github.com/argonautproject/smart-imaging). It isn't production code.
+A working prototype of a SMART Imaging deployment: an Authorization Server, an Imaging Server holding policy and a study catalog, and a WADO-RS proxy that enforces study-level policy without holding any of it. It runs on ten studies across three patients. It implements the `spec-clarity-organization` branch of the [SMART Imaging Access guide](https://github.com/argonautproject/smart-imaging). It isn't production code.
 
 ## Get running
 
-You need Bun (developed on 1.4.3), Docker with Compose, DCMTK (`dcmconv`, `dcmcjpeg`, `dcmodify`), `curl`, and `tar`. There's no `bun install`, since the project has no packages. Allow roughly 3 GB of disk, an estimate from one machine's copy.
+You need Bun (developed on 1.4.3), Docker with Compose, DCMTK (`dcmconv`, `dcmcjpeg`, `dcmodify`), `curl`, and `tar`. Run `bun install` for the browser test driver. Allow roughly 3 GB of disk, an estimate from one machine's copy.
 
 ```sh
 bun run fetch-data      # downloads the sample data, verifying checksums
-bun run ingest          # builds the archive
+bun run ingest          # generates the synthetic studies, and builds the archive
 docker compose up -d    # MinIO and Orthanc
 bun run load            # copies the archive to MinIO, and adds any study Orthanc lacks
 bun run start           # builds any empty catalog, then prints the URLs
@@ -18,8 +18,8 @@ Each step is safe to repeat. Everything except the downloads lives under `/tmp/s
 
 Then open http://127.0.0.1:4600/browse and try these:
 
-1. **Josh, the patient:** shows all six studies. Retrieve one through the proxy, and follow its link to the live trace.
-2. **Sam, a related person:** gets nothing until Josh shares. The page offers to do that, and then Sam sees only the shared sites.
+1. **Josh, the patient:** shows all six of his studies. Retrieve one through the proxy, and follow its link to the live trace.
+2. **Sam, a patient and a caregiver:** right under Sam, choose Sam's own records or Riley's as guardian. Each choice is a real new sign-in and search. Josh's aren't Sam's until Josh shares: choose "Josh Example hasn't shared with Sam", and the page offers to share, and then Josh is a third choice, showing only the shared sites.
 3. **A backend client:** gets a `403` until you apply a rule set at `/admin`.
 
 ## What's at each URL
@@ -36,10 +36,10 @@ Every service listens on `127.0.0.1`. If Tailscale is running, each one also lis
 | 4610 | MinIO | Loopback only |
 | 4611 | Orthanc | Loopback only |
 
-- **Flow player:** 14 flows, each a series of steps showing real requests and responses, on any backend. Flows run against a scratch policy store that's emptied when a flow starts.
-- **Browse:** pick an account or a backend client. The demo server runs a real launch or token request, then a real paged search, holding the token itself. Starting a session switches to saved policy. A panel shows the Imaging Server's reason for each study, which a real app would never see.
-- **Admin:** policy store, delegations and app grants, rule sets, settings, demo clock, backend, decision outage, token revocation, decision flush, and key rotation.
-- **Account page:** at `/account`, a patient shares sites with a related person, and a user revokes people and apps.
+- **Flow player:** 15 flows, each a series of steps showing real requests and responses, on any backend. Flows run against a scratch policy store that goes back to the guardians on file when a flow starts.
+- **Browse:** pick an account or a backend client, and, for a person holding more than one record, whose records. The demo server runs a real launch or token request, then a real paged search, holding the token itself. Starting a session switches to saved policy. A panel shows the Imaging Server's reason for each study, which a real app would never see.
+- **Admin:** policy store, guardians on file, delegations and app grants, rule sets, settings, demo clock, backend, decision outage, token revocation, decision flush, and key rotation.
+- **Account page:** at `/account`, a patient or guardian picks whose records to share, shares sites with a related person, and revokes people and apps.
 - **Live trace:** spans from every service, with inline previews. They're kept in SQLite and survive a restart.
 
 ## How it works
@@ -49,7 +49,9 @@ Every service listens on `127.0.0.1`. If Tailscale is running, each one also lis
 - **Signing keys:** the proxy reads public keys from the Imaging Server's JWKS, holding them for 60 seconds. A retired key ends the instant path for its URLs, and current policy still decides through the evaluation.
 - **App Launch:** discovery, authorization code with PKCE S256, required `state`, exact `redirect_uri`, single-use codes, and a consent page where the user picks a patient and sites.
 - **Backend Services:** ES256 client assertions, with each check traced separately: registered key, algorithm, `iss` and `sub`, `aud`, expiry, `jti`, signature, and scope.
-- **Delegation:** patient to related person to app, where each link can only narrow what the last one allows. The Imaging Server holds all of it.
+- **Delegation:** patient or guardian to related person to app, where each link can only narrow what the last one allows. What a patient shares with someone stops there: they can give an app part of it, and can't pass it on. The Imaging Server holds all of it.
+- **Guardians:** a standing relationship in the policy store, seeded from `data/patient.json`, that covers a patient's whole record with no one sharing first. The Imaging Server evaluates it like any other link. A policy reset clears what people chose and puts guardians back, and what a guardian shared ends if they stop being the guardian.
+- **One patient to a token:** whoever holds several records picks one at each launch, which makes its own token and its own app grant. Searching for another patient gets `403`, and retrieving another patient's study gets `404`.
 - **Search:** reads only the catalog, never a bucket. `_count` defaults to 20, with a maximum of 100. Each page's `next` link holds a signed cursor that grants nothing, because policy runs again on every page.
 - **Retrieval:** the proxy reads from the backend only as the client takes bytes. On the file and MinIO backends, it settles every `404`, `406`, and byte count from the indexes before opening an instance, and sends an exact `Content-Length`. A client sending `Accept-Encoding: zstd` gets stored zstd objects without decoding.
 - **Failures:** a response that can't finish aborts with no closing boundary, so a partial study can't look complete.
@@ -128,7 +130,7 @@ Then restart `bun run start`.
 | `src/browse.ts` | The Browse page's sessions and API |
 | `src/admin-api.ts`, `src/rule-presets.ts` | The admin API, and its named rule sets |
 | `src/trace.ts`, `src/trace-collector.ts`, `src/trace-store.ts` | Spans and redaction, the live stream, and SQLite storage |
-| `scripts/` | Fetch, ingest, load, and catalog builds |
+| `scripts/` | Fetch, synthetic study generation, ingest, load, and catalog builds |
 | `data/` | Source list with checksums, patient links, and Orthanc's per-study settings |
 | `web/` | All the pages |
 | `tests/` | The test suite |
@@ -142,6 +144,7 @@ Everything has a working default.
 | `DEMO_TAILNET` | Detected | `0` stays on loopback |
 | `DEMO_PORT_OFFSET` | `0` | Added to ports 4600-4604, to run a second copy |
 | `DEMO_STORAGE` | `/tmp/smart-imaging-demo` | Compose volumes for MinIO and Orthanc only |
+| `MINIO_PORT`, `ORTHANC_PORT` | `4610`, `4611` | Where Compose publishes MinIO and Orthanc, and where the demo reaches them |
 | `ARCHIVE_DIR` | `/tmp/smart-imaging-demo/archive` | The local archive |
 | `INGEST_WORK` | The OS temp directory | Ingest's working files |
 | `CATALOG_DB` | `/tmp/smart-imaging-demo/catalog.sqlite` | The archive catalog. Orthanc's sits beside it, named `-orthanc` |
@@ -157,7 +160,7 @@ Everything has a working default.
 - **6 to 11** put a service on MinIO's or Orthanc's port.
 - **1396 to 1400** put a service on port 6000, which Chromium blocks. Check any large offset against the [Fetch standard's blocked ports](https://fetch.spec.whatwg.org/#port-blocking).
 
-A second copy shares MinIO, Orthanc, and the default SQLite files, so give it its own `POLICY_DB`, `CATALOG_DB`, and `TRACE_DB`.
+A second copy shares MinIO, Orthanc, and the default SQLite files, so give it its own `POLICY_DB`, `CATALOG_DB`, and `TRACE_DB`. For its own backends too, run `docker compose -p {name} up -d` with its own `DEMO_STORAGE`, `MINIO_PORT`, and `ORTHANC_PORT`, and its own `ARCHIVE_DIR`.
 
 **Splitting the services,** with each command in its own terminal and the same `SERVICE_SECRET` in both:
 
@@ -183,12 +186,21 @@ Split services have no flow player, Browse, or admin screen. `auth` registers th
 | Signed client assertions and token issuance | **Accounts and apps:** a fixed list in the code. Backend client keys are generated at each start |
 | Ed25519 signed contexts, JWKS, and key rotation | **Patient matching:** an exact match on Patient ID, seeded from `data/patient.json` |
 | Delegation and consent, enforced in search and retrieval | **Site names:** assigned in the data files, not read from DICOM |
-| FHIR search and the AuthZEN API, over HTTP between services | **Clinical FHIR server:** a stub serving discovery and two `Patient` resources |
+| FHIR search and the AuthZEN API, over HTTP between services | **Clinical FHIR server:** a stub serving discovery and four `Patient` resources |
 | WADO-RS streaming, with files, MinIO's S3 API, and Orthanc's DICOMweb | **Time:** a demo clock can jump ahead, to show expiry |
 | zstd at rest and passthrough | **Faults:** the outage switch, and truncation injected at the backend boundary |
 | SQLite stores and traces, which survive a restart | **Private transfer syntax:** a synthetic label on one instance |
 
-The images are real. Five studies are a real patient's, de-identified as "Josh Example" and published in [jmandel/my-health-data](https://github.com/jmandel/my-health-data), and the sixth is a CC BY 4.0 slide from the NCI Imaging Data Commons, rewritten to the same patient. Tokens are stored only as hashes, and traces hold only hash prefixes of them.
+Where the images come from:
+
+| Patient | Studies | Source |
+|---|---|---|
+| Josh Example | 5 | A real patient's, de-identified as "Josh Example" and published in [jmandel/my-health-data](https://github.com/jmandel/my-health-data) |
+| Josh Example | 1 | A public CC BY 4.0 slide from the NCI Imaging Data Commons, rewritten to the same patient. It isn't his tissue |
+| Sam Example, Riley Example | 2 each | Fully synthetic. `scripts/generate-synthetic.ts` computes them, with no download, and the same bytes on every rebuild. Their `StudyDescription` and `SeriesDescription` start with `SYNTHETIC`, and no person's images are in them |
+| Robin Example | None | A Patient ID with nothing linked to it, so a search is a real empty result |
+
+Sam Example's and Riley Example's are invented people, and they're the only ones whose images are computed. Tokens are stored only as hashes, and traces hold only hash prefixes of them.
 
 ## Known limits
 
@@ -196,7 +208,7 @@ The images are real. Five studies are a real patient's, de-identified as "Josh E
 
 **Not tried:** other devices on the tailnet, real S3 (only MinIO), any cloud deployment, and real patient matching.
 
-**Scale:** a tiny prototype on six studies, with no load tests or scale proof. The design aims to have no obvious scaling blockers, and that's reasoning, not measurement.
+**Scale:** a tiny prototype on ten studies, with no load tests or scale proof. The design aims to have no obvious scaling blockers, and that's reasoning, not measurement.
 
 **Decided against:**
 

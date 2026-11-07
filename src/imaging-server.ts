@@ -103,16 +103,17 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
   const cursorKey = opts.cursorKey ?? randomBytes(32);
   const pageBytes = opts.pageBytes ?? PAGE_BYTES;
 
-  type PolicyRows = Pick<Policy, "rules" | "delegations" | "appGrants">;
+  type PolicyRows = Pick<Policy, "rules" | "delegations" | "guardians" | "appGrants">;
   type Evaluation = { release: "none" | "study" | { series: string[] }; rule?: Rule; why: string; chain?: string[] };
   /** One search evaluates every candidate against the same policy, read once. */
-  const policyRows = (): PolicyRows => { const s = opts.store(); return { rules: s.rules(), delegations: s.delegations(), appGrants: s.appGrants() }; };
+  const policyRows = (): PolicyRows => { const s = opts.store(); return { rules: s.rules(), delegations: s.delegations(), guardians: s.guardians(), appGrants: s.appGrants() }; };
 
   const matchRule = (t: any, patient: string, policy: PolicyRows): Rule | undefined =>
     policy.rules.find(r =>
       (r.when.client === undefined || r.when.client === t.client_id) &&
       (r.when.user === undefined || r.when.user === t.sub) &&
       (r.when.patient === undefined || r.when.patient === patient));
+  const isGuardian = (policy: Pick<PolicyRows, "guardians">, user: string, patient: string) => policy.guardians.some(g => g.guardian === user && g.patient === patient);
   /** A withdrawn rule is no pre-authorization at all. */
   const preAuthorizing = (rule: Rule | undefined) => rule && !rule.withdrawn ? rule : undefined;
 
@@ -122,13 +123,16 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
     check("policy", `policy evaluation: ${study.id}`, r.release !== "none", { client: t.client_id, user: t.sub, patient_context: t.patient, study: study.id, site: study.site, chain: r.chain?.join(" → "), rule: r.rule?.id ?? "(none)", release: typeof r.release === "object" ? `${r.release.series.length} series` : r.release, why: r.why });
     return r;
   }
-  /** Patient to related person to app. Each link can only narrow what the one before it allows. */
+  /** The patient, or a guardian on file, to related person to app. Each link can only narrow what the one before it allows. */
   function accessChain(t: any, patient: string, site: string, policy: PolicyRows): { ok: boolean; why?: string; chain: string[] } {
     const chain: string[] = [];
+    const guardian = policy.guardians.find(x => x.guardian === t.sub && x.patient === patient);
     if (t.fhirUser === `Patient/${patient}`) chain.push(`${t.sub} is the patient`);
+    else if (guardian) chain.push(`${t.sub} is ${patient}'s ${guardian.relationship}, on file, for the whole record`);
     else {
       const d = policy.delegations.find(x => x.delegate === t.sub && x.patient === patient);
       if (!d) return { ok: false, why: `${t.sub} has no delegation from the patient`, chain };
+      if (d.asGuardian && !isGuardian(policy, d.grantedBy, patient)) return { ok: false, why: `${d.grantedBy} is no longer ${patient}'s guardian, so what they shared has ended`, chain };
       chain.push(`${d.grantedBy} delegated to ${t.sub} (${d.relationship}): ${d.sites.join(", ")}`);
       if (!d.sites.includes(site)) return { ok: false, why: `the delegation to ${t.sub} doesn't include ${site}`, chain };
     }
@@ -139,14 +143,15 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
     return { ok: true, chain };
   }
 
-  /** What one signed-in user can see and has shared, for the Authorization Server's pages. */
+  /** What one signed-in user can see and has shared, for the Authorization Server's pages. Their own record is first, then the people they're guardian for, then what's shared with them. */
   function accessFor(user: string, fhirUser: string) {
-    const records: { patient: string; via: "self" | "delegation"; relationship?: string; sites: string[] }[] = [];
+    const records: { patient: string; via: "self" | "guardian" | "delegation"; relationship?: string; sites: string[] }[] = [];
     const self = fhirUser.match(/^Patient\/(.+)$/)?.[1];
     if (self) records.push({ patient: self, via: "self", sites: opts.catalog().sitesFor(self) });
-    const { delegations, appGrants } = opts.store().getPolicy();
-    for (const d of delegations) if (d.delegate === user) records.push({ patient: d.patient, via: "delegation", relationship: d.relationship, sites: d.sites });
-    return { records, delegations: delegations.filter(d => d.grantedBy === user), apps: appGrants.filter(g => g.user === user) };
+    const policy = opts.store().getPolicy();
+    for (const g of policy.guardians) if (g.guardian === user && g.patient !== self) records.push({ patient: g.patient, via: "guardian", relationship: g.relationship, sites: opts.catalog().sitesFor(g.patient) });
+    for (const d of policy.delegations) if (d.delegate === user && !records.some(r => r.patient === d.patient) && (!d.asGuardian || isGuardian(policy, d.grantedBy, d.patient))) records.push({ patient: d.patient, via: "delegation", relationship: d.relationship, sites: d.sites });
+    return { records, delegations: policy.delegations.filter(d => d.grantedBy === user), apps: policy.appGrants.filter(g => g.user === user) };
   }
 
   /**
@@ -172,6 +177,7 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
     return Response.json({
       client, user: user ?? undefined, fhirUser: fhirUser ?? undefined, patient, level: user ? "patient" : "system",
       searchAllowed: !!user || !!preAuthorizing(rule), rule: user ? rule : preAuthorizing(rule),
+      guardian: user ? policy.guardians.find(g => g.guardian === user && g.patient === patient) : undefined,
       delegation: user ? policy.delegations.find(d => d.delegate === user && d.patient === patient) : undefined,
       appGrant: user ? policy.appGrants.find(g => g.client === client && g.user === user && g.patient === patient) : undefined,
       studies,
@@ -458,22 +464,23 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
       if (p === "/access/v1/evaluation" || p.startsWith("/internal/")) server.record.service = "policy";
       if (p.startsWith("/internal/")) {
         if (bearerOf(req) !== opts.serviceSecret) return new Response(null, { status: 401 });
-        if (p === "/internal/relationships") return Response.json(opts.store().delegations().map(d => ({ patient: d.patient, delegate: d.delegate, relationship: d.relationship })));
+        if (p === "/internal/relationships") return Response.json([...opts.store().guardians().map(g => ({ patient: g.patient, delegate: g.guardian, relationship: g.relationship })), ...opts.store().delegations().map(d => ({ patient: d.patient, delegate: d.delegate, relationship: d.relationship }))]);
         if (p === "/internal/access") return Response.json(accessFor(url.searchParams.get("user") ?? "", url.searchParams.get("fhirUser") ?? ""));
         if (p === "/internal/explain") return explain(url);
         if (p === "/internal/delegations" && req.method === "POST") {
           const d: any = await req.json();
-          if (!check("policy", "only the patient can delegate their records", d.fhirUser === `Patient/${d.patient}`, { user: d.grantedBy, patient: d.patient })) return new Response(null, { status: 403 });
+          const self = d.fhirUser === `Patient/${d.patient}`;
+          if (!check("policy", "only the patient or their guardian can delegate their records", self || isGuardian(policyRows(), d.grantedBy, d.patient), { user: d.grantedBy, patient: d.patient })) return new Response(null, { status: 403 });
           const known = new Set(opts.catalog().sitesFor(d.patient));
           const sites = d.sites.filter((s: string) => known.has(s));
-          opts.store().putDelegation({ patient: d.patient, grantedBy: d.grantedBy, delegate: d.delegate, relationship: d.relationship, sites });
+          opts.store().putDelegation({ patient: d.patient, grantedBy: d.grantedBy, delegate: d.delegate, relationship: d.relationship, sites, ...(self ? {} : { asGuardian: true }) });
           check("policy", "record delegation to a related person", true, { from: d.grantedBy, to: d.delegate, relationship: d.relationship, sites: sites.join(", ") });
           return new Response(null, { status: 204 });
         }
         if (p === "/internal/delegations" && req.method === "DELETE") {
-          const by = url.searchParams.get("grantedBy"), to = url.searchParams.get("delegate");
-          opts.store().removeDelegations({ grantedBy: by ?? "", delegate: to ?? "" });
-          check("policy", "revoke delegation", true, { from: by, to });
+          const by = url.searchParams.get("grantedBy"), to = url.searchParams.get("delegate"), patient = url.searchParams.get("patient") ?? undefined;
+          opts.store().removeDelegations({ grantedBy: by ?? "", delegate: to ?? "", patient });
+          check("policy", "revoke delegation", true, { from: by, to, patient });
           return new Response(null, { status: 204 });
         }
         if (p === "/internal/consents" && req.method === "POST") {
@@ -494,9 +501,9 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
           return new Response(null, { status: 204 });
         }
         if (p === "/internal/consents" && req.method === "DELETE") {
-          const client = url.searchParams.get("client"), user = url.searchParams.get("user");
-          opts.store().removeAppGrants({ client: client ?? "", user: user ?? "" });
-          check("policy", "revoke app authorization", true, { client, user });
+          const client = url.searchParams.get("client"), user = url.searchParams.get("user"), patient = url.searchParams.get("patient") ?? undefined;
+          opts.store().removeAppGrants({ client: client ?? "", user: user ?? "", patient });
+          check("policy", "revoke app authorization", true, { client, user, patient });
           return new Response(null, { status: 204 });
         }
         return new Response("not found", { status: 404 });
