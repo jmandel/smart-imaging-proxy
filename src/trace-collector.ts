@@ -1,19 +1,48 @@
 // The god-mode collector. It takes spans from the services, streams them live over SSE, and keeps
 // them in a TraceStore. The stream doesn't depend on the store, so a storage problem can't stop it.
-import { LISTEN_HOSTS, PORTS } from "./config";
+import { LISTEN_HOSTS, PORTS, TAILNET } from "./config";
 import { join } from "node:path";
-import type { SpanRecord } from "./trace";
+import { KINDS, SERVICES, STATUSES, type SpanRecord } from "./trace";
 import { summaryOf, TraceStore, type TraceStoreConfig } from "./trace-store";
 
 const PAGES: Record<string, string> = { "/live.js": "web/live.js", "/live.css": "web/live.css", "/trace-view.js": "web/trace-view.js", "/span.html": "web/span.html", "/span.js": "web/span.js", "/log.html": "web/log.html", "/log.js": "web/log.js" };
 
 const json = (text: string) => new Response(text, { headers: { "content-type": "application/json;charset=utf-8" } });
 const publicSession = ({ id, startedAt, lastAt, spans }: { id: string; startedAt: number; lastAt: number; spans: number }) => ({ id, startedAt, lastAt, spans });
-/** Traces change only through this service's own address, so a cross-site or rebinding page can't. */
-const ownHosts = () => [...LISTEN_HOSTS.map(h => `${h}:${PORTS.trace}`), `localhost:${PORTS.trace}`];
+/** Traces are read and changed only through this service's own addresses, so a rebinding page can do neither. */
+const ownHosts = () => [...LISTEN_HOSTS.map(h => `${h}:${PORTS.trace}`), `localhost:${PORTS.trace}`, ...(TAILNET ? [`${TAILNET.name}:${PORTS.trace}`] : [])];
 // A browser always sends Host, so only a rebinding page's own name has to be refused.
 const ownHost = (req: Request) => { const h = req.headers.get("host"); return !h || ownHosts().includes(h); };
-const sameOrigin = (req: Request, url: URL) => { const o = req.headers.get("origin"); return ownHost(req) && (!o || o === url.origin); };
+const sameOrigin = (req: Request, url: URL) => { const o = req.headers.get("origin"); return !o || o === url.origin; };
+
+/** Well above what a service sends at once: its bodies are capped at capture, and it sends every 25 ms. */
+export const MAX_SPANS_BODY = 32 * 1024 * 1024;
+const bad = (why: string, status = 400) => new Response(why, { status });
+const isObject = (v: unknown): v is Record<string, any> => typeof v === "object" && v !== null && !Array.isArray(v);
+const isText = (v: unknown) => typeof v === "string" && v.length > 0;
+const isTime = (v: unknown) => typeof v === "number" && Number.isFinite(v);
+const messageProblem = (m: unknown) => isObject(m) && isObject(m.headers) ? undefined : "must have headers";
+function httpProblem(h: unknown) {
+  if (!isObject(h)) return "http must be an object";
+  if (!isText(h.method) || !isText(h.url)) return "http needs a method and a url";
+  if (h.status !== undefined && !isTime(h.status)) return "http.status must be a number";
+  if (messageProblem(h.request)) return `http.request ${messageProblem(h.request)}`;
+  if (h.response !== undefined && messageProblem(h.response)) return `http.response ${messageProblem(h.response)}`;
+}
+/** Why the store couldn't keep this as a span, if so. */
+function spanProblem(r: unknown) {
+  if (!isObject(r)) return "a span must be an object";
+  for (const k of ["session", "trace", "span", "name"]) if (!isText(r[k])) return `${k} must be a non-empty string`;
+  if (!SERVICES.includes(r.service)) return "service isn't one of the demo's services";
+  if (!KINDS.includes(r.kind)) return `kind must be one of ${KINDS.join(", ")}`;
+  if (!isTime(r.start)) return "start must be a number";
+  if (r.end !== undefined && !isTime(r.end)) return "end must be a number";
+  if (r.parent !== undefined && typeof r.parent !== "string") return "parent must be a string";
+  if (r.status !== undefined && !STATUSES.includes(r.status)) return `status must be one of ${STATUSES.join(", ")}`;
+  if (!isObject(r.attrs)) return "attrs must be an object";
+  if (r.http !== undefined) return httpProblem(r.http);
+}
+const decodable = (path: string) => { try { decodeURIComponent(path); return true; } catch { return false; } };
 
 /** With no store config, traces are in memory: only src/main.ts reads the TRACE_* settings. */
 export function createCollector(root: string, config: TraceStoreConfig = { mode: "memory" }) {
@@ -38,10 +67,18 @@ export function createCollector(root: string, config: TraceStoreConfig = { mode:
   const fetchHandler = async (req: Request): Promise<Response> => {
     const url = new URL(req.url);
     const p = url.pathname;
+    if (!ownHost(req)) return new Response("this service answers only at its own addresses", { status: 403 });
     if (p === "/v1/spans" && req.method === "POST") {
       // Services send spans. A browser always names an origin, and has no reason to send any.
-      if (req.headers.get("origin") || !ownHost(req)) return new Response(null, { status: 403 });
-      ingest(await req.json() as SpanRecord[]);
+      if (req.headers.get("origin")) return new Response(null, { status: 403 });
+      if (Number(req.headers.get("content-length") ?? 0) > MAX_SPANS_BODY) return bad("too many spans at once", 413);
+      const text = await req.text();
+      if (text.length > MAX_SPANS_BODY) return bad("too many spans at once", 413);
+      let records: unknown;
+      try { records = JSON.parse(text); } catch { return bad("the request body must be valid JSON"); }
+      if (!Array.isArray(records)) return bad("the request body must be a JSON array of spans");
+      for (const [i, r] of records.entries()) { const problem = spanProblem(r); if (problem) return bad(`span ${i}: ${problem}`); }
+      ingest(records);
       return new Response(null, { status: 202 });
     }
     if (p === "/" || p === "/live") return page("web/live.html");
@@ -54,6 +91,7 @@ export function createCollector(root: string, config: TraceStoreConfig = { mode:
       return new Response(null, { status: 204 });
     }
     if (p === "/api/sessions") return Response.json(list());
+    if (p.startsWith("/api/sessions/") && !decodable(p)) return bad("that session name isn't valid percent-encoding");
     const m = p.match(/^\/api\/sessions\/([^/]+)\/spans$/);
     if (m) return json(store.summariesJson(decodeURIComponent(m[1]!)));
     const log = p.match(/^\/api\/sessions\/([^/]+)\/http$/);

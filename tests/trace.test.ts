@@ -1,5 +1,6 @@
 // The live trace has to show a request's whole journey, correlated across services.
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,9 +9,9 @@ import { CONFIG, PORTS } from "../src/config";
 import { createDemoServer } from "../src/demo-server";
 import { submitConsent } from "../src/flows/oauth";
 import { defaultsFor, FLOWS, registerClients, runStep, startFlow } from "../src/flows";
-import { createCollector } from "../src/trace-collector";
+import { createCollector, MAX_SPANS_BODY } from "../src/trace-collector";
 import { DEFAULT_TRACE_DB, traceStoreConfigFromEnv } from "../src/trace-store";
-import { redactUrl, setCaptureLimitsForTest, type SpanRecord } from "../src/trace";
+import { redactUrl, setCaptureLimitsForTest, traced, type SpanRecord } from "../src/trace";
 
 let stack: Stack; let clients: any;
 beforeAll(async () => { stack = await startStack(join(import.meta.dir, "..")); clients = registerClients(stack); });
@@ -398,6 +399,90 @@ test("stats, export, and clear work, and a cross-site page can't clear", async (
   await send(c, [span("after", "a")]);
   expect((await getJson(c, "/api/sessions")).map((s: any) => s.id)).toEqual(["after"]);
   c.close();
+});
+
+test("the collector refuses a span the store couldn't keep, and takes nothing from that batch", async () => {
+  const c = createCollector(ROOT);
+  const post = (body: string, headers: Record<string, string> = {}) => c.fetch(new Request(`${T}/v1/spans`, { method: "POST", body, headers }));
+  const { session: _none, ...noSession } = span("s", "a");
+  const bad: unknown[] = [noSession, { ...span("s", "a"), trace: 5 }, { ...span("s", "a"), span: "" }, { ...span("s", "a"), service: "elsewhere" }, { ...span("s", "a"), kind: "x" }, { ...span("s", "a"), start: "soon" }, { ...span("s", "a"), end: "later" }, { ...span("s", "a"), attrs: [] }, { ...span("s", "a"), status: "fine" }, { ...span("s", "a"), http: { method: "GET", url: "http://x.test", request: {} } }, { ...span("s", "a"), http: { method: "GET", url: "http://x.test", request: { headers: {} }, response: {} } }, "not a span", null];
+  for (const r of bad) {
+    const res = await post(JSON.stringify([span("s", "good"), r]));
+    expect([JSON.stringify(r), res.status]).toEqual([JSON.stringify(r), 400]);
+    expect(await res.text()).toStartWith("span 1:");
+  }
+  expect((await post("{nope")).status).toBe(400);
+  expect((await post("")).status).toBe(400);
+  expect((await post('{"session":"s"}')).status).toBe(400);
+  expect((await post("null")).status).toBe(400);
+  expect((await post("[]", { "content-length": String(MAX_SPANS_BODY + 1) })).status).toBe(413);
+  expect((await post(`[${" ".repeat(MAX_SPANS_BODY)}]`)).status).toBe(413);
+  expect(await getJson(c, "/api/sessions")).toEqual([]);
+  expect((await send(c, [span("s", "good")])).status).toBe(202);
+  expect((await getJson(c, "/api/stats")).written).toBe(1);
+  c.close();
+});
+
+test("a session name that isn't valid percent-encoding gets a 400 on every route", async () => {
+  const c = createCollector(ROOT);
+  for (const path of ["/api/sessions/%/http", "/api/sessions/%/spans", "/api/sessions/%/spans/a", "/api/sessions/%/export", "/api/sessions/%E2/http"]) {
+    expect([path, (await c.fetch(new Request(T + path))).status]).toEqual([path, 400]);
+  }
+  c.close();
+});
+
+test("a row the database refuses is dropped and counted, without holding up the rest of its batch or anything later", () => {
+  const c = createCollector(ROOT);
+  const good = (id: string) => span("s", id);
+  const put = (r: any) => c.store.put(r, JSON.stringify(r));
+  const { session: _none, ...noSession } = good("bad");
+  put(good("before"));
+  put(noSession);
+  put({ ...good("unbindable"), start: {} });
+  put(good("after"));
+  const stats = c.store.stats();
+  expect(stats).toMatchObject({ pending: 0, written: 2, droppedInvalid: 2, spans: 2 });
+  expect(stats.lastError).toBeDefined();
+  expect(c.store.fullSession("s").map(r => r.span).sort()).toEqual(["after", "before"]);
+  put(good("later"));
+  const clean = c.store.stats();
+  expect(clean).toMatchObject({ pending: 0, written: 3, droppedInvalid: 2, spans: 3 });
+  expect(clean.lastError).toBeUndefined();
+  c.close();
+});
+
+test("a busy database keeps the batch and writes it once the database is free", () => {
+  const path = tempDb();
+  const c = createCollector(ROOT, { mode: "file", path });
+  (c.store as any).db.exec("PRAGMA busy_timeout = 1");
+  const other = new Database(path);
+  other.exec("BEGIN IMMEDIATE");
+  const r = span("s", "a");
+  c.store.put(r, JSON.stringify(r));
+  const during = c.store.stats();
+  expect(during).toMatchObject({ pending: 1, droppedInvalid: 0 });
+  expect(during.failures).toBeGreaterThan(0);
+  expect(during.lastError).toContain("locked");
+  other.exec("COMMIT");
+  other.close();
+  expect(c.store.stats()).toMatchObject({ pending: 0, written: 1, droppedInvalid: 0, spans: 1 });
+  c.close();
+});
+
+test("the queue stays bounded while the database is down", () => {
+  const c = createCollector(ROOT);
+  (c.store as any).db.exec("DROP TABLE spans");
+  for (let i = 0; i < 5010; i++) { const r = span("s", `s${i}`); c.store.put(r, JSON.stringify(r)); }
+  const stats = c.store.stats();
+  expect(stats.pending).toBe(5000);
+  expect(stats.droppedPending).toBe(10);
+  expect(stats.droppedInvalid).toBe(0);
+});
+
+test("baggage that can't be decoded doesn't stop a traced service", async () => {
+  const handler = traced("demo", () => new Response("fine"));
+  const res = await handler(new Request(`${T}/x`, { headers: { baggage: "demo.session=%" } }));
+  expect(await res.text()).toBe("fine");
 });
 
 test("settings come from the environment, and a test stack never touches the trace file", () => {

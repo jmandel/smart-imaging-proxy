@@ -304,11 +304,31 @@ describe("a real window", () => {
     expect(s.status).toBe("failed");
     expect(s.detail).toContain("window closed");
   }, 60000);
+  test("asking for a patient the account doesn't hold says that, rather than that they declined", async () => {
+    const b = browser();
+    const s = await b.pick("josh", { patient: "robin-example" });
+    expect(s.status).toBe("denied");
+    expect(s.detail).toContain("Josh doesn't hold Robin Example's records");
+    expect(s.detail).not.toContain("chose not to approve");
+    const alex = await browser().pick("alex-neighbor", { patient: "josh-example" });
+    expect(alex.status).toBe("denied");
+    expect(alex.detail).toContain("Alex doesn't hold Josh Example's records");
+  }, 60000);
+  test("declining in a window still says the person declined", async () => {
+    const b = browser();
+    await b.call("POST", "/api/browse/start", { user: "josh", client: "portal-app", mode: "window", count: 5 });
+    const waiting = await b.settled(s => s.status === "waiting-for-you");
+    const back = await submitConsent(waiting.authUrl, { user: "josh", approve: false });
+    expect((await demo.fetch(new Request(back))).status).toBe(200);
+    const s = await b.settled();
+    expect(s.status).toBe("denied");
+    expect(s.detail).toContain("Josh chose not to approve the app.");
+  }, 60000);
   test("a redirect with an unknown state goes nowhere", async () => {
     const b = browser();
     await b.call("POST", "/api/browse/start", { user: "josh", client: "portal-app", mode: "window", count: 5 });
     await b.settled(s => s.status === "waiting-for-you");
-    await demo.fetch(new Request(`${CONFIG.demoUrl}/oauth/callback?code=x&state=wrong`));
+    expect((await demo.fetch(new Request(`${CONFIG.demoUrl}/oauth/callback?code=x&state=wrong`))).status).toBe(400);
     expect((await b.session()).status).toBe("waiting-for-you");
     await b.call("POST", "/api/browse/cancel", {});
     await b.settled();
