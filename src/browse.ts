@@ -204,7 +204,7 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
     s.bundle = r.body;
     s.total = r.body.total;
     s.nextUrl = r.next;
-    const entries: any[] = r.body.entry;
+    const entries: any[] = r.body.entry ?? [];
     const byUrl = new Map(entries.filter(e => e.resource.resourceType === "Endpoint").map(e => [e.fullUrl, e.resource]));
     const rows = new Map<string, any>((s.explain?.studies ?? []).map((x: any) => [x.id, x]));
     s.studies = entries.filter(e => e.resource.resourceType === "ImagingStudy").map(e => {
@@ -425,7 +425,7 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
       }
       const s = sessionOf(req);
       if (!s) return gone();
-      if (p === "/cancel") { s.c.cancelWindow?.("The sign-in window closed before it finished."); return json({ session: view(s) }); }
+      if (p === "/cancel") { s.c.cancelWindow?.(body?.stopped ? "You stopped waiting for this sign-in." : "The sign-in window closed before it finished."); return json({ session: view(s) }); }
       if (p === "/page") {
         if (!s.token) return json({ error: "this session has no token: pick someone to sign in" }, 409);
         if (s.searching) return json({ error: "a search is still running" }, 409);

@@ -292,7 +292,7 @@ describe("paged search", () => {
     return { imaging, store, get };
   }
   const internal = (next: string) => next.replace("http://fhir/ImagingStudy", "http://fhir/fhir/ImagingStudy");
-  const studiesOf = (b: any) => b.entry.filter((e: any) => e.resource.resourceType === "ImagingStudy").map((e: any) => e.resource);
+  const studiesOf = (b: any) => (b.entry ?? []).filter((e: any) => e.resource.resourceType === "ImagingStudy").map((e: any) => e.resource);
   const nextOf = (b: any) => b.link.find((l: any) => l.relation === "next")?.url as string | undefined;
   const walk = async (get: (q: string) => Promise<any>, q: string) => {
     const pages: any[] = [];
@@ -329,7 +329,7 @@ describe("paged search", () => {
         expect(ep.resource.resourceType).toBe("Endpoint");
         expect(ep.fullUrl).toStartWith("urn:uuid:");
       }
-      expect(p.entry.length).toBe(studiesOf(p).length * 2);
+      expect((p.entry ?? []).length).toBe(studiesOf(p).length * 2);
     }
   });
   test("_count: default 20, larger values clamp to 100, 0 is only the total, and nonsense is a 400", async () => {
@@ -350,7 +350,7 @@ describe("paged search", () => {
     const zero = await get("patient=p1&_count=0");
     expect(zero.status).toBe(200);
     expect(zero.body.total).toBe(25);
-    expect(zero.body.entry).toEqual([]);
+    expect(zero.body.entry).toBeUndefined();
     expect(nextOf(zero.body)).toBeUndefined();
     for (const bad of ["-1", "abc", "1.5", ""]) {
       const r = await get(`patient=p1&_count=${bad}`);
@@ -409,7 +409,7 @@ describe("paged search", () => {
     expect(second.total).toBe(3);
     store.setPolicy({ rules: [{ id: "r", when: { client: "app" }, withdrawn: true, allow: { all: true } }] });
     const none = (await get(internal(nextOf(first)!))).body;
-    expect(none.entry).toEqual([]);
+    expect(none.entry).toBeUndefined();
     expect(none.total).toBe(0);
     expect(nextOf(none)).toBeUndefined();
     store.setPolicy({ rules: [] });
@@ -707,7 +707,7 @@ describe("the real stack", () => {
     stack.resetAll();
     const b = await searchWith((await scriptedLaunch("robin")).access_token, "patient=robin-example");
     expect(b.total).toBe(0);
-    expect(b.entry).toEqual([]);
+    expect(b.entry).toBeUndefined();
   });
   test("the capability statement describes paging", async () => {
     const m: any = await (await fetch(`${CONFIG.imagingUrl}/fhir/metadata`)).json();

@@ -5,7 +5,7 @@ import type { Rule } from "./policy-store";
 
 const PATIENT = "josh-example";
 const CT = "ct-abdomen-pelvis-2012";
-const WITHHELD_SERIES = /Clinical Documents|Dose Report/;
+const WITHHELD_SERIES = /Clinical Documents|Dose (Report|Record)/;
 
 const handWristReferral: Rule = { id: "hand-referral", description: "Referral service: hand and wrist X-rays", when: { client: "hand-referral-service", patient: PATIENT }, allow: { modalities: ["CR"] } };
 const researchDonation: Rule = { id: "research-consent", description: "Josh's research donation consent", when: { client: "research-donation", patient: PATIENT }, allow: { all: true } };

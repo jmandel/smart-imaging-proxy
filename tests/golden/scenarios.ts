@@ -14,6 +14,7 @@ const payloadOf = (jws: string) => JSON.parse(Buffer.from(jws.split(".")[1]!, "b
 /** Replaces random and time-dependent values. Long instance lists become a count and hashes. */
 export function normalizeBody(body: any): any {
   if (body?.resourceType !== "Bundle") return body;
+  body = { ...body, entry: body.entry ?? [] }; // An empty search has no `entry`, and the captures list none.
   const endpointOwner = new Map<string, string>();
   for (const e of body.entry) if (e.resource.resourceType === "ImagingStudy") for (const r of e.resource.endpoint ?? []) endpointOwner.set(r.reference, e.resource.id);
   const local = (ref: string) => `urn:uuid:{endpoint of ${endpointOwner.get(ref)}}`;

@@ -335,7 +335,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     }
     if (url.pathname === "/account/signout") {
       accountSessions.delete(req.headers.get("cookie")?.match(/account_session=([^;]+)/)?.[1] ?? "");
-      return new Response(null, { status: 303, headers: { Location: "/account", "Set-Cookie": "account_session=; Max-Age=0; Path=/" } });
+      return new Response(null, { status: 303, headers: { Location: `/account${q}`, "Set-Cookie": "account_session=; Max-Age=0; Path=/" } });
     }
     const name = accountUser(req);
     if (!check("authorization-server", "account session is signed in", !!name)) return page("Sign in", "<h1>Sign in first</h1>", 401);
@@ -433,7 +433,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     }
     if (url.pathname.startsWith("/fhir/Patient/")) {
       const id = url.pathname.slice("/fhir/Patient/".length);
-      const bearer = req.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1];
+      const bearer = req.headers.get("authorization")?.match(/^Bearer (.+)$/i)?.[1];
       const t = bearer ? opts.store().getToken(bearer, "access") : undefined;
       if (!check("authorization-server", "patient read has a live access token", !!t && !t.revoked && t.exp! > now(), { token_hash: bearer && ath(bearer).slice(0, 10) })) return new Response(null, { status: 401, headers: { "WWW-Authenticate": bearer ? 'Bearer error="invalid_token"' : "Bearer" } });
       if (!check("authorization-server", "the token's patient context is this patient", t!.patient === id, { patient: id, patient_context: t!.patient })) return new Response(null, { status: 403, headers: { "WWW-Authenticate": 'Bearer error="insufficient_scope"' } });

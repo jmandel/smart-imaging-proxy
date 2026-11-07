@@ -381,7 +381,7 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
     // page's parsed hierarchies are held at once, which the byte budget bounds, except that one
     // study larger than the budget is held whole, along with its one serialized entry.
     const self = (function* () {
-      yield `${JSON.stringify({ resourceType: "Bundle", type: "searchset", total, link }).slice(0, -1)},"entry":[`;
+      yield `${JSON.stringify({ resourceType: "Bundle", type: "searchset", total, link }).slice(0, -1)}${rows.length ? ',"entry":[' : ""}`;
       let first = true;
       for (const { study, ev, uuid, address } of rows) {
         const endpointRef = address ? `urn:uuid:${uuid}` : undefined;
@@ -400,7 +400,7 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
           },
         })}`;
       }
-      yield "]}";
+      yield rows.length ? "]}" : "}";
     })();
     const encoder = new TextEncoder();
     return new Response(new ReadableStream({

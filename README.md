@@ -227,6 +227,8 @@ The images are real. Five studies are a real patient's, de-identified as "Josh E
 
 ```sh
 bun test                         # every flow on every backend, and the rest
+
+`bun run test:ui` drives the pages in real Chromium: focus, overflow, contrast, popups, and what the pages draw from real responses. It runs its own stack in memory, and takes the browser from `CHROMIUM`, or `/usr/bin/chromium`.
 BACKENDS=static-files bun test   # flows, Browse, rotation, and conformance on one backend
 ```
 

@@ -116,7 +116,8 @@ export class OrthancBackend implements Backend {
   }
   async openBulk(study: string, series: string, instance: string, ref: string) {
     const r = await this.get(`/studies/${study}/series/${series}/instances/${instance}/bulk/${ref.toLowerCase()}`, "*/*");
-    if (!r.ok) throw mapError(r.status);
+    // A reference Orthanc can't read as a tag path is an element that isn't there.
+    if (!r.ok) throw mapError(r.status === 406 || r.status === 400 ? 404 : r.status);
     const boundary = boundaryOf(r.headers.get("content-type"));
     if (!boundary) return { ...knownLength(r.headers.get("content-length")), body: asIterable(r.body!) };
     // Orthanc wraps an element in one multipart part, which comes off here.

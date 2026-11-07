@@ -40,6 +40,7 @@ async function backToSaved() {
   renderIntro(services);
 }
 async function init() {
+  const returning = location.hash === "#flow";
   const data = await api("/api/flows");
   flows = data.flows;
   services = data.services;
@@ -49,7 +50,8 @@ async function init() {
   renderIntro(data.services);
   // A flow in progress comes back as it was. Loading this page changes nothing on the server.
   const state = await api("/api/flow-state");
-  if (state.flow && state.store.active === "scratch") restoreFlow(state);
+  // Only a reload or Back returns to a flow, so the Overview link always shows the overview.
+  if (state.flow && state.store.active === "scratch" && returning) restoreFlow(state);
   const b = await api("/api/backends");
   const sel = $("#backend");
   sel.innerHTML = b.backends.map(x => `<option value="${x.name}" ${x.name === b.current ? "selected" : ""}>${x.name}${x.ok ? "" : " (unavailable)"}</option>`).join("");
@@ -61,12 +63,27 @@ function showBackend(b) {
   $("#backend-status").textContent = x ? `${x.capabilities.selection}${x.capabilities.hasManifest ? ", indexed" : ""}` : "";
   $("#backend-status").title = x ? x.capabilities.notes.join(" ") : "";
 }
+// Grouped by the question each flow answers. Flow numbers stay as the docs cite them.
+const FLOW_GROUPS = [
+  ["Who can see what", [1, 2, 3, 4, 6]],
+  ["How the proxy decides", [5, 7, 8, 9, 10]],
+  ["What comes back", [11, 12, 13, 14]],
+];
+const flowsIn = numbers => numbers.map(n => flows.find(f => f.number === n)).filter(Boolean);
+const statusMark = f => flowStatus[f.id] === true ? '<span class="done" aria-label="passed">✓</span>' : flowStatus[f.id] === false ? '<span class="failed" aria-label="failed">✗</span>' : "";
 function renderNav() {
-  const item = f => `<button data-id="${f.id}" class="${current?.id === f.id ? "active" : ""}"><span class="n">${f.number}</span><span>${esc(f.title)}</span>${flowStatus[f.id] === true ? '<span class="done" aria-label="passed">✓</span>' : flowStatus[f.id] === false ? '<span class="failed" aria-label="failed">✗</span>' : ""}</button>`;
+  const item = f => `<button data-id="${f.id}" class="${current?.id === f.id ? "active" : ""}"><span class="n">${f.number}</span><span>${esc(f.title)}</span>${statusMark(f)}</button>`;
   const nav = $("#flow-list");
-  nav.innerHTML = `<h2>Policy flows</h2>${flows.filter(f => f.group === "policy").map(item).join("")}<h2>Protocol flows</h2>${flows.filter(f => f.group === "protocol").map(item).join("")}<button id="run-all" class="secondary">Run every flow</button>`;
+  nav.innerHTML = `${FLOW_GROUPS.map(([name, numbers]) => `<h2>${name}</h2>${flowsIn(numbers).map(item).join("")}`).join("")}<button id="run-all" class="secondary">Run every flow</button>`;
   nav.querySelectorAll("button[data-id]").forEach(b => b.onclick = () => openFlow(b.dataset.id));
   $("#run-all").onclick = runEvery;
+}
+const firstSentence = text => text.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? text;
+function flowChooser() {
+  const choice = f => `<button class="flow-choice" data-id="${f.id}"><span class="n">${f.number}</span><span class="what"><b>${esc(f.title)}</b><span>${esc(firstSentence(f.summary))}</span></span>${statusMark(f)}</button>`;
+  return `<section class="flows-section" aria-labelledby="h-flows"><h2 id="h-flows">Try a flow</h2><p>Each one runs real requests step by step, in a scratch policy that resets when the flow starts.</p>
+    <div class="flow-groups">${FLOW_GROUPS.map(([name, numbers]) => `<div><h3>${name}</h3>${flowsIn(numbers).map(choice).join("")}</div>`).join("")}</div>
+    <button id="run-every" class="secondary">Run every flow</button></section>`;
 }
 const ROUTE_WHY = {
   instant: "The URL's signature, expiry, study and token hash all check out, so the proxy answers with no network call.",
@@ -82,6 +99,8 @@ function renderIntro(services) {
     routeNode(20, 154, "App", "token, signed URL") + routeNode(355, 154, "Proxy", "a key, no policy") + routeNode(690, 154, "Image store", "bytes only") + routeNode(355, 18, "Imaging Server", "all the policy"));
   const tall = routeSvg("tall", "460 366", "M115 56 V316", "M115 56 V172 H345 V200 H115 V316",
     routeNode(10, 20, "App", "token, signed URL") + routeNode(10, 150, "Proxy", "a key, no policy") + routeNode(10, 280, "Image store", "bytes only") + routeNode(240, 150, "Imaging Server", "all the policy"));
+  history.replaceState(null, "", location.pathname);
+  document.body.classList.remove("in-flow");
   $("#main").innerHTML = `<section class="intro">
     <div class="hero">
       <h1>The proxy decides without ever holding the policy.</h1>
@@ -101,15 +120,19 @@ function renderIntro(services) {
         <p>Anyone with access can authorize an app, through a real SMART App Launch. The Imaging Server keeps these choices as policy, tokens carry the patient and scope, and the proxy learns none of it.</p>
       </div>
       <div class="next">
-        <h2>See it work</h2>
+        <h2>See who can see what</h2>
         <p>Sign in as someone and see exactly the studies they can reach.</p>
         <p><a class="button" href="/browse">Browse studies</a></p>
-        <p class="note">Or run a flow from the list. Each step makes real requests, in a scratch policy that resets when the flow starts. Accounts share from their own <a href="${esc(services.authorization ?? "")}/account" target="_blank" rel="noopener">account page</a>, and the <a href="/admin">admin screen</a> manages the rest.</p>
+        <p class="note">Accounts share from their own <a href="${esc(services.authorization ?? "")}/account" target="_blank" rel="noopener">account page</a>, and the <a href="/admin">admin screen</a> manages the rest.</p>
       </div>
     </div>
+    ${flowChooser()}
     <details class="addresses"><summary>Service addresses</summary><dl>${Object.entries(services).map(([k, v]) => `<dt>${esc(k)}</dt><dd><code>${esc(v)}</code></dd>`).join("")}</dl></details></section>`;
 }
 document.addEventListener("click", e => {
+  const pick = e.target.closest?.(".flow-choice, [data-next]");
+  if (pick) { openFlow(pick.dataset.id ?? pick.dataset.next); scrollTo(0, 0); return; }
+  if (e.target.id === "run-every") { runEvery(); return; }
   const b = e.target.closest?.(".route-tabs button");
   if (!b) return;
   document.querySelectorAll(".route-tabs button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
@@ -137,14 +160,17 @@ function restoreFlow(state) {
   }
 }
 function showFlow(id, data) {
+  history.replaceState(null, "", "#flow");
+  document.body.classList.add("in-flow");
   const f = flows.find(x => x.id === id);
   current = { ...f, steps: data.steps };
   stepsDone = {};
   renderNav();
-  $("#main").innerHTML = `<h2 class="flow-title">${f.number}. ${esc(f.title)}</h2><p class="summary">${esc(f.summary)}</p><p class="shows">${esc(f.shows)}</p>
+  const next = flows.find(x => x.number === f.number + 1);
+  $("#main").innerHTML = `<p class="back"><a href="/">All flows</a></p><h2 class="flow-title">${f.number}. ${esc(f.title)}</h2><p class="summary">${esc(f.summary)}</p><p class="shows">${esc(f.shows)}</p>
     <div class="toolbar"><button class="primary" id="run-rest">Run remaining steps</button><button class="secondary" id="restart">Start over</button></div>
     <div id="chain" class="chain"></div><details class="policy" id="policy"><summary>Imaging Server policy</summary><div class="inner"><p class="note"><span id="policy-note"></span> Active: <b id="policy-store"></b>.</p><textarea id="policy-text" spellcheck="false" aria-label="Policy JSON"></textarea><div><button class="secondary" id="apply-policy">Apply policy</button><span class="msg" id="policy-msg" role="status"></span></div></div></details>
-    <div id="steps"></div>`;
+    <div id="steps"></div>${next ? `<p class="next-flow"><button class="secondary" data-next="${next.id}">Next flow: ${next.number}. ${esc(next.title)}</button></p>` : ""}`;
   $("#restart").onclick = () => openFlow(id);
   $("#run-rest").onclick = runRemaining;
   $("#apply-policy").onclick = applyPolicy;
@@ -221,13 +247,22 @@ async function runStep(id) {
   const el = $(`[data-step="${id}"]`);
   const btn = el.querySelector("[data-run]");
   btn.disabled = true; btn.textContent = "Running…";
+  el.querySelector(".result").innerHTML = "";
   const inputs = collect(el);
   // A popup has to open from the click itself, so it opens before the authorization URL exists.
   const popup = inputs.mode === "window" ? window.open("about:blank", "smart-imaging-authorize", "width=600,height=800") : null;
   if (inputs.mode === "window" && !popup) inputs.mode = "scripted"; // Popups are blocked, so the scripted path runs.
   if (popup) btn.textContent = "Waiting for you in the other window…";
   let polling = !!popup;
-  (async () => { while (polling) { const p = await api("/api/pending-authorization"); if (p.url) { popup.location = p.url; return; } await new Promise(r => setTimeout(r, 200)); } })();
+  (async () => {
+    let sent = false, closedPolls = 0;
+    while (polling) {
+      if (!sent) { const p = await api("/api/pending-authorization"); if (p.url) { popup.location = p.url; sent = true; } }
+      // Someone closed the window without finishing. Two polls, since the redirect also closes it.
+      else if (popup.closed && ++closedPolls >= 2) { await post("/api/pending-authorization/cancel"); return; }
+      await new Promise(r => setTimeout(r, 250));
+    }
+  })();
   try {
     const r = await post(`/api/flows/${current.id}/steps/${id}`, { inputs });
     polling = false;

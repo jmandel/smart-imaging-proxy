@@ -67,6 +67,12 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     }
     if (p.startsWith("/api/admin/")) return adminApi(stack, req, url, { forgetFlow: () => { session = undefined; } });
     if (p === "/api/pending-authorization") return json({ url: session?.ctx.pendingAuthUrl ?? null });
+    if (p === "/api/pending-authorization/cancel" && req.method === "POST") {
+      const refused = refuseWrite(req, url);
+      if (refused) return refused;
+      session?.ctx.cancelWindow?.("The sign-in window closed before it finished. Run the step again.");
+      return json({ ok: true });
+    }
     if (p === "/api/session") return json({ session: session?.ctx.session ?? null, flow: session?.flowId ?? null, traceUrl: CONFIG.traceUrl });
     if (p === "/api/store") return json(storeStatus());
     if (p === "/api/flow-state") {
@@ -113,7 +119,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     }
     const step = p.match(/^\/api\/flows\/([^/]+)\/steps\/([^/]+)$/);
     if (step && req.method === "POST") {
-      const b: any = await req.json().catch(() => ({}));
+      const b: any = (await req.json().catch(() => undefined)) ?? {};
       if (session && session.flowId !== step[1]) return json({ error: "another flow has started since this page loaded: reload to see it" }, 409);
       if (session?.running) return json({ error: `the step "${session.running}" is still running` }, 409);
       if (session?.completed[step[2]!]) return json({ error: "this step has already run: reload to see its result" }, 409);
@@ -127,7 +133,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         const result = await runStep(s.ctx, s.flow, step[2]!, b.inputs ?? {});
         s.session.completed[step[2]!] = { inputs: b.inputs ?? {}, result };
         return json({ result, steps: stepInfo(s.flow, s.ctx), policy: stack.imaging.getPolicy(), events: stack.proxy.events.slice(-12), store: storeStatus() });
-      } catch (e) { return json({ error: String((e as Error).message ?? e) }, e instanceof StepStopped ? 409 : 500); }
+      } catch (e) { return json({ error: String((e as Error).message ?? e) }, e instanceof StepStopped ? 409 : /^no step /.test((e as Error).message) ? 404 : 500); }
       finally { s.session.running = undefined; }
     }
     return new Response("not found", { status: 404 });

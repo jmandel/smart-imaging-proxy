@@ -8,7 +8,7 @@
 // client sees a short body or a missing final chunk. A client that hangs up cancels the body, and
 // so does one that accepts nothing for `stallSeconds`.
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { LISTEN_HOSTS } from "./config";
+import { FOREIGN_HOST, foreignHost, LISTEN_HOSTS } from "./config";
 
 export interface StreamingServer { port: number; stop(): void; }
 
@@ -16,9 +16,13 @@ async function send(req: IncomingMessage, res: ServerResponse, handler: (req: Re
   req.resume(); // No route here reads a request body.
   let response: Response;
   try {
+    if (foreignHost(req.headers.host, req.socket.localPort ?? 0)) response = FOREIGN_HOST();
+    else if (req.url === "/favicon.ico") response = new Response(null, { status: 204 });
+    else {
     const headers = new Headers();
     for (let i = 0; i + 1 < req.rawHeaders.length; i += 2) headers.append(req.rawHeaders[i]!, req.rawHeaders[i + 1]!);
     response = await handler(new Request(`http://${req.headers.host ?? "localhost"}${req.url}`, { method: req.method, headers }));
+    }
   } catch {
     res.writeHead(500).end();
     return;

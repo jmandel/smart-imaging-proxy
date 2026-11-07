@@ -1,6 +1,7 @@
 (async () => {
   const q = new URLSearchParams(location.search);
   const session = q.get("session"), trace = q.get("trace");
+  if (!session) { document.getElementById("scope").textContent = "Open this page from the HTTP log link on a trace in the live view."; return; }
   document.getElementById("scope").textContent = `Session ${session}${trace ? `, trace ${trace.slice(0, 8)}` : ""}. Both sides of each call appear: the caller's view and the receiver's.`;
   const spans = await (await fetch(`/api/sessions/${encodeURIComponent(session)}/http${trace ? `?trace=${trace}` : ""}`)).json();
   const list = document.getElementById("list"), count = document.getElementById("count");

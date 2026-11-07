@@ -162,8 +162,8 @@ describe("rule sets", () => {
     const { policy } = await ok("POST", "/api/admin/rule-set", { id: "outside-release" });
     const ct = stack.catalog.allStudies().find(s => s.id === "ct-abdomen-pelvis-2012")!;
     const series = stack.catalog.hierarchies([ct.pk]).get(ct.pk)!.series;
-    expect(policy.rules[0].withholdSeries.sort()).toEqual(series.filter(x => /Clinical Documents|Dose Report/.test(x.description ?? "")).map(x => x.uid).sort());
-    expect(policy.rules[0].withholdSeries.length).toBe(2);
+    expect(policy.rules[0].withholdSeries.sort()).toEqual(series.filter(x => /Clinical Documents|Dose (Report|Record)/.test(x.description ?? "")).map(x => x.uid).sort());
+    expect(policy.rules[0].withholdSeries.length).toBe(3);
   });
   test("the referral set releases the hand and wrist X-rays and nothing else, to that client alone", async () => {
     await ok("POST", "/api/admin/rule-set", { id: "hand-wrist-referral" });

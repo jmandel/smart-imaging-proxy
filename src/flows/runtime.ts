@@ -201,8 +201,9 @@ export class Ctx {
     last.body = summarizeBundle(r.body, id => this.siteOf(id));
     const studies: Record<string, { uid: string; base: string; resource: any; claims: any }> = {};
     if (r.status === 200) {
-      const byUrl = new Map(r.body.entry.filter((e: any) => e.resource.resourceType === "Endpoint").map((e: any) => [e.fullUrl, e.resource]));
-      for (const e of r.body.entry) if (e.resource.resourceType === "ImagingStudy" && e.resource.endpoint) {
+      const entries = r.body.entry ?? [];
+      const byUrl = new Map(entries.filter((e: any) => e.resource.resourceType === "Endpoint").map((e: any) => [e.fullUrl, e.resource]));
+      for (const e of entries) if (e.resource.resourceType === "ImagingStudy" && e.resource.endpoint) {
         const ep: any = byUrl.get(e.resource.endpoint[0].reference);
         const uid = e.resource.identifier[0].value.replace("urn:oid:", "");
         const ctx = ep.address.split("/wado/")[1];
@@ -277,7 +278,7 @@ export function summarizeBundle(b: any, siteOf: (id: string) => string | undefin
   if (b?.resourceType !== "Bundle") return b;
   return {
     resourceType: "Bundle", total: b.total,
-    studies: b.entry.filter((e: any) => e.resource.resourceType === "ImagingStudy").map((e: any) => ({
+    studies: (b.entry ?? []).filter((e: any) => e.resource.resourceType === "ImagingStudy").map((e: any) => ({
       id: e.resource.id, site: siteOf(e.resource.id), modality: (e.resource.modality ?? []).map((m: any) => m.code).join(","), numberOfSeries: e.resource.numberOfSeries, numberOfInstances: e.resource.numberOfInstances,
       endpointAddress: shortUrl((b.entry.find((x: any) => x.fullUrl === e.resource.endpoint?.[0].reference)?.resource.address ?? "") + "/").replace(/\/$/, ""),
     })),

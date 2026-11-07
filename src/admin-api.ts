@@ -6,7 +6,7 @@ import type { BackendName, Stack } from "./stack";
 import { PolicyValidationError, type Settings } from "./policy-store";
 import { matchRuleSet, RULE_SETS, ruleSetById } from "./rule-presets";
 import { advance, clockOffset, now, resetClock } from "./clock";
-import { PORTS, TAILNET } from "./config";
+import { ownHosts, PORTS } from "./config";
 
 export const BACKEND_NAMES: BackendName[] = ["static-files", "minio", "orthanc"];
 
@@ -32,7 +32,7 @@ export const extraField = (b: Record<string, unknown>, allowed: string[]) =>
   Object.keys(b).some(k => !allowed.includes(k)) ? `this request accepts only ${allowed.join(", ")}` : undefined;
 /** The message for a request with a body, when it takes none. */
 const unwantedBody = async (req: Request) => ["", "{}"].includes((await req.text()).trim()) ? undefined : "this action takes no input";
-export const ownHosts = (port: number, tailnet = TAILNET) => [`127.0.0.1:${port}`, `localhost:${port}`, ...(tailnet ? [`${tailnet.name}:${port}`, `${tailnet.ip}:${port}`] : [])];
+export { ownHosts };
 /**
  * A DNS rebinding page reaches a service under its own host name, so a Host header has to be the
  * service's. A browser always sends Host, so a request with none isn't such a page.

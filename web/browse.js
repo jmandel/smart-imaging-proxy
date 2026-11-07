@@ -21,6 +21,12 @@ const shortBytes = v => {
 let options, view = null, shown = "", timer, popup, popupSent = false, closedPolls = 0, wantFocus = false, pageError = "", backendSet = false, optionsOpen = false;
 const choices = { mode: "scripted", app: "portal-app", count: 5, patient: "josh-example", records: {} };
 
+/** A control can be gone or disabled after a re-render, and focus then goes to the results, never to the page. */
+function keepFocus(fid) {
+  const el = $(`[data-fid="${fid}"]`);
+  if (el && !el.disabled) el.focus(); else $("#h-results").focus({ preventScroll: true });
+}
+
 function showStore(store) {
   const b = $("#store-badge");
   b.textContent = store.label;
@@ -50,7 +56,7 @@ function renderPick() {
     <h3>Backend clients, which request a token</h3>
     <label class="field clients-for">Searching for <select id="patient">${options.patients.map(p => `<option value="${esc(p.id)}" ${choices.patient === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>
     <ul class="who-list">${options.clients.map(client).join("")}</ul>`;
-  if (focused) $(`[data-fid="${focused}"]`)?.focus();
+  if (focused) keepFocus(focused);
 }
 
 async function loadOptions() {
@@ -123,7 +129,7 @@ function render() {
     const focused = document.activeElement?.dataset?.fid;
     $("#result").innerHTML = (pageError ? `<p class="error" role="alert">${esc(pageError)}</p>` : "") + (view ? renderView() : EMPTY);
     if (options) renderPick();
-    if (focused) $(`[data-fid="${focused}"]`)?.focus();
+    if (focused) keepFocus(focused);
     if (view && !view.running) {
       say(view.headline ?? "Done.");
       if (wantFocus) { wantFocus = false; $("#h-results").focus({ preventScroll: true }); if (innerWidth <= 900) $("#results").scrollIntoView(); }
@@ -233,7 +239,8 @@ function renderRetrievals() {
     const html = mine.map(renderRetrieval).join("");
     if (slot.dataset.html !== html) { slot.innerHTML = html; slot.dataset.html = html; }
   }
-  for (const b of document.querySelectorAll("[data-retrieve]")) b.disabled = !!v.retrieving;
+  // aria-disabled, since a disabled button would lose keyboard focus while the retrieval runs.
+  for (const b of document.querySelectorAll("[data-retrieve]")) b.setAttribute("aria-disabled", String(!!v.retrieving));
 }
 function renderRetrieval(r) {
   const label = r.mode === "zstd" ? "With zstd" : "Without zstd";
@@ -262,16 +269,16 @@ const ticked = id => [...document.querySelectorAll(`#${id} input:checked`)].map(
 
 document.addEventListener("click", async e => {
   const t = e.target.closest("button");
-  if (!t || t.disabled) return;
+  if (!t || t.disabled || t.getAttribute("aria-disabled") === "true") return;
   try {
     if (t.dataset.user) startUser(t.dataset.user);
     else if (t.dataset.client) startClient(t.dataset.client);
     else if (t.dataset.share) { const d = t.dataset.share; startUser(d, { share: { delegate: d, sites: ticked("share-sites") } }); }
     else if (t.id === "again") again();
     else if (t.id === "narrow") again({ sites: ticked("app-sites") });
-    else if (t.id === "cancel") { popup?.close(); popup = null; apply(await call("POST", "/cancel", {})); }
+    else if (t.id === "cancel") { popup?.close(); popup = null; apply(await call("POST", "/cancel", { stopped: true })); }
     else if (t.dataset.to) {
-      document.querySelectorAll("[data-to]").forEach(b => { b.disabled = true; });
+      document.querySelectorAll("[data-to]").forEach(b => { b.setAttribute("aria-disabled", "true"); });
       apply(await call("POST", "/page", { to: t.dataset.to }));
     } else if (t.dataset.retrieve) {
       apply(await call("POST", "/retrieve", { study: t.dataset.retrieve, zstd: t.dataset.zstd === "1" }));

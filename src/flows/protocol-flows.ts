@@ -46,7 +46,7 @@ export const protocolFlows: Flow[] = [
     ],
   },
   {
-    id: "viewer", number: 8, group: "protocol", title: "Viewer",
+    id: "viewer", number: 8, group: "protocol", title: "Handing a URL to a viewer",
     summary: "A viewer inside the app uses the app's token. A separate client needs its own authorization.",
     shows: "The Endpoint URL can be handed around safely, because it isn't a credential.",
     steps: [
@@ -96,7 +96,7 @@ export const protocolFlows: Flow[] = [
     ],
   },
   {
-    id: "attacks", number: 10, group: "protocol", title: "Attacks",
+    id: "attacks", number: 10, group: "protocol", title: "Attempts to get around the checks",
     summary: "Attempts to get around the URL and token checks.",
     shows: "Griffin's warning about treating URLs as secrets: the URL alone never grants anything.",
     setup: c => { c.setRules([{ id: "wrist-only", description: "This app may see only the left wrist", when: { client: "portal-app", user: "josh" }, allow: { studies: [WRIST] } }]); },
@@ -145,7 +145,7 @@ export const protocolFlows: Flow[] = [
     ],
   },
   {
-    id: "transfer-syntax", number: 11, group: "protocol", title: "Transfer syntax",
+    id: "transfer-syntax", number: 11, group: "protocol", title: "Asking for image formats",
     summary: "What the guide says each Accept should produce, and what the backend does underneath.",
     shows: "Griffin's points: clients needn't send *, 406 is real, parts are labeled, private syntaxes stay hidden, and lossy data is the exception.",
     steps: [
@@ -207,7 +207,7 @@ export const protocolFlows: Flow[] = [
     ],
   },
   {
-    id: "truncation", number: 12, group: "protocol", title: "Truncated upstream",
+    id: "truncation", number: 12, group: "protocol", title: "A backend stops partway",
     summary: "The backend stops partway through a study. The client has to be able to tell.",
     shows: "Research found Orthanc and dcm4chee end cleanly with no closing boundary, so a byte-copying proxy makes a broken study look complete.",
     steps: [
@@ -233,7 +233,7 @@ export const protocolFlows: Flow[] = [
     ],
   },
   {
-    id: "metadata", number: 13, group: "protocol", title: "Metadata",
+    id: "metadata", number: 13, group: "protocol", title: "Metadata links through the proxy",
     summary: "WADO-RS metadata can expose internal hostnames, and its bulk data links have to work through the proxy.",
     shows: "Research found Orthanc and dcm4chee return absolute internal URLs. No static setting can add the per-request signed prefix.",
     steps: [

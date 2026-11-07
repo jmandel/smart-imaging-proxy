@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { startStack, type Stack } from "../src/stack";
 import { registerClients } from "../src/flows";
 import { createDemoServer } from "../src/demo-server";
-import { accountUrl, buildAuthorization, submitDelegation } from "../src/flows/oauth";
+import { accountUrl, buildAuthorization, scriptedLaunch, submitDelegation } from "../src/flows/oauth";
 import { CONFIG, PORTS } from "../src/config";
 import { ownHosts } from "../src/admin-api";
 import { createCollector } from "../src/trace-collector";
@@ -152,4 +152,27 @@ test("the pages' fonts are served locally, by the demo and by the trace viewer",
     expect(r.status).toBe(200);
     expect(new Uint8Array(await r.arrayBuffer()).slice(0, 4)).toEqual(new Uint8Array([0x77, 0x4f, 0x46, 0x32]));
   }
+});
+
+test("every service refuses another host name, and a Host that doesn't parse gets no 500", async () => {
+  for (const base of [CONFIG.authUrl, CONFIG.imagingUrl, CONFIG.proxyUrl]) for (const host of ["evil.example", "127.0.0.1:99999", "127.0.0.1:1.evil.example"]) {
+    expect([base, host, (await fetch(`${base}/account`, { headers: { host } })).status]).toEqual([base, host, 403]);
+  }
+  expect((await fetch(`${CONFIG.imagingUrl}/.well-known/authzen-configuration`, { headers: { host: "evil.example" } })).status).toBe(403);
+  expect((await fetch(`${CONFIG.proxyUrl}/favicon.ico`)).status).toBe(204);
+});
+
+test("the Bearer scheme is case-insensitive on the Clinical FHIR Server, and an empty search has no empty entry array", async () => {
+  const { access_token: token } = await scriptedLaunch("josh");
+  for (const scheme of ["Bearer", "bearer", "BEARER"]) expect((await fetch(`${CONFIG.authUrl}/fhir/Patient/josh-example`, { headers: { Authorization: `${scheme} ${token}` } })).status).toBe(200);
+  const empty: any = await (await fetch(`${CONFIG.imagingUrl}/fhir/ImagingStudy?patient=josh-example&identifier=nothing`, { headers: { Authorization: `Bearer ${token}` } })).json();
+  expect(empty.total).toBe(0);
+  expect("entry" in empty).toBe(false);
+});
+
+test("a malformed step request isn't a server error", async () => {
+  const step = (name: string, body: string) => fetch(`http://127.0.0.1:${PORTS.demo}/api/flows/patient-sites/steps/${name}`, { method: "POST", headers: { "content-type": "application/json" }, body });
+  expect((await step("constructor", "{}")).status).toBe(404);
+  const nulled = await step("consent", "null");
+  expect(nulled.status).toBeLessThan(500);
 });

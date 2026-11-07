@@ -259,7 +259,7 @@ describe("Account picker", () => {
     expect(r.status).toBe(200);
     const b: any = await r.json();
     expect(b.total).toBe(0);
-    expect(b.entry).toEqual([]);
+    expect(b.entry).toBeUndefined();
   });
   test("Robin can't reach Josh's studies, by search or by retrieval", async () => {
     stack.resetAll();

@@ -129,7 +129,7 @@ function rawClient(port: number, ctx = context(), headers: Record<string, string
   const received: Uint8Array[] = [];
   const state = { bytes: 0, ended: false, error: undefined as string | undefined, head: "" };
   let headRest: Buffer | undefined = Buffer.alloc(0);
-  s.on("connect", () => s.write(`GET /wado/${ctx}/studies/${STUDY} HTTP/1.1\r\nHost: proxy\r\nConnection: close\r\nAuthorization: Bearer ${TOKEN}\r\nAccept: ${ACCEPT}\r\n${Object.entries(headers).map(([k, v]) => `${k}: ${v}\r\n`).join("")}\r\n`));
+  s.on("connect", () => s.write(`GET /wado/${ctx}/studies/${STUDY} HTTP/1.1\r\nHost: 127.0.0.1:${s.remotePort}\r\nConnection: close\r\nAuthorization: Bearer ${TOKEN}\r\nAccept: ${ACCEPT}\r\n${Object.entries(headers).map(([k, v]) => `${k}: ${v}\r\n`).join("")}\r\n`));
   s.on("data", d => {
     state.bytes += d.length;
     if (headRest) {
