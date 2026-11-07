@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "scripts": {
-    "up": "bun scripts/up.ts",
+    "up": "bun install --frozen-lockfile && bun scripts/up.ts",
     "down": "bun scripts/down.ts",
     "fetch-data": "bun scripts/fetch-data.ts",
     "generate-synthetic": "bun scripts/generate-synthetic.ts",
