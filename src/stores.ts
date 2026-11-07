@@ -3,6 +3,7 @@
 // attributes, such as birth dates, which policy by age reads.
 import { DURABILITIES, PolicyStore, validateDocument, validateSetting, type Durability, type OnFile, type OrgPolicy, type PatientAttributes, type PolicyDocument, type Relationship, type Settings, type StoreConfig } from "@smart-imaging-proxy/core";
 import { DEFAULT_POLICY_DB } from "./config";
+import { USERS } from "./auth-server";
 import people from "../data/patient.json";
 
 type Person = { id: string; birthDate?: string; guardians?: { account: string }[] };
@@ -52,6 +53,8 @@ export function storeConfigFromEnv(env: Record<string, string | undefined> = pro
   return { mode, path: env.POLICY_DB || DEFAULT_POLICY_DB, durability: durability as Durability };
 }
 
+/** Which patient each demo account is, so a choice made as the patient can rest on that. */
+export const accountPatient = (user: string) => USERS[user]?.patient;
 /** The root's store: the one real policy database, or memory with no configuration. */
 export const openRootStore = (config: StoreConfig = { mode: "memory" }) =>
-  new PolicyStore({ onFile: ON_FILE, ...config, ...(config.mode === "file" ? { path: config.path ?? DEFAULT_POLICY_DB } : {}) });
+  new PolicyStore({ onFile: ON_FILE, patientOf: accountPatient, ...config, ...(config.mode === "file" ? { path: config.path ?? DEFAULT_POLICY_DB } : {}) });

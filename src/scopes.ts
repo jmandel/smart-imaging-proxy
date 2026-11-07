@@ -8,7 +8,7 @@
 import { randomBytes } from "node:crypto";
 import { deflateRawSync, inflateRawSync } from "node:zlib";
 import { PolicyStore } from "@smart-imaging-proxy/core";
-import { ON_FILE, splitPanel, type Panel } from "./stores";
+import { accountPatient, ON_FILE, splitPanel, type Panel } from "./stores";
 import { createDemoClock } from "./clock";
 import { createWorld, type Shared, type World } from "./world";
 
@@ -49,7 +49,7 @@ export function createScopes(shared: Shared, opts: { idleMs?: number; max?: numb
   const sweep = () => { const cutoff = Date.now() - idleMs; for (const pool of [minted, seeded]) for (const [id, e] of pool.live) if (e.usedAt < cutoff) evict(id); };
   function add(id: string, seed?: Seed) {
     // What a seed names is its world's on file, so a reset there puts the seed back.
-    const store = new PolicyStore({ mode: "memory", onFile: { relationships: seed?.relationships ?? ON_FILE.relationships, policies: seed?.policies ?? ON_FILE.policies } });
+    const store = new PolicyStore({ mode: "memory", onFile: { relationships: seed?.relationships ?? ON_FILE.relationships, policies: seed?.policies ?? ON_FILE.policies }, patientOf: accountPatient });
     if (seed) {
       const { document, settings } = splitPanel(seed);
       if (document.shares || document.approvals) store.setDocument({ ...(document.shares ? { shares: document.shares } : {}), ...(document.approvals ? { approvals: document.approvals } : {}) });

@@ -18,6 +18,8 @@ import type { World } from "../src/world";
 
 const root = join(import.meta.dir, "..");
 const ACCEPT = "multipart/related; type=application/dicom; transfer-syntax=*";
+/** A relationship as a fact, without the ids and times its world gave it. */
+const fact = ({ id: _, recordedAt: __, ...r }: any) => r;
 const RULE = { id: "r1", type: "service-access" as const, service: "service:c", patients: "any" as const, allow: { all: true } };
 const services = (store: { policiesOf(type: "service-access"): unknown[] }) => store.policiesOf("service-access");
 let stack: Stack; let demo: Bun.Server;
@@ -220,7 +222,7 @@ describe("inline seeds", () => {
     const w = (first as { world: World }).world;
     expect(services(w.store)).toEqual([RULE]);
     expect(w.store.getSettings().contextLifetimeSeconds).toBe(120);
-    expect(w.store.relationships()).toEqual(stack.store.relationships());
+    expect(w.store.relationships().map(fact)).toEqual(stack.store.relationships().map(fact));
     expect(w.store.policies()).toEqual([RULE]);
     // Over HTTP, the same world.
     const conf: any = await (await get(`${w.urls.clinicalFhir}/.well-known/smart-configuration`)).json();
@@ -236,13 +238,13 @@ describe("inline seeds", () => {
     const w = (stack.scopes.resolve(encodeSeed({ relationships: [], shares: [share] })) as { world: World }).world;
     expect(w.store.relationships()).toEqual([]);
     expect(w.store.policies()).toEqual(stack.store.policies());
-    expect(w.store.shares()).toEqual([share]);
+    expect(w.store.shares()).toMatchObject([{ ...share, basis: "self" }]);
     // A reset there puts the seed's facts back, and clears its choices.
     w.store.putRelationship({ subject: "user:sam-caregiver", relation: "guardian_of", object: "patient:riley-example" });
     w.store.resetPolicy();
     expect([w.store.relationships(), w.store.shares()]).toEqual([[], []]);
     const g = (stack.scopes.resolve(encodeSeed({ policies: [] })) as { world: World }).world;
-    expect([g.store.policies(), g.store.relationships()]).toEqual([[], stack.store.relationships()]);
+    expect([g.store.policies(), g.store.relationships().map(fact)]).toEqual([[], stack.store.relationships().map(fact)]);
   });
   test("a seed that isn't a valid policy, or is too large, gets a 400 naming why", async () => {
     const raw = (doc: unknown) => `~${deflateRawSync(Buffer.from(JSON.stringify(doc))).toString("base64url")}`;

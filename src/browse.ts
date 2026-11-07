@@ -270,7 +270,9 @@ export function createBrowse(world: World, clients: Record<string, BackendClient
       // With no route at all, the reason is the route's, which names no study.
       if (who) {
         const reached = new Set(reachedBy(who, patient));
-        const noRoute = !model.hasRoute(world.store.patientSnapshot(ref("patient", patient)), ref("user", who), ref("patient", patient)) && x.studies[0] ? x.studies[0].why : undefined;
+        const snap = world.store.patientSnapshot(ref("patient", patient)), me = ref("user", who);
+        const anyRow = USERS[who]?.patient === patient || snap.relationships.some(r => r.subject === me) || snap.shares.some(sh => sh.with === me);
+        const noRoute = !anyRow && x.studies[0] ? x.studies[0].why : undefined;
         x.studies = x.studies.filter((row: any) => reached.has(row.id));
         x.noRoute = noRoute;
       }

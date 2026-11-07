@@ -117,7 +117,7 @@ describe("the guardian", () => {
     await launchFor("riley-example");
     const res = await demo.fetch(new Request(`${CONFIG.demoUrl}/api/admin/store/reset-saved`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host, "content-type": "application/json" }, body: JSON.stringify({ confirm: true }) }));
     const status: any = await res.json();
-    expect(status.policy.relationships).toEqual([riley]);
+    expect(status.policy.relationships).toMatchObject([riley]);
     expect(status.policy.policies).toEqual(ON_FILE.policies);
     expect(status.policy.shares).toEqual([]);
     expect(status.policy.approvals).toEqual([]);
@@ -125,8 +125,8 @@ describe("the guardian", () => {
     expect((await search((await launchFor("riley-example")).access_token, "riley-example")).ids).toEqual(RILEY);
     await stack.resetSaved();
     await stack.resetAll();
-    expect(stack.scopes.mint().store.relationships()).toEqual([riley]);
-    expect(stack.store.relationships()).toEqual([riley]);
+    expect(stack.scopes.mint().store.relationships()).toMatchObject([riley]);
+    expect(stack.store.relationships()).toMatchObject([riley]);
   }, 60000);
   test("is a fact that grants through policy: taking away either ends Sam's access at once, and a reset puts both back", async () => {
     const t = await launchFor("riley-example");
@@ -181,10 +181,11 @@ describe("the guardian", () => {
     expect((await accountPage(SAM_ACCOUNT)).html).not.toContain("Northside Pathology");
     expect((await accountPage("alex-neighbor")).html).not.toContain("Northside Pathology");
   }, 60000);
-  test("only the patient or a guardian can share, however a row is written", async () => {
-    for (const from of ["alex-neighbor", "SAM-CAREGIVER", "riley-example", "josh"]) {
-      stack.store.setDocument({ shares: [share(from, ["Northside Pathology", "Lakeside Imaging"], "robin")] });
-      expect([from, (await launchFor("riley-example", "robin")).error]).toEqual([from, "access_denied"]);
+  test("only the patient or a guardian can share, however a row is written: a share with no route under it is refused", async () => {
+    const samsRelationship = stack.store.relationships()[0]!.id!;
+    for (const [from, basis] of [["alex-neighbor", undefined], ["SAM-CAREGIVER", undefined], ["riley-example", undefined], ["josh", undefined], ["alex-neighbor", "self"], ["alex-neighbor", samsRelationship]] as const) {
+      expect(() => stack.store.setDocument({ shares: [{ ...share(from, ["Northside Pathology", "Lakeside Imaging"], "robin"), ...(basis ? { basis } : {}) }] })).toThrow("route");
+      expect([from, stack.store.shares(), (await launchFor("riley-example", "robin")).error]).toEqual([from, [], "access_denied"]);
     }
     stack.store.setDocument({ shares: [share(SAM_ACCOUNT, ["Northside Pathology", "Lakeside Imaging"], "robin")] });
     const t = await launchFor("riley-example", "robin");
@@ -199,10 +200,13 @@ describe("the guardian", () => {
     expect(stack.store.shares()).toEqual([]);
   }, 30000);
   test("pages don't name a confidential study's site, from an approval or a row that grants nothing", async () => {
-    stack.store.setDocument({ shares: [], approvals: [{ by: "user:alex-neighbor", app: "app:portal-app", patient: "patient:riley-example", sites: ["Northside Pathology"] }] });
+    // An approval with no route under it can't be written at all.
+    expect(() => stack.store.setDocument({ shares: [], approvals: [{ by: "user:alex-neighbor", app: "app:portal-app", patient: "patient:riley-example", sites: ["Northside Pathology"] }] })).toThrow("route");
     const page = (await accountPage("alex-neighbor")).html;
     expect(page).not.toContain("Northside Pathology");
     stack.store.setDocument({ shares: [share(SAM_ACCOUNT, ["Lakeside Imaging"])] });
+    // With Sam's share under it, an approval naming only the confidential study's site can be written, and shows as no sites.
+    stack.store.putApproval({ by: "user:alex-neighbor", app: "app:portal-app", patient: "patient:riley-example", sites: ["Northside Pathology"] });
     expect((await accountPage("alex-neighbor")).html).not.toContain("Northside Pathology");
     expect((await accountPage("alex-neighbor")).html).toContain("no sites");
   }, 30000);
@@ -224,7 +228,7 @@ describe("the guardian", () => {
     await stack.policy.removeRelationship(GUARDIANS_ON_FILE[0]!);
     const r = await submitDelegation(accountUrl(SAM_ACCOUNT), { user: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"], patient: "riley-example" });
     expect(r.status).toBe(403);
-    stack.store.putShare({ from: `user:${SAM_ACCOUNT}`, with: "user:alex-neighbor", patient: "patient:riley-example", sites: ["Lakeside Imaging"], label: "neighbor" });
+    expect(() => stack.store.putShare({ from: `user:${SAM_ACCOUNT}`, with: "user:alex-neighbor", patient: "patient:riley-example", sites: ["Lakeside Imaging"], label: "neighbor" })).toThrow("route");
     expect((await launchFor("riley-example", "alex-neighbor")).error).toBe("access_denied");
   });
   test("Orthanc serves the bulk links its metadata lists, nested ones too, and only those", async () => {
@@ -260,7 +264,7 @@ describe("the guardian", () => {
     const s = new PolicyStore({ mode: "memory", onFile: ON_FILE });
     const { revision, ...doc } = s.snapshot();
     s.setDocument(doc);
-    expect(s.relationships()).toEqual([riley]);
+    expect(s.relationships()).toMatchObject([riley]);
     expect(() => s.setDocument({ relationships: [{ subject: "riley-example" } as any] })).toThrow("relationships[0].subject");
     expect(() => s.setDocument({ relationships: [riley, riley] })).toThrow("duplicate");
     s.close();
@@ -270,7 +274,7 @@ describe("the guardian", () => {
     expect(html).toContain("Riley Example</b>: you're their guardian, on file with the Imaging Server");
     expect(html).toContain("Sam Example</b>: your own records");
     const admin: any = await (await demo.fetch(new Request(`${CONFIG.demoUrl}/api/admin/status`, { headers: { host: new URL(CONFIG.demoUrl).host } }))).json();
-    expect(admin.policy.relationships).toEqual([riley]);
+    expect(admin.policy.relationships).toMatchObject([riley]);
     expect(await Bun.file(join(root, "web/admin.js")).text()).toContain("Facts: relationships on file");
   });
   test("its chain reads plainly, in the Imaging Server's view", async () => {
@@ -283,7 +287,7 @@ describe("each link only narrows", () => {
   test("Sam shares part of their own record, and Alex's app gets no more than that", async () => {
     await submitDelegation(accountUrl(SAM_ACCOUNT), { user: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging", "Northside Pathology"], patient: "sam-example" });
     // Sam has nothing at Northside, so it isn't recorded.
-    expect(stack.store.shares()).toEqual([{ from: `user:${SAM_ACCOUNT}`, with: "user:alex-neighbor", patient: "patient:sam-example", sites: ["Lakeside Imaging"], label: "neighbor" }]);
+    expect(stack.store.shares()).toMatchObject([{ from: `user:${SAM_ACCOUNT}`, with: "user:alex-neighbor", patient: "patient:sam-example", sites: ["Lakeside Imaging"], label: "neighbor", basis: "self" }]);
     const wide = await launchFor("sam-example", "alex-neighbor", { sites: ["Lakeside Imaging", "Riverside Hospital"] });
     expect((await search(wide.access_token, "sam-example")).ids).toEqual(["syn-sam-ct-sinus-2024"]);
     expect(stack.store.approvals()[0]!.sites).toEqual(["Lakeside Imaging"]);
@@ -345,7 +349,7 @@ describe("choosing on the Authorization Server's pages", () => {
     form.append("sites@sam-example", "Lakeside Imaging");
     const r = await fetch(decision, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: form.toString(), redirect: "manual" });
     expect(new URL(r.headers.get("location")!).searchParams.get("code")).toBeTruthy();
-    expect(stack.store.approvals()).toEqual([{ by: `user:${SAM_ACCOUNT}`, app: "app:portal-app", patient: "patient:riley-example", sites: ["Lakeside Imaging"] }]);
+    expect(stack.store.approvals()).toMatchObject([{ by: `user:${SAM_ACCOUNT}`, app: "app:portal-app", patient: "patient:riley-example", sites: ["Lakeside Imaging"], basis: [stack.store.relationships()[0]!.id] }]);
   });
   test("a person holding one record sees the plain form", async () => {
     const html = (await accountPage("josh")).html;

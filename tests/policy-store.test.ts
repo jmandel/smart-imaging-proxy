@@ -60,7 +60,7 @@ describe("the root and scopes", () => {
       expect(c.world.store.policiesOf("service-access")).toEqual([]);
       expect(c.world.store.shares()).toEqual([]);
       expect(c.world.store.getSettings().contextLifetimeSeconds).toBe(300);
-      expect(c.world.store.relationships()).toEqual(stack.store.relationships());
+      expect(c.world.store.relationships().map(({ id: _, recordedAt: __, ...r }) => r)).toEqual(stack.store.relationships().map(({ id: _, recordedAt: __, ...r }) => r));
       for (const s of flow.steps) {
         const r = await runStep(c, flow, s.id, defaultsFor(c, flow, s.id));
         expect(r.checks.filter(k => !k.ok)).toEqual([]);

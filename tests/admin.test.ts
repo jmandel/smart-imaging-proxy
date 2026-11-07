@@ -107,7 +107,9 @@ describe("flows and saved policy, over HTTP", () => {
     expect(started.scope.base).toBe(`/s/${started.scope.id}`);
     expect(services(started.policy)).toEqual([]);
     expect(started.policy.shares).toEqual([]);
-    expect(started.policy.relationships).toEqual(stack.store.relationships());
+    // The same facts on file; each world gives its rows its own ids.
+    const fact = ({ id: _, recordedAt: __, ...r }: any) => r;
+    expect(started.policy.relationships.map(fact)).toEqual(stack.store.relationships().map(fact));
     expect(started.policy.policies).toEqual(stack.store.policiesOf("guardian-access").concat(stack.store.policiesOf("sharing") as any));
     expect(services(await ok("GET", "/api/policy"))).toEqual([RULE]);
     expect(services(await ok("GET", `${started.scope.base}/api/policy`))).toEqual([]);
