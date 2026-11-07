@@ -1,4 +1,4 @@
-// The full activity: recorded events as cards, filtered by scope, person, kind and outcome, and by the
+// The full activity: recorded events as cards, newest first, filtered by scope, person, kind and outcome, and by the
 // session or a linked value an action or a card points here with.
 const FILTERS = ["scope", "who", "kind", "outcome"];
 const LABELS = { scope: "Scope", who: "Person or service", kind: "Kind", outcome: "Outcome" };
@@ -14,7 +14,8 @@ async function load() {
   const word = (f, v) => f === "kind" ? KIND_WORDS[v] ?? v : f === "who" ? names[v] ?? v : f === "scope" ? v : v;
   $("#filters").innerHTML = FILTERS.filter(f => f !== "scope" || facets.scope.length).map(f => `<label>${esc(LABELS[f])}<select name="${f}"><option value="">Any</option>${f === "scope" ? `<option value="-" ${q.get(f) === "-" ? "selected" : ""}>Saved policy</option>` : ""}${facets[f].map(v => `<option value="${esc(v)}" ${q.get(f) === v ? "selected" : ""}>${esc(word(f, v))}</option>`).join("")}</select></label>`).join("")
     + `<div class="chosen">${["session", "link", "trace"].filter(k => q.get(k)).map(k => `<span class="tag">${esc(k === "session" ? "One session" : k === "link" ? q.get(k) : "One step")}</span>`).join("")}${["session", "link", "trace"].some(k => q.get(k)) ? `<a href="${esc(`${BASE}/activity`)}">Show everything</a>` : ""}</div>`;
-  $("#events").innerHTML = Cards.list(r.events, "Nothing matches these filters yet.");
+  // Newest first.
+  $("#events").innerHTML = Cards.list([...r.events].reverse(), "Nothing matches these filters yet.");
   Cards.wire($("#events"));
   announce(`${plural(r.events.length, "event")}`);
 }

@@ -18,7 +18,7 @@
     "viewer-kit": "bun scripts/viewer-kit.ts",
     "start": "bun src/main.ts",
     "test": "bun test",
-    "test:ui": "DEMO_PORT_OFFSET=3000 bun test ./e2e/browser.e2e.ts"
+    "test:ui": "DEMO_PORT_OFFSET=${DEMO_PORT_OFFSET:-3000} bun test ./e2e/browser.e2e.ts"
   },
   "devDependencies": {
     "playwright-core": "^1.65.0"

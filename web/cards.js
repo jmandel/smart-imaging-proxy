@@ -26,8 +26,27 @@ const Cards = (() => {
     "stream.done": e => ({ summary: `${plural(e.data.parts, "part")} streamed, ${bytes(e.data.bytes)}${e.data.encoding === "zstd" ? ", zstd passed through" : ""}${e.data.complete ? "" : ", cut off"}`,
       fields: [["What", e.data.resource], ["Decided", e.data.authz], ["Syntaxes", (e.data.syntaxes ?? []).join(", ")], ["Note", e.data.note]] }),
     "retrieval.answered": e => ({ summary: `Retrieval answered ${e.data.status}`, fields: [["What", e.data.resource], ["Decided", e.data.authz], ["Denial", e.data.denial], ["Note", e.data.note]] }),
-    "policy.written": e => ({ summary: `Policy ${e.data.status < 300 ? "written" : "refused"}: ${e.data.operation}`, fields: [["Level", e.data.level], ["Patient", e.data.patient], ["Why", e.data.error], ["Change", e.data.body !== undefined && JSON.stringify(e.data.body)], ["Query", e.data.query && new URLSearchParams(e.data.query).toString()]] }),
+    "policy.written": e => { const w = written(e.data); return { summary: `${e.data.status < 300 ? "" : "Refused: "}${w.what}`, fields: [["Who", w.who], ["Sites", w.sites], ["Patient", e.data.patient && nameOf(`patient:${e.data.patient}`)], ["Level", LEVEL_WORDS[e.data.level] ?? e.data.level], ["Why", e.data.error], ["Call", e.data.operation]], raw: e.data.body ?? e.data.query }; },
   };
+  const LEVEL_WORDS = { fact: "A fact", policy: "Organization policy", choice: "A person's choice", settings: "Settings", document: "The whole document", reset: "A reset" };
+  const sitesOf = sites => Array.isArray(sites) ? (sites.length ? sites.join(", ") : "no sites") : undefined;
+  /** A policy write in words: who did what, and at which sites. */
+  function written(d) {
+    const b = d.body ?? {}, q = d.query ?? {}, op = d.operation ?? "";
+    const whose = p => p ? `${nameOf(p)}'s records` : "records";
+    if (op === "POST /shares") return { who: nameOf(b.from), what: `${nameOf(b.from)} shares ${whose(b.patient)} with ${nameOf(b.with)}${b.label ? `, as ${b.label}` : ""}`, sites: sitesOf(b.sites) };
+    if (op === "DELETE /shares") return { who: q.from ? nameOf(q.from) : undefined, what: `${q.from ? nameOf(q.from) : "Everyone"} stops sharing ${q.patient ? `${whose(q.patient)} ` : ""}with ${nameOf(q.with)}` };
+    if (op === "POST /app-approvals") return { who: nameOf(b.by), what: `${nameOf(b.by)} approves ${nameOf(b.app)} for ${whose(b.patient)}`, sites: b.sites ? sitesOf(b.sites) : "Every site, or the sites chosen before" };
+    if (op === "DELETE /app-approvals") return { who: nameOf(q.by), what: `${nameOf(q.by)} revokes ${nameOf(q.app)}${q.patient ? ` for ${whose(q.patient)}` : ""}` };
+    if (op === "PUT /relationships") return { what: `Recorded: ${nameOf(b.subject)} ${String(b.relation ?? "").replaceAll("_", " ")} ${nameOf(b.object)}` };
+    if (op === "DELETE /relationships") return { what: `Removed: ${nameOf(q.subject)} ${String(q.relation ?? "").replaceAll("_", " ")} ${nameOf(q.object)}` };
+    if (op.startsWith("PUT /policies")) return { what: Array.isArray(b) ? `Organization policies of type ${q.type ?? "?"} set: ${b.map(x => x.id).join(", ") || "none"}` : `Organization policy ${b.id ?? op.slice("PUT /policies/".length)} set`, sites: sitesOf(b.allow?.sites) };
+    if (op.startsWith("DELETE /policies/")) return { what: `Organization policy ${op.slice("DELETE /policies/".length)} removed` };
+    if (op === "PATCH /settings") return { what: `Settings changed: ${Object.keys(b).join(", ")}` };
+    if (op === "POST /reset") return { what: b.tokens ? "Policy reset, with tokens" : "Policy reset" };
+    if (op === "PUT /document") return { what: `Policy document written: ${Object.keys(b).join(", ")}` };
+    return { what: `Policy written: ${op}` };
+  }
   const LINK_WORDS = { token: "token", context: "link", study: "study", uid: "study UID", patient: "patient", user: "person", client: "service" };
 
   function card(e) {
@@ -40,7 +59,7 @@ const Cards = (() => {
       <div class="line"><span class="summary">${esc(k.summary)}</span><span class="who-said">${esc(SERVICE[e.service] ?? e.service)}</span><span class="when">${esc(time(e.at))}</span></div>
       ${fields.length ? `<dl>${fields.map(([a, b]) => `<dt>${esc(a)}</dt><dd>${esc(short(b))}</dd>`).join("")}</dl>` : ""}
       ${links.length ? `<div class="links">${links.map(l => { const [kind, v] = [l.slice(0, l.indexOf(":")), l.slice(l.indexOf(":") + 1)]; return `<a href="${esc(`${BASE}/activity?link=${encodeURIComponent(l)}`)}" title="Every event with this ${esc(LINK_WORDS[kind] ?? kind)}">${esc(LINK_WORDS[kind] ?? kind)} ${esc(kind === "user" || kind === "client" ? nameOf(l) : v)}</a>`; }).join("")}</div>` : ""}
-      ${e.span ? `<details data-session="${esc(e.session)}" data-span="${esc(e.span)}"><summary>The exchange</summary><div class="raw"><p class="note">Loading…</p></div></details>` : ""}
+      ${e.span ? `<details data-session="${esc(e.session)}" data-span="${esc(e.span)}"><summary>The exchange</summary><div class="raw"><p class="note">Loading…</p></div></details>` : k.raw !== undefined ? `<details><summary>As recorded</summary><div class="raw"><pre>${esc(JSON.stringify(k.raw, null, 2))}</pre></div></details>` : ""}
     </li>`;
   }
 
