@@ -1,7 +1,8 @@
-// JSON endpoints behind the admin screen. Policy changes go through the Imaging Server's policy API. The demo has no admin login: every service binds to
+// JSON endpoints behind the admin screen. The demo has no admin login: every service binds to
 // 127.0.0.1 and the tailnet address, and a request naming another Host, or a write from another web
 // origin, is refused. Every write takes a fixed choice from this file or from rule-presets.ts, and
-// nothing else. A store action applies to the active store unless it names one.
+// nothing else. A store action applies to the active store unless it names one. Policy changes go
+// through the Imaging Server's policy API.
 import type { BackendName, Stack } from "./stack";
 import { PolicyApiError, type Settings } from "@smart-imaging-proxy/core";
 import { matchRuleSet, RULE_SETS, ruleSetById } from "./rule-presets";

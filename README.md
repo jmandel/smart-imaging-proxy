@@ -2,6 +2,8 @@
 
 A working prototype of a SMART Imaging deployment: an Authorization Server, an Imaging Server holding policy and a study catalog, and a WADO-RS proxy that enforces study-level policy without holding any of it. It runs on ten studies across three patients. It implements the `focused-access-updates` branch of the [SMART Imaging Access guide](https://github.com/argonautproject/smart-imaging). It isn't production code.
 
+The proxy, its backends, the archive, and the Imaging Server are a package of their own, [`packages/core`](packages/core/README.md), which knows nothing of the demo. The demo around it supplies the sign-in, the pages, the flows, the live trace, and the configuration.
+
 ## Get running
 
 You need Bun (developed on 1.4.3), DCMTK (`dcmconv`, `dcmcjpeg`, `dcmodify`), `curl`, `tar`, and `unzip`. No containers: the S3 store ([RustFS](https://github.com/rustfs/rustfs)) and [Orthanc](https://www.orthanc-server.com/) run as plain processes, from release binaries the setup downloads and checks against pinned SHA-256 hashes. Orthanc's builds are for Linux on x86-64; elsewhere its backend reports itself unavailable. Allow roughly 3 GB of disk, an estimate from one machine's copy.
@@ -17,7 +19,7 @@ bun run down    # stops the demo, the S3 store, and Orthanc, keeping their data
 The same steps, one at a time:
 
 ```sh
-bun install             # the browser test driver
+bun install             # links the core package, and installs the browser test driver
 bun run fetch-data      # downloads the sample data, verifying checksums
 bun run ingest          # generates the synthetic studies, and builds the archive
 bun scripts/backends.ts fetch   # downloads RustFS and Orthanc, checking their hashes
@@ -44,7 +46,7 @@ Everything is at one origin, port 4605: the demo's pages, the live trace at `/tr
 |---|---|---|
 | 4600 | Demo | `/` flow player, `/browse` Browse, `/admin` admin screen |
 | 4601 | WADO-RS proxy | `/wado/{signed-context}/studies/...`, opaque to clients |
-| 4602 | Imaging Server | `/fhir/ImagingStudy`, `/fhir/metadata`, `/access/v1/evaluation`, `/.well-known/jwks.json`, `/.well-known/authzen-configuration` |
+| 4602 | Imaging Server | `/fhir/ImagingStudy`, `/fhir/metadata`, `/access/v1/evaluation`, `/policy/v1/...`, `/.well-known/jwks.json`, `/.well-known/authzen-configuration` |
 | 4603 | Authorization Server | `/fhir/.well-known/smart-configuration`, `/authorize`, `/token`, `/introspect`, `/revoke`, `/account`, `/fhir/Patient/{id}` (with a token for that patient) |
 | 4604 | Live trace | `/` viewer, `/span.html` full exchange, `/log.html` HTTP log, `/api/sessions/{id}/export` |
 | 4605 | One origin | `/imaging/...` Imaging Server, `/wado/...` proxy, `/trace/...` live trace, `/fhir/...`, `/authorize`, `/token`, `/introspect`, `/revoke`, and `/account` Authorization Server, and everything else the demo |
@@ -94,6 +96,7 @@ The demo's pages, live trace, and admin screen have no login of their own. Anyon
 - **App Launch:** discovery, authorization code with PKCE S256, required `state`, exact `redirect_uri`, single-use codes, and a consent page where the user picks a patient and sites.
 - **Backend Services:** ES256 client assertions, with each check traced separately: registered key, algorithm, `iss` and `sub`, `aud`, expiry, `jti`, signature, and scope.
 - **Delegation:** patient or guardian to related person to app, where each link can only narrow what the last one allows. What a patient shares with someone stops there: they can give an app part of it, and can't pass it on, since the Imaging Server honors a share only from the patient or a guardian. The Imaging Server holds all of it.
+- **Policy API:** the account page, consent, Browse, the flows, and the admin screen change policy only through the Imaging Server's policy API, at `/policy/v1`, with the service credential. Its calls are in [packages/core/README.md](packages/core/README.md#the-policy-api).
 - **Guardians:** a standing relationship in the policy store, seeded from `data/patient.json`, that covers a patient's record, apart from any study marked confidential from that guardian, with no one sharing first. Riley's skin biopsy is confidential from Sam: search omits it, retrieval refuses it, and Sam's shares and apps can't include it. The Imaging Server evaluates it like any other link. A policy reset clears what people chose and puts guardians back, and what a guardian shared ends if they stop being the guardian.
 - **One patient to a token:** whoever holds several records picks one at each launch, which makes its own token and its own app grant. Searching for another patient gets `403`, and retrieving another patient's study gets `404`.
 - **Search:** reads only the catalog, never a bucket. `_count` defaults to 20, with a maximum of 100. Each page's `next` link holds a signed cursor that grants nothing, because policy runs again on every page.
@@ -161,25 +164,22 @@ Then restart `bun run start`.
 
 | Path | Purpose |
 |---|---|
-| `src/main.ts`, `src/roles.ts`, `src/stack.ts` | Startup, all at once or by `--role` |
-| `src/config.ts` | Ports, addresses, and backend credentials |
+| `packages/core/` | The core package: the proxy and its backends, the archive and ingest, the catalog, the Imaging Server, the policy store, and the policy API and its client. See [its README](packages/core/README.md) |
+| `src/main.ts`, `src/roles.ts`, `src/stack.ts` | Startup, all at once or by `--role`, and how the demo builds core's services and joins them |
+| `src/config.ts` | Ports, addresses, storage paths, the Host check, and backend credentials |
+| `src/stores.ts` | The saved and scratch policy stores, and the guardians on file, from `data/patient.json` |
 | `src/gateway.ts`, `src/cors.ts` | The one origin apps are given, and the services' CORS |
 | `src/auth-server.ts` | SMART launch and Backend Services, sign-in, consent, account page, introspection |
-| `src/imaging-server.ts` | Search, policy evaluation, signed contexts, the decision API, JWKS |
-| `src/policy-store.ts` | SQLite policy, signing key, and hashed tokens, with saved and scratch stores |
-| `src/proxy.ts`, `src/jwks.ts`, `src/serve-streaming.ts` | The proxy, its key source, and the server that keeps its `Content-Length` |
-| `src/accept.ts`, `src/multipart.ts`, `src/zstd-frames.ts`, `src/dicom.ts` | `Accept` plans, multipart framing, raw zstd frames, and PS3.10 parsing |
-| `src/catalog.ts`, `src/catalog-archive.ts`, `src/catalog-orthanc.ts` | The catalog and its two builders |
-| `src/archive/` | The archive format, reader, object stores, and ingest |
-| `src/backends/` | Files and the S3 bucket (`archive.ts`), Orthanc (`orthanc.ts`), and fault injection |
 | `src/flows/` | The flows, shared by the web page and tests, and the launch client |
 | `src/browse.ts` | The Browse page's sessions and API |
 | `src/admin-api.ts`, `src/rule-presets.ts` | The admin API, and its named rule sets |
-| `src/trace.ts`, `src/trace-collector.ts`, `src/trace-store.ts` | Spans and redaction, the live stream, and SQLite storage |
-| `scripts/` | Fetch, synthetic study generation, ingest, load, and catalog builds |
+| `src/trace.ts`, `src/trace-collector.ts`, `src/trace-store.ts` | Spans and redaction, the observer core reports to, the live stream, and SQLite storage |
+| `src/clock.ts` | The demo clock, which core's services are given |
+| `scripts/` | Fetch, synthetic study generation, ingest, load, catalog builds, the backends, and deploying |
+| `deploy/` | The installer for a Linux machine with systemd |
 | `data/` | Source list with checksums, patient links, and Orthanc's per-study settings |
 | `web/` | All the pages |
-| `tests/` | The test suite |
+| `tests/`, `e2e/` | The demo's tests, and the browser tests. Core's are in `packages/core/tests` |
 
 ## Configuration
 
@@ -288,8 +288,9 @@ Sam Example's and Riley Example's are invented people, and they're the only ones
 ## Tests
 
 ```sh
-bun test                         # every flow on every backend, and the rest
+bun test                         # every flow on every backend, core's tests, and the rest
 BACKENDS=static-files bun test   # flows, Browse, rotation, and conformance on one backend
+cd packages/core && bun test     # core alone, with no demo
 ```
 `bun run test:ui` drives the pages in real Chromium: focus, overflow, contrast, popups, and what the pages draw from real responses. It runs its own stack in memory, and takes the browser from `CHROMIUM`, or `/usr/bin/chromium`.
 

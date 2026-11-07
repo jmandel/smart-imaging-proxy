@@ -41,6 +41,6 @@ export interface Backend {
   getMetadata(scope: Scope): Promise<any[]>;
   /** The element's own bytes, unframed. How they're framed for the client is the proxy's choice. `bytes` is their exact count, when known. */
   openBulk(study: string, series: string, instance: string, ref: string, /** The study version a signed context names. Absent means current. */ version?: number): Promise<{ bytes?: number; body: AsyncIterable<Uint8Array> }>;
-  /** Raw upstream behavior, shown side by side in the demo. Absent on store-backed backends. */
+  /** Raw upstream behavior, for showing side by side. Absent on store-backed backends. */
   rawProbe?(path: string, accept: string): Promise<{ status: number; contentType: string | null; partSyntaxLabel: string | null; bodyPreview: string }>;
 }

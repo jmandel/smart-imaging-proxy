@@ -160,7 +160,7 @@ export function createCatalog(path: string = ":memory:"): CatalogStore {
   };
 }
 
-/** Links each patient's Patient ID in `data/patient.json`, which stands in for a master patient index. */
+/** Links each patient's unqualified Patient ID to their id, from a list that stands in for a master patient index. */
 export function seedPatientLinks(catalog: CatalogStore, people: { id: string; mrn: string; otherPatients?: { id: string; mrn: string }[] }) {
   for (const p of [people, ...(people.otherPatients ?? [])]) catalog.linkPatient(UNQUALIFIED_PATIENT_IDS, p.mrn, p.id);
 }

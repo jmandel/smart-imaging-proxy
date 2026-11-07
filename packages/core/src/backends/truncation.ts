@@ -1,7 +1,7 @@
 import type { PlanItem } from "../accept";
 import type { Backend, InstancePart, OpenOptions, Scope } from "./types";
 
-/** A backend that stops after a number of parts. Used by the truncated upstream flow. */
+/** A backend that stops after a number of parts, for showing what a client sees of a truncated upstream. */
 export function withTruncation(inner: Backend, afterParts: () => number | undefined): Backend {
   return new Proxy(inner, {
     get(target, prop, recv) {

@@ -5,7 +5,7 @@ import { patientSourceOf, publicationFor } from "./catalog";
 
 /**
  * What DICOM doesn't state: the FHIR id, a display title, and the site, by accession. It stands in
- * for an operator's configuration, and it's in data/orthanc-catalog.json. A study it doesn't name
+ * for an operator's configuration. A study it doesn't name
  * uses its Study UID as its id and has no site, so site-limited access never reaches it.
  */
 export interface OperatorStudyConfig { id?: string; title?: string; site?: string; }

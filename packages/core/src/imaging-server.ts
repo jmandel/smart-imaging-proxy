@@ -207,7 +207,7 @@ export function createImagingServer(opts: ImagingServerOptions) {
 
   /**
    * What the same `evaluate` that search uses decides for each of a patient's studies, for one client
-   * and, for a launch, one user. Only the demo calls this, to show why a list looks as it does.
+   * and, for a launch, one user. It's for showing why a list looks as it does, which a real app never sees.
    */
   function explain(store: PolicyStore, { client, user, fhirUser, patient }: Partial<ExplainQuery>) {
     if (!client || !patient || (user && !fhirUser)) return { error: "client and patient are required, and a user needs a fhirUser" };

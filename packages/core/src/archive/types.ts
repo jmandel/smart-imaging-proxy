@@ -158,7 +158,7 @@ export interface CatalogStore {
   linkedPatients(): string[];
   /** The sites one patient has studies at. */
   sitesFor(patient: string): string[];
-  /** Every study, for the demo's own displays and for tests. Search must not use this. */
+  /** Every study, for an operator's displays and for tests. Search must not use this. */
   allStudies(): CatalogStudy[];
   /** `hierarchyBytes` is as stored, compressed. `hierarchyRawBytes` is the same data uncompressed. */
   stats(): { studies: number; series: number; hierarchyBytes: number; hierarchyRawBytes: number; path: string };

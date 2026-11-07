@@ -1,4 +1,4 @@
-// A typed client for the policy API in src/policy-api.ts.
+// A typed client for the policy API in policy-api.ts.
 import { POLICY_API_PATH, type Access, type AppGrantRequest, type DelegationRequest, type ExplainQuery, type Relationship } from "./policy-api";
 import type { Guardian, Policy, PolicyStore, Rule, Settings } from "./policy-store";
 
