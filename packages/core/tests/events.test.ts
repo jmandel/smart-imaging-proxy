@@ -5,7 +5,7 @@ import { ath, createCatalog, createImagingServer, createPolicyClient, createProx
 import { ACCEPT, EVRLE, FakeBackend, fakeInstance } from "./fake-backend";
 import { manualClock, put, recordingObserver } from "./support";
 
-const SECRET = "service-secret", POLICY = "policy-secret", TOKEN = "events-token", SERVICE_TOKEN = "service-token";
+const SECRET = "service-secret", POLICY = "policy-secret", TOKEN = "events-token", SERVICE_TOKEN = "service-token", FRIEND_TOKEN = "friend-token";
 const clock = manualClock();
 const catalog = createCatalog();
 put(catalog, "1.2.3", { site: "Site A" }, "p1");
@@ -26,6 +26,7 @@ afterAll(() => { http.stop(true); store.close(); catalog.close(); });
 
 store.putToken(TOKEN, "access", { client_id: "app", scope: "patient/ImagingStudy.rs", patient: "p1", sub: "pat", fhirUser: "Patient/p1" }, clock.now() + 3600);
 store.putToken(SERVICE_TOKEN, "access", { client_id: "svc", scope: "system/ImagingStudy.rs" }, clock.now() + 3600);
+store.putToken(FRIEND_TOKEN, "access", { client_id: "app", scope: "patient/ImagingStudy.rs", patient: "p1", sub: "friend", fhirUser: "RelatedPerson/friend" }, clock.now() + 3600);
 const search = (token: string, q = "patient=p1") => imaging.fetch(new Request(`http://imaging/fhir/ImagingStudy?${q}`, { headers: { Authorization: `Bearer ${token}` } }));
 const hash = ath(TOKEN).slice(0, 10);
 const drain = async (res: Response) => { const r = res.body!.getReader(); while (!(await r.read()).done); };
@@ -45,10 +46,21 @@ describe("typed events", () => {
   test("search reports what it found, what it withheld and why, and signs one context per study found", () => {
     const s = rec.kinds("search.returned").at(-1);
     expect(s).toMatchObject({ status: 200, client: "app", user: "pat", patient: "p1", tokenHash: hash, found: ["study-1.2.3"], total: 1 });
+    // The patient reaches Site B's study, and the app isn't approved for it.
     expect(s.withheld).toEqual([{ study: "study-1.2.4", why: expect.stringContaining("Site B") }]);
+    expect(s.unreached).toEqual([]);
     const signed = rec.kinds("context.signed");
     expect(signed.map(c => c.study)).toEqual(["study-1.2.3"]);
     expect(signed[0]).toMatchObject({ studyUid: "1.2.3", form: "whole study", tokenHash: hash, kid: imaging.signingKid });
+  });
+  test("what no route of the user's reaches is unreached, apart from what the app isn't released", async () => {
+    await policy.putPolicy({ id: "patients-share", type: "sharing", allowedFrom: ["patient"] });
+    store.putShare({ from: "user:pat", with: "user:friend", patient: "patient:p1", sites: ["Site A"], label: "friend", basis: "self" });
+    await policy.approveApp({ by: "user:friend", app: "app:app", patient: "patient:p1", fhirUser: "RelatedPerson/friend" });
+    await search(FRIEND_TOKEN).then(r => r.text());
+    const s = rec.kinds("search.returned").at(-1);
+    expect(s).toMatchObject({ status: 200, user: "friend", found: ["study-1.2.3"], withheld: [] });
+    expect(s.unreached).toEqual([{ study: "study-1.2.4", why: expect.stringContaining("Site B") }]);
   });
   test("a refused search says why", async () => {
     await search(SERVICE_TOKEN);
@@ -78,6 +90,18 @@ describe("typed events", () => {
     expect(d.response.context.denial).toBe("not_released");
     expect(rec.kinds("proxy.decision").at(-1)).toMatchObject({ via: "asked", allowed: false, denial: "not_released" });
     expect(rec.kinds("retrieval.answered").at(-1)).toMatchObject({ studyUid: "1.2.4", resource: "study", status: 404, authz: "asked" });
+  });
+  test("a decision on an expired signed context holds the context and the token only as short hashes", async () => {
+    const bundle: any = await (await search(TOKEN)).json();
+    const ctx = bundle.entry.find((e: any) => e.resource.resourceType === "Endpoint").resource.address.split("/wado/")[1];
+    clock.advance(store.getSettings().contextLifetimeSeconds + 1);
+    await drain(await proxy.fetch(new Request(`http://proxy/wado/${ctx}/studies/1.2.3`, { headers: { Authorization: `Bearer ${TOKEN}`, Accept: ACCEPT } })));
+    const d = rec.kinds("decision.answered").at(-1);
+    expect(d).toMatchObject({ decision: true, contextHash: shortHash(ctx), tokenHash: hash });
+    expect(d.request.context.signed_context).toBe(`sha256:${shortHash(ctx)}…`);
+    expect(d.request.subject.id).toBe(`sha256:${hash}…`);
+    const all = JSON.stringify(rec.events);
+    for (const secret of [ctx, ath(TOKEN), TOKEN, FRIEND_TOKEN, SERVICE_TOKEN]) expect([secret, all.includes(secret)]).toEqual([secret, false]);
   });
   test("events run in the span of the request that made them", () => {
     const s = rec.kinds("search.returned").at(-1);

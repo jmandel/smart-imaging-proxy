@@ -70,14 +70,16 @@ A `Span` has `set(attrs)`, `end(status, attrs)`, and `within(fn)`, which runs `f
 
 | Kind | Sent by | Fields |
 |---|---|---|
-| `search.returned` | Imaging Server, once per search | `status`, `query`, `client`, `user`, `patient`, `tokenHash`, and for a `200` `found` (this page), `total`, and `withheld`, each `{ study, why }`. Otherwise `reason` |
+| `search.returned` | Imaging Server, once per search | `status`, `query`, `client`, `user`, `patient`, `tokenHash`, and for a `200` `found` (this page), `total`, `withheld` and `unreached`, each `{ study, why }`. Otherwise `reason` |
 | `context.signed` | Imaging Server, per Endpoint | `study`, `studyUid`, `kid`, `form`, `series`, `exp`, `tokenHash`, `contextHash` |
-| `decision.answered` | Imaging Server's decision API | `decision`, `why`, `study`, `studyUid`, `client`, `user`, `patient`, `tokenHash`, `contextHash`, and the AuthZEN `request` (its token as a hash) and `response` |
+| `decision.answered` | Imaging Server's decision API | `decision`, `why`, `study`, `studyUid`, `client`, `user`, `patient`, `tokenHash`, `contextHash`, and the AuthZEN `request` and `response`. In the request, the subject's `id` and access token are the token's short hash, and `signed_context` is the context's |
 | `proxy.fast-path` | Proxy, per retrieval with a token | `studyUid`, `tokenHash`, `contextHash`, `taken`, and the first check that `failed` |
 | `proxy.decision` | Proxy, when it didn't take the fast path | `via` (`cached` or `asked`), `allowed`, `denial`, `unavailable` |
 | `stream.done` | Proxy, when a streamed response ends | `studyUid`, `resource`, `authz`, `parts`, `bytes`, `encoding`, `syntaxes`, `complete`, `note` |
 | `retrieval.answered` | Proxy, for any other response | `studyUid`, `resource`, `status`, `authz`, `denial`, `note` |
 | `policy.written` | Policy API, per write the credential allowed | `operation`, `level`, `status`, `body`, `query`, `revision`, `patient`, and `error` for a refusal |
+
+A search's `withheld` and `unreached` together are every matching study policy didn't release. `withheld` holds those the user reaches by a route of their own, as the patient, a guardian or a share's recipient, that this client isn't released, such as one outside an app approval's sites or resting on a route the approval doesn't. `unreached` holds the rest: those no route or policy of the caller's reaches, such as one a label keeps from a guardian, one outside a share's sites, and for a backend service every study its policies don't release. Events are for operators. `unreached` names studies the caller may not know exist, with reasons that can name a label, so a view shown to the caller or the person behind it leaves it out, and keeps of `withheld` only the studies that person reaches.
 
 ## The proxy
 

@@ -374,10 +374,16 @@ export function createImagingServer(opts: ImagingServerOptions) {
     const catalog = opts.catalog();
     const page: { study: CatalogStudy; ev: Evaluation }[] = [];
     let total = 0, bytes = 0, more = false;
-    const withheld: { study: string; why: string }[] = [];
+    // What policy didn't release, in two parts: what the user reaches by a route of their own and this
+    // client isn't released, and what no route or policy of the caller's reaches.
+    const withheld: { study: string; why: string }[] = [], unreached: { study: string; why: string }[] = [];
     for (const study of candidates(catalog, filters)) {
       const ev = evaluate(t, study, policy);
-      if (ev.release === "none") { withheld.push({ study: study.id, why: ev.why }); continue; }
+      if (ev.release === "none") {
+        const reached = !!t.sub && model.userRoute(policy, ref("user", t.sub), ref("patient", patient), study, t.fhirUser).ok;
+        (reached ? withheld : unreached).push({ study: study.id, why: ev.why });
+        continue;
+      }
       total++;
       if (after && !isAfter(study, after)) continue;
       if (more) continue;
@@ -386,7 +392,7 @@ export function createImagingServer(opts: ImagingServerOptions) {
       bytes += study.hierarchyBytes;
     }
 
-    Object.assign(e, { found: page.map(p => p.study.id), total, withheld });
+    Object.assign(e, { found: page.map(p => p.study.id), total, withheld, unreached });
     const hasEndpoint = (s: CatalogStudy) => s.status === "available";
     const withEndpoint = page.filter(p => hasEndpoint(p.study));
     const hierarchies = withEndpoint.length ? catalog.hierarchies(withEndpoint.map(p => p.study.pk)) : new Map<number, StudyHierarchy>();
@@ -453,12 +459,17 @@ export function createImagingServer(opts: ImagingServerOptions) {
       check("policy", `decision: ${decision ? "allow" : "deny"}`, decision, { decision_id: res.context.decision_id, why, release: typeof context.release === "object" ? `${context.release.series.length} series` : context.release, denial: context.denial, max_age_seconds: context.max_age_seconds });
       const presented = body.subject?.properties?.access_token, signedContext = body.context?.signed_context;
       const tokenHash = typeof presented === "string" ? ath(presented).slice(0, 10) : undefined;
-      const request = { ...body, subject: { ...body.subject, properties: { access_token: tokenHash ? `sha256:${tokenHash}…` : "(none)" } } };
+      // The token and the signed context appear only as short hashes, as everywhere in events.
+      const named = (hash: string | undefined) => hash ? `sha256:${hash}…` : "(none)";
+      const request = {
+        ...body, subject: { ...body.subject, id: named(tokenHash), properties: { access_token: named(tokenHash) } },
+        ...(body.context && typeof body.context === "object" ? { context: { ...body.context, ...(signedContext !== undefined ? { signed_context: typeof signedContext === "string" ? named(shortHash(signedContext)) : "(not a string)" } : {}) } } : {}),
+      };
       obs.event("policy", {
         kind: "decision.answered", ...asker, ...(typeof body.resource?.id === "string" ? { studyUid: body.resource.id } : {}), ...(tokenHash ? { tokenHash } : {}),
         ...(typeof signedContext === "string" ? { contextHash: shortHash(signedContext) } : {}), decision, why, request, response: res,
       });
-      decisions.push({ at: Date.now(), why, request: { ...body, subject: { ...body.subject, properties: { access_token: "(redacted in this log)" } } }, response: res });
+      decisions.push({ at: Date.now(), why, request, response: res });
       if (decisions.length > 200) decisions.shift();
       return Response.json(res, { headers: echo });
     };

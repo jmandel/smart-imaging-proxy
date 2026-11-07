@@ -17,15 +17,23 @@ export interface SearchReturned {
   kind: "search.returned"; status: number; client?: string; user?: string; patient?: string; tokenHash?: string;
   /** The query, without `_cursor`. */
   query: string;
-  /** For a 200: this page's studies, every study the caller may see, and those policy withheld, each with its reason. */
-  found?: string[]; total?: number; withheld?: { study: string; why: string }[];
+  /** For a 200: this page's studies, and every study the caller may see. */
+  found?: string[]; total?: number;
+  /** For a 200: the studies the user reaches by a route of their own and this client isn't released, such as one outside an app approval's sites, each with its reason. */
+  withheld?: { study: string; why: string }[];
+  /**
+   * For a 200: every other study policy didn't release, which no route or policy of the caller's
+   * reaches, such as one a label keeps from a guardian, or one outside a share's sites. It names
+   * studies the caller may not know exist: it's for operators, and a view shown to the caller leaves it out.
+   */
+  unreached?: { study: string; why: string }[];
   /** For anything else: why. */
   reason?: string;
 }
 export interface DecisionAnswered {
   kind: "decision.answered"; study?: string; studyUid?: string; client?: string; user?: string; patient?: string; tokenHash?: string; contextHash?: string;
   decision: boolean; why: string;
-  /** The AuthZEN request, with the access token replaced by its hash. */
+  /** The AuthZEN request, with the subject's id, its access token and the signed context each replaced by a short hash. */
   request: unknown;
   response: unknown;
 }
