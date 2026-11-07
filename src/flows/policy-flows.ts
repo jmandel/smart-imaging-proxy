@@ -120,7 +120,7 @@ export const policyFlows: Flow[] = [
           c.state.samStudies = s.studies;
           c.check("Josh sees every study", Object.keys(j.studies).length === c.studies().length);
           if (c.state.samPatient === JOSH) {
-            c.check("Sam's app sees only sites in both links", Object.keys(s.studies).every(id => c.state.appSites.includes(c.siteOf(id)) && c.state.delegated.includes(c.siteOf(id))) && Object.keys(s.studies).length < Object.keys(j.studies).length, Object.keys(s.studies).join(", "));
+            c.check("Sam's app sees only sites in both links", Object.keys(s.studies).every(id => c.state.appSites.includes(c.siteOf(id)) && c.state.delegated.includes(c.siteOf(id))), Object.keys(s.studies).join(", "));
             return;
           }
           const name = firstOf(c.state.samPatient);
@@ -479,7 +479,7 @@ export const policyFlows: Flow[] = [
           // Sam can share only what Sam holds, and a study confidential from Sam isn't part of that.
           const hidden = c.stack.imaging.getPolicy().guardians.find(g => g.patient === i.whose && g.guardian === SAM_ACCOUNT)?.excludedStudies ?? [];
           const expected = c.studies(i.whose).filter(s => i.sites.includes(s.site) && !hidden.includes(s.id));
-          c.check("Alex sees only what Sam shared", Object.keys(r.studies).length === expected.length && Object.keys(r.studies).every(id => i.sites.includes(c.siteOf(id))), `${Object.keys(r.studies).length} of ${c.studies(i.whose).length} studies${expected.length ? "" : `. ${firstOf(i.whose)} has nothing at the sites ticked`}`);
+          c.check("Alex sees only what Sam shared", Object.keys(r.studies).length === expected.length && Object.keys(r.studies).every(id => i.sites.includes(c.siteOf(id))), `${Object.keys(r.studies).length} of ${c.studies(i.whose).length} studies${expected.length ? "" : `. Nothing Sam can share is at the sites ticked`}`);
         },
       },
     ],

@@ -203,7 +203,10 @@ describe("whose records, as Sam", () => {
       await page.locator("article.study").first().waitFor();
       expect(await shown(page)).toEqual(["syn-riley-knee-mr-2022"]);
       expect(await page.locator(".whose-line").innerText()).toBe("Riley Example's records, which Sam holds as guardian");
-      expect(await page.locator(".outcome").innerText()).toContain("Sam is Riley's guardian, on file apart from what's confidential from them");
+      expect(await page.locator(".outcome").innerText()).toContain("Sam is Riley's guardian, on file");
+      await page.locator("details.raw", { hasText: "only some sites" }).locator("summary").click();
+      expect(await page.locator("#app-sites").innerText()).not.toContain("Northside Pathology");
+      expect(await page.locator(".outcome").innerText()).not.toContain("confidential");
       expect(await choice(page, "riley-example").getAttribute("aria-current")).toBe("true");
       expect(await page.locator("article.study h3").first().innerText()).toStartWith("SYNTHETIC");
       const first: any = await page.evaluate(async () => (await (await fetch("/api/browse/session")).json()).session.name);
@@ -372,7 +375,7 @@ describe("flows, in real windows", () => {
     await popup.getByRole("button", { name: "Continue" }).click();
     await popup.getByRole("link", { name: /Done, back to the demo/ }).waitFor();
     await popup.getByRole("button", { name: "Sign out" }).click();
-    await popup.locator("input[name=username][value=josh]").check();
+    expect(await popup.locator("input[name=username][value=josh]").isChecked()).toBe(true);
     await popup.getByRole("button", { name: "Continue" }).click();
     await popup.getByRole("link", { name: /Done, back to the demo/ }).waitFor();
   });

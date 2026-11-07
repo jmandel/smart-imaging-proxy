@@ -188,6 +188,7 @@ test("the proxy answers odd Hosts and request targets without a 500", async () =
   });
   const own = `${hostname}:${port}`;
   const status = (r: string) => Number(r.split(" ")[1]);
+  for (const target of ["//", "///", "//[", "//:x", "/\\\\"]) expect([target, status(await raw(`GET ${target} HTTP/1.1\r\nHost: ${own}\r\nConnection: close\r\n\r\n`))]).toEqual([target, 404]);
   expect(status(await raw(`GET http://evil.example/wado/-/studies/1 HTTP/1.1\r\nHost: ${own}\r\nConnection: close\r\n\r\n`))).toBe(401);
   expect(status(await raw("GET / HTTP/1.1\r\nHost:\r\nConnection: close\r\n\r\n"))).toBe(403);
   expect(status(await raw(`GET / HTTP/1.1\r\nHost: ${own}\r\nHost: evil.example\r\nConnection: close\r\n\r\n`))).toBeLessThan(500);
@@ -201,4 +202,7 @@ test("a step's input has to be one of its choices", async () => {
   for (const inputs of [{ sites: null }, { sites: "notalist" }, "text", null]) expect((await step("delegate", inputs)).status).toBeLessThan(500);
   expect((await step("sam-launch", { whose: ["x"] })).status).toBe(400);
   expect((await step("sam-launch", { whose: "robin-example" })).status).toBe(400);
+  expect((await step("delegate", { sites: ["Not A Site"] })).status).toBe(400);
+  const broken = await fetch(`http://127.0.0.1:${PORTS.demo}/api/flows/caregiver/steps/delegate`, { method: "POST", headers: { "content-type": "application/json" }, body: "{" });
+  expect(broken.status).toBe(400);
 });

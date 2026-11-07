@@ -62,7 +62,7 @@ function plainChain(x: any) {
   if (x.level === "system") return x.rule ? `${x.client} is pre-authorized for ${PATIENT_NAMES[x.patient] ?? x.patient} by the rule "${x.rule.description ?? x.rule.id}"` : `No rule in saved policy pre-authorizes ${x.client} for ${PATIENT_NAMES[x.patient] ?? x.patient}`;
   const who = firstName(x.user), links: string[] = [];
   if (x.fhirUser === `Patient/${x.patient}`) links.push(`${who} is the patient`);
-  else if (x.guardian) links.push(`${who} is ${patientFirst(x.patient)}'s ${x.guardian.relationship}, on file ${x.guardian.excludedStudies?.length ? "apart from what's confidential from them" : "for the whole record"}`);
+  else if (x.guardian) links.push(`${who} is ${patientFirst(x.patient)}'s ${x.guardian.relationship}, on file`);
   else if (x.delegation) links.push(`${firstName(x.delegation.grantedBy)} shared ${x.delegation.sites.length ? list(x.delegation.sites) : "no sites"} with ${who}`);
   else return Object.values(USERS).some(u => u.fhirUser === `Patient/${x.patient}`) ? `${patientFirst(x.patient)} hasn't shared anything with ${who}` : `Nothing of ${patientFirst(x.patient)}'s has been shared with ${who}`;
   if (x.appGrant) links.push(`${who} gave the ${appName(x.client)} ${x.appGrant.sites ? (x.appGrant.sites.length ? list(x.appGrant.sites) : "no sites") : `everything ${who} can see`}`);
@@ -117,13 +117,15 @@ export function createBrowse(stack: Stack, clients: Record<string, BackendClient
   };
 
   // Everyone a person holds, by the saved store: what a Browse sign-in will use.
+  // A guardian isn't offered a site that only a study confidential from them is at, since that would reveal it.
+  const guardianSites = (g: { patient: string; excludedStudies?: string[] }) => [...new Set(stack.catalog.allStudies().filter(st => st.patient === g.patient && !g.excludedStudies?.includes(st.id)).flatMap(st => st.site ? [st.site] : []))];
   const recordsOf = (id: string) => {
     const u = USERS[id]!;
     const out: { patient: string; name: string; via: "self" | "guardian" | "delegation"; relationship?: string; sites: string[] }[] = [];
     if (u.patient) out.push({ patient: u.patient, name: PATIENT_NAMES[u.patient] ?? u.patient, via: "self", sites: stack.catalog.sitesFor(u.patient) });
     const guardians = stack.stores.saved.guardians();
-    for (const g of guardians) if (g.guardian === id && g.patient !== u.patient) out.push({ patient: g.patient, name: PATIENT_NAMES[g.patient] ?? g.patient, via: "guardian", relationship: g.relationship, sites: stack.catalog.sitesFor(g.patient) });
-    for (const d of stack.stores.saved.delegations()) if (d.delegate === id && !out.some(r => r.patient === d.patient) && (!d.asGuardian || guardians.some(g => g.guardian === d.grantedBy && g.patient === d.patient))) out.push({ patient: d.patient, name: PATIENT_NAMES[d.patient] ?? d.patient, via: "delegation", relationship: d.relationship, sites: d.sites });
+    for (const g of guardians) if (g.guardian === id && g.patient !== u.patient) out.push({ patient: g.patient, name: PATIENT_NAMES[g.patient] ?? g.patient, via: "guardian", relationship: g.relationship, sites: guardianSites(g) });
+    for (const d of stack.stores.saved.delegations()) if (d.delegate === id && !out.some(r => r.patient === d.patient) && (!d.asGuardian || guardians.some(g => g.guardian === d.grantedBy && g.patient === d.patient))) out.push({ patient: d.patient, name: PATIENT_NAMES[d.patient] ?? d.patient, via: "delegation", relationship: d.relationship, sites: (() => { const g = guardians.find(x => x.guardian === d.grantedBy && x.patient === d.patient); if (!g?.excludedStudies?.length) return d.sites; const open = guardianSites(g); return d.sites.filter(x => open.includes(x)); })() });
     return out;
   };
   function options() {

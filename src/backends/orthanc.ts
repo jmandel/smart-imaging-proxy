@@ -116,9 +116,8 @@ export class OrthancBackend implements Backend {
   }
   async openBulk(study: string, series: string, instance: string, ref: string) {
     // Orthanc answers for any tag, and with a 500 for what it can't read. As with the stores, only what the metadata lists as bulk data is.
-    const meta = /^[0-9a-f]{8}$/i.test(ref) ? await this.get(`/studies/${study}/series/${series}/instances/${instance}/metadata`, "application/dicom+json") : undefined;
-    const listed = meta?.ok ? (await meta.json() as any[])[0]?.[ref.toUpperCase()]?.BulkDataURI : undefined;
-    if (!listed) throw mapError(404);
+    const meta = /^[0-9a-f]{8}(\/\d+\/[0-9a-f]{8})*$/i.test(ref) ? await this.get(`/studies/${study}/series/${series}/instances/${instance}/metadata`, "application/dicom+json") : undefined;
+    if (!meta?.ok || !(await meta.text()).toLowerCase().includes(`/bulk/${ref.toLowerCase()}"`)) throw mapError(404);
     const r = await this.get(`/studies/${study}/series/${series}/instances/${instance}/bulk/${ref.toLowerCase()}`, "*/*");
     if (!r.ok) throw mapError(r.status);
     const boundary = boundaryOf(r.headers.get("content-type"));

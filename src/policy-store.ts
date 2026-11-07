@@ -245,7 +245,7 @@ export class PolicyStore {
         this.db.run("DELETE FROM guardians");
         for (const g of p.guardians) this.putGuardian(g);
       }
-      if (p.guardians) for (const d of this.delegations()) if (d.asGuardian && !p.guardians.some(g => g.guardian === d.grantedBy && g.patient === d.patient)) this.db.run("DELETE FROM delegations WHERE patient = ? AND granted_by = ? AND delegate = ?", [d.patient, d.grantedBy, d.delegate]);
+      if (p.guardians || p.delegations) for (const d of this.delegations()) if (d.asGuardian && !this.guardians().some(g => g.guardian === d.grantedBy && g.patient === d.patient)) this.db.run("DELETE FROM delegations WHERE patient = ? AND granted_by = ? AND delegate = ?", [d.patient, d.grantedBy, d.delegate]);
       if (p.appGrants) {
         this.db.run("DELETE FROM app_grants");
         for (const g of p.appGrants) this.putAppGrant(g);

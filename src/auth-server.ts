@@ -178,7 +178,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
   const page = (title: string, body: string, status = 200, showStore = false) => new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)}</title><style>${PAGE_CSS}</style></head><body><p class="brand">Authorization Server</p><main>${body}</main>${showStore ? `<p class="store-line">Policy in use: ${esc(opts.storeLabel())}</p>` : ""}</body></html>`, { status, headers: { "content-type": "text/html; charset=utf-8" } });
   const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 
-  const demoQuery = (url: URL) => { const q = new URLSearchParams(); for (const k of ["demo_traceparent", "demo_session", "return", "return_state"]) if (url.searchParams.get(k)) q.set(k, url.searchParams.get(k)!); const s = q.toString(); return s ? `&${s}` : ""; };
+  const demoQuery = (url: URL) => { const q = new URLSearchParams(); for (const k of ["demo_traceparent", "demo_session", "return", "return_state", "preselect"]) if (url.searchParams.get(k)) q.set(k, url.searchParams.get(k)!); const s = q.toString(); return s ? `&${s}` : ""; };
   const redirectTo = (location: string) => new Response(null, { status: 303, headers: { Location: location } });
   const initials = (name: string) => name.split(/\s+/).map(w => w[0]).join("").slice(0, 2).toUpperCase();
   /** The account picker. It's a plain form, so it works with no script. */
@@ -318,7 +318,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     const name = hint && signedIn !== hint ? undefined : signedIn;
     const q = demoQuery(url).replace(/^&/, "?");
     const returnTo = url.searchParams.get("return") === opts.redirectUri ? opts.redirectUri : undefined;
-    if (!name) return page("Sign in", `<h1>Sign in to your account</h1>${await signInForm(`/account/signin${q}${hint ? `${q ? "&" : "?"}login_hint=${encodeURIComponent(hint)}` : ""}`, hint)}`);
+    if (!name) return page("Sign in", `<h1>Sign in to your account</h1>${await signInForm(`/account/signin${q}${hint ? `${q ? "&" : "?"}login_hint=${encodeURIComponent(hint)}` : ""}`, hint || (url.searchParams.get("preselect") ?? ""))}`);
     const user = USERS[name]!;
     const access = await opts.directory.access(name, user.fhirUser);
     const others = Object.entries(USERS).filter(([id]) => id !== name);
@@ -362,7 +362,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     }
     if (url.pathname === "/account/signout") {
       accountSessions.delete(req.headers.get("cookie")?.match(/account_session=([^;]+)/)?.[1] ?? "");
-      return new Response(null, { status: 303, headers: { Location: `/account${q}`, "Set-Cookie": "account_session=; Max-Age=0; Path=/" } });
+      return new Response(null, { status: 303, headers: { Location: `/account${url.search}`, "Set-Cookie": "account_session=; Max-Age=0; Path=/" } });
     }
     const name = accountUser(req);
     if (!check("authorization-server", "account session is signed in", !!name)) return page("Sign in", "<h1>Sign in first</h1>", 401);

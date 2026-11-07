@@ -119,7 +119,9 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     }
     const step = p.match(/^\/api\/flows\/([^/]+)\/steps\/([^/]+)$/);
     if (step && req.method === "POST") {
-      const b: any = (await req.json().catch(() => undefined)) ?? {};
+      const text = await req.text();
+      let b: any = {};
+      if (text.trim()) { try { b = JSON.parse(text) ?? {}; } catch { return json({ error: "the request body isn't JSON" }, 400); } }
       if (b.inputs !== undefined && (typeof b.inputs !== "object" || b.inputs === null || Array.isArray(b.inputs))) return json({ error: "inputs must be an object" }, 400);
       if (session && session.flowId !== step[1]) return json({ error: "another flow has started since this page loaded: reload to see it" }, 409);
       if (session?.running) return json({ error: `the step "${session.running}" is still running` }, 409);

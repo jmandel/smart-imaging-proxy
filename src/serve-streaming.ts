@@ -22,7 +22,7 @@ async function send(req: IncomingMessage, res: ServerResponse, handler: (req: Re
     else {
     const headers = new Headers();
     for (let i = 0; i + 1 < req.rawHeaders.length; i += 2) headers.append(req.rawHeaders[i]!, req.rawHeaders[i + 1]!);
-    response = await handler(new Request(new URL((req.url ?? "/").replace(/^[a-z]+:\/\/[^/]*/i, "") || "/", `http://${req.headers.host ?? "localhost"}`), { method: req.method, headers }));
+    response = await handler(new Request(`http://${req.headers.host ?? "localhost"}${(req.url ?? "/").replace(/^[a-z]+:\/\/[^/]*/i, "") || "/"}`, { method: req.method, headers }));
     }
   } catch {
     res.writeHead(500).end();

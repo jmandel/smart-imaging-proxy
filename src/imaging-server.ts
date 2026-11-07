@@ -137,7 +137,7 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
       if (!d) return { ok: false, why: `${t.sub} has no delegation from the patient`, chain };
       if (d.asGuardian && !isGuardian(policy, d.grantedBy, patient)) return { ok: false, why: `${d.grantedBy} is no longer ${patient}'s guardian, so what they shared has ended`, chain };
       chain.push(`${d.grantedBy} delegated to ${t.sub} (${d.relationship}): ${d.sites.join(", ")}`);
-      if (d.asGuardian && policy.guardians.find(x => x.guardian === d.grantedBy && x.patient === patient)?.excludedStudies?.includes(studyId)) return { ok: false, why: `this study is confidential from ${d.grantedBy}, so what they shared can't include it`, chain };
+      if (policy.guardians.find(x => x.guardian === d.grantedBy && x.patient === patient)?.excludedStudies?.includes(studyId)) return { ok: false, why: `this study is confidential from ${d.grantedBy}, so what they shared can't include it`, chain };
       if (!d.sites.includes(site)) return { ok: false, why: `the delegation to ${t.sub} doesn't include ${site}`, chain };
     }
     const g = policy.appGrants.find(x => x.client === t.client_id && x.user === t.sub && x.patient === patient);
@@ -149,6 +149,13 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
 
   /** The sites a guardian can choose among, so that a confidential study's site doesn't give it away. */
   const guardianSites = (g: Guardian) => [...new Set([...candidates(opts.catalog(), { patient: g.patient })].filter(s => !g.excludedStudies?.includes(s.id)).flatMap(s => s.site ? [s.site] : []))];
+  /** Sites a guardian named, less any only a study confidential from them could explain. */
+  const withinGuardian = (policy: Pick<PolicyRows, "guardians">, user: string, patient: string, sites: string[]) => {
+    const g = policy.guardians.find(x => x.guardian === user && x.patient === patient);
+    if (!g?.excludedStudies?.length) return sites;
+    const open = new Set(guardianSites(g));
+    return sites.filter(s => open.has(s));
+  };
   /** What one signed-in user can see and has shared, for the Authorization Server's pages. Their own record is first, then the people they're guardian for, then what's shared with them. */
   function accessFor(user: string, fhirUser: string) {
     const records: { patient: string; via: "self" | "guardian" | "delegation"; relationship?: string; sites: string[] }[] = [];
@@ -156,8 +163,12 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
     if (self) records.push({ patient: self, via: "self", sites: opts.catalog().sitesFor(self) });
     const policy = opts.store().getPolicy();
     for (const g of policy.guardians) if (g.guardian === user && g.patient !== self) records.push({ patient: g.patient, via: "guardian", relationship: g.relationship, sites: guardianSites(g) });
-    for (const d of policy.delegations) if (d.delegate === user && !records.some(r => r.patient === d.patient) && (!d.asGuardian || isGuardian(policy, d.grantedBy, d.patient))) records.push({ patient: d.patient, via: "delegation", relationship: d.relationship, sites: d.sites });
-    return { records, delegations: policy.delegations.filter(d => d.grantedBy === user), apps: policy.appGrants.filter(g => g.user === user) };
+    for (const d of policy.delegations) if (d.delegate === user && !records.some(r => r.patient === d.patient) && (!d.asGuardian || isGuardian(policy, d.grantedBy, d.patient))) records.push({ patient: d.patient, via: "delegation", relationship: d.relationship, sites: withinGuardian(policy, d.grantedBy, d.patient, d.sites) });
+    return {
+      records,
+      delegations: policy.delegations.filter(d => d.grantedBy === user).map(d => ({ ...d, sites: withinGuardian(policy, user, d.patient, d.sites) })),
+      apps: policy.appGrants.filter(g => g.user === user).map(g => g.sites ? { ...g, sites: withinGuardian(policy, user, g.patient, g.sites) } : g),
+    };
   }
 
   /**

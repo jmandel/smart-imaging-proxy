@@ -36,7 +36,7 @@ export async function runStep(c: Ctx, flow: Flow, stepId: string, inputs: Record
   for (const i of step.inputs?.(c) ?? []) {
     const v = inputs[i.id];
     if (v === undefined) continue;
-    const fits = i.type === "multi" ? Array.isArray(v) && v.every(x => typeof x === "string") : typeof v === "string" && (i.type !== "select" || !i.options || i.options.some(o => o.value === v));
+    const fits = i.type === "multi" ? Array.isArray(v) && v.every(x => typeof x === "string" && (!i.options || i.options.some(o => o.value === x))) : typeof v === "string" && (i.type !== "select" || !i.options || i.options.some(o => o.value === v));
     if (!fits) throw new BadStepInput(`"${i.label}" isn't one of this step's choices.`);
   }
   c.beginStep();

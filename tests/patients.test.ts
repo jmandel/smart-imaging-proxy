@@ -146,6 +146,32 @@ describe("the guardian", () => {
     expect(e.studies.find((s: any) => s.id === CONFIDENTIAL).reason).toContain("confidential");
     expect(STANDING_GUARDIANS[0]!.excludedStudies).toEqual([CONFIDENTIAL]);
   }, 60000);
+  test("a confidential study stays out however a share from the guardian is written, and pages don't name its site", async () => {
+    stack.useStore("scratch");
+    stack.imaging.setPolicy({ delegations: [{ patient: "riley-example", grantedBy: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging", "Northside Pathology"] }] });
+    const t = await launchFor("riley-example", "alex-neighbor");
+    expect((await search(t.access_token, "riley-example")).ids).toEqual(RILEY);
+    expect((await wado(CONFIG.proxyUrl + "/wado/-", uidOf(CONFIDENTIAL), t.access_token)).status).toBe(404);
+    expect((await accountPage(SAM_ACCOUNT)).html).not.toContain("Northside Pathology");
+    expect((await accountPage("alex-neighbor")).html).not.toContain("Northside Pathology");
+    stack.useStore("saved");
+  }, 60000);
+  test("a guardian's share written while they aren't the guardian isn't kept", () => {
+    const riley = stack.imaging.getPolicy().guardians;
+    stack.imaging.setPolicy({ guardians: [] });
+    stack.imaging.setPolicy({ delegations: [{ patient: "riley-example", grantedBy: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"], asGuardian: true }] });
+    stack.imaging.setPolicy({ guardians: riley });
+    expect(stack.imaging.getPolicy().delegations).toEqual([]);
+  });
+  test("Orthanc serves the bulk links its metadata lists, nested ones too, and only those", async () => {
+    const row = stack.catalogs.orthanc.allStudies().find(s => s.id === "xr-hand-right-2012")!;
+    const series = stack.catalogs.orthanc.hierarchies([row.pk]).get(row.pk)!.series[0]!;
+    const open = async (ref: string) => { try { for await (const _ of (await stack.backends.orthanc.openBulk(row.uid, series.uid, series.instances[0]!.uid, ref)).body) { /* drain */ } return 200; } catch (e: any) { return e.kind ?? e.code ?? 404; } };
+    expect(await open("7FE00010")).toBe(200);
+    expect(await open("00283010/1/00283006")).toBe(200);
+    expect(await open("00080018")).not.toBe(200);
+    expect(await open("7fe0")).not.toBe(200);
+  }, 30000);
   test("a guardian can't share what's confidential from them, even by naming its site", async () => {
     await submitDelegation(accountUrl(SAM_ACCOUNT), { user: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging", "Northside Pathology"], patient: "riley-example" });
     expect(stack.imaging.getPolicy().delegations[0]!.sites).toEqual(["Lakeside Imaging"]);
@@ -339,7 +365,7 @@ describe("Browse", () => {
     expect(riley.name).not.toBe(own.name);
     expect(riley.whose).toMatchObject({ patient: "riley-example", plain: "Riley Example's records, which Sam holds as guardian" });
     expect(ids(riley)).toEqual(RILEY);
-    expect(riley.explain.chain).toBe("Sam is Riley's guardian, on file apart from what's confidential from them; Sam gave the Health Records App everything Sam can see");
+    expect(riley.explain.chain).toBe("Sam is Riley's guardian, on file; Sam gave the Health Records App everything Sam can see");
     expect(riley.steps.map((x: any) => x.title)).toEqual(expect.arrayContaining(["Exchange the code, with the PKCE verifier", "Search ImagingStudy"]));
     const denied = await b.pick(SAM_ACCOUNT, { patient: "josh-example" });
     expect(denied.status).toBe("denied");
