@@ -160,7 +160,8 @@ reports/quarantine.json                                       inputs left out of
 | A private transfer syntax | Quarantines it. The left wrist study's private syntax is a synthetic fixture |
 | Another study's instance, or a repeated SOP Instance | Quarantines it |
 
-- **Publishing:** content goes first, then documents, then `current.json`, which is what makes a version live. Unchanged input writes nothing. Changed input writes the next version, and earlier ones stay.
+- **Publishing:** content goes first, then documents, then `current.json`, which is what makes a version live. Unchanged input writes nothing. Changed input writes the next version, and earlier ones stay. Documents in an earlier archive format are rewritten in the current one at their own version, when that version's content is the same.
+- **Metadata:** Pixel Data, and any other binary value (OB, OD, OF, OL, OV, OW, UN) over 1 KiB at any depth, is a `BulkDataURI` rather than `InlineBinary`. A link names its element by path: a tag at the top level, and inside a sequence, the sequence's path, the item number counting from 1, and the tag, such as `00480105/1/00282000`, the slide's ICC profile. Orthanc names its links the same way. The proxy serves each at `.../instances/{instance}/bulk/{path}` as exactly that element's bytes, and from the file and S3 backends with an exact `Content-Length`.
 - **Quarantine:** other inputs carry on. A study with a live version keeps it until its inputs are clean. A new study publishes its valid instances.
 - **Compression:** an object gets a zstd wrapper only when that saves at least 5%, so incompressible instances stay byte-for-byte.
 - **Not checked:** pixel data isn't decoded. Patient ID isn't compared across a study's instances, and study-level fields come from its last file.

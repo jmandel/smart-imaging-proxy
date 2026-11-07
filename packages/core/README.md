@@ -79,14 +79,14 @@ A `Span` has `set(attrs)`, `end(status, attrs)`, and `within(fn)`, which runs `f
 | `maxDecisions` (10,000), `maxEvents` (500) | Bounds on the decision cache and the event log |
 | `observer`, `clock` | See above |
 
-It serves `GET /wado/{context}/studies/{study}[/series/{series}[/instances/{instance}]][/metadata|/bulk/{tag}]`, where `{context}` is a signed context or `-`, and `POST /internal/keys/refresh`, which refetches the keys now. A signed context that verifies, covers the request and hasn't expired is decided with no call. Anything else asks `decisionUrl`, and caches an allowed answer for its `max_age_seconds`. A failed decision releases nothing.
+It serves `GET /wado/{context}/studies/{study}[/series/{series}[/instances/{instance}]][/metadata|/bulk/{path}]`, where `{context}` is a signed context or `-`, `{path}` names a bulk element by `bulkPath` (see [the archive](#the-archive)), and `POST /internal/keys/refresh`, which refetches the keys now. A signed context that verifies, covers the request and hasn't expired is decided with no call. Anything else asks `decisionUrl`, and caches an allowed answer for its `max_age_seconds`. A failed decision releases nothing.
 
 ## Backends
 
 A `Backend` (`backends/types.ts`) lists series, opens instances in a transfer syntax the `Accept` plan allows, reads metadata, and opens bulk data. One that knows every part up front returns a plan, which lets the proxy send an exact `Content-Length`.
 
 - **`ArchiveBackend(source)`** reads the archive from any `ObjectSource`: `fileStore(dir)` or `s3Store(new S3Client(...))`. It plans every part from the indexes, and passes stored zstd through to a client that sends `Accept-Encoding: zstd`.
-- **`OrthancBackend({ base, user, password }, { observer })`** reads Orthanc's DICOMweb API, one syntax per request, labeling each part from its File Meta.
+- **`OrthancBackend({ base, user, password }, { observer })`** reads Orthanc's DICOMweb API, one syntax per request, labeling each part from its File Meta. Orthanc names nested bulk data by the same paths, and the backend serves only the links an instance's metadata lists.
 - **`withTruncation(backend, afterParts)`** ends a stream after a number of parts, for showing what a client sees.
 
 ## The archive
@@ -100,7 +100,9 @@ content/{sha256}.dcm[.zst]                                    PS3.10 bytes, name
 reports/quarantine.json                                       inputs left out of the last ingest, and why
 ```
 
-`archiveKeys` builds these keys. `ArchiveReader` reads them, with a byte-bounded cache. `ingestStudies(store, studies)` publishes PS3.10 inputs to an `ObjectStore`: content first, then documents, then `current.json`. It converts Implicit VR, big endian and deflated inputs to Explicit VR Little Endian with DCMTK (`runTool`), quarantines what it can't use, writes nothing for unchanged input, and gives an object a zstd wrapper only when that saves 5% (`wrapperPaysOff`).
+`archiveKeys` builds these keys. `ArchiveReader` reads them, with a byte-bounded cache, and reads only documents in `ARCHIVE_FORMAT`. `ingestStudies(store, studies)` publishes PS3.10 inputs to an `ObjectStore`: content first, then documents, then `current.json`. It converts Implicit VR, big endian and deflated inputs to Explicit VR Little Endian with DCMTK (`runTool`), quarantines what it can't use, writes nothing for unchanged input, and gives an object a zstd wrapper only when that saves 5% (`wrapperPaysOff`). A live version whose documents are in an earlier format gets them rewritten in this one, at the same version, when its content is the same, and otherwise the next version.
+
+Bulk data is top-level Pixel Data, and any binary value (OB, OD, OF, OL, OV, OW, UN) longer than `BULK_THRESHOLD`, 1,024 bytes, at any depth. Smaller values stay `InlineBinary`. Each is named by its path, `bulkPath`: a tag at the top level, and inside a sequence, the sequence's path, the item number counting from 1, and the tag, such as `00480105/1/00282000`. The metadata document holds it as `"BulkDataURI": "bulk:{path}"`, which the proxy rewrites to its own route, and the series index holds its offset and length in the stored PS3.10 file, by the same path, so `openBulk` reads exactly its bytes with a range, or by decoding a zstd object as far as the element. An undefined-length value, such as encapsulated pixel data, runs from its first item through its sequence delimiter.
 
 ## The Imaging Server
 
