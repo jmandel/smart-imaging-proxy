@@ -3,6 +3,7 @@
 import { S3Client } from "bun";
 import { ArchiveReader, chooseOffer, fileStore, s3Store, zstdDecompressSync } from "@smart-imaging-proxy/core";
 import { CONFIG, STORAGE } from "../src/config";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 
 const wait = async (url: string, init?: RequestInit) => {
@@ -42,27 +43,47 @@ for (const key of keys) {
 }
 console.log(`S3 bucket ${bucket}: ${uploaded} objects uploaded, ${skipped} already there`);
 
-// Orthanc gets a study only if it doesn't have it, each instance once, in a standard syntax. Where
-// it isn't installed (scripts/backends.ts), there's nothing to load.
+// Orthanc gets each study as the archive holds it, each instance once, in a standard syntax. A study
+// it holds with different content (a new version, or edited headers) is replaced. Where Orthanc isn't
+// installed (scripts/backends.ts), there's nothing to load.
 const auth = "Basic " + btoa(`${CONFIG.orthanc.user}:${CONFIG.orthanc.password}`);
 if (!existsSync(`${STORAGE}/bin/Orthanc`)) { console.log("Orthanc: not installed here, skipped"); process.exit(0); }
 await wait(`${CONFIG.orthanc.base}/system`, { headers: { Authorization: auth } });
+const orthanc = async (path: string, init: RequestInit = {}) => {
+  const r = await fetch(`${CONFIG.orthanc.base}${path}`, { ...init, headers: { Authorization: auth, ...init.headers } });
+  if (!r.ok) throw new Error(`Orthanc ${init.method ?? "GET"} ${path}: ${r.status}`);
+  return r;
+};
+const md5 = (b: Uint8Array) => createHash("md5").update(b).digest("hex");
 const reader = new ArchiveReader(local, { currentTtlMs: 0 });
-let sent = 0, present = 0;
+let sent = 0, present = 0, replaced = 0;
 for (const key of keys.filter(k => k.endsWith("/current.json"))) {
   const uid = key.split("/")[1]!;
-  const lookup = await fetch(`${CONFIG.orthanc.base}/tools/lookup`, { method: "POST", headers: { Authorization: auth }, body: uid });
-  if (!lookup.ok) throw new Error(`Orthanc lookup failed: ${lookup.status}`);
-  if ((await lookup.json() as any[]).some(m => m.Type === "Study")) { present++; continue; }
   const version = await reader.currentVersion(uid);
+  const wanted = new Map<string, Uint8Array>();
   for (const s of (await reader.study(uid, version)).series) {
     for (const inst of (await reader.seriesIndex(uid, version, s.uid)).instances) {
       const offer = chooseOffer(inst.offers, [{ syntax: "*", q: 1 }])!;
       const stored = await local.bytes(offer.key);
-      const r = await fetch(`${CONFIG.orthanc.base}/instances`, { method: "POST", headers: { Authorization: auth, "Content-Type": "application/dicom" }, body: offer.encoding === "zstd" ? zstdDecompressSync(stored) : stored });
-      if (!r.ok) throw new Error(`Orthanc rejected ${inst.uid}: ${r.status}`);
-      sent++;
+      wanted.set(inst.uid, offer.encoding === "zstd" ? zstdDecompressSync(stored) : stored);
     }
   }
+  const held = ((await (await orthanc("/tools/lookup", { method: "POST", body: uid })).json()) as any[]).find(m => m.Type === "Study");
+  if (held) {
+    // Orthanc keeps an MD5 of each file as received, which is these same bytes when nothing changed.
+    const instances = (await (await orthanc(`/studies/${held.ID}/instances?expand`)).json()) as any[];
+    const same = instances.length === wanted.size && (await Promise.all(instances.map(async i => {
+      const bytes = wanted.get(i.MainDicomTags?.SOPInstanceUID);
+      return !!bytes && (await (await orthanc(`/instances/${i.ID}/attachments/dicom/md5`)).text()).trim() === md5(bytes);
+    }))).every(Boolean);
+    if (same) { present++; continue; }
+    await orthanc(`/studies/${held.ID}`, { method: "DELETE" });
+    replaced++;
+  }
+  for (const [sop, bytes] of wanted) {
+    const r = await fetch(`${CONFIG.orthanc.base}/instances`, { method: "POST", headers: { Authorization: auth, "Content-Type": "application/dicom" }, body: bytes });
+    if (!r.ok) throw new Error(`Orthanc rejected ${sop}: ${r.status}`);
+    sent++;
+  }
 }
-console.log(`Orthanc: ${present} studies already present, ${sent} instances sent`);
+console.log(`Orthanc: ${present} studies already present, ${replaced} replaced, ${sent} instances sent`);
