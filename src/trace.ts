@@ -4,6 +4,7 @@
 // other credentials appear as hash prefixes, and passwords not at all.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes } from "node:crypto";
+import { localUrl } from "./config";
 
 export const SERVICES = ["user", "app", "authorization-server", "imaging-fhir", "policy", "dicomweb-proxy", "backend", "demo"] as const;
 export const KINDS = ["action", "server", "client", "internal", "check"] as const;
@@ -30,7 +31,7 @@ const flush = () => {
   if (!sinkUrl || !buffer.length) { buffer = []; return; }
   const body = JSON.stringify(buffer);
   buffer = [];
-  fetch(`${sinkUrl}/v1/spans`, { method: "POST", headers: { "content-type": "application/json" }, body }).catch(() => {});
+  fetch(localUrl(`${sinkUrl}/v1/spans`), { method: "POST", headers: { "content-type": "application/json" }, body }).catch(() => {});
 };
 const emit = (s: SpanRecord) => { buffer.push({ ...s, attrs: { ...s.attrs }, http: s.http && { ...s.http } }); timer ??= setTimeout(flush, 25); };
 export const flushTraces = () => { if (timer) clearTimeout(timer); flush(); };
@@ -159,7 +160,7 @@ export async function tfetch(service: Service, name: string, url: string, init: 
     const text = typeof init.body === "string" ? init.body : init.body instanceof URLSearchParams ? init.body.toString() : undefined;
     if (text !== undefined) { request.body = redactBody(text, contentType); request.encoding = "text"; request.bytes = text.length; }
     s.record.http = { method: init.method ?? "GET", url: redactUrl(url), request };
-    const res = await fetch(url, { ...init, headers: sent, redirect: init.redirect ?? "manual" });
+    const res = await fetch(localUrl(url), { ...init, headers: sent, redirect: init.redirect ?? "manual" });
     s.record.http.status = res.status;
     s.end(res.status >= 500 ? "error" : res.status >= 400 ? "denied" : "ok", { status: res.status });
     return captureResponse(res, m => { s.record.http!.response = m; s.update(); });

@@ -41,9 +41,25 @@ export const USERS = table<DemoUser>({
 });
 const userOf = (name: string): DemoUser | undefined => Object.hasOwn(USERS, name) ? USERS[name] : undefined;
 export const PATIENT_NAMES = table<string>({ "josh-example": "Josh Example", "robin-example": "Robin Example", "sam-example": "Sam Example", "riley-example": "Riley Example" });
-export const APP_NAMES = table<string>({ "portal-app": "Health Records App", "separate-viewer": "Separate Image Viewer", "shlink-dicom-share": "SHLink DICOM Share" });
-/** Where the SHLink DICOM Share page, hosted or run locally, sends a sign-in back to. */
-const SHARE_REDIRECT_URIS = (process.env.SHARE_REDIRECT_URIS ?? "https://shlink-dicom.exe.xyz/share/smart-callback/,http://localhost:3000/share/smart-callback/,http://127.0.0.1:3000/share/smart-callback/,http://localhost:3333/share/smart-callback/,http://127.0.0.1:3333/share/smart-callback/").split(",").filter(Boolean);
+export const APP_NAMES = table<string>({ "portal-app": "Health Records App", "separate-viewer": "Separate Image Viewer" });
+
+/**
+ * Public clients beyond the demo's own, from DEMO_APP_CLIENTS: comma-separated
+ * `client_id=redirect_uri` pairs, with an id repeated for each of its redirect URIs. None by default.
+ */
+export function appClientsFromEnv(value = process.env.DEMO_APP_CLIENTS ?? ""): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const pair of value.split(",").map(s => s.trim()).filter(Boolean)) {
+    const at = pair.indexOf("=");
+    const id = pair.slice(0, at).trim(), uri = pair.slice(at + 1).trim();
+    if (at < 1 || !/^[A-Za-z0-9._-]+$/.test(id)) throw new Error(`DEMO_APP_CLIENTS: "${pair}" isn't client_id=redirect_uri`);
+    const u = URL.canParse(uri) ? new URL(uri) : undefined;
+    if (!u || !/^https?:$/.test(u.protocol) || u.hash) throw new Error(`DEMO_APP_CLIENTS: ${id}'s redirect URI "${uri}" isn't an absolute http(s) URL without a fragment`);
+    if (APP_NAMES[id]) throw new Error(`DEMO_APP_CLIENTS: ${id} is one of the demo's own clients`);
+    out.set(id, [...(out.get(id) ?? []), uri]);
+  }
+  return out;
+}
 /** Describes an account by what's in place now: "Patient", the delegations it holds, or neither. */
 export const RELATIONSHIPS = ["caregiver", "spouse", "adult child", "neighbor"];
 
@@ -129,7 +145,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
   const PUBLIC_CLIENTS = table<{ name: string; redirectUris: string[] }>({
     "portal-app": { name: APP_NAMES["portal-app"]!, redirectUris: [opts.redirectUri] },
     "separate-viewer": { name: APP_NAMES["separate-viewer"]!, redirectUris: [opts.redirectUri] },
-    "shlink-dicom-share": { name: APP_NAMES["shlink-dicom-share"]!, redirectUris: SHARE_REDIRECT_URIS },
+    ...Object.fromEntries([...appClientsFromEnv()].map(([id, redirectUris]) => [id, { name: id, redirectUris }])),
   });
   const txns = new Map<string, { client_id: string; redirect_uri: string; state: string; scope: string; code_challenge: string; exp: number; user?: string; login_hint?: string; patient_hint?: string }>();
   const accountSessions = new Map<string, string>();

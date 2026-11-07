@@ -364,7 +364,7 @@ describe("writes naming another Host, over real HTTP", () => {
   let server: ReturnType<typeof Bun.serve>;
   beforeAll(() => { server = Bun.serve({ port: PORTS.demo, hostname: "127.0.0.1", fetch: demo.fetch }); });
   afterAll(() => server.stop(true));
-  const send = (path: string, host: string | undefined, init: RequestInit = { method: "POST", body: "{}" }) => fetch(`${CONFIG.demoUrl}${path}`, { ...init, headers: { "content-type": "application/json", ...(host ? { host } : {}) } });
+  const send = (path: string, host: string | undefined, init: RequestInit = { method: "POST", body: "{}" }) => fetch(`http://127.0.0.1:${PORTS.demo}${path}`, { ...init, headers: { "content-type": "application/json", ...(host ? { host } : {}) } });
 
   test("are refused with a 403 and change nothing", async () => {
     stack.stores.saved.setPolicy({ rules: [RULE] });

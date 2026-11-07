@@ -1,7 +1,7 @@
 // Runs some of the services in this process, for a deployment that splits them. They find each other
 // through CONFIG, and act together only over HTTP.
 import { randomBytes } from "node:crypto";
-import { CONFIG, ONE_ORIGIN, PORTS, serveOn } from "./config";
+import { CONFIG, GATEWAY_HOSTS, ONE_ORIGIN, PORTS, serveOn } from "./config";
 import { DEMO_BACKEND_CLIENTS, DEMO_BACKEND_SCOPES, derivedBackendClient } from "./auth-server";
 import { createProxy } from "./proxy";
 import { DEFAULT_JWKS_TTL_SECONDS } from "./jwks";
@@ -26,7 +26,7 @@ export async function startRoles(root: string, roles: Role[], env: Record<string
   // Each service in the deployment has to hold the same one, so it can't be made up here.
   const serviceSecret = env.SERVICE_SECRET ?? (needsCredential ? undefined : randomBytes(24).toString("base64url"));
   if (!serviceSecret) throw new Error(`--role ${roles.join(",")} needs SERVICE_SECRET, the credential the services share`);
-  setTraceSink(CONFIG.traceUrl);
+  setTraceSink(CONFIG.traceSink);
 
   const stops: (() => void)[] = [];
   if (has("trace")) {
@@ -62,7 +62,7 @@ export async function startRoles(root: string, roles: Role[], env: Record<string
   }
   if (has("gateway")) {
     if (!ONE_ORIGIN) throw new Error("--role gateway serves the one origin, which DEMO_ONE_ORIGIN=0 turns off");
-    const server = await serveStreaming(PORTS.gateway, gatewayFetch);
+    const server = await serveStreaming(PORTS.gateway, gatewayFetch, { hosts: GATEWAY_HOSTS });
     stops.push(() => server.stop());
   }
   return { stop() { flushTraces(); for (const stop of stops.reverse()) stop(); } };

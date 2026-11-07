@@ -275,8 +275,8 @@ function plainPreview(span, related) {
   return section(span.name, kv(rows) || muted("Nothing further recorded for this step. Rows nested under it show the work."));
 }
 
-const fullHref = s => `/span.html?session=${encodeURIComponent(s.session)}&span=${s.span}`;
-const logHref = s => `/log.html?session=${encodeURIComponent(s.session)}&trace=${s.trace}`;
+const fullHref = s => `span.html?session=${encodeURIComponent(s.session)}&span=${s.span}`;
+const logHref = s => `log.html?session=${encodeURIComponent(s.session)}&trace=${s.trace}`;
 
 /** The inline preview for any span. `related` is everything nested under it, `pair` is the other side of the same call. */
 function preview(span, related = [], pair) {

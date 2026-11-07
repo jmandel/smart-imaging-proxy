@@ -18,7 +18,8 @@ beforeAll(async () => {
 afterAll(() => { server.stop(true); stack.stop(); });
 
 const span = JSON.stringify([{ session: "guard-test", trace: "a".repeat(32), span: "b".repeat(16), service: "demo", kind: "check", name: "planted", start: 1, attrs: {} }]);
-const raw = (path: string, method: string, headers: Record<string, string>, body?: string) => fetch(`${CONFIG.traceUrl}${path}`, { method, headers, body });
+// The trace service's own port: these are its Host checks.
+const raw = (path: string, method: string, headers: Record<string, string>, body?: string) => fetch(`http://127.0.0.1:${PORTS.trace}${path}`, { method, headers, body });
 
 test("spans are refused from a browser or under another host name", async () => {
   expect((await raw("/v1/spans", "POST", { origin: "https://evil.example" }, span)).status).toBe(403);
@@ -41,7 +42,7 @@ test("traces can't be read under another host name", async () => {
     expect(await res.text()).not.toContain("guard-test");
   }
   expect((await raw("/api/sessions", "GET", { host: `evil.example:${PORTS.trace}` })).status).toBe(403);
-  expect((await raw("/api/sessions", "GET", { host: `127.0.0.1:${PORTS.trace + 1}` })).status).toBe(403);
+  expect((await raw("/api/sessions", "GET", { host: `127.0.0.1:${PORTS.trace + 2}` })).status).toBe(403);
 });
 
 test("traces can be read at this service's own addresses, the viewer's pages load, and a request with no Host is fine", async () => {
@@ -182,7 +183,7 @@ test("a malformed step request isn't a server error", async () => {
 });
 
 test("the proxy answers odd Hosts and request targets without a 500", async () => {
-  const { port, hostname } = new URL(CONFIG.proxyUrl);
+  const { port, hostname } = new URL(`http://127.0.0.1:${PORTS.proxy}`);
   const raw = (head: string) => new Promise<string>((resolve, reject) => {
     let out = "";
     const s = connect(Number(port), hostname, () => s.write(head));

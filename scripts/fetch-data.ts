@@ -7,7 +7,8 @@ import { join } from "node:path";
 const root = join(import.meta.dir, "..");
 const def = await Bun.file(join(root, "data/studies.source.json")).json();
 const sources: any[] = def.sources;
-const dir = join(root, "data/sources");
+// SOURCES_DIR keeps the downloads outside the checkout, so a new checkout doesn't fetch them again.
+const dir = process.env.SOURCES_DIR || join(root, "data/sources");
 
 async function fetchOne(src: any) {
   const name = src.archive ?? src.file;

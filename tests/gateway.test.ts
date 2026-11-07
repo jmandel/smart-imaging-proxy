@@ -5,14 +5,20 @@ import { join } from "node:path";
 import { startStack, type Stack } from "../src/stack";
 import { CONFIG, PORTS } from "../src/config";
 import { gatewayFetch } from "../src/gateway";
+import { appClientsFromEnv } from "../src/auth-server";
+
+const SHARE = "https://share.example";
 
 let stack: Stack;
-beforeAll(async () => { stack = await startStack(join(import.meta.dir, "..")); });
-afterAll(() => stack.stop());
+const APP = `${SHARE}/share/smart-callback/`;
+beforeAll(async () => {
+  process.env.DEMO_APP_CLIENTS = `share-app=${APP}`;
+  stack = await startStack(join(import.meta.dir, ".."));
+});
+afterAll(() => { stack.stop(); delete process.env.DEMO_APP_CLIENTS; });
 
 const G = `http://127.0.0.1:${PORTS.gateway}`;
 const via = (path: string, init: RequestInit = {}) => gatewayFetch(new Request(G + path, init));
-const SHARE = "https://shlink-dicom.exe.xyz";
 
 const configWith = (one: string) => {
   const r = Bun.spawnSync(["bun", "-e", `const { CONFIG } = await import("./src/config.ts"); console.log(JSON.stringify([CONFIG.authUrl, CONFIG.imagingUrl, CONFIG.proxyUrl]))`], { cwd: join(import.meta.dir, ".."), env: { ...process.env, DEMO_ONE_ORIGIN: one, DEMO_TAILNET: "0" } });
@@ -47,11 +53,20 @@ test("a page on another origin can call it, including from a public page to loop
   expect(token.headers.get("access-control-allow-origin")).toBe("*");
 });
 
-test("the share page's client and callback are registered", async () => {
-  const q = new URLSearchParams({ response_type: "code", client_id: "shlink-dicom-share", redirect_uri: `${SHARE}/share/smart-callback/`, scope: "launch/patient patient/ImagingStudy.rs", state: "s", aud: `${CONFIG.authUrl}/fhir`, code_challenge: "c".repeat(43), code_challenge_method: "S256" });
+test("an app client from DEMO_APP_CLIENTS is registered with its callback", async () => {
+  const q = new URLSearchParams({ response_type: "code", client_id: "share-app", redirect_uri: APP, scope: "launch/patient patient/ImagingStudy.rs", state: "s", aud: `${CONFIG.authUrl}/fhir`, code_challenge: "c".repeat(43), code_challenge_method: "S256" });
   const res = await via(`/authorize?${q}`);
   expect(res.status).toBe(200);
-  expect(await res.text()).toContain("SHLink DICOM Share");
+  expect(await res.text()).toContain("share-app");
+});
+
+test("DEMO_APP_CLIENTS lists client_id=redirect_uri pairs, and adds none by default", () => {
+  expect(appClientsFromEnv("")).toEqual(new Map());
+  expect(appClientsFromEnv("a=https://x.example/cb, a=http://localhost:3000/cb,b=https://y.example/")).toEqual(new Map([["a", ["https://x.example/cb", "http://localhost:3000/cb"]], ["b", ["https://y.example/"]]]));
+  expect(() => appClientsFromEnv("https://x.example/cb")).toThrow("client_id=redirect_uri");
+  expect(() => appClientsFromEnv("a=/cb")).toThrow("absolute");
+  expect(() => appClientsFromEnv("a=https://x.example/cb#f")).toThrow("fragment");
+  expect(() => appClientsFromEnv("portal-app=https://x.example/cb")).toThrow("demo's own");
 });
 
 test("a form on the front's own origin passes the write guard, and one from elsewhere doesn't", async () => {

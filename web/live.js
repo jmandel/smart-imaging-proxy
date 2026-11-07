@@ -86,7 +86,7 @@ async function showPreview(item) {
     if (!box.innerHTML) box.innerHTML = `<p class="muted">Loading…</p>`;
     loading.add(id);
     try {
-      const r = await fetch(`/api/sessions/${encodeURIComponent(s.session)}/spans/${id}`);
+      const r = await fetch(`api/sessions/${encodeURIComponent(s.session)}/spans/${id}`);
       if (r.ok) details.set(id, await r.json());
     } catch { /* The summary below still shows what's known. */ }
     loading.delete(id);
@@ -115,7 +115,7 @@ async function loadSession() {
   showExport();
   if (id) {
     try {
-      const list = await (await fetch(`/api/sessions/${encodeURIComponent(id)}/spans`)).json();
+      const list = await (await fetch(`api/sessions/${encodeURIComponent(id)}/spans`)).json();
       if (ticket !== loadTicket) return;
       for (const s of list) keep(s);
     } catch { $("#state").textContent = "Couldn't load that session."; }
@@ -133,7 +133,7 @@ function showExport() {
 }
 async function showStorage() {
   try {
-    const s = await (await fetch("/api/stats")).json();
+    const s = await (await fetch("api/stats")).json();
     const held = `${s.sessions} sessions, ${s.spans} spans, ${fmtBytes(s.bytes)}.`;
     const limits = `The least recently active sessions are dropped past ${s.limits.sessions} sessions or ${fmtBytes(s.limits.bytes)}, and a session keeps at most ${s.limits.spansPerSession} spans.`;
     $("#storage").textContent = (s.mode === "file" ? `Traces are saved in a SQLite file of their own, ${s.path}, so they survive a restart, including flow runs whose policy is temporary. ` : "Traces are in memory for this run, and a restart loses them. ") + `${limits} Held now: ${held}${s.lastError ? ` Storage problem: ${s.lastError}` : ""}`;
@@ -142,7 +142,7 @@ async function showStorage() {
 document.querySelector(".terms").addEventListener("toggle", e => { if (e.target.open) showStorage(); });
 $("#clear").onclick = async () => {
   if (!confirm("Delete every saved trace? This can't be undone.")) return;
-  const r = await fetch("/api/sessions", { method: "DELETE" }).catch(() => undefined);
+  const r = await fetch("api/sessions", { method: "DELETE" }).catch(() => undefined);
   if (!r?.ok) $("#state").textContent = "Couldn't clear the traces.";
 };
 /** While paused, live events wait in order. Controls keep working on what's already shown. */
@@ -152,7 +152,7 @@ const live = handler => e => {
   handler(data);
 };
 function connect() {
-  const es = new EventSource("/stream");
+  const es = new EventSource("stream");
   es.addEventListener("hello", live(async list => { sessions = list; renderSessions(); await loadSession(); showState(); }));
   es.addEventListener("session", live(s => {
     if (!sessions.some(x => x.id === s.id)) sessions.unshift(s);

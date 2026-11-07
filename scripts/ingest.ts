@@ -37,15 +37,16 @@ async function rewriteSlide(file: string, study: any) {
   }
 }
 
-const SYNTHETIC_DIR = join(root, "data/sources/synthetic");
+const SOURCES = process.env.SOURCES_DIR || join(root, "data/sources");
+const SYNTHETIC_DIR = join(SOURCES, "synthetic");
 await writeSynthetic(SYNTHETIC_DIR, syntheticStudies(def));
 
 const inputs: StudyInput[] = [];
 for (const study of def.studies) {
   const files: string[] = [];
   if (study.synthetic) files.push(...await walk(join(SYNTHETIC_DIR, study.id)));
-  else if (study.archives) for (const a of study.archives) files.push(...await walk(join(root, "data/sources/unpacked", a.replace(/\.tgz$/, ""))));
-  else for (const f of study.files) files.push(join(root, "data/sources/raw", f));
+  else if (study.archives) for (const a of study.archives) files.push(...await walk(join(SOURCES, "unpacked", a.replace(/\.tgz$/, ""))));
+  else for (const f of study.files) files.push(join(SOURCES, "raw", f));
   inputs.push({
     id: study.id, title: study.report?.title ?? study.id, site: study.site, files,
     rewrite: study.files ? file => rewriteSlide(file, study) : undefined,

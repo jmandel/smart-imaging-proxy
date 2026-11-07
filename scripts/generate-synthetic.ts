@@ -96,7 +96,7 @@ export const syntheticStudies = (def: { studies: any[] }): SyntheticStudy[] => d
 
 if (import.meta.main) {
   const root = join(import.meta.dir, "..");
-  const dir = process.argv[2] ?? join(root, "data/sources/synthetic");
+  const dir = process.argv[2] ?? join(process.env.SOURCES_DIR || join(root, "data/sources"), "synthetic");
   const studies = syntheticStudies(await Bun.file(join(root, "data/studies.source.json")).json());
   await writeSynthetic(dir, studies);
   console.log(`${dir}: ${studies.length} synthetic studies, ${studies.reduce((n, st) => n + st.series.reduce((m, s) => m + s.instances, 0), 0)} instances`);

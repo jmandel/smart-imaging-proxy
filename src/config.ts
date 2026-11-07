@@ -21,10 +21,23 @@ function detectTailnet(): { name: string; ip: string } | undefined {
 export const TAILNET = detectTailnet();
 // The address, not the MagicDNS name: not every machine resolves the name, including sometimes this one.
 const host = `http://${TAILNET?.ip ?? "127.0.0.1"}`;
+/**
+ * Where people and apps reach the one origin when a host in front of it gives it a name, such as
+ * https://imaging.example.org. Its host terminates TLS and forwards to the one origin's port, so that
+ * port listens on every interface. Without it, the one origin is this machine's port 4605.
+ */
+const PUBLIC = process.env.DEMO_PUBLIC_URL ? new URL(process.env.DEMO_PUBLIC_URL) : undefined;
+if (PUBLIC && (PUBLIC.pathname !== "/" || PUBLIC.search)) throw new Error("DEMO_PUBLIC_URL is an origin, such as https://imaging.example.org, with no path");
+if (PUBLIC && !ONE_ORIGIN) throw new Error("DEMO_PUBLIC_URL names the one origin, which DEMO_ONE_ORIGIN=0 turns off");
+const origin = PUBLIC?.origin ?? `${host}:${PORTS.gateway}`;
+/** The addresses the one origin listens on. */
+export const GATEWAY_HOSTS = PUBLIC ? ["0.0.0.0"] : undefined;
 /** The address every service listens on. MinIO and Orthanc stay on loopback: only the proxy reaches them. */
 export const LISTEN_HOSTS = ["127.0.0.1", ...(TAILNET ? [TAILNET.ip] : [])];
 /** What a client sees of a failed request. The details go to the server's log. */
-export const ownHosts = (port: number, tailnet = TAILNET) => [`127.0.0.1:${port}`, `localhost:${port}`, ...(tailnet ? [`${tailnet.name}:${port}`, `${tailnet.ip}:${port}`] : [])];
+const hostsAt = (port: number, tailnet = TAILNET) => [`127.0.0.1:${port}`, `localhost:${port}`, ...(tailnet ? [`${tailnet.name}:${port}`, `${tailnet.ip}:${port}`] : [])];
+/** A service's own names, which include the one origin's, since that's where apps reach it. */
+export const ownHosts = (port: number, tailnet = TAILNET) => [...hostsAt(port, tailnet), ...(ONE_ORIGIN && port !== PORTS.gateway ? hostsAt(PORTS.gateway, tailnet) : []), ...(PUBLIC ? [PUBLIC.host, `${PUBLIC.hostname}:${PORTS.gateway}`] : [])];
 /** A DNS rebinding page reaches a service under its own host name. A browser always sends Host, so a request with none isn't such a page. */
 export const foreignHost = (host: string | null | undefined, port: number) => host != null && !ownHosts(port).includes(host);
 export const FOREIGN_HOST = () => Response.json({ error: "this server answers only at its own addresses and port" }, { status: 403 });
@@ -41,12 +54,25 @@ export const serveOn = (port: number, options: Omit<Parameters<typeof Bun.serve>
     },
   } as any));
 export const CONFIG = {
-  demoUrl: `${host}:${PORTS.demo}`,
-  proxyUrl: ONE_ORIGIN ? `${host}:${PORTS.gateway}` : `${host}:${PORTS.proxy}`,
-  imagingUrl: ONE_ORIGIN ? `${host}:${PORTS.gateway}/imaging` : `${host}:${PORTS.imaging}`,
-  authUrl: ONE_ORIGIN ? `${host}:${PORTS.gateway}` : `${host}:${PORTS.auth}`,
-  traceUrl: `${host}:${PORTS.trace}`,
+  demoUrl: ONE_ORIGIN ? origin : `${host}:${PORTS.demo}`,
+  proxyUrl: ONE_ORIGIN ? origin : `${host}:${PORTS.proxy}`,
+  imagingUrl: ONE_ORIGIN ? `${origin}/imaging` : `${host}:${PORTS.imaging}`,
+  authUrl: ONE_ORIGIN ? origin : `${host}:${PORTS.auth}`,
+  traceUrl: ONE_ORIGIN ? `${origin}/trace` : `${host}:${PORTS.trace}`,
+  /** Where services send spans: the trace service itself, since spans are service-to-service traffic. */
+  traceSink: `http://127.0.0.1:${PORTS.trace}`,
   minio: { endpoint: `http://127.0.0.1:${process.env.MINIO_PORT ?? 4610}`, accessKey: "demo-minio", secretKey: "demo-minio-secret" },
   archive: { dir: process.env.ARCHIVE_DIR ?? `${STORAGE}/archive`, bucket: "smart-imaging-archive" },
   orthanc: { base: `http://127.0.0.1:${process.env.ORTHANC_PORT ?? 4611}`, user: "demo-proxy", password: "demo-orthanc-secret" },
 };
+
+/**
+ * Where this machine's own processes send a request for a URL it issued: the one origin's public
+ * name goes straight to its local port, rather than out through the host in front of it and back.
+ */
+export function localUrl(url: string): string {
+  return ONE_ORIGIN && url.startsWith(origin) && (url.length === origin.length || url[origin.length] === "/") ? `http://127.0.0.1:${PORTS.gateway}${url.slice(origin.length)}` : url;
+}
+/** The origin people and apps use, for the one origin's own checks. */
+export const PUBLIC_ORIGIN = origin;
+

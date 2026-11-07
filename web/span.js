@@ -26,7 +26,7 @@ if (document.getElementById("page")) (async () => {
   const q = new URLSearchParams(location.search);
   const page = document.getElementById("page");
   if (!q.get("session") || !q.get("span")) { page.innerHTML = `<h1>No exchange chosen</h1><p class="muted">This link needs both a session and a span. Open it from a row in the live trace.</p>`; return; }
-  const r = await fetch(`/api/sessions/${encodeURIComponent(q.get("session"))}/spans/${encodeURIComponent(q.get("span"))}`);
+  const r = await fetch(`api/sessions/${encodeURIComponent(q.get("session"))}/spans/${encodeURIComponent(q.get("span"))}`);
   if (!r.ok) { page.innerHTML = `<h1>Not found</h1><p class="muted">This exchange is no longer held. The collector keeps recent sessions only.</p>`; return; }
   const s = await r.json();
   document.title = `${s.name} | HTTP Exchange`;

@@ -1,23 +1,36 @@
-// One origin in front of the Authorization Server, Imaging Server, and proxy, which is what the
-// stack gives apps unless DEMO_ONE_ORIGIN=0. `/imaging/` goes to the Imaging Server, `/wado/` to
-// the proxy, and everything else to the Authorization Server, which also serves the clinical FHIR
-// base. The services keep their own ports, and add their own CORS.
-import { PORTS } from "./config";
+// The one origin people and apps use, unless DEMO_ONE_ORIGIN=0: a host may give a machine only
+// one public port, and some browser apps send a token only to one origin. It routes by path:
+//
+//   /imaging/...   Imaging Server, without the prefix
+//   /wado/...      proxy
+//   /trace/...     live trace, without the prefix
+//   /fhir/..., /authorize..., /token, /introspect, /revoke, /account...   Authorization Server,
+//                  which also serves the clinical FHIR base
+//   anything else  the demo's pages
+//
+// The services keep their own ports, and add their own CORS.
+import { PORTS, PUBLIC_ORIGIN } from "./config";
 
 const at = (port: number, path: string) => `http://127.0.0.1:${port}${path}`;
+const AUTH = /^\/(fhir|authorize|account)(\/|$)|^\/(token|introspect|revoke)$/;
 function target(path: string): string {
   if (path.startsWith("/imaging/")) return at(PORTS.imaging, path.slice("/imaging".length));
   if (path.startsWith("/wado/") || path === "/internal/keys/refresh") return at(PORTS.proxy, path);
-  return at(PORTS.auth, path);
+  if (path.startsWith("/trace/")) return at(PORTS.trace, path.slice("/trace".length));
+  if (AUTH.test(path)) return at(PORTS.auth, path);
+  return at(PORTS.demo, path);
 }
 
 export async function gatewayFetch(req: Request): Promise<Response> {
   const url = new URL(req.url);
+  // The trace's pages use relative links, so its root needs the slash.
+  if (url.pathname === "/trace") return new Response(null, { status: 308, headers: { location: `/trace/${url.search}` } });
   const to = target(url.pathname);
   const headers = new Headers(req.headers);
   headers.delete("host");
   // A form on this origin is same-origin to the service behind it, so the service's write guard still holds.
-  if (headers.get("origin") === url.origin) headers.set("origin", new URL(to).origin);
+  const from = headers.get("origin");
+  if (from === url.origin || from === PUBLIC_ORIGIN) headers.set("origin", new URL(to).origin);
   const hasBody = req.method !== "GET" && req.method !== "HEAD";
   let r: Response;
   try {

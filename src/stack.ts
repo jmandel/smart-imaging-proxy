@@ -12,7 +12,7 @@ import { fileStore, s3Store } from "./archive/sources";
 import { withTruncation } from "./backends/truncation";
 import { OrthancBackend } from "./backends/orthanc";
 import type { Backend } from "./backends/types";
-import { CONFIG, ONE_ORIGIN, PORTS, serveOn } from "./config";
+import { CONFIG, GATEWAY_HOSTS, ONE_ORIGIN, PORTS, serveOn } from "./config";
 import { gatewayFetch } from "./gateway";
 import { withCors } from "./cors";
 import { setTraceSink, tfetch } from "./trace";
@@ -90,7 +90,7 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
   const catalogs = await openCatalogs(root, opts.catalog);
   const serviceSecret = randomBytes(24).toString("base64url");
   const collector = createCollector(root, opts.traces);
-  setTraceSink(CONFIG.traceUrl);
+  setTraceSink(CONFIG.traceSink);
 
   const auth = buildAuthServer(stores, serviceSecret);
   const imaging = buildImagingServer(stores, serviceSecret, () => catalogFor(current));
@@ -115,7 +115,7 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
   ];
   const proxyServer = await serveStreaming(PORTS.proxy, withCors(proxy.fetch));
   // The streaming server, so the proxy's exact Content-Length reaches the client.
-  const gatewayServer = ONE_ORIGIN ? await serveStreaming(PORTS.gateway, gatewayFetch) : undefined;
+  const gatewayServer = ONE_ORIGIN ? await serveStreaming(PORTS.gateway, gatewayFetch, { hosts: GATEWAY_HOSTS }) : undefined;
 
   /** Checks a backend works and reports what it declares. */
   async function selfTest(name: BackendName) {

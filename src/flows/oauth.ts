@@ -1,7 +1,7 @@
 // A SMART App Launch client: standalone launch, authorization code, PKCE S256, public client.
 // The submit functions do what a browser does on the Authorization Server's pages.
 import { createHash, randomBytes } from "node:crypto";
-import { CONFIG } from "../config";
+import { CONFIG, localUrl } from "../config";
 
 export const CALLBACK = `${CONFIG.demoUrl}/oauth/callback`;
 export const CLINICAL_FHIR = `${CONFIG.authUrl}/fhir`;
@@ -79,11 +79,11 @@ export async function submitRevocation(url: string, d: { user: string; delegate:
 
 /** A complete scripted launch. */
 export async function scriptedLaunch(user: string, client = "portal-app", opts: { scope?: string; sites?: string[]; patient?: string } = {}) {
-  const config: any = await (await fetch(`${CLINICAL_FHIR}/.well-known/smart-configuration`)).json();
+  const config: any = await (await fetch(localUrl(`${CLINICAL_FHIR}/.well-known/smart-configuration`))).json();
   const a = buildAuthorization(config.authorization_endpoint, client, opts.scope, undefined, user);
   const back = await submitConsent(a.url, { user, sites: opts.sites, patient: opts.patient });
   if (back.searchParams.get("state") !== a.state) throw new Error("state mismatch");
   if (!back.searchParams.get("code")) return { error: back.searchParams.get("error") } as any;
-  const res = await fetch(config.token_endpoint, { method: "POST", headers: FORM, body: tokenRequestBody(a, back.searchParams.get("code")!) });
+  const res = await fetch(localUrl(config.token_endpoint), { method: "POST", headers: FORM, body: tokenRequestBody(a, back.searchParams.get("code")!) });
   return res.json() as Promise<any>;
 }

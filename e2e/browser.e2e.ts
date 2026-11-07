@@ -10,7 +10,7 @@ import { startStack, type Stack } from "../src/stack";
 
 setDefaultTimeout(90000);
 const root = join(import.meta.dir, "..");
-const DEMO = `http://127.0.0.1:${PORTS.demo}`;
+const DEMO = CONFIG.demoUrl;
 const DESKTOP = { width: 1440, height: 900 }, PHONE = { width: 390, height: 844 };
 
 let stack: Stack, server: ReturnType<typeof Bun.serve>, browser: Browser, context: BrowserContext | undefined;

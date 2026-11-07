@@ -3,6 +3,7 @@ name: smart-imaging-sandbox
 services:
   minio:
     image: minio/minio:latest
+    restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: demo-minio
@@ -11,6 +12,7 @@ services:
     volumes: ["${DEMO_STORAGE:-/tmp/smart-imaging-demo}/minio:/data"]
   orthanc:
     image: orthancteam/orthanc:latest
+    restart: unless-stopped
     environment:
       DICOM_WEB_PLUGIN_ENABLED: "true"
       ORTHANC__AUTHENTICATION_ENABLED: "true"
