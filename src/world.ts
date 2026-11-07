@@ -4,8 +4,9 @@
 // the backends and the trace collector, and reach one another only over HTTP, so nothing one issues
 // works in another.
 import { randomBytes, type KeyObject } from "node:crypto";
-import { createImagingServer, createPolicyClient, createProxy, withTruncation, type Backend, type CatalogStore, type PolicyOperation, type PolicyStore } from "@smart-imaging-proxy/core";
-import { createAuthServer, DEMO_BACKEND_SCOPES, USERS, type BackendClient } from "./auth-server";
+import { createImagingServer, createPolicyClient, createProxy, idOf, ref, withTruncation, type Backend, type CatalogStore, type PolicyOperation, type PolicyStore } from "@smart-imaging-proxy/core";
+import { APP_NAMES, createAuthServer, DEMO_BACKEND_SCOPES, PATIENT_NAMES, USERS, type BackendClient } from "./auth-server";
+import { patientAttributes } from "./stores";
 import { PORTS, urlsFor, type WorldUrls } from "./config";
 import { tfetch, traceObserver, type Service } from "./trace";
 import type { DemoClock } from "./clock";
@@ -24,23 +25,40 @@ export interface Shared {
 
 /** How each policy API call reads in the trace. */
 const POLICY_CALLS: Record<PolicyOperation, string> = {
+  "get-document": "read policy at the Imaging Server",
+  "set-document": "set policy at the Imaging Server",
   relationships: "look up who is related to whom",
+  "put-relationship": "record a relationship at the Imaging Server",
+  "remove-relationship": "remove a relationship at the Imaging Server",
+  policies: "read the organization's policies at the Imaging Server",
+  "put-policy": "set an organization policy at the Imaging Server",
+  "replace-policies": "set the organization's policies at the Imaging Server",
+  "remove-policy": "remove an organization policy at the Imaging Server",
+  shares: "look up shares at the Imaging Server",
+  share: "record the share at the Imaging Server",
+  "remove-shares": "revoke the share at the Imaging Server",
+  approvals: "look up app approvals at the Imaging Server",
+  "approve-app": "record the app approval at the Imaging Server",
+  "remove-approvals": "revoke the app approval at the Imaging Server",
   access: "look up the user's access",
   explain: "the demo asks for the Imaging Server's view",
-  delegate: "record the delegation at the Imaging Server",
-  "remove-delegations": "revoke the delegation at the Imaging Server",
-  "grant-app": "record the app authorization at the Imaging Server",
-  "remove-app-grants": "revoke the app authorization at the Imaging Server",
-  "get-policy": "read policy at the Imaging Server",
-  "set-policy": "set policy at the Imaging Server",
-  "set-guardians": "set the guardians on file at the Imaging Server",
-  "set-rules": "set the rules at the Imaging Server",
-  "update-rule": "change a rule at the Imaging Server",
   "get-settings": "read the settings at the Imaging Server",
   "set-settings": "change the settings at the Imaging Server",
   reset: "reset policy at the Imaging Server",
   info: "read the policy store's state at the Imaging Server",
 };
+
+/** Display names for the reasons decisions give: the demo's people, patients, apps, services and labels. */
+const LABEL_NAMES: Record<string, string> = { "confidential-adolescent": "confidential adolescent care" };
+export function nameOf(r: string): string {
+  const [kind, id = ""] = [r.slice(0, r.indexOf(":")), r.slice(r.indexOf(":") + 1)];
+  if (kind === "user") return USERS[id]?.name.split(" ")[0] ?? id;
+  if (kind === "patient") return PATIENT_NAMES[id]?.split(" ")[0] ?? id;
+  if (kind === "app") return APP_NAMES[id] ? `the ${APP_NAMES[id]}` : id;
+  if (kind === "service") return `the ${id.replaceAll("-", " ")}`;
+  if (kind === "label") return LABEL_NAMES[id] ?? id.replaceAll("-", " ");
+  return r;
+}
 
 /**
  * The Imaging Server's policy API at `base`, its loopback address: the one origin doesn't forward the
@@ -65,13 +83,30 @@ export function createWorld(o: { scope?: string; store: PolicyStore; clock: Demo
 
   const auth = createAuthServer({
     issuer: urls.auth, imagingFhirBase: `${urls.imaging}/fhir`, serviceSecret, redirectUri: urls.callback, store: () => store, clock,
+    // The Authorization Server's pages, in their own terms, over the policy API's three levels.
     directory: {
-      relationships: () => directoryPolicy.relationships(),
-      access: (user, fhirUser) => directoryPolicy.access(user, fhirUser),
-      recordConsent: async c => { await directoryPolicy.grantApp(c); },
-      delegate: async d => { await directoryPolicy.delegate(d); },
-      revokeDelegation: async (grantedBy, delegate, patient) => { if (delegate) await directoryPolicy.removeDelegations({ grantedBy, delegate, patient }); },
-      revokeApp: async (client, user, patient) => { if (client) await directoryPolicy.removeAppGrants({ client, user, patient }); },
+      relationships: async () => [
+        ...(await directoryPolicy.relationships()).filter(r => r.relation === "guardian_of").map(r => ({ patient: idOf(r.object, "patient")!, delegate: idOf(r.subject, "user")!, relationship: "guardian" })),
+        ...(await directoryPolicy.shares()).map(s => ({ patient: idOf(s.patient, "patient")!, delegate: idOf(s.with, "user")!, relationship: s.label })),
+      ],
+      access: async (user, fhirUser) => {
+        const a = await directoryPolicy.access(user, fhirUser);
+        return {
+          records: a.records.map(r => ({ ...r, via: r.via === "share" ? "delegation" as const : r.via })),
+          delegations: a.shares.map(s => ({ patient: idOf(s.patient, "patient")!, delegate: idOf(s.with, "user")!, relationship: s.label, sites: s.sites })),
+          apps: a.approvals.map(x => ({ client: idOf(x.app, "app")!, patient: idOf(x.patient, "patient")!, ...(x.sites ? { sites: x.sites } : {}) })),
+        };
+      },
+      recordConsent: async c => {
+        const r = await directoryPolicy.approveApp({ by: ref("user", c.user), app: ref("app", c.client), patient: ref("patient", c.patient), fhirUser: c.fhirUser, ...(c.sites ? { sites: c.sites } : {}) });
+        return r.ok ? {} : { refused: `${r.refusal.error} (${r.refusal.policy})` };
+      },
+      delegate: async d => {
+        const r = await directoryPolicy.share({ from: ref("user", d.grantedBy), with: ref("user", d.delegate), patient: ref("patient", d.patient), sites: d.sites, label: d.relationship });
+        return r.ok ? {} : { refused: `${r.refusal.error} (${r.refusal.policy})` };
+      },
+      revokeDelegation: async (grantedBy, delegate, patient) => { if (delegate) await directoryPolicy.removeShares({ from: ref("user", grantedBy), with: ref("user", delegate), patient: patient && ref("patient", patient) }); },
+      revokeApp: async (client, user, patient) => { if (client) await directoryPolicy.removeApprovals({ by: ref("user", user), app: ref("app", client), patient: patient && ref("patient", patient) }); },
     },
   });
   const clients: Record<string, BackendClient> = {};
@@ -82,7 +117,7 @@ export function createWorld(o: { scope?: string; store: PolicyStore; clock: Demo
     return r.ok ? r.json() : { active: false };
   };
   const imaging = createImagingServer({
-    base: `${urls.imaging}/fhir`, clinicalFhirBase: urls.clinicalFhir, proxyBase: () => urls.proxy, introspect, patientOf: user => USERS[user]?.patient,
+    base: `${urls.imaging}/fhir`, clinicalFhirBase: urls.clinicalFhir, proxyBase: () => urls.proxy, introspect, patientOf: user => USERS[user]?.patient, patientAttributes, name: nameOf,
     serviceSecret, policySecret, catalog, keyStore: store, store: () => store, observer: traceObserver, clock,
   });
 

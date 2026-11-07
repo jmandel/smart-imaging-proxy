@@ -76,9 +76,10 @@ for (const backend of BACKENDS) {
     test("an old URL follows current policy, and stays bound to its own study", async () => {
       const { t, url } = await launchAndSearch();
       await admin("/signing-key/rotate");
-      stack.store.setPolicy({ rules: [{ id: "none", when: { client: "portal-app" }, allow: { studies: [] } }] });
+      const approval = { by: "user:josh", app: "app:portal-app", patient: "patient:josh-example" };
+      stack.store.putApproval({ ...approval, sites: [] });
       expect(await get(url, t.access_token)).toEqual({ status: 404, parts: 0, authz: "asked" });
-      stack.store.setPolicy({ rules: [] });
+      stack.store.putApproval(approval);
       const other = stack.catalog.allStudies().find(s => !url.endsWith(s.uid) && url.split("/studies/")[1] !== s.uid)!.uid;
       const base = url.split("/studies/")[0];
       expect(await get(`${base}/studies/${other}`, t.access_token)).toEqual({ status: 404, parts: 0, authz: "asked" });

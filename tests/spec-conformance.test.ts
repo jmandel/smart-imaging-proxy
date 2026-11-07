@@ -78,33 +78,36 @@ describe("Discovery and search", () => {
     expect(await ids(`patient=josh-example&based-on:identifier=${accession}`)).toEqual([WRIST]);
     expect((await ids("patient=josh-example&_lastUpdated=gt2022-01-01T00:00:00Z"))).toEqual(["slide-lung-2023"]);
   });
-  test("a withdrawn rule is a client with no rule: 403 on search, and what the demo says matches", async () => {
+  test("a withdrawn service-access policy is a service with none: 403 on search, and what the demo says matches", async () => {
     says("a request for a patient outside the client's authorized access SHALL receive `403 Forbidden`");
     const c = clients["hand-referral-service"];
     const backendToken = async () => ((await (await fetch(stack.auth.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "client_credentials", scope: "system/ImagingStudy.rs", client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: clientAssertion(c, stack.auth.tokenUrl) }).toString() })).json()) as any).access_token as string;
     const t = await backendToken();
     const none = await searchFor(t, "patient=josh-example");
-    stack.store.setPolicy({ rules: [{ id: "hand-referral", when: { client: "hand-referral-service", patient: "josh-example" }, allow: { modalities: ["CR"] } }] });
+    const policy = { id: "hand-referral", type: "service-access" as const, service: "service:hand-referral-service", patients: "patient:josh-example", allow: { modalities: ["CR"] } };
+    stack.store.putPolicy(policy);
     try {
       const allowed: any = await (await searchFor(t, "patient=josh-example")).json();
       expect(allowed.total).toBeGreaterThan(0);
-      stack.store.updateRule("hand-referral", { withdrawn: true });
+      stack.store.putPolicy({ ...policy, withdrawn: true });
       const withdrawn = await searchFor(t, "patient=josh-example");
       expect(withdrawn.status).toBe(403);
       expect(await withdrawn.json()).toEqual(await none.json());
       const seen = await stack.explain({ client: "hand-referral-service", patient: "josh-example" });
       expect(seen.searchAllowed).toBe(false);
-      expect(seen.rule).toBeUndefined();
-    } finally { stack.store.setPolicy({ rules: [] }); }
+      expect(seen.policy).toBeUndefined();
+    } finally { stack.store.replacePolicies("service-access", []); }
   });
-  test("a user's token sees a withdrawn rule as omitted studies, within the patient they can see", async () => {
+  test("a user's token sees studies its app approval leaves out as omitted, within the patient they can see", async () => {
     says("SHALL omit studies and included Endpoints");
-    stack.store.setPolicy({ rules: [{ id: "gone", when: { client: "portal-app" }, allow: { all: true }, withdrawn: true }] });
+    const approval = { by: "user:josh", app: "app:portal-app", patient: "patient:josh-example" };
+    stack.store.putApproval({ ...approval, sites: [] });
     try {
       const r = await searchFor(token, "patient=josh-example");
       expect(r.status).toBe(200);
-      expect(((await r.json()) as any).total).toBe(0);
-    } finally { stack.store.setPolicy({ rules: [] }); }
+      const b: any = await r.json();
+      expect([b.total, b.entry ?? []]).toEqual([0, []]);
+    } finally { stack.store.putApproval(approval); }
   });
   test("real search filters: nothing is silently ignored", async () => {
     const total = async (q: string) => { const r = await searchFor(token, `patient=josh-example&${q}`); return r.status === 200 ? ((await r.json()) as any).total : r.status; };

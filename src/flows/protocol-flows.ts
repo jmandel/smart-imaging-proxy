@@ -6,8 +6,9 @@ import { CONFIG } from "../config";
 const WRIST = "xr-wrist-left-2012", SLIDE = "slide-lung-2023", MRI = "mri-brain-2020";
 const part = (s: string, q?: number) => `multipart/related; type=application/dicom; transfer-syntax=${s}${q !== undefined ? `; q=${q}` : ""}`;
 
-async function loginAndSearch(c: Ctx, user = "josh") {
-  const t = await c.launch(user);
+const RIVERSIDE = "Riverside Hospital";
+async function loginAndSearch(c: Ctx, user = "josh", sites?: string[]) {
+  const t = await c.launch(user, "portal-app", sites ? { sites } : {});
   c.state.token = c.launched(t);
   const r = await c.search(c.state.token);
   c.state.refresh = t.refresh_token;
@@ -57,11 +58,10 @@ export const protocolFlows: Flow[] = [
         c.check("Instant", r.authz === "instant" && r.status === 200);
       } },
       { id: "separate", title: "A separate client gets the URL", actor: "Separate viewer", doc: `<p>The app passes the Endpoint address and study UID to a client registered separately, which uses its own token. Whether it's authorized is up to the Imaging Server.</p>`,
-        inputs: () => [{ id: "allowed", label: "Is this client authorized for Josh?", type: "select", options: [{ value: "yes", label: "Yes" }, { value: "no", label: "No" }], default: "yes" }],
+        inputs: () => [{ id: "allowed", label: "Does Josh approve this client for his records?", type: "select", options: [{ value: "yes", label: "Yes, for every site" }, { value: "no", label: "No: for no sites" }], default: "yes" }],
         run: async (c, i) => {
           const s = c.found(WRIST);
-          await c.setRules([{ id: "separate-viewer", description: "Policy for the separate viewer", when: { client: "separate-viewer" }, allow: i.allowed === "yes" ? { all: true } : {} }]);
-          const t = await c.launch("josh", "separate-viewer");
+          const t = await c.launch("josh", "separate-viewer", i.allowed === "yes" ? {} : { sites: [] });
           const r = await c.retrieve("Separate viewer", "Same URL, the viewer's own token", c.studyUrl(s.base, s.uid), c.launched(t));
           const ok = i.allowed === "yes";
           c.check(ok ? "Released, after asking" : "Denied, after asking", r.status === (ok ? 200 : 404) && r.authz === "asked", `status ${r.status}, authorization: ${r.authz}`);
@@ -99,11 +99,10 @@ export const protocolFlows: Flow[] = [
     id: "attacks", number: 10, group: "protocol", title: "Attempts to get around the checks",
     summary: "Attempts to get around the URL and token checks.",
     shows: "Griffin's warning about treating URLs as secrets: the URL alone never grants anything.",
-    setup: async c => { await c.setRules([{ id: "wrist-only", description: "This app may see only the left wrist", when: { client: "portal-app", user: "josh" }, allow: { studies: [WRIST] } }]); },
     steps: [
-      { id: "setup", title: "Get a valid URL", actor: "App", doc: `<p>The policy here lets the app see only the left wrist study.</p>`, run: async c => {
-        await loginAndSearch(c);
-        c.check("One study returned", Object.keys(c.state.studies).length === 1);
+      { id: "setup", title: "Get a valid URL", actor: "App", doc: `<p>Josh approves the app for Riverside Hospital only, where the left wrist study is.</p>`, run: async c => {
+        await loginAndSearch(c, "josh", [RIVERSIDE]);
+        c.check("Only Riverside Hospital's studies returned", Object.keys(c.state.studies).length > 0 && Object.keys(c.state.studies).every(id => c.siteOf(id) === RIVERSIDE) && !!c.state.studies[WRIST], Object.keys(c.state.studies).join(", "));
       } },
       { id: "substitute", title: "Substitute another Study UID", actor: "Attacker", doc: `<p>The signed context names one study. Appending a different UID fails the fast path, and the decision service refuses it.</p>`, inputs: c => [{ id: "study", label: "Study UID to substitute", type: "select", options: studyOptions(c).filter((o: any) => o.value !== WRIST), default: MRI }], run: async (c, i) => {
         const s = c.found(WRIST);
@@ -303,20 +302,22 @@ export const protocolFlows: Flow[] = [
         c.check("Every study came back once, newest first", JSON.stringify(seen) === JSON.stringify(expected), seen.join(", "));
         c.check("Every page carried its own Endpoints", onSamePage);
       } },
-      { id: "policy", title: "Policy changes between pages", actor: "Imaging Server", doc: `<p>The app reads page 1, and then a site is taken away from this app. The cursor in the <code>next</code> link was issued before that, and it makes no difference: policy runs again, so page 2 and its <code>total</code> reflect the change. Putting the site back makes the same URL return those studies again.</p>`,
+      { id: "policy", title: "Policy changes between pages", actor: "Imaging Server", doc: `<p>The app reads page 1, and then Josh takes a site away from this app's approval. The cursor in the <code>next</code> link was issued before that, and it makes no difference: policy runs again, so page 2 and its <code>total</code> reflect the change. Putting the site back makes the same URL return those studies again.</p>`,
         inputs: c => [{ id: "site", label: "Site to take away after page 1", type: "select", options: siteOptions(c), default: "Riverside Hospital" }],
         run: async (c, i) => {
           const first = await c.searchPage("Page 1, before the change", c.state.token, c.state.query);
           const onFirst = studiesOn(first.body).map(s => s.id);
           const remaining = c.studies().filter(s => s.site !== i.site);
-          await c.setRules([{ id: "site-removed", description: `This app may no longer see ${i.site}`, when: { client: "portal-app", user: "josh" }, allow: { sites: c.sites().filter(s => s !== i.site) } }]);
-          if (!first.next) { c.check("Everything fit on page 1, so there's no page 2 to change", true); await c.setRules([]); return; }
+          // Josh narrows the app's approval, which takes effect at once.
+          const approve = (sites?: string[]) => c.world.policy.approveApp({ by: "user:josh", app: "app:portal-app", patient: "patient:josh-example", fhirUser: "Patient/josh-example", sites: sites ?? c.sites() });
+          await approve(c.sites().filter(s => s !== i.site));
+          if (!first.next) { c.check("Everything fit on page 1, so there's no page 2 to change", true); await approve(); return; }
           const second = await c.searchPage("Page 2, after the change", c.state.token, first.next);
           const onSecond = studiesOn(second.body).map(s => s.id);
           c.check(`Page 2 has nothing from ${i.site}`, second.status === 200 && onSecond.every(id => c.siteOf(id) !== i.site), onSecond.join(", ") || "no studies");
           c.check("total now counts only what this caller may see", second.body.total === remaining.length, `total ${second.body.total}`);
           c.check("Page 2 doesn't repeat page 1", onSecond.every(id => !onFirst.includes(id)));
-          await c.setRules([]);
+          await approve();
           const restored = await c.searchPage("The same next URL, with the site back", c.state.token, first.next);
           c.check("The same URL follows policy again", restored.status === 200 && restored.body.total === c.studies().length && studiesOn(restored.body).length > 0, `total ${restored.body.total}`);
         } },

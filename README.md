@@ -34,7 +34,7 @@ Then open http://127.0.0.1:4605/browse and try these:
 
 1. **Josh, the patient:** shows all six of his studies. Retrieve one through the proxy, and follow its link to the live trace.
 2. **Sam, a patient and a caregiver:** right under Sam, choose Sam's own records or Riley's as guardian. Each choice is a real new sign-in and search. Josh's aren't Sam's until Josh shares: choose "Josh Example hasn't shared with Sam", and the page offers to share, and then Josh is a third choice, showing only the shared sites.
-3. **A backend client:** gets a `403` until you apply a rule set at `/admin`.
+3. **A backend client:** gets a `403` until you apply a rule set of service-access policies at `/admin`.
 
 ## What's at each URL
 
@@ -46,7 +46,7 @@ Everything is at one origin, port 4605: the demo's pages, the live trace at `/tr
 |---|---|---|
 | 4600 | Demo | `/` flow player, `/browse` Browse, `/admin` admin screen |
 | 4601 | WADO-RS proxy | `/wado/{signed-context}/studies/...`, opaque to clients |
-| 4602 | Imaging Server | `/fhir/ImagingStudy`, `/fhir/metadata`, `/access/v1/evaluation`, `/policy/v1/...`, `/.well-known/jwks.json`, `/.well-known/authzen-configuration` |
+| 4602 | Imaging Server | `/fhir/ImagingStudy`, `/fhir/metadata`, `/access/v1/evaluation`, `/policy/v2/...`, `/.well-known/jwks.json`, `/.well-known/authzen-configuration` |
 | 4603 | Authorization Server | `/fhir/.well-known/smart-configuration`, `/authorize`, `/token`, `/introspect`, `/revoke`, `/account`, `/fhir/Patient/{id}` (with a token for that patient) |
 | 4604 | Live trace | `/` viewer, `/span.html` full exchange, `/log.html` HTTP log, `/api/sessions/{id}/export` |
 | 4605 | One origin | `/imaging/...` Imaging Server, `/wado/...` proxy, `/trace/...` live trace, `/fhir/...`, `/authorize`, `/token`, `/introspect`, `/revoke`, and `/account` Authorization Server, and everything else the demo |
@@ -55,9 +55,9 @@ Everything is at one origin, port 4605: the demo's pages, the live trace at `/tr
 
 `/s/{scope}` in front of any of these paths, on any of these ports, reaches a [policy scope](#policy-scopes) instead.
 
-- **Flow player:** 15 flows, each a series of steps showing real requests and responses, on any backend. Every run mints a scope of its own, starting from the guardians on file, and the page moves to that scope's URL, so a reload comes back to the run.
+- **Flow player:** 15 flows, each a series of steps showing real requests and responses, on any backend. Every run mints a scope of its own, starting from what's on file, and the page moves to that scope's URL, so a reload comes back to the run.
 - **Browse:** pick an account or a backend client, and, for a person holding more than one record, whose records. The demo server runs a real launch or token request, then a real paged search, holding the token itself. At `/browse`, it works on saved policy, and at `/s/{scope}/browse`, on that scope's. A panel shows the Imaging Server's reason for each study, which a real app would never see.
-- **Admin:** saved policy, guardians on file, delegations and app grants, rule sets, settings, demo clock, backend, decision outage, token revocation, decision flush, and key rotation.
+- **Admin:** saved policy in its three levels, with the relationships and policies on file, shares and app approvals, rule sets of service-access policies, settings, demo clock, backend, decision outage, token revocation, decision flush, and key rotation.
 - **Account page:** at `/account`, a patient or guardian picks whose records to share, shares sites with a related person, and revokes people and apps.
 - **Live trace:** spans from every service, with inline previews. They're kept in SQLite and survive a restart.
 
@@ -67,8 +67,8 @@ With no prefix, every service uses saved policy, the one real policy database. `
 
 Each service's listener sends a scoped path to that scope's own instance of the same service, with the prefix taken off, and the one origin forwards the prefix through, so scopes work the same with `DEMO_ONE_ORIGIN=0`. A scope's pages are the flow player, Browse, its account page, and its live trace at `/s/{scope}/trace/`, which lists only its own sessions.
 
-- **A minted id:** `POST /api/scopes` returns `{ scope, base, urls }`, with a random 22-character id, seeded from the guardians on file. So does starting a flow.
-- **An inline seed:** `/s/~{seed}/`, where the seed is deflate-raw compressed JSON, base64url encoded: the policy API's policy document, `{ rules, delegations, guardians, appGrants, contextLifetimeSeconds, maxSeriesInContext }`, any part of it, with the guardians on file when it names none. The first request builds the world from it, and later ones reuse it, along with any changes made there. A seed is at most 4,096 characters, and 64 KiB of JSON. One that doesn't validate gets a `400` saying why. `encodeSeed` in `src/scopes.ts` makes one.
+- **A minted id:** `POST /api/scopes` returns `{ scope, base, urls }`, with a random 22-character id, seeded from what's on file. So does starting a flow.
+- **An inline seed:** `/s/~{seed}/`, where the seed is deflate-raw compressed JSON, base64url encoded: the policy API's document in all three levels, `{ relationships, policies, shares, approvals }`, with `contextLifetimeSeconds` and `maxSeriesInContext`, any part of it. The relationships and policies it names are that world's on file, and a reset there puts them back. Where it names none, they're the ones on file. Labels are the catalog's, and birth dates the patient records'. The first request builds the world from it, and later ones reuse it, along with any changes made there. A seed is at most 4,096 characters, and 64 KiB of JSON. One that doesn't validate gets a `400` saying why. `encodeSeed` in `src/scopes.ts` makes one.
 - **Lifetimes:** a scope sits idle for 30 minutes at most. Minted scopes and seeds are separate pools, at most 64 of each, the least recently used going first, so seeds never push out a minted scope. An unknown or dropped minted id gets a `404` saying so. A dropped seed builds again from its document. A restart drops every scope.
 - **A seed world is shared** by everyone who uses the same seed: its policy changes, its tokens' effects, its live trace, and the response bodies the trace holds. Use a minted id for anything one person shouldn't see of another's.
 
@@ -108,10 +108,11 @@ The demo's pages, live trace, and admin screen have no login of their own. Anyon
 - **Signing keys:** the proxy reads public keys from the Imaging Server's JWKS, holding them for 60 seconds. A retired key ends the instant path for its URLs, and current policy still decides through the evaluation.
 - **App Launch:** discovery, authorization code with PKCE S256, required `state`, exact `redirect_uri`, single-use codes, and a consent page where the user picks a patient and sites.
 - **Backend Services:** ES256 client assertions, with each check traced separately: registered key, algorithm, `iss` and `sub`, `aud`, expiry, `jti`, signature, and scope.
-- **Delegation:** patient or guardian to related person to app, where each link can only narrow what the last one allows. What a patient shares with someone stops there: they can give an app part of it, and can't pass it on, since the Imaging Server honors a share only from the patient or a guardian. The Imaging Server holds all of it.
-- **Policy API:** the account page, consent, Browse, the flows, and the admin screen change policy only through the Imaging Server's policy API, at `/policy/v1`, with its own credential, which the proxy doesn't hold. The one origin doesn't forward it: callers use the Imaging Server's loopback port. Its calls are in [packages/core/README.md](packages/core/README.md#the-policy-api).
-- **Guardians:** a standing relationship in the policy store, seeded from `data/patient.json`, that covers a patient's record, apart from any study marked confidential from that guardian, with no one sharing first. Riley's skin biopsy is confidential from Sam: search omits it, retrieval refuses it, and Sam's shares and apps can't include it. The Imaging Server evaluates it like any other link. A policy reset clears what people chose and puts guardians back, and what a guardian shared ends if they stop being the guardian.
-- **One patient to a token:** whoever holds several records picks one at each launch, which makes its own token and its own app grant. Searching for another patient gets `403`, and retrieving another patient's study gets `404`.
+- **Three levels of policy:** facts (relationships, labels on studies, birth dates), organization policy (guardian access by age, who may share, and backend services' access), and people's choices within it (shares and app approvals). No fact grants anything alone, and no choice exceeds the chooser's own access. The model is in [packages/core/README.md](packages/core/README.md#policy).
+- **Sharing:** a patient or guardian shares with a related person, who can give an app part of it. What a patient shares stops there, since the sharing policy lets only patients and guardians share: a share someone else makes gets a `403` naming that policy. A share follows what the sharer can see now.
+- **Policy API:** the account page, consent, Browse, the flows, and the admin screen change policy only through the Imaging Server's policy API, at `/policy/v2`, with its own credential, which the proxy doesn't hold. The one origin doesn't forward it: callers use the Imaging Server's loopback port. Its calls are in [packages/core/README.md](packages/core/README.md#the-policy-api).
+- **Guardians:** a `guardian_of` relationship from registration, in `data/patient.json`, which grants what the guardian-access policy for the patient's age allows. Guardians of patients under 13 see every study, and guardians of 13- to 17-year-olds see all but those labeled `confidential-adolescent`. Riley is 15, and Riley's skin biopsy carries that label in `data/studies.source.json`, so search omits it for Sam, retrieval refuses it, and Sam's shares and apps can't include it. At 18 no guardian-access policy applies, and Sam holds nothing of Riley's. Age comes from the birth date and the world's clock at each check. A policy reset clears what people chose and puts what's on file back.
+- **One patient to a token:** whoever holds several records picks one at each launch, which makes its own token and its own app approval. Searching for another patient gets `403`, and retrieving another patient's study gets `404`.
 - **Search:** reads only the catalog, never a bucket. `_count` defaults to 20, with a maximum of 100. Each page's `next` link holds a signed cursor that grants nothing, because policy runs again on every page.
 - **Retrieval:** the proxy reads from the backend only as the client takes bytes. On the file and S3 backends, it settles every `404`, `406`, and byte count from the indexes before opening an instance, and sends an exact `Content-Length`. A client sending `Accept-Encoding: zstd` gets stored zstd objects without decoding.
 - **Failures:** a response that can't finish aborts with no closing boundary, so a partial study can't look complete.
@@ -180,14 +181,14 @@ Then restart `bun run start`.
 | `packages/core/` | The core package: the proxy and its backends, the archive and ingest, the catalog, the Imaging Server, the policy store, and the policy API and its client. See [its README](packages/core/README.md) |
 | `src/main.ts`, `src/roles.ts`, `src/stack.ts` | Startup, all at once or by `--role`, and the listeners that send each world its own requests |
 | `src/config.ts` | Ports, addresses, storage paths, the Host check, and backend credentials |
-| `src/stores.ts` | Saved policy's store, and the guardians on file, from `data/patient.json` |
+| `src/stores.ts` | Saved policy's store, and what's on file: guardians and birth dates from `data/patient.json`, and the organization's guardian and sharing policies |
 | `src/world.ts` | One world: an Authorization Server, Imaging Server and proxy, with their own policy, keys and clock |
 | `src/scopes.ts` | Policy scopes: minting, inline seeds, idling out, and the `/s/{scope}` prefix |
 | `src/gateway.ts`, `src/cors.ts` | The one origin apps are given, and the services' CORS |
 | `src/auth-server.ts` | SMART launch and Backend Services, sign-in, consent, account page, introspection |
 | `src/flows/` | The flows, shared by the web page and tests, and the launch client |
 | `src/browse.ts` | The Browse page's sessions and API |
-| `src/admin-api.ts`, `src/rule-presets.ts` | The admin API, and its named rule sets |
+| `src/admin-api.ts`, `src/rule-presets.ts` | The admin API, and its named rule sets of service-access policies |
 | `src/trace.ts`, `src/trace-collector.ts`, `src/trace-store.ts` | Spans and redaction, the observer core reports to, the live stream, and SQLite storage |
 | `src/clock.ts` | Demo clocks: the root's, which the admin screen moves, and one for each scope |
 | `scripts/` | Fetch, synthetic study generation, ingest, load, catalog builds, the backends, and deploying |
@@ -210,6 +211,7 @@ Everything has a working default.
 | `DEMO_STORAGE` | `/tmp/smart-imaging-demo` | The default home of everything below, the S3 store's and Orthanc's data and binaries, and `bun run up`'s log |
 | `S3_PORT`, `ORTHANC_PORT` | `4610`, `4611` | Where the S3 store and Orthanc listen, on loopback, and where the demo reaches them |
 | `ARCHIVE_DIR` | `/tmp/smart-imaging-demo/archive` | The local archive |
+| `S3_BUCKET` | `smart-imaging-archive` | The S3 store's bucket for the archive |
 | `SOURCES_DIR` | `data/sources` | Where `bun run fetch-data` keeps the downloads, and ingest reads them |
 | `INGEST_WORK` | The OS temp directory | Ingest's working files |
 | `CATALOG_DB` | `/tmp/smart-imaging-demo/catalog.sqlite` | The archive catalog. Orthanc's sits beside it, named `-orthanc` |

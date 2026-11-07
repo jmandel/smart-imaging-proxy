@@ -9,7 +9,9 @@ import { accountUrl, submitDelegation } from "./flows/oauth";
 import { ACCEPT_ANY, browserFetch, Ctx } from "./flows/runtime";
 import { boundaryOf, readMultipart } from "@smart-imaging-proxy/core";
 import type { Stack } from "./stack";
-import type { World } from "./world";
+import { createModel, ref } from "@smart-imaging-proxy/core";
+import { nameOf, type World } from "./world";
+import { patientAttributes } from "./stores";
 import { flushTraces, runInSession, sessionKey, tfetch, withSpan } from "./trace";
 
 export const PAGE_SIZES = [2, 5, 20];
@@ -57,18 +59,16 @@ function plainWords(text: string) {
 }
 const releaseLabel = (r: any, seriesCount: number) => r === "none" ? "Not released" : r === "study" ? "Released: whole study" : `Released: ${r.series.length} of ${seriesCount} series`;
 
-/** The chain behind a list, from the rows that decide it. */
+/**
+ * The chain behind a list: the reasons, from all three levels, of a study it releases, or failing
+ * that, why the first one isn't. A study's own labels aren't part of the list's chain.
+ */
 function plainChain(x: any) {
-  if (x.level === "system") return x.rule ? `${x.client} is pre-authorized for ${PATIENT_NAMES[x.patient] ?? x.patient} by the rule "${x.rule.description ?? x.rule.id}"` : `No rule in saved policy pre-authorizes ${x.client} for ${PATIENT_NAMES[x.patient] ?? x.patient}`;
-  const who = firstName(x.user), links: string[] = [];
-  if (x.fhirUser === `Patient/${x.patient}`) links.push(`${who} is the patient`);
-  else if (x.guardian) links.push(`${who} is ${patientFirst(x.patient)}'s ${x.guardian.relationship}, on file`);
-  else if (x.delegation) links.push(`${firstName(x.delegation.grantedBy)} shared ${x.delegation.sites.length ? list(x.delegation.sites) : "no sites"} with ${who}`);
-  else return Object.values(USERS).some(u => u.fhirUser === `Patient/${x.patient}`) ? `${patientFirst(x.patient)} hasn't shared anything with ${who}` : `Nothing of ${patientFirst(x.patient)}'s has been shared with ${who}`;
-  if (x.appGrant) links.push(`${who} gave the ${appName(x.client)} ${x.appGrant.sites ? (x.appGrant.sites.length ? list(x.appGrant.sites) : "no sites") : `everything ${who} can see`}`);
-  else links.push(`${who} hasn't authorized the ${appName(x.client)}`);
-  if (x.rule) links.push(`the rule "${x.rule.description ?? x.rule.id}" also applies`);
-  return links.join("; ");
+  if (x.level === "system") return x.policy ? `${x.client} is pre-authorized for ${PATIENT_NAMES[x.patient] ?? x.patient} by the service-access policy "${x.policy.description ?? x.policy.id}"` : `No service-access policy here pre-authorizes ${x.client} for ${PATIENT_NAMES[x.patient] ?? x.patient}`;
+  const row = x.studies.find((r: any) => r.release !== "none") ?? x.studies[0];
+  if (!row) return `Nothing of ${patientFirst(x.patient)}'s is in the catalog`;
+  const links = row.because.filter((b: any) => !b.ref.startsWith("study:")).map((b: any) => b.text);
+  return row.release === "none" ? [...links, plainWords(row.why)].join("; ") : links.join("; ");
 }
 
 /** The context form, read from the signed URL's claims the way anyone holding it could. */
@@ -117,20 +117,32 @@ export function createBrowse(world: World, clients: Record<string, BackendClient
     }
   };
 
-  // Everyone a person holds, by the saved store: what a Browse sign-in will use.
-  // A guardian isn't offered a site that only a study confidential from them is at, since that would reveal it.
-  const guardianSites = (g: { patient: string; excludedStudies?: string[] }) => [...new Set(world.catalog.allStudies().filter(st => st.patient === g.patient && !g.excludedStudies?.includes(st.id)).flatMap(st => st.site ? [st.site] : []))];
+  // Everyone a person holds, by this world's store, as the Imaging Server's model decides it: what a
+  // Browse sign-in will use. A site only a study hidden from them is at isn't offered, since that would reveal it.
+  const model = createModel({ patientOf: user => USERS[user]?.patient, attributesOf: patientAttributes, now: () => world.clock.now(), name: nameOf });
+  const sitesSeen = (user: string, patient: string) => {
+    const snap = world.store.patientSnapshot(ref("patient", patient));
+    const studies = world.catalog.allStudies().filter(st => st.patient === patient);
+    return [...new Set(model.visible(snap, ref("user", user), ref("patient", patient), studies, USERS[user]?.fhirUser).flatMap(st => st.site ? [st.site] : []))];
+  };
   const recordsOf = (id: string) => {
     const u = USERS[id]!;
-    const out: { patient: string; name: string; via: "self" | "guardian" | "delegation"; relationship?: string; sites: string[] }[] = [];
+    const out: { patient: string; name: string; via: "self" | "guardian" | "share"; relationship?: string; sites: string[] }[] = [];
     if (u.patient) out.push({ patient: u.patient, name: PATIENT_NAMES[u.patient] ?? u.patient, via: "self", sites: world.catalog.sitesFor(u.patient) });
-    const guardians = world.store.guardians();
-    for (const g of guardians) if (g.guardian === id && g.patient !== u.patient) out.push({ patient: g.patient, name: PATIENT_NAMES[g.patient] ?? g.patient, via: "guardian", relationship: g.relationship, sites: guardianSites(g) });
-    for (const d of world.store.delegations()) if (d.delegate === id && !out.some(r => r.patient === d.patient) && (USERS[d.grantedBy]?.patient === d.patient || guardians.some(g => g.guardian === d.grantedBy && g.patient === d.patient))) out.push({ patient: d.patient, name: PATIENT_NAMES[d.patient] ?? d.patient, via: "delegation", relationship: d.relationship, sites: (() => { const g = guardians.find(x => x.guardian === d.grantedBy && x.patient === d.patient); if (!g?.excludedStudies?.length) return d.sites; const open = guardianSites(g); return d.sites.filter(x => open.includes(x)); })() });
+    const mine = world.store.personSnapshot(ref("user", id));
+    for (const r of mine.relationships) {
+      const patient = r.relation === "guardian_of" ? r.object.replace(/^patient:/, "") : undefined;
+      if (patient && patient !== u.patient && !out.some(x => x.patient === patient)) out.push({ patient, name: PATIENT_NAMES[patient] ?? patient, via: "guardian", relationship: "guardian", sites: sitesSeen(id, patient) });
+    }
+    for (const s of mine.shares) {
+      const patient = s.patient.replace(/^patient:/, "");
+      if (s.with !== ref("user", id) || out.some(r => r.patient === patient) || !model.sharingFor(world.store.patientSnapshot(s.patient), s.from, s.patient).policy) continue;
+      out.push({ patient, name: PATIENT_NAMES[patient] ?? patient, via: "share", relationship: s.label, sites: sitesSeen(id, patient) });
+    }
     return out;
   };
   function options() {
-    const rules = world.store.rules();
+    const rules = world.store.policiesOf("service-access");
     const held = world.catalog.allStudies();
     return {
       people: Object.entries(USERS).map(([id, u]) => {
@@ -139,8 +151,8 @@ export function createBrowse(world: World, clients: Record<string, BackendClient
         return { id, name: u.name, first: firstName(id), fhirUser: u.fhirUser, role: roleOf(u, records.filter(r => r.via !== "self")), detail: own === undefined ? "" : own ? `${own} ${own === 1 ? "study" : "studies"} on file` : "No studies on file", records: records.map(r => ({ patient: r.patient, name: r.name, via: r.via, relationship: r.relationship })), unshared: id !== SHARED_BY && records.length > 0 && !records.some(r => r.patient === SHARED_PATIENT) ? { patient: SHARED_PATIENT, name: PATIENT_NAMES[SHARED_PATIENT]! } : undefined };
       }),
       clients: Object.keys(clients).map(id => {
-        const mine = rules.filter(r => r.when.client === id);
-        return { id, role: mine.length ? `Pre-authorized by ${list(mine.map(r => `rule ${r.id}`))}` : "Backend client, with no pre-authorization in saved policy" };
+        const mine = rules.filter(r => r.service === `service:${id}`);
+        return { id, role: mine.length ? `Pre-authorized by ${list(mine.map(r => `the service-access policy ${r.id}`))}` : "Backend client, with no service-access policy" };
       }),
       apps: Object.entries(APP_NAMES).map(([id, name]) => ({ id, name })),
       patients: world.catalog.linkedPatients().map(id => ({ id, name: PATIENT_NAMES[id] ?? id })),
@@ -176,7 +188,7 @@ export function createBrowse(world: World, clients: Record<string, BackendClient
       steps: s.steps,
       page: { studies: s.studies, total: s.total, count: s.count, number: s.pageIndex + 1, first: page && s.studies.length ? page.offset + 1 : 0, last: page ? page.offset + s.studies.length : 0, hasNext: !!s.nextUrl, hasPrevious: s.pageIndex > 0 },
       explain: s.explain, explainError: s.explainError,
-      appSites: held && s.status === "results" ? { sites: held.sites, granted: s.explain?.appGrant?.sites ?? held.sites } : undefined,
+      appSites: held && s.status === "results" ? { sites: held.sites, granted: s.explain?.approval?.sites ?? held.sites } : undefined,
       share: delegates.length ? { from: firstName(SHARED_BY), patient: SHARED_PATIENT, sites: world.catalog.sitesFor(USERS[SHARED_BY]!.patient!).map(name => ({ name, ticked: DEFAULT_SHARED_SITES.includes(name) })), offers: delegates.map(d => ({ delegate: d, label: `Have ${firstName(SHARED_BY)} share with ${firstName(d)}` })) } : undefined,
       accounts: who ? [accountLink(s, who), ...(lookingToJosh ? [accountLink(s, SHARED_BY)] : [])] : [],
       retrievals: [...s.retrievals.values()], retrieving: s.retrieving, hasBundle: !!s.bundle,
@@ -252,8 +264,9 @@ export function createBrowse(world: World, clients: Record<string, BackendClient
       const x = await world.explain({ client: s.start.client, patient, ...(who ? { user: who, fhirUser: USERS[who]?.fhirUser ?? "" } : {}) });
       s.explain = {
         patient, patientName: PATIENT_NAMES[patient] ?? patient, chain: plainChain(x), level: x.level,
-        appGrant: x.appGrant,
-        studies: x.studies.map((row: any) => ({ ...row, released: row.release !== "none", releaseLabel: releaseLabel(row.release, row.seriesCount), reason: plainWords(row.reason), chain: row.chain.map(plainWords) })),
+        // This user's approval of this app for this patient, which the site ticks show.
+        approval: who ? world.store.personSnapshot(ref("user", who)).approvals.find(a => a.app === ref("app", s.start.client) && a.patient === ref("patient", patient)) : undefined,
+        studies: x.studies.map((row: any) => ({ ...row, released: row.release !== "none", releaseLabel: releaseLabel(row.release, row.seriesCount), reason: plainWords(row.why), chain: row.because.map((b: any) => `${b.text} (${b.level})`) })),
       };
       s.explainError = undefined;
       s.steps.push({ title: "The demo asks for the Imaging Server's view", status: 200 });

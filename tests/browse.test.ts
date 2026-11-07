@@ -62,7 +62,13 @@ function browser(base = "") {
   return { call, session, settled, start, page, pick, ids, retrieve, seen, get cookie() { return cookie; } };
 }
 const SHARE = ["Lakeside Imaging", "Riverside Hospital"];
-const rule = (client: string, allow: any = { all: true }, extra: any = {}) => ({ id: `${client}-rule`, when: { client, patient: "josh-example" }, allow, ...extra });
+const rule = (client: string, allow: any = { all: true }, extra: any = {}) => ({ id: `${client}-rule`, type: "service-access" as const, service: `service:${client}`, patients: "patient:josh-example", allow, ...extra });
+const share = (sites: string[]) => ({ from: "user:josh", with: "user:sam-caregiver", patient: "patient:josh-example", sites, label: "caregiver" });
+/** Puts service-access policies and shares in saved policy, leaving what's on file. */
+const setSaved = (x: { rules?: any[]; shares?: any[] }) => {
+  if (x.rules) stack.store.replacePolicies("service-access", x.rules);
+  if (x.shares) stack.store.setDocument({ shares: x.shares });
+};
 
 /** Search says yes exactly when the same evaluation says it's released, walking every page. */
 async function expectExplainMatchesSearch(b: ReturnType<typeof browser>, s: any) {
@@ -82,7 +88,7 @@ for (const backend of BACKENDS) {
       expect(s.status).toBe("results");
       expect(s.page.total).toBe(6);
       expect(b.ids(s)).toEqual(ALL);
-      expect(s.explain.chain).toBe("Josh is the patient; Josh gave the Health Records App everything Josh can see");
+      expect(s.explain.chain).toBe("Josh is the patient; Josh approved the Health Records App for all sites");
       expect(s.steps.map((x: any) => x.title)).toEqual(expect.arrayContaining(["Discover the authorization endpoints", "Exchange the code, with the PKCE verifier", "Search ImagingStudy"]));
       const mri = s.page.studies.find((x: any) => x.id === "mri-brain-2020");
       expect(mri).toMatchObject({ site: "Lakeside Imaging", modalities: ["MR"], series: 18, instances: 267, date: "2020-07-29", retrievable: true });
@@ -104,9 +110,9 @@ for (const backend of BACKENDS) {
       expect(s.headline).toContain("access_denied");
       expect(s.detail).toContain("No patient has shared records with Alex");
       expect(s.steps.map((x: any) => x.title)).not.toContain("Search ImagingStudy");
-      expect(s.explain.chain).toBe("Josh hasn't shared anything with Alex");
+      expect(s.explain.chain).toBe("Alex has no share of Josh's records");
       expect(s.explain.studies.map((r: any) => r.released)).toEqual(ALL.map(() => false));
-      expect(s.explain.studies[0].reason).toBe("Alex has no delegation from the patient");
+      expect(s.explain.studies[0].reason).toBe("Alex has no share of Josh's records");
       expect(s.share.offers.map((o: any) => o.label)).toEqual(["Have Josh share with Alex", "Have Josh share with Sam"]);
     }, 60000);
     test("Sam sees nothing of Josh's, then what Josh shared, then what Sam gave the app", async () => {
@@ -119,17 +125,18 @@ for (const backend of BACKENDS) {
       const shared = await b.pick("sam-caregiver", { share: { delegate: "sam-caregiver", sites: SHARE } });
       expect(shared.status).toBe("results");
       expect(b.ids(shared)).toEqual(LAKESIDE_RIVERSIDE);
-      expect(shared.explain.chain).toBe("Josh shared Lakeside Imaging and Riverside Hospital with Sam; Sam gave the Health Records App everything Sam can see");
+      expect(shared.explain.chain).toBe("Josh is the patient; Patients and guardians may share what they can see; Josh shared Lakeside Imaging and Riverside Hospital with Sam, as caregiver; Sam approved the Health Records App for all sites");
       const slide = shared.explain.studies.find((r: any) => r.id === "slide-lung-2023");
       expect(slide.released).toBe(false);
-      expect(slide.reason).toBe("the delegation to Sam doesn't include Northside Pathology");
+      expect(slide.reason).toBe("the share with Sam doesn't include Northside Pathology");
       await expectExplainMatchesSearch(b, shared);
 
       const narrowed = await b.pick("sam-caregiver", { patient: "josh-example", sites: ["Lakeside Imaging"] });
       expect(b.ids(narrowed)).toEqual(["mri-brain-2020"]);
-      expect(narrowed.explain.chain).toBe("Josh shared Lakeside Imaging and Riverside Hospital with Sam; Sam gave the Health Records App Lakeside Imaging");
+      expect([[...narrowed.appSites.sites].sort(), narrowed.appSites.granted]).toEqual([SHARE, ["Lakeside Imaging"]]);
+      expect(narrowed.explain.chain).toBe("Josh is the patient; Patients and guardians may share what they can see; Josh shared Lakeside Imaging and Riverside Hospital with Sam, as caregiver; Sam approved the Health Records App for Lakeside Imaging");
       const riverside = narrowed.explain.studies.find((r: any) => r.id === "xr-wrist-left-2012");
-      expect(riverside.reason).toBe("Sam's authorization of the Health Records App doesn't include Riverside Hospital");
+      expect(riverside.reason).toBe("Sam's approval of the Health Records App doesn't include Riverside Hospital");
       await expectExplainMatchesSearch(b, narrowed);
     }, 120000);
     test("retrieval reports the same numbers in both modes", async () => {
@@ -200,13 +207,13 @@ describe("paging", () => {
 
 describe("explain", () => {
   test("is service-authenticated, and only on the Imaging Server's own port", async () => {
-    const q = "/policy/v1/explain?client=portal-app&patient=josh-example";
+    const q = "/policy/v2/explain?client=portal-app&patient=josh-example";
     expect((await realFetch(`http://127.0.0.1:${PORTS.imaging}${q}`)).status).toBe(401);
     if (ONE_ORIGIN) expect((await realFetch(`${CONFIG.imagingUrl}${q}`)).status).toBe(404);
   });
   test("matches search for every person and client, for every study", async () => {
-    stack.store.setPolicy({
-      delegations: [{ patient: "josh-example", grantedBy: "josh", delegate: "sam-caregiver", relationship: "caregiver", sites: SHARE }],
+    setSaved({
+      shares: [share(SHARE)],
       rules: [rule("hand-referral-service", { modalities: ["CR"] }), rule("outside-release-service", { studies: ["ct-abdomen-pelvis-2012"] }), rule("research-donation", { since: "2020-01-01" })],
     });
     const b = browser();
@@ -223,7 +230,7 @@ describe("backend clients", () => {
     expect(s.headline).toContain("403");
     expect(s.detail).toContain("This patient is outside the client's authorized access");
     expect(s.page.studies).toEqual([]);
-    expect(s.explain.chain).toContain("No rule in saved policy pre-authorizes hand-referral-service");
+    expect(s.explain.chain).toContain("No service-access policy here pre-authorizes hand-referral-service");
     expect(s.explain.studies.every((r: any) => !r.released)).toBe(true);
     expect(s.steps.map((x: any) => x.title)).toContain("SMART Backend Services token request");
     expect(s.ruleHelp.url).toBe("/admin?rule-set=hand-wrist-referral#h-rules");
@@ -234,7 +241,7 @@ describe("backend clients", () => {
   test("with a rule, what it allows, withheld series included", async () => {
     const ct = stack.catalog.allStudies().find(x => x.id === "ct-abdomen-pelvis-2012")!;
     const withhold = [ct.series[0]!.uid];
-    stack.store.setPolicy({ rules: [rule("outside-release-service", { studies: [ct.id] }, { withholdSeries: withhold })] });
+    setSaved({ rules: [rule("outside-release-service", { studies: [ct.id] }, { withholdSeries: withhold })] });
     const b = browser();
     const s = await b.start({ client: "outside-release-service", patient: "josh-example", count: 5 });
     expect(s.status).toBe("results");
@@ -249,7 +256,7 @@ describe("backend clients", () => {
     await expectExplainMatchesSearch(b, s);
   }, 120000);
   test("a rule's restricted form shows, and the proxy asks and then uses its cache", async () => {
-    stack.store.setPolicy({ rules: [rule("research-donation", { studies: [SMALL] }, { contextForm: "restricted" })] });
+    setSaved({ rules: [rule("research-donation", { studies: [SMALL] }, { contextForm: "restricted" })] });
     const b = browser();
     const s = await b.start({ client: "research-donation", patient: "josh-example", count: 5 });
     expect(s.page.studies[0].context.form).toBe("restricted");
@@ -287,7 +294,7 @@ describe("a real window", () => {
   }, 60000);
   test("someone else signing in shows as that person", async () => {
     const b = browser();
-    stack.store.setPolicy({ delegations: [{ patient: "josh-example", grantedBy: "josh", delegate: "sam-caregiver", relationship: "caregiver", sites: ["Lakeside Imaging"] }] });
+    setSaved({ shares: [share(["Lakeside Imaging"])] });
     await b.call("POST", "/api/browse/start", { user: "josh", client: "portal-app", mode: "window", count: 5 });
     const waiting = await b.settled(s => s.status === "waiting-for-you");
     const back = await submitConsent(waiting.authUrl, { user: "sam-caregiver", patient: "josh-example" });
@@ -343,7 +350,7 @@ describe("saved policy and scopes", () => {
     const b = browser();
     const s = await b.pick("josh");
     expect(s.status).toBe("results");
-    expect(stack.store.appGrants().some(g => g.user === "josh")).toBe(true);
+    expect(stack.store.approvals().some(g => g.by === "user:josh")).toBe(true);
     expect((await b.call("GET", "/api/browse/session")).json().scope).toBeNull();
   }, 60000);
   test("a session in a scope works on that scope's policy, and its token is no good at the root", async () => {
@@ -354,8 +361,8 @@ describe("saved policy and scopes", () => {
     expect(s.status).toBe("results");
     expect(s.liveUrl.startsWith(`${world.urls.trace}/`)).toBe(true);
     expect((await b.call("GET", "/api/browse/session")).json().scope).toEqual({ id: scope, base });
-    expect(world.store.appGrants().some((g: any) => g.user === "josh")).toBe(true);
-    expect(stack.store.appGrants()).toEqual([]);
+    expect(world.store.approvals().some((g: any) => g.by === "user:josh")).toBe(true);
+    expect(stack.store.approvals()).toEqual([]);
     // The root's Browse doesn't know this session's cookie.
     const root = browser();
     expect((await root.call("GET", "/api/browse/session")).json().session).toBeNull();
@@ -383,9 +390,9 @@ describe("saved policy and scopes", () => {
     expect(started.status).toBe(200);
     const s = await b.settled();
     expect(s.status).toBe("results");
-    expect(stack.store.delegations().map(d => d.delegate)).toEqual(["sam-caregiver"]);
+    expect(stack.store.shares().map(d => d.with)).toEqual(["user:sam-caregiver"]);
     const scope = (await started.json() as any).scope.id;
-    expect((stack.scopes.resolve(scope) as any).world.store.delegations()).toEqual([]);
+    expect((stack.scopes.resolve(scope) as any).world.store.shares()).toEqual([]);
   }, 60000);
   test("a sign-in waiting on a window waits on through a flow starting", async () => {
     const b = browser();
@@ -432,7 +439,7 @@ describe("the token stays on the server", () => {
     await b.call("GET", "/api/browse/options");
     await b.call("GET", "/api/browse/session");
     await b.pick("alex-neighbor");
-    stack.store.setPolicy({ rules: [rule("research-donation")] });
+    setSaved({ rules: [rule("research-donation")] });
     await b.start({ client: "research-donation", patient: "josh-example", count: 5 });
     await b.start({ client: "hand-referral-service", patient: "josh-example", count: 5 });
     for (const path of ["/browse", "/browse.js", "/styles.css", "/"]) await b.call("GET", path);

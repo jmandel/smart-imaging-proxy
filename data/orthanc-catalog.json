@@ -10,6 +10,6 @@
     "SYNSAM2021": { "id": "syn-sam-chest-xr-2021", "title": "SYNTHETIC CHEST X-RAY, 2 VIEWS", "site": "Riverside Hospital" },
     "SYNSAM2024": { "id": "syn-sam-ct-sinus-2024", "title": "SYNTHETIC CT SINUSES WITHOUT CONTRAST", "site": "Lakeside Imaging" },
     "SYNRILEY2022": { "id": "syn-riley-knee-mr-2022", "title": "SYNTHETIC MRI LEFT KNEE WITHOUT CONTRAST", "site": "Lakeside Imaging" },
-    "SYNRILEY2023": { "id": "syn-riley-skin-slide-2023", "title": "SYNTHETIC SKIN BIOPSY, SLIDE PHOTO", "site": "Northside Pathology" }
+    "SYNRILEY2023": { "id": "syn-riley-skin-slide-2023", "title": "SYNTHETIC SKIN BIOPSY, SLIDE PHOTO", "site": "Northside Pathology", "labels": ["confidential-adolescent"] }
   }
 }

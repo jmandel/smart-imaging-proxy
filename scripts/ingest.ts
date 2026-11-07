@@ -47,7 +47,7 @@ for (const study of def.studies) {
   else if (study.archives) for (const a of study.archives) files.push(...await walk(join(SOURCES, "unpacked", a.replace(/\.tgz$/, ""))));
   else for (const f of study.files) files.push(join(SOURCES, "raw", f));
   inputs.push({
-    id: study.id, title: study.report?.title ?? study.id, site: study.site, files,
+    id: study.id, title: study.report?.title ?? study.id, site: study.site, ...(study.labels ? { labels: study.labels } : {}), files,
     rewrite: study.files ? file => rewriteSlide(file, study) : undefined,
     jpegLosslessVariant: VARIANT_STUDIES.has(study.id),
     privateSyntaxFixture: study.id === PRIVATE_FIXTURE_STUDY,

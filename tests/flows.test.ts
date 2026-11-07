@@ -160,7 +160,7 @@ describe("a redirect back to the app", () => {
     const page = await (await fetch(new URL(signedIn.headers.get("location")!, account), { headers: { cookie: signedIn.headers.get("set-cookie")!.split(";")[0]! } })).text();
     const link = page.match(/href="([^"]*account=done[^"]*)"/)![1]!.replaceAll("&amp;", "&");
     expect(c.receiveCallback(new URL(link))).toBe(true);
-    expect((await running as any).checks.find((k: any) => k.label === "The Imaging Server holds the delegation").ok).toBe(false);
+    expect((await running as any).checks.find((k: any) => k.label === "The Imaging Server holds the share").ok).toBe(false);
   });
 });
 

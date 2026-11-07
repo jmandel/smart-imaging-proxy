@@ -59,11 +59,11 @@ test("traces can be read at this service's own addresses, the viewer's pages loa
   c.close();
 });
 
-test("a delegation takes only an offered relationship", async () => {
+test("a share takes only an offered relationship", async () => {
   await stack.resetAll();
   const r = await submitDelegation(accountUrl("josh"), { user: "josh", delegate: "sam-caregiver", relationship: "<script>x</script>", sites: ["Lakeside Imaging"] });
   expect(r.status).toBe(400);
-  expect(stack.store.delegations()).toEqual([]);
+  expect(stack.store.shares()).toEqual([]);
   expect((await submitDelegation(accountUrl("josh"), { user: "josh", delegate: "sam-caregiver", relationship: "spouse", sites: ["Lakeside Imaging"] })).status).toBe(303);
 });
 
@@ -90,13 +90,13 @@ describe("the Authorization Server's forms", () => {
     await stack.resetAll();
     const cookie = await signedIn();
     expect((await form("/account/delegations", { cookie }, delegation)).status).toBe(303);
-    const before = JSON.stringify(stack.store.getPolicy());
+    const before = JSON.stringify(stack.store.snapshot());
     for (const headers of FOREIGN) {
       for (const [path, body] of [["/account/delegations", "delegate=alex-neighbor&relationship=neighbor&sites=Lakeside+Imaging"], ["/account/delegations/revoke", "delegate=sam-caregiver"], ["/account/apps/revoke", "client=portal-app"], ["/account/signout", ""]] as const) {
         expect((await form(path, { ...headers, cookie }, body)).status).toBe(403);
       }
     }
-    expect(JSON.stringify(stack.store.getPolicy())).toBe(before);
+    expect(JSON.stringify(stack.store.snapshot())).toBe(before);
     // The session outlived the refused sign-outs.
     expect((await form("/account/delegations", { cookie }, delegation)).status).toBe(303);
   });

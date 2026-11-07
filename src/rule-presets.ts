@@ -1,13 +1,18 @@
-// The named rule sets the admin screen offers, and the only rules it can apply. Each set follows the
-// pattern of a flow. Anything a set needs from the catalog, such as a series UID, is read when it's applied.
-import type { CatalogStore, Rule } from "@smart-imaging-proxy/core";
+// The named rule sets the admin screen offers: sets of service-access policies, and the only ones it
+// can apply. Each set follows the pattern of a flow. Anything a set needs from the catalog, such as a
+// series UID, is read when it's applied.
+import type { CatalogStore, ServiceAccessPolicy } from "@smart-imaging-proxy/core";
+
+type Rule = ServiceAccessPolicy;
 
 const PATIENT = "josh-example";
 const CT = "ct-abdomen-pelvis-2012";
 const WITHHELD_SERIES = /Clinical Documents|Dose (Report|Record)/;
 
-const handWristReferral: Rule = { id: "hand-referral", description: "Referral service: hand and wrist X-rays", when: { client: "hand-referral-service", patient: PATIENT }, allow: { modalities: ["CR"] } };
-const researchDonation: Rule = { id: "research-consent", description: "Josh's research donation consent", when: { client: "research-donation", patient: PATIENT }, allow: { all: true } };
+/** A service-access policy for one of the demo's backend clients and Josh. */
+export const serviceAccess = (id: string, client: string, description: string, rest: Pick<Rule, "allow"> & Partial<Rule>): Rule => ({ id, type: "service-access", description, service: `service:${client}`, patients: `patient:${PATIENT}`, ...rest });
+const handWristReferral = serviceAccess("hand-referral", "hand-referral-service", "Referral service: hand and wrist X-rays", { allow: { modalities: ["CR"] } });
+const researchDonation = serviceAccess("research-consent", "research-donation", "Josh's research donation consent", { allow: { all: true } });
 
 /** The CT with three series withheld, or nothing if this catalog doesn't hold the study or those series. */
 function outsideRelease(catalog: CatalogStore): Rule | undefined {
@@ -16,7 +21,7 @@ function outsideRelease(catalog: CatalogStore): Rule | undefined {
   const series = catalog.hierarchies([study.pk]).get(study.pk)?.series ?? [];
   const withhold = series.filter(s => WITHHELD_SERIES.test(s.description ?? "")).map(s => s.uid);
   if (!withhold.length) return undefined;
-  return { id: "outside-release", description: "Outside release: CT without its dose report, dose record and clinical documents", when: { client: "outside-release-service", patient: PATIENT }, allow: { studies: [CT] }, withholdSeries: withhold };
+  return serviceAccess("outside-release", "outside-release-service", "Outside release: CT without its dose report, dose record and clinical documents", { allow: { studies: [CT] }, withholdSeries: withhold });
 }
 
 export interface RuleSet {
@@ -72,5 +77,5 @@ export function matchRuleSet(rules: Rule[], catalogs: CatalogStore[]): RuleSet |
 
 /** The narrowest named set that pre-authorizes this client for this patient. */
 export function ruleSetFor(client: string, patient: string, catalog: CatalogStore): RuleSet | undefined {
-  return RULE_SETS.find(set => set.rules(catalog)?.some(r => r.when.client === client && r.when.patient === patient));
+  return RULE_SETS.find(set => set.rules(catalog)?.some(r => r.service === `service:${client}` && r.patients === `patient:${patient}`));
 }

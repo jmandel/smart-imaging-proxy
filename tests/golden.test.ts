@@ -1,5 +1,6 @@
 // Search through the catalog against responses captured from the code before it. Additions are
-// allowed, and removed here: `ver` in a signed context, `version` in a decision. Entry order is
+// allowed, and removed here: `ver` in a signed context, and `version`, `policy_revision` and
+// `patient_revision` in a decision, whose values depend on how many writes ran before. Entry order is
 // compared by what's in it, because results are now newest first, which has its own test. Anything
 // else that differs fails, and should be reported rather than recaptured.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -16,7 +17,7 @@ function canonical(value: any, anyOrder: boolean): any {
   // An encoded absolute reference in a query keeps the port its scenario ran on.
   const v = JSON.parse(JSON.stringify(value).replace(/127\.0\.0\.1%3A\d+/g, "{host}"));
   for (const d of v?.decisions ?? []) {
-    delete d.context.version;
+    delete d.context.version; delete d.context.policy_revision; delete d.context.patient_revision;
     if (anyOrder && d.context.release?.series) d.context.release.series.sort();
   }
   const b = v?.body;
@@ -49,10 +50,12 @@ for (const [backend, anyOrder] of [["static-files", false], ["orthanc", true]] a
     test("no scenario appeared or disappeared", () => {
       expect(Object.keys(runs[backend]).sort()).toEqual(Object.keys(golden).sort());
     });
-    test("the additions are there: ver in a context, version in a decision, and newest first", () => {
+    test("the additions are there: ver in a context, version and revisions in a decision, and newest first", () => {
       const all = runs[backend]["josh: all, with _include"].body;
       for (const e of all.entry) if (e.context) expect(e.context.ver).toBe(1);
-      expect(runs[backend]["can_i: allowed"].decisions[0].context.version).toBe(1);
+      const { context } = runs[backend]["can_i: allowed"].decisions[0];
+      expect(context.version).toBe(1);
+      expect([typeof context.policy_revision, typeof context.patient_revision]).toEqual(["number", "number"]);
       const dates = all.entry.filter((e: any) => e.resource.resourceType === "ImagingStudy").map((e: any) => e.resource.started);
       expect(dates).toEqual([...dates].sort().reverse());
       expect(all.link.some((l: any) => l.relation === "next")).toBe(false);

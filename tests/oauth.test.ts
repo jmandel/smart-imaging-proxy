@@ -71,9 +71,9 @@ describe("Authorization request", () => {
     expect(r.status).toBe(302);
     expect(new URL(r.headers.get("location")!).searchParams.get("error")).toBe("invalid_scope");
   });
-  test("a user's token with a system scope and no patient gets nothing, even where a rule names its client", async () => {
+  test("a user's token with a system scope and no patient gets nothing, even where a service-access policy names its client", async () => {
     const store = stack.store;
-    stack.store.setPolicy({ rules: [{ id: "names-client", when: { client: "separate-viewer" }, allow: { all: true } }] });
+    stack.store.replacePolicies("service-access", [{ id: "names-client", type: "service-access", service: "service:separate-viewer", patients: "any", allow: { all: true } }]);
     store.putToken("user-system-token", "access", { client_id: "separate-viewer", scope: "system/ImagingStudy.rs", sub: "robin", fhirUser: "RelatedPerson/robin" }, Math.floor(Date.now() / 1000) + 300);
     const r = await fetch(`${CONFIG.imagingUrl}/fhir/ImagingStudy?patient=josh-example`, { headers: { Authorization: "Bearer user-system-token" } });
     expect(r.status).toBe(403);
@@ -105,7 +105,7 @@ describe("Consent", () => {
     await stack.resetAll();
     const t = await scriptedLaunch("josh", "portal-app", { sites: ["Lakeside Imaging"] });
     expect(t.scope).toBe("launch/patient patient/ImagingStudy.rs online_access");
-    expect(stack.store.getPolicy().appGrants[0]!.sites).toEqual(["Lakeside Imaging"]);
+    expect(stack.store.approvals()[0]!.sites).toEqual(["Lakeside Imaging"]);
     const b: any = await (await fetch(`${conf.associated_endpoints[0].url}/ImagingStudy?patient=josh-example`, { headers: { Authorization: `Bearer ${t.access_token}` } })).json();
     expect(b.total).toBe(1);
     await stack.resetAll();
@@ -344,7 +344,7 @@ describe("Account picker", () => {
     const running = runStep(c, flow, "delegate", { mode: "window", sites: [] });
     await inWindow(c, async url => { await submitDelegation(url, { user: "alex-neighbor", delegate: "sam-caregiver", relationship: "caregiver", sites: ["Lakeside Imaging"] }); });
     const failed = (await running).checks.filter(k => !k.ok);
-    expect(failed.map(k => k.label)).toEqual(["Signed in with the account this step expects", "The Imaging Server holds the delegation"]);
+    expect(failed.map(k => k.label)).toEqual(["Signed in with the account this step expects", "The Imaging Server holds the share"]);
     for (const k of failed) expect(k.detail).toContain("alex-neighbor signed in, and this step expected josh");
   });
 });
@@ -381,7 +381,7 @@ describe("Delegation: patient to related person to app", () => {
     await stack.resetAll();
     await share(["Lakeside Imaging"]);
     const t = await scriptedLaunch("sam-caregiver", "portal-app", { sites: ["Lakeside Imaging", "Northside Pathology"], patient: "josh-example" });
-    expect(stack.store.getPolicy().appGrants[0]!.sites).toEqual(["Lakeside Imaging"]);
+    expect(stack.store.approvals()[0]!.sites).toEqual(["Lakeside Imaging"]);
     expect(sitesOf(await search(t.access_token))).toBe(1);
   });
   test("only a patient or their guardian can delegate", async () => {
@@ -390,7 +390,7 @@ describe("Delegation: patient to related person to app", () => {
     await share(["Lakeside Imaging"]);
     const r = await submitDelegation(accountUrl("sam-caregiver"), { user: "sam-caregiver", delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"], patient: "josh-example" });
     expect(r.status).toBe(403);
-    expect(stack.store.getPolicy().delegations.map(d => d.delegate)).toEqual(["sam-caregiver"]);
+    expect(stack.store.shares().map(d => d.with)).toEqual(["user:sam-caregiver"]);
   });
   test("revoking the delegation ends what the related person's app can find", async () => {
     await stack.resetAll();

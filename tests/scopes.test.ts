@@ -18,7 +18,8 @@ import type { World } from "../src/world";
 
 const root = join(import.meta.dir, "..");
 const ACCEPT = "multipart/related; type=application/dicom; transfer-syntax=*";
-const RULE = { id: "r1", when: { client: "c" }, allow: { all: true } };
+const RULE = { id: "r1", type: "service-access" as const, service: "service:c", patients: "any" as const, allow: { all: true } };
+const services = (store: { policiesOf(type: "service-access"): unknown[] }) => store.policiesOf("service-access");
 let stack: Stack; let demo: Bun.Server;
 beforeAll(async () => {
   stack = await startStack(root);
@@ -81,22 +82,22 @@ describe("isolation", () => {
   });
   test("a policy change in one scope is invisible in another and at the root, and the root's in every scope", async () => {
     const a = stack.scopes.mint(), b = stack.scopes.mint();
-    await a.policy.setRules([RULE]);
+    await a.policy.replacePolicies("service-access", [RULE]);
     await a.policy.setSettings({ maxSeriesInContext: 3 });
-    expect(a.store.rules()).toEqual([RULE]);
-    expect(b.store.rules()).toEqual([]);
-    expect(stack.store.rules()).toEqual([]);
-    await stack.policy.setRules([{ ...RULE, id: "root-rule" }]);
-    expect(a.store.rules()).toEqual([RULE]);
-    expect(b.store.rules()).toEqual([]);
-    expect(stack.scopes.mint().store.rules()).toEqual([]);
+    expect(services(a.store)).toEqual([RULE]);
+    expect(services(b.store)).toEqual([]);
+    expect(services(stack.store)).toEqual([]);
+    await stack.policy.replacePolicies("service-access", [{ ...RULE, id: "root-rule" }]);
+    expect(services(a.store)).toEqual([RULE]);
+    expect(services(b.store)).toEqual([]);
+    expect(services(stack.scopes.mint().store)).toEqual([]);
     expect(b.store.getSettings().maxSeriesInContext).toBe(12);
     // Sharing on one scope's account page reaches only that scope's policy.
     const t = await scriptedLaunch("josh", "portal-app", { at: a.urls, sites: ["Lakeside Imaging"] });
     expect(t.access_token).toBeTruthy();
-    expect(a.store.appGrants().length).toBe(1);
-    expect(b.store.appGrants()).toEqual([]);
-    expect(stack.store.appGrants()).toEqual([]);
+    expect(a.store.approvals().length).toBe(1);
+    expect(b.store.approvals()).toEqual([]);
+    expect(stack.store.approvals()).toEqual([]);
   });
   test("each scope signs with a key of its own, and serves only its own JWKS", async () => {
     const a = stack.scopes.mint(), b = stack.scopes.mint();
@@ -111,12 +112,12 @@ describe("isolation", () => {
     expect((await get(`${a.urls.auth}/s/${b.scope}/fhir/.well-known/smart-configuration`)).status).toBe(404);
     expect((await fetch(`http://127.0.0.1:${PORTS.auth}/s/${a.scope}/s/${b.scope}/fhir/.well-known/smart-configuration`)).status).toBe(404);
     if (ONE_ORIGIN) {
-      expect((await get(`${a.urls.imaging}/policy/v1/policy`, { headers: { Authorization: "Bearer x" } })).status).toBe(404);
+      expect((await get(`${a.urls.imaging}/policy/v2/document`, { headers: { Authorization: "Bearer x" } })).status).toBe(404);
       expect((await get(`${a.urls.proxy}/internal/keys/refresh`, { method: "POST" })).status).toBe(404);
     }
     // On its loopback port, a scope's policy API takes only that scope's credential.
-    expect((await fetch(`http://127.0.0.1:${PORTS.imaging}/s/${a.scope}/policy/v1/policy`, { headers: { Authorization: "Bearer x" } })).status).toBe(401);
-    expect((await a.policy.getPolicy()).rules).toEqual([]);
+    expect((await fetch(`http://127.0.0.1:${PORTS.imaging}/s/${a.scope}/policy/v2/document`, { headers: { Authorization: "Bearer x" } })).status).toBe(401);
+    expect((await a.policy.policies("service-access"))).toEqual([]);
   });
 });
 
@@ -145,12 +146,12 @@ describe("a scope's rest of path", () => {
     const sneaky = await get(`${urlsFor(`/s/${a.scope}`).demo}//evil.example/api/scopes`, evil);
     expect([403, 404]).toContain(sneaky.status);
     expect(stack.scopes.size).toBe(before);
-    for (const path of ["//h/policy/v1/policy", "//127.0.0.1/policy/v1/policy"]) {
+    for (const path of ["//h/policy/v2/document", "//127.0.0.1/policy/v2/document"]) {
       expect([path, (await get(`${a.urls.imaging}${path}`, { headers: { Authorization: "Bearer x" } })).status]).toEqual([path, 404]);
       expect([path, (await get(`${CONFIG.imagingUrl}${path}`, { headers: { Authorization: "Bearer x" } })).status]).toEqual([path, 404]);
     }
     // On a service's own port, too.
-    expect((await fetch(`http://127.0.0.1:${PORTS.imaging}/s/${a.scope}//h/policy/v1/policy`, { headers: { Authorization: "Bearer x" } })).status).toBe(404);
+    expect((await fetch(`http://127.0.0.1:${PORTS.imaging}/s/${a.scope}//h/policy/v2/document`, { headers: { Authorization: "Bearer x" } })).status).toBe(404);
   });
 });
 
@@ -212,45 +213,57 @@ describe("every URL a scope issues carries its prefix", () => {
 
 describe("inline seeds", () => {
   test("a seed builds its world on first use, the same one after, and its changes stay there", async () => {
-    const seed = encodeSeed({ rules: [RULE], contextLifetimeSeconds: 120 });
+    const seed = encodeSeed({ policies: [RULE], contextLifetimeSeconds: 120 });
     expect(seed).toMatch(/^~[A-Za-z0-9_-]+$/);
     const first = stack.scopes.resolve(seed);
     expect("world" in first).toBe(true);
     const w = (first as { world: World }).world;
-    expect(w.store.rules()).toEqual([RULE]);
+    expect(services(w.store)).toEqual([RULE]);
     expect(w.store.getSettings().contextLifetimeSeconds).toBe(120);
-    expect(w.store.guardians()).toEqual(stack.store.guardians());
+    expect(w.store.relationships()).toEqual(stack.store.relationships());
+    expect(w.store.policies()).toEqual([RULE]);
     // Over HTTP, the same world.
     const conf: any = await (await get(`${w.urls.clinicalFhir}/.well-known/smart-configuration`)).json();
     expect(conf.issuer).toBe(w.urls.auth);
     expect(new URL(conf.issuer).pathname.startsWith(`/s/${seed}`)).toBe(true);
-    await w.policy.setRules([]);
+    await w.policy.replacePolicies("service-access", []);
     expect((stack.scopes.resolve(seed) as { world: World }).world).toBe(w);
-    expect(w.store.rules()).toEqual([]);
-    expect(stack.store.rules()).toEqual([]);
+    expect(services(w.store)).toEqual([]);
+    expect(services(stack.store)).toEqual([]);
   });
-  test("a seed's guardians, when it names them, replace the ones on file", async () => {
-    const w = (stack.scopes.resolve(encodeSeed({ guardians: [] })) as { world: World }).world;
-    expect(w.store.guardians()).toEqual([]);
+  test("a seed's relationships and policies, when it names them, replace the ones on file, and its choices go in beside them", async () => {
+    const share = { from: "user:josh", with: "user:alex-neighbor", patient: "patient:josh-example", sites: ["Lakeside Imaging"], label: "friend" };
+    const w = (stack.scopes.resolve(encodeSeed({ relationships: [], shares: [share] })) as { world: World }).world;
+    expect(w.store.relationships()).toEqual([]);
+    expect(w.store.policies()).toEqual(stack.store.policies());
+    expect(w.store.shares()).toEqual([share]);
+    // A reset there puts the seed's facts back, and clears its choices.
+    w.store.putRelationship({ subject: "user:sam-caregiver", relation: "guardian_of", object: "patient:riley-example" });
+    w.store.resetPolicy();
+    expect([w.store.relationships(), w.store.shares()]).toEqual([[], []]);
+    const g = (stack.scopes.resolve(encodeSeed({ policies: [] })) as { world: World }).world;
+    expect([g.store.policies(), g.store.relationships()]).toEqual([[], stack.store.relationships()]);
   });
   test("a seed that isn't a valid policy, or is too large, gets a 400 naming why", async () => {
     const raw = (doc: unknown) => `~${deflateRawSync(Buffer.from(JSON.stringify(doc))).toString("base64url")}`;
     for (const [seg, why] of [
-      [raw({ rules: "nope" }), "rules must be an array"],
-      [raw({ rules: [{ id: "x" }] }), "rules[0].when"],
+      [raw({ policies: "nope" }), "policies must be an array"],
+      [raw({ policies: [{ id: "x" }] }), "policies[0]"],
+      [raw({ rules: [RULE] }), 'unknown field "rules"'],
+      [raw({ contextLifetimeSeconds: "soon" }), "contextLifetimeSeconds"],
       [raw([1, 2]), "JSON object"],
       [`~${deflateRawSync(Buffer.from("not json")).toString("base64url")}`, "isn't JSON"],
       ["~notdeflate", "deflate-raw"],
       [`~${"A".repeat(MAX_SEED_CHARS + 1)}`, "at most"],
-      [raw({ rules: [{ ...RULE, description: "x".repeat(MAX_SEED_BYTES) }] }), `${MAX_SEED_BYTES} bytes`],
+      [raw({ policies: [{ ...RULE, description: "x".repeat(MAX_SEED_BYTES) }] }), `${MAX_SEED_BYTES} bytes`],
     ] as const) {
       const r = stack.scopes.resolve(seg);
       expect([why, "error" in r && r.status, "error" in r && r.error.includes(why)]).toEqual([why, 400, true]);
     }
-    const over = await get(`${urlsFor(`/s/${raw({ rules: "nope" })}`).clinicalFhir}/.well-known/smart-configuration`);
+    const over = await get(`${urlsFor(`/s/${raw({ policies: "nope" })}`).clinicalFhir}/.well-known/smart-configuration`);
     expect(over.status).toBe(400);
-    expect(((await over.json()) as any).error).toContain("rules must be an array");
-    expect(decodeSeed(encodeSeed({ rules: [RULE] }))).toEqual({ seed: { rules: [RULE] } });
+    expect(((await over.json()) as any).error).toContain("policies must be an array");
+    expect(decodeSeed(encodeSeed({ policies: [RULE] }))).toEqual({ seed: { policies: [RULE] } });
   });
 });
 
@@ -266,13 +279,13 @@ describe("scope lifetimes", () => {
     expect(scopes.resolve(b.scope!)).toMatchObject({ status: 404 });
     expect(scopes.resolve(a.scope!)).toMatchObject({ world: a });
     expect(scopes.resolve(c.scope!)).toMatchObject({ world: c });
-    const seed = encodeSeed({ rules: [RULE] });
+    const seed = encodeSeed({ policies: [RULE] });
     const s1 = (scopes.resolve(seed) as { world: World }).world;
-    s1.store.setPolicy({ rules: [] });
-    scopes.resolve(encodeSeed({ rules: [] }));
+    s1.store.setDocument({ policies: [] });
+    scopes.resolve(encodeSeed({ policies: [] }));
     const s2 = (scopes.resolve(seed) as { world: World }).world;
     expect(s2).not.toBe(s1);
-    expect(s2.store.rules()).toEqual([RULE]);
+    expect(services(s2.store)).toEqual([RULE]);
     scopes.close();
   });
   test("seeds have a pool of their own, so any number of them never evicts a minted scope", () => {

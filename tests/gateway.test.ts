@@ -85,7 +85,7 @@ test("each service answers CORS on its own port", async () => {
 });
 
 test("service-to-service APIs aren't reachable through the one origin", async () => {
-  for (const path of ["/imaging/policy/v1/policy", "/imaging/policy/v1/rules", "/imaging/policy", "/internal/keys/refresh", "/imaging//policy/v1/policy", "//imaging/policy/v1/policy", "/trace//v1/spans", "/internal//keys/refresh"]) {
+  for (const path of ["/imaging/policy/v2/document", "/imaging/policy/v2/explain", "/imaging/policy", "/internal/keys/refresh", "/imaging//policy/v2/document", "//imaging/policy/v2/document", "/trace//v1/spans", "/internal//keys/refresh"]) {
     expect([path, (await via(path, { headers: { authorization: "Bearer anything" } })).status]).toEqual([path, 404]);
   }
 });

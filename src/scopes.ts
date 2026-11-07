@@ -1,14 +1,14 @@
 // Policy scopes: scratch worlds addressed by the URL. `/s/{scope}/` in front of any path reaches that
-// scope's own services. A scope is either a minted id, random and unguessable, which starts from the
-// guardians on file, or an inline seed, `~` and a base64url deflate-raw JSON policy document, which
+// scope's own services. A scope is either a minted id, random and unguessable, which starts from what
+// is on file, or an inline seed, `~` and a base64url deflate-raw JSON policy document, which
 // builds its world from the document on first use. Scopes idle out, and the least recently used go
 // first past the cap. Minted scopes and seeds are separate pools, each with its own cap, so seeds,
 // which anyone can make up, never push out a minted scope. An unknown or evicted minted id is gone; an
 // evicted seed builds again.
 import { randomBytes } from "node:crypto";
 import { deflateRawSync, inflateRawSync } from "node:zlib";
-import { PolicyStore, validatePolicy, type Policy } from "@smart-imaging-proxy/core";
-import { STANDING_GUARDIANS } from "./stores";
+import { PolicyStore } from "@smart-imaging-proxy/core";
+import { ON_FILE, splitPanel, type Panel } from "./stores";
 import { createDemoClock } from "./clock";
 import { createWorld, type Shared, type World } from "./world";
 
@@ -19,8 +19,13 @@ export const MAX_SEED_CHARS = 4096, MAX_SEED_BYTES = 64 * 1024;
 const MINTED = /^[A-Za-z0-9_-]{22}$/;
 const SEEDED = /^~[A-Za-z0-9_-]+$/;
 
-/** A seed: the policy API's policy document. With no `guardians`, the guardians on file. */
-export type Seed = Partial<Policy>;
+/**
+ * A seed: the policy API's document, in all three levels the store holds: relationships, organization
+ * policies, shares and app approvals, with the context settings. A part it leaves out is what's on
+ * file, or none for choices.
+ * Labels are the catalog's, and patient attributes the patient record's.
+ */
+export type Seed = Panel;
 export const encodeSeed = (seed: Seed) => `~${deflateRawSync(Buffer.from(JSON.stringify(seed))).toString("base64url")}`;
 export function decodeSeed(segment: string): { seed: Seed } | { error: string } {
   if (!SEEDED.test(segment)) return { error: "a seed is ~ and base64url" };
@@ -30,7 +35,7 @@ export function decodeSeed(segment: string): { seed: Seed } | { error: string } 
   catch { return { error: `a seed is deflate-raw JSON of at most ${MAX_SEED_BYTES} bytes` }; }
   let seed: unknown;
   try { seed = JSON.parse(text); } catch { return { error: "a seed's document isn't JSON" }; }
-  const errors = validatePolicy(seed);
+  const { errors } = splitPanel(seed);
   return errors.length ? { error: `the seed isn't a valid policy: ${errors.join("; ")}` } : { seed: seed as Seed };
 }
 
@@ -43,9 +48,13 @@ export function createScopes(shared: Shared, opts: { idleMs?: number; max?: numb
   const evict = (id: string) => { const { live } = poolOf(id); const e = live.get(id); if (!e) return; live.delete(id); e.world.close(); };
   const sweep = () => { const cutoff = Date.now() - idleMs; for (const pool of [minted, seeded]) for (const [id, e] of pool.live) if (e.usedAt < cutoff) evict(id); };
   function add(id: string, seed?: Seed) {
-    const { guardians, ...rest } = seed ?? {};
-    const store = new PolicyStore({ mode: "memory", guardians: guardians ?? STANDING_GUARDIANS });
-    if (Object.keys(rest).length) store.setPolicy(rest);
+    // What a seed names is its world's on file, so a reset there puts the seed back.
+    const store = new PolicyStore({ mode: "memory", onFile: { relationships: seed?.relationships ?? ON_FILE.relationships, policies: seed?.policies ?? ON_FILE.policies } });
+    if (seed) {
+      const { document, settings } = splitPanel(seed);
+      if (document.shares || document.approvals) store.setDocument({ ...(document.shares ? { shares: document.shares } : {}), ...(document.approvals ? { approvals: document.approvals } : {}) });
+      if (Object.keys(settings).length) store.setSettings(settings);
+    }
     const world = createWorld({ scope: id, store, clock: createDemoClock(), shared });
     const pool = poolOf(id);
     pool.live.set(id, { world, usedAt: Date.now() });
@@ -53,7 +62,7 @@ export function createScopes(shared: Shared, opts: { idleMs?: number; max?: numb
     return world;
   }
   return {
-    /** A new scope, seeded from the guardians on file. */
+    /** A new scope, starting from what is on file. */
     mint(): World { sweep(); return add(randomBytes(16).toString("base64url")); },
     /** The scope's world, building a seed's on first use, or why there is none. */
     resolve(id: string): { world: World } | { status: 400 | 404; error: string } {

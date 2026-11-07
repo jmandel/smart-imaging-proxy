@@ -646,7 +646,7 @@
         "id": "riley-example",
         "mrn": "RYEXAMPLE01",
         "dicomName": "Example^Riley",
-        "birthDate": "2016-01-01",
+        "birthDate": "2011-01-01",
         "sex": "O"
       },
       "accession": "SYNRILEY2022",
@@ -686,12 +686,13 @@
     {
       "id": "syn-riley-skin-slide-2023",
       "site": "Northside Pathology",
+      "labels": ["confidential-adolescent"],
       "synthetic": true,
       "patient": {
         "id": "riley-example",
         "mrn": "RYEXAMPLE01",
         "dicomName": "Example^Riley",
-        "birthDate": "2016-01-01",
+        "birthDate": "2011-01-01",
         "sex": "O"
       },
       "accession": "SYNRILEY2023",

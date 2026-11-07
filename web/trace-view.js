@@ -169,14 +169,14 @@ function httpPreview(span, related = []) {
     const answered = h.status === undefined ? "" : section("can_i response", res?.decision === undefined ? muted(`No decision: status ${h.status}. The proxy fails closed with a 503.`) : kv([["Decision", res.decision ? "allow" : "deny"], ["Why", why], ["Release", release === "study" ? "whole study" : release?.series ? `${release.series.length} series` : release], ["Denial", res.context?.denial], ["Cacheable for", res.context?.max_age_seconds === undefined ? undefined : `${res.context.max_age_seconds} s`], ["Decision ID", res.context?.decision_id]]));
     return asked + answered;
   }
-  if (path.startsWith("/policy/v1/")) {
+  if (path.startsWith("/policy/v2/")) {
     const fields = sent ?? Object.fromEntries([...q].filter(([k]) => !k.startsWith("demo_")));
     const listed = Object.entries(fields).map(([k, v]) => [k, Array.isArray(v) ? v.join(", ") : v]);
-    const title = `Policy ${h.method === "GET" ? "lookup" : h.method === "DELETE" ? "removal" : "update"}: ${path.replace("/policy/v1/", "")}`;
+    const title = `Policy ${h.method === "GET" ? "lookup" : h.method === "DELETE" ? "removal" : "update"}: ${path.replace("/policy/v2/", "")}`;
     const answer = res?.records ? [
       ["Records", res.records.map(r => `${r.patient} via ${r.via}: ${r.sites.join(", ")}`).join("; ") || "none"],
-      ["Delegations", res.delegations?.map(d => `${d.delegate ?? d.to} (${d.relationship}): ${(d.sites ?? []).join(", ")}`).join("; ")],
-      ["App authorizations", res.apps?.map(a => `${a.client}${a.sites ? `: ${a.sites.join(", ")}` : ""}`).join("; ")],
+      ["Shares", res.shares?.map(d => `${d.with} (${d.label}): ${(d.sites ?? []).join(", ")}`).join("; ")],
+      ["App approvals", res.approvals?.map(a => `${a.app}${a.sites ? `: ${a.sites.join(", ")}` : ""}`).join("; ")],
     ] : res ? Object.entries(res) : [];
     return section(title, kv([...listed, ...answer, ["Result", h.status === 204 ? "recorded" : undefined], ["Failed check", stopped()]]));
   }
@@ -233,8 +233,8 @@ const attrRows = (attrs, skip = []) => Object.entries(attrs ?? {})
 function checkPreview(span) {
   const a = span.attrs ?? {}, passed = span.status === "ok";
   if (span.name.startsWith("policy evaluation:")) {
-    const chain = a.chain ? `<h4>Chain of authority</h4><ol class="chain">${String(a.chain).split(" → ").map(step => `<li>${esc(step)}</li>`).join("")}</ol>` : "";
-    return section(passed ? "Policy releases this study" : "Policy withholds this study", kv([["Study", a.study], ["Site", a.site], ["Release", a.release], ["Why", a.why], ["Rule", a.rule === "(none)" ? undefined : a.rule], ["Client", a.client], ["User", a.user], ["Patient context", a.patient_context]]) + chain);
+    const chain = a.because ? `<h4>Because: facts, policy and choices</h4><ol class="chain">${String(a.because).split(" → ").map(step => `<li>${esc(step)}</li>`).join("")}</ol>` : "";
+    return section(passed ? "Policy releases this study" : "Policy withholds this study", kv([["Study", a.study], ["Site", a.site], ["Release", a.release], ["Why", a.why], ["Policy", a.policy === "(none)" ? undefined : a.policy], ["Client", a.client], ["User", a.user], ["Patient context", a.patient_context]]) + chain);
   }
   if (span.name.startsWith("decision:")) {
     return section(`Decision: ${passed ? "allow" : "deny"}`, kv([["Why", a.why], ...attrRows(a, ["why"])]));

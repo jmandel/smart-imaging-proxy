@@ -52,19 +52,22 @@ function render(s) {
   const row = (name, f) => `<tr><th scope="row">${esc(name)}</th><td>${esc(f(saved))}</td></tr>`;
   $("#store-table").innerHTML = `<table><thead><tr><th></th><th scope="col">Saved policy</th></tr></thead><tbody>${row("Live scopes", () => s.scopes.live)}
     ${row("Mode", x => x.mode)}${row("Path", x => x.path)}${row("Durability", x => x.mode === "file" ? x.durability : "none: in memory")}${row("Journal", x => x.journal)}${row("Schema version", x => x.schemaVersion)}
-    ${row("Guardians on file", x => x.counts.guardians)}${row("Delegations", x => x.counts.delegations)}${row("App grants", x => x.counts.appGrants)}${row("Rules", x => x.counts.rules)}${row("Settings changed", x => x.counts.settings)}${row("Live access tokens", x => x.counts.liveAccessTokens)}${row("Refresh tokens", x => x.counts.refreshTokens)}${row("Signing keys", x => x.counts.signingKeys)}${row("Retired signing keys", x => x.counts.retiredSigningKeys)}
+    ${row("Policy revision", x => x.revision)}${row("Relationships", x => x.counts.relationships)}${row("Policies", x => x.counts.policies)}${row("Shares", x => x.counts.shares)}${row("App approvals", x => x.counts.approvals)}${row("Settings changed", x => x.counts.settings)}${row("Live access tokens", x => x.counts.liveAccessTokens)}${row("Refresh tokens", x => x.counts.refreshTokens)}${row("Signing keys", x => x.counts.signingKeys)}${row("Retired signing keys", x => x.counts.retiredSigningKeys)}
   </tbody></table>`;
 
   const sites = v => v === undefined ? "everything they can see" : v.length ? v.join(", ") : "no sites";
-  const d = s.policy.delegations, g = s.policy.appGrants, standing = s.policy.guardians;
+  const { relationships, policies, shares, approvals } = s.policy;
+  const id = r => r.slice(r.indexOf(":") + 1);
   $("#chain-list").innerHTML = `<p class="note">In saved policy</p>
-    <h3>Guardians on file</h3>
-    <ul class="rows" id="guardians">${standing.map(x => `<li data-guardian="${esc(x.guardian)}"><span><b>${esc(x.guardian)}</b> is the ${esc(x.relationship)} of patient ${esc(x.patient)}: ${x.excludedStudies?.length ? `all but ${esc(x.excludedStudies.join(", "))}, which is confidential from them` : "the whole record"}</span></li>`).join("") || '<li><span class="note">No guardians.</span></li>'}</ul>
-    <p class="note">Standing policy the Imaging Server evaluates, seeded from <code>data/patient.json</code>. No one chose it by sharing, so there's no one to revoke it here, and a policy reset puts it back.</p>
-    <h3>Delegations</h3>
-    <ul class="rows">${d.map(x => `<li><span><b>${esc(x.grantedBy)}</b> to <b>${esc(x.delegate)}</b> (${esc(x.relationship)}), patient ${esc(x.patient)}: ${esc(sites(x.sites))}</span><button class="secondary small" data-del-delegation="${esc(JSON.stringify({ patient: x.patient, delegate: x.delegate }))}">Delete</button></li>`).join("") || '<li><span class="note">No delegations.</span></li>'}</ul>
-    <h3>App grants</h3>
-    <ul class="rows">${g.map(x => `<li><span><b>${esc(x.user)}</b> authorized app <b>${esc(x.client)}</b>, patient ${esc(x.patient)}: ${esc(sites(x.sites))}</span><button class="secondary small" data-del-grant="${esc(JSON.stringify({ client: x.client, user: x.user, patient: x.patient }))}">Delete</button></li>`).join("") || '<li><span class="note">No app grants.</span></li>'}</ul>`;
+    <h3>Facts: relationships on file</h3>
+    <ul class="rows" id="guardians">${relationships.map(x => `<li data-guardian="${esc(id(x.subject))}"><span><b>${esc(id(x.subject))}</b> ${esc(x.relation.replaceAll("_", " "))} ${esc(id(x.object))}${x.recordedBy ? `, recorded by ${esc(x.recordedBy)}` : ""}</span></li>`).join("") || '<li><span class="note">No relationships.</span></li>'}</ul>
+    <p class="note">Facts grant nothing alone. Registration recorded these, seeded from <code>data/patient.json</code>, and a policy reset puts them back. Labels are on the studies, in the catalog.</p>
+    <h3>Organization policy</h3>
+    <ul class="rows">${policies.map(x => `<li><span><b>${esc(x.id)}</b> (${esc(x.type)})${x.description ? `: ${esc(x.description)}` : ""}</span></li>`).join("") || '<li><span class="note">No policies.</span></li>'}</ul>
+    <h3>Shares</h3>
+    <ul class="rows">${shares.map(x => `<li><span><b>${esc(id(x.from))}</b> to <b>${esc(id(x.with))}</b> (${esc(x.label)}), patient ${esc(id(x.patient))}: ${esc(sites(x.sites))}</span><button class="secondary small" data-del-share="${esc(JSON.stringify({ patient: x.patient, with: x.with }))}">Delete</button></li>`).join("") || '<li><span class="note">No shares.</span></li>'}</ul>
+    <h3>App approvals</h3>
+    <ul class="rows">${approvals.map(x => `<li><span><b>${esc(id(x.by))}</b> approved app <b>${esc(id(x.app))}</b>, patient ${esc(id(x.patient))}: ${esc(sites(x.sites))}</span><button class="secondary small" data-del-approval="${esc(JSON.stringify({ app: x.app, by: x.by, patient: x.patient }))}">Delete</button></li>`).join("") || '<li><span class="note">No app approvals.</span></li>'}</ul>`;
 
   ruleSets = s.ruleSets;
   const inEffect = s.ruleSets.choices.find(c => c.id === s.ruleSets.current);
@@ -94,16 +97,16 @@ function render(s) {
 }
 
 document.addEventListener("click", e => {
-  const del = e.target.closest("[data-del-delegation]");
-  if (del) act($("#chain-msg"), "Delegation deleted.", () => call("DELETE", `/delegations?${new URLSearchParams(JSON.parse(del.dataset.delDelegation))}`));
-  const grant = e.target.closest("[data-del-grant]");
-  if (grant) act($("#chain-msg"), "App grant deleted.", () => call("DELETE", `/app-grants?${new URLSearchParams(JSON.parse(grant.dataset.delGrant))}`));
+  const del = e.target.closest("[data-del-share]");
+  if (del) act($("#chain-msg"), "Share deleted.", () => call("DELETE", `/shares?${new URLSearchParams(JSON.parse(del.dataset.delShare))}`));
+  const grant = e.target.closest("[data-del-approval]");
+  if (grant) act($("#chain-msg"), "App approval deleted.", () => call("DELETE", `/app-approvals?${new URLSearchParams(JSON.parse(grant.dataset.delApproval))}`));
   const ahead = e.target.closest("[data-advance]");
   if (ahead) act($("#clock-msg"), `Clock advanced ${ahead.textContent.replace("Advance ", "")}.`, () => call("POST", "/clock", { advanceSeconds: Number(ahead.dataset.advance) }));
 });
 $("#reset-saved").onclick = () => {
-  if (!confirm("Delete all saved delegations, app grants, rules and settings? This can't be undone. Guardians on file stay.")) return;
-  act($("#store-msg"), "Saved policy is reset. Guardians on file, saved tokens and the signing key were kept.", () => call("POST", "/store/reset-saved", { confirm: true }));
+  if (!confirm("Delete all saved shares, app approvals, service policies and settings? This can't be undone. What's on file goes back.")) return;
+  act($("#store-msg"), "Saved policy is reset. What's on file, saved tokens and the signing key were kept.", () => call("POST", "/store/reset-saved", { confirm: true }));
 };
 $("#rule-set-select").onchange = e => { ruleSetPick = e.target.value; renderRuleSets(); };
 $("#apply-rule-set").onclick = () => {

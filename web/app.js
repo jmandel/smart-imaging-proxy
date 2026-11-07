@@ -157,14 +157,16 @@ function showFlow(id, data) {
   renderSteps(data.steps);
 }
 function setPolicy(p) {
+  const doc = p;
   const t = $("#policy-text");
-  if (t) t.value = JSON.stringify(p, null, 2);
+  if (t) t.value = JSON.stringify(doc, null, 2);
   const box = $("#chain");
   if (!box) return;
   const sites = s => s?.length ? s.join(", ") : s ? "no sites" : "everything they can see";
+  const id = r => r.slice(r.indexOf(":") + 1);
   // Guardians are on file in every flow, and matter only where someone acts for another person.
-  const standing = (current?.number === 2 || current?.number === 15 ? p.guardians ?? [] : []).map(g => `${g.guardian} is ${g.patient}'s ${g.relationship}, on file: ${g.excludedStudies?.length ? "all but what's confidential from them" : "the whole record"}`);
-  const lines = [...standing, ...p.delegations.map(d => `${d.grantedBy} → ${d.delegate} (${d.relationship}), ${d.patient}: ${sites(d.sites)}`), ...p.appGrants.map(g => `${g.user} → app ${g.client}, ${g.patient}: ${sites(g.sites)}`)];
+  const standing = (current?.number === 2 || current?.number === 15 ? doc.relationships ?? [] : []).filter(r => r.relation === "guardian_of").map(r => `${id(r.subject)} is ${id(r.object)}'s guardian, on file: what the organization's guardian policy allows for their age`);
+  const lines = [...standing, ...doc.shares.map(d => `${id(d.from)} → ${id(d.with)} (${d.label}), ${id(d.patient)}: ${sites(d.sites)}`), ...doc.approvals.map(g => `${id(g.by)} → app ${id(g.app)}, ${id(g.patient)}: ${sites(g.sites)}`)];
   box.innerHTML = lines.length ? `<h3>Who holds what</h3><ul>${lines.map(l => `<li>${esc(l)}</li>`).join("")}</ul>` : "";
 }
 async function applyPolicy() {

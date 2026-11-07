@@ -78,8 +78,10 @@ export interface AccessSummary {
 export interface Directory {
   relationships(): Promise<{ patient: string; delegate: string; relationship: string }[]>;
   access(user: string, fhirUser: string): Promise<AccessSummary>;
-  recordConsent(c: { client: string; user: string; fhirUser: string; patient: string; sites?: string[] }): Promise<void>;
-  delegate(d: { patient: string; grantedBy: string; fhirUser: string; delegate: string; relationship: string; sites: string[] }): Promise<void>;
+  /** Records an app approval, or says why organization policy refused it. */
+  recordConsent(c: { client: string; user: string; fhirUser: string; patient: string; sites?: string[] }): Promise<{ refused?: string }>;
+  /** Records a share, or says why organization policy refused it, naming the policy. */
+  delegate(d: { patient: string; grantedBy: string; fhirUser: string; delegate: string; relationship: string; sites: string[] }): Promise<{ refused?: string }>;
   revokeDelegation(grantedBy: string, delegate: string, patient?: string): Promise<void>;
   revokeApp(client: string, user: string, patient?: string): Promise<void>;
 }
@@ -323,7 +325,8 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     const record = access.records.find(r => r.patient === (f.get("patient") ?? access.records[0]?.patient));
     if (!check("authorization-server", "user has access to the chosen patient", !!record, { user: txn.user, patient: f.get("patient"), via: record?.via })) return deny();
     const chosen = chosenSites(f, record!.patient);
-    await opts.directory.recordConsent({ client: txn.client_id, user: txn.user!, fhirUser: user.fhirUser, patient: record!.patient, ...(chosen.shown ? { sites: chosen.sites } : {}) });
+    const approved = await opts.directory.recordConsent({ client: txn.client_id, user: txn.user!, fhirUser: user.fhirUser, patient: record!.patient, ...(chosen.shown ? { sites: chosen.sites } : {}) });
+    if (!check("authorization-server", "the Imaging Server recorded the approval", !approved.refused, { refused: approved.refused })) return deny();
     const grant: Grant = { client_id: txn.client_id, scope: txn.scope, sub: txn.user!, fhirUser: user.fhirUser };
     if (/(^| )launch\/patient( |$)/.test(txn.scope)) grant.patient = record!.patient;
     const code = randomBytes(24).toString("base64url");
@@ -398,7 +401,8 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
       const patient = f.get("patient") || user.patient || "";
       const record = (await opts.directory.access(name!, user.fhirUser)).records.find(r => r.patient === patient);
       if (!check("authorization-server", "user can delegate: they're the patient or the guardian, and the delegate has an account", !!record && record.via !== "delegation" && !!userOf(delegate) && delegate !== name, { user: name, delegate, patient, via: record?.via })) return page("Not allowed", "<h1>Only a patient or their guardian can delegate their records</h1>", 403);
-      await opts.directory.delegate({ patient, grantedBy: name!, fhirUser: user.fhirUser, delegate, relationship: f.get("relationship") || "related person", sites: chosenSites(f, patient).sites });
+      const shared = await opts.directory.delegate({ patient, grantedBy: name!, fhirUser: user.fhirUser, delegate, relationship: f.get("relationship") || "related person", sites: chosenSites(f, patient).sites });
+      if (shared.refused) return page("Not allowed", `<h1>The organization's policy doesn't allow this share</h1><p>${esc(shared.refused)}</p>`, 403);
     } else if (url.pathname === "/account/delegations/revoke") await opts.directory.revokeDelegation(name!, f.get("delegate") ?? "", f.get("patient") ?? undefined);
     else if (url.pathname === "/account/apps/revoke") await opts.directory.revokeApp(f.get("client") ?? "", name!, f.get("patient") ?? undefined);
     else return new Response("not found", { status: 404 });

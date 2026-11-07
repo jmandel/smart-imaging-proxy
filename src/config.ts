@@ -71,7 +71,7 @@ export const CONFIG = {
   /** Where services send spans: the trace service itself, since spans are service-to-service traffic. */
   traceSink: `http://127.0.0.1:${PORTS.trace}`,
   s3: { endpoint: `http://127.0.0.1:${process.env.S3_PORT ?? 4610}`, accessKey: "demo-s3", secretKey: "demo-s3-secret" },
-  archive: { dir: process.env.ARCHIVE_DIR ?? `${STORAGE}/archive`, bucket: "smart-imaging-archive" },
+  archive: { dir: process.env.ARCHIVE_DIR ?? `${STORAGE}/archive`, bucket: process.env.S3_BUCKET || "smart-imaging-archive" },
   orthanc: { base: `http://127.0.0.1:${process.env.ORTHANC_PORT ?? 4611}`, user: "demo-proxy", password: "demo-orthanc-secret" },
 };
 

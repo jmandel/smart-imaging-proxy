@@ -60,15 +60,15 @@ function ruleSetStatus(stack: Stack, rules: Parameters<typeof matchRuleSet>[0]) 
 }
 
 export function adminStatus(stack: Stack) {
-  const policy = stack.store.getPolicy();
+  const policy = stack.store.snapshot();
   return {
     store: stack.store.info(),
     scopes: { live: stack.scopes.size },
-    policy: { rules: policy.rules, delegations: policy.delegations, guardians: policy.guardians, appGrants: policy.appGrants },
+    policy: { relationships: policy.relationships, policies: policy.policies, shares: policy.shares, approvals: policy.approvals, revision: policy.revision },
     settings: stack.store.getSettings(),
     settingChoices: SETTING_CHOICES,
     clockChoices: CLOCK_CHOICES,
-    ruleSets: ruleSetStatus(stack, policy.rules),
+    ruleSets: ruleSetStatus(stack, stack.store.policiesOf("service-access")),
     clock: { offsetSeconds: clockOffset(), now: now() },
     backend: { current: stack.backend, names: BACKEND_NAMES },
     catalog: { source: stack.catalogSource, ...stack.catalog.stats() },
@@ -79,7 +79,7 @@ export function adminStatus(stack: Stack) {
 }
 
 /** The query fields each delete needs to identify one row. */
-const DELETE_FIELDS: Record<string, string[]> = { "/delegations": ["patient", "delegate"], "/app-grants": ["client", "user", "patient"] };
+const DELETE_FIELDS: Record<string, string[]> = { "/shares": ["patient", "with"], "/app-approvals": ["app", "by", "patient"] };
 const NO_INPUT = ["/tokens/revoke-all", "/proxy/flush", "/signing-key/rotate"];
 const WITH_INPUT: Record<string, string> = { "/store/reset-saved": "POST", "/rule-set": "POST", "/settings": "PUT", "/clock": "POST", "/backend": "POST", "/outage": "POST" };
 
@@ -100,9 +100,9 @@ export async function adminApi(stack: Stack, req: Request, url: URL): Promise<Re
     const unwanted = await unwantedBody(req);
     if (unwanted) return bad(unwanted);
     const q = (f: string) => url.searchParams.get(f)!;
-    if (p === "/delegations") {
-      if (!await stack.policy.removeDelegations({ patient: q("patient"), delegate: q("delegate") })) return json({ error: "no such delegation" }, 404);
-    } else if (!await stack.policy.removeAppGrants({ client: q("client"), user: q("user"), patient: q("patient") })) return json({ error: "no such app grant" }, 404);
+    if (p === "/shares") {
+      if (!await stack.policy.removeShares({ patient: q("patient"), with: q("with") })) return json({ error: "no such share" }, 404);
+    } else if (!await stack.policy.removeApprovals({ app: q("app"), by: q("by"), patient: q("patient") })) return json({ error: "no such app approval" }, 404);
     return status();
   }
 
@@ -140,7 +140,7 @@ export async function adminApi(stack: Stack, req: Request, url: URL): Promise<Re
       if (!set) return bad(`id must be one of ${RULE_SETS.map(s => s.id).join(", ")}`);
       const rules = set.rules(stack.catalog);
       if (!rules) return json({ error: `the catalog for ${stack.backend} doesn't hold what "${set.label}" names` }, 409);
-      await stack.policy.setRules(rules);
+      await stack.policy.replacePolicies("service-access", rules);
       return status();
     }
     if (p === "/settings") {

@@ -202,10 +202,12 @@ describe("whose records, as Sam", () => {
       await page.locator("article.study").first().waitFor();
       expect(await shown(page)).toEqual(["syn-riley-knee-mr-2022"]);
       expect(await page.locator(".whose-line").innerText()).toBe("Riley Example's records, which Sam holds as guardian");
-      expect(await page.locator(".outcome").innerText()).toContain("Sam is Riley's guardian, on file");
+      expect(await page.locator(".outcome").innerText()).toContain("Sam is Riley's guardian; Guardians of patients 13 to 17 see all studies, except those labeled confidential adolescent care");
       await page.locator("details.raw", { hasText: "only some sites" }).locator("summary").click();
       expect(await page.locator("#app-sites").innerText()).not.toContain("Northside Pathology");
-      expect(await page.locator(".outcome").innerText()).not.toContain("confidential");
+      // The organization's rule shows, the same for any patient that age; the study and its label don't.
+      const outcome = await page.locator(".outcome").innerText();
+      for (const hidden of ["Labeled confidential", "Skin biopsy", "Northside Pathology"]) expect(outcome).not.toContain(hidden);
       expect(await choice(page, "riley-example").getAttribute("aria-current")).toBe("true");
       expect(await page.locator("article.study h3").first().innerText()).toStartWith("SYNTHETIC");
       const first: any = await page.evaluate(async () => (await (await fetch("/api/browse/session")).json()).session.name);
@@ -261,7 +263,7 @@ describe("whose records, as Sam", () => {
     });
     test(`${name}: the account page shares the chosen person's records, and says what stops at Sam`, async () => {
       await fetch(`${DEMO}/api/browse/start`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ user: SAM, client: "portal-app", mode: "scripted", count: 5, share: { delegate: SAM, sites: ["Lakeside Imaging"] } }) });
-      const shared = async () => { for (let i = 0; i < 400; i++) { if (stack.store.delegations().length) return; await Bun.sleep(25); } throw new Error("Josh never shared"); };
+      const shared = async () => { for (let i = 0; i < 400; i++) { if (stack.store.shares().length) return; await Bun.sleep(25); } throw new Error("Josh never shared"); };
       await shared();
       const page = await open(`${CONFIG.authUrl}/account?login_hint=${SAM}`, { viewport });
       await page.locator(`input[name=username][value=${SAM}]`).check();
@@ -281,19 +283,19 @@ describe("whose records, as Sam", () => {
       expect(await page.locator('input[name="sites@riley-example"][value="Northside Pathology"]').count()).toBe(0);
       await page.getByRole("button", { name: "Share", exact: true }).click();
       await page.getByText("Riley Example's records: Lakeside Imaging").waitFor();
-      expect(stack.store.delegations().find(d => d.delegate === "alex-neighbor")).toMatchObject({ patient: "riley-example", sites: ["Lakeside Imaging"], asGuardian: true });
+      expect(stack.store.shares().find(d => d.with === "user:alex-neighbor")).toMatchObject({ from: `user:${SAM}`, patient: "patient:riley-example", sites: ["Lakeside Imaging"], label: "neighbor" });
       expect(await overflow(page)).toBe(0);
       expect(problems).toEqual([]);
     });
   }
-  test("the admin screen shows the guardian on file, and a reset leaves it", async () => {
+  test("the admin screen shows the guardian relationship on file, and a reset leaves it", async () => {
     const page = await open("/admin");
     const row = page.locator(`#guardians [data-guardian=${SAM}]`);
     await row.waitFor();
-    expect(await row.innerText()).toContain("guardian of patient riley-example");
+    expect(await row.innerText()).toContain("guardian of riley-example");
     page.on("dialog", d => d.accept());
     await page.locator("#reset-saved").click();
-    await page.locator("#store-msg", { hasText: "Guardians on file" }).waitFor();
+    await page.locator("#store-msg", { hasText: "What's on file" }).waitFor();
     await row.waitFor();
     expect(problems).toEqual([]);
   });

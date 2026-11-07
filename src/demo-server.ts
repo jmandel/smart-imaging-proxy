@@ -10,6 +10,7 @@ import { StepStopped, type Ctx } from "./flows/runtime";
 import { adminApi, extraField, readJson, refuseHost, refuseWrite, BACKEND_NAMES } from "./admin-api";
 import type { BackendClient } from "./auth-server";
 import { createBrowse } from "./browse";
+import { panelOf, splitPanel } from "./stores";
 import type { World } from "./world";
 
 const json = (b: unknown, status = 200) => Response.json(b, { status });
@@ -75,7 +76,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       if (p === "/api/flow-state") {
         const flow = session && flowById(session.flowId);
         if (!session || !flow) return json({ scope: scopeOf(world), flow: null });
-        return json({ scope: scopeOf(world), flow: session.flowId, running: session.running ?? null, steps: stepInfo(flow, session.ctx), completed: session.completed, policy: world.store.getPolicy() });
+        return json({ scope: scopeOf(world), flow: session.flowId, running: session.running ?? null, steps: stepInfo(flow, session.ctx), completed: session.completed, policy: panelOf(world.store) });
       }
       if (p === "/api/flows") return json({ services, backend: world.backend, scope: scopeOf(world), flows: FLOWS.map(f => ({ id: f.id, number: f.number, group: f.group, title: f.title, summary: f.summary, shows: f.shows, steps: f.steps.length })) });
       if (p === "/api/backends") return json({ current: world.backend, backends: await Promise.all(BACKEND_NAMES.map(n => stack.selfTest(n))) });
@@ -98,26 +99,29 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         const w = stack.scopes.mint();
         return json({ scope: w.scope, base: w.prefix, urls: w.urls }, 201);
       }
-      if (p === "/api/policy" && req.method === "GET") return json(world.store.getPolicy());
+      if (p === "/api/policy" && req.method === "GET") return json(panelOf(world.store));
       if (p === "/api/policy" && req.method === "PUT") {
         const refused = refuseWrite(req, url);
         if (refused) return refused;
         if (!world.scope) return json({ error: "This panel changes only a flow's own scope. The root's rules change through the named rule sets on the admin screen." }, 409);
         const b = await readJson(req);
         if (b === undefined) return json({ error: "the request body must be valid JSON" }, 400);
+        const { document, settings, errors } = splitPanel(b);
+        if (errors.length) return json({ error: errors.join("; "), errors }, 400);
         try {
-          await world.policy.setPolicy(b);
+          if (Object.keys(document).length) await world.policy.setDocument(document);
+          if (Object.keys(settings).length) await world.policy.setSettings(settings);
         } catch (e) {
           if (e instanceof PolicyApiError && e.status === 400) return json({ error: e.message, errors: e.errors }, 400);
           throw e;
         }
-        return json(world.store.getPolicy());
+        return json(panelOf(world.store));
       }
       const started = p.match(/^\/api\/flows\/([^/]+)\/start$/);
       if (started && req.method === "POST") {
         const r = await startRun(started[1]!);
         if (!r) return json({ error: "unknown flow" }, 404);
-        return json({ scope: scopeOf(r.world), steps: stepInfo(r.run.flow, r.run.ctx), policy: r.world.store.getPolicy(), session: r.run.ctx.session });
+        return json({ scope: scopeOf(r.world), steps: stepInfo(r.run.flow, r.run.ctx), policy: panelOf(r.world.store), session: r.run.ctx.session });
       }
       const step = p.match(/^\/api\/flows\/([^/]+)\/steps\/([^/]+)$/);
       if (step && req.method === "POST") {
@@ -137,7 +141,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         try {
           const result = await runStep(s.ctx, s.flow, step[2]!, b.inputs ?? {});
           s.session.completed[step[2]!] = { inputs: b.inputs ?? {}, result };
-          return json({ result, steps: stepInfo(s.flow, s.ctx), policy: world.store.getPolicy(), events: world.proxy.events.slice(-12), scope: scopeOf(world) });
+          return json({ result, steps: stepInfo(s.flow, s.ctx), policy: panelOf(world.store), events: world.proxy.events.slice(-12), scope: scopeOf(world) });
         } catch (e) { return json({ error: String((e as Error).message ?? e) }, e instanceof StepStopped ? 409 : e instanceof BadStepInput ? 400 : /^no step /.test((e as Error).message) ? 404 : 500); }
         finally { s.session.running = undefined; }
       }

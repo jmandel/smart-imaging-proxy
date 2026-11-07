@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { boundaryOf, type Delegation, PolicyStore, readMultipart, type Rule } from "@smart-imaging-proxy/core";
+import { boundaryOf, PolicyStore, readMultipart, type AppApproval, type Share, type ServiceAccessPolicy } from "@smart-imaging-proxy/core";
 import { startStack } from "../src/stack";
 import { defaultsFor, FLOWS, registerClients, runStep, startFlow } from "../src/flows";
 import { accountUrl, scriptedLaunch, submitDelegation } from "../src/flows/oauth";
@@ -17,9 +17,9 @@ const dirs: string[] = [];
 const tempPath = () => { const d = mkdtempSync(join(tmpdir(), "policy-store-test-")); dirs.push(d); return join(d, "nested", "policy.sqlite"); };
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); resetClock(); });
 
-const RULE: Rule = { id: "r1", description: "a rule", when: { client: "c1", patient: "josh-example" }, allow: { sites: ["Lakeside Imaging"], since: "2020-01-01" }, withholdSeries: ["1.2.3"], contextForm: "restricted" };
-const DELEGATION: Delegation = { patient: "josh-example", grantedBy: "josh", delegate: "sam-caregiver", relationship: "caregiver", sites: ["Lakeside Imaging"] };
-const GRANT = { client: "portal-app", user: "josh", patient: "josh-example", sites: ["Riverside Hospital"] };
+const RULE: ServiceAccessPolicy = { id: "r1", type: "service-access", description: "a rule", service: "service:c1", patients: "patient:josh-example", allow: { sites: ["Lakeside Imaging"], since: "2020-01-01" }, withholdSeries: ["1.2.3"], contextForm: "restricted" };
+const SHARE: Share = { from: "user:josh", with: "user:sam-caregiver", patient: "patient:josh-example", sites: ["Lakeside Imaging"], label: "caregiver" };
+const APPROVAL: AppApproval = { by: "user:josh", app: "app:portal-app", patient: "patient:josh-example", sites: ["Riverside Hospital"] };
 
 describe("configuration", () => {
   test("the configuration comes from the environment, and bad values stop startup", () => {
@@ -45,37 +45,38 @@ describe("the root and scopes", () => {
     const stack = await startStack(root, { store: { mode: "file", path, durability: "normal" } });
     try {
       const clients = registerClients(stack);
-      stack.store.setPolicy({ rules: [RULE], delegations: [DELEGATION], appGrants: [GRANT], contextLifetimeSeconds: 77 });
-      stack.store.setSettings({ tokenLifetimeSeconds: 111 });
+      stack.store.replacePolicies("service-access", [RULE]);
+      stack.store.setDocument({ shares: [SHARE], approvals: [APPROVAL] });
+      stack.store.setSettings({ tokenLifetimeSeconds: 111, contextLifetimeSeconds: 77 });
       const savedToken = await scriptedLaunch("josh", "portal-app");
       expect(savedToken.expires_in).toBe(111);
-      const dump = () => JSON.stringify({ tables: ["delegations", "app_grants", "rules", "settings", "signing_keys", "tokens"].map(t => stack.store.db.query(`SELECT * FROM ${t} ORDER BY 1, 2`).all()) });
+      const dump = () => JSON.stringify({ tables: ["relationships", "policies", "shares", "approvals", "patient_revisions", "meta", "settings", "signing_keys", "tokens"].map(t => stack.store.db.query(`SELECT * FROM ${t} ORDER BY 1, 2`).all()) });
       const before = dump();
 
       const flow = FLOWS.find(f => f.id === "caregiver")!;
       const c = await startFlow(stack, clients, flow);
       expect(c.world.store).not.toBe(stack.store);
-      expect(c.world.store.getPolicy().rules).toEqual([]);
-      expect(c.world.store.getPolicy().delegations).toEqual([]);
-      expect(c.world.store.getPolicy().contextLifetimeSeconds).toBe(300);
-      expect(c.world.store.guardians()).toEqual(stack.store.guardians());
+      expect(c.world.store.policiesOf("service-access")).toEqual([]);
+      expect(c.world.store.shares()).toEqual([]);
+      expect(c.world.store.getSettings().contextLifetimeSeconds).toBe(300);
+      expect(c.world.store.relationships()).toEqual(stack.store.relationships());
       for (const s of flow.steps) {
         const r = await runStep(c, flow, s.id, defaultsFor(c, flow, s.id));
         expect(r.checks.filter(k => !k.ok)).toEqual([]);
       }
-      expect(c.world.store.getPolicy().appGrants.length).toBeGreaterThan(0);
+      expect(c.world.store.approvals().length).toBeGreaterThan(0);
       expect(dump()).toBe(before);
 
       // A second flow gets a scope of its own, which starts empty.
       const second = await startFlow(stack, clients, FLOWS.find(f => f.id === "backend-referral")!);
       expect(second.world.scope).not.toBe(c.world.scope);
-      expect(second.world.store.getPolicy().appGrants).toEqual([]);
+      expect(second.world.store.approvals()).toEqual([]);
       expect(second.world.store.info().counts.accessTokens).toBe(0);
-      expect(c.world.store.getPolicy().appGrants.length).toBeGreaterThan(0);
+      expect(c.world.store.approvals().length).toBeGreaterThan(0);
       expect(dump()).toBe(before);
 
-      expect(stack.store.getPolicy().rules).toEqual([RULE]);
-      expect(stack.store.getPolicy().contextLifetimeSeconds).toBe(77);
+      expect(stack.store.policiesOf("service-access")).toEqual([RULE]);
+      expect(stack.store.getSettings().contextLifetimeSeconds).toBe(77);
     } finally { stack.stop(); }
   }, 60000);
 
@@ -129,8 +130,8 @@ describe("a restart", () => {
     const second = await startStack(root, { store: config });
     try {
       expect(JSON.stringify(second.imaging.jwks())).toBe(publicKeyBefore);
-      expect(second.store.getPolicy().delegations.map(d => d.delegate)).toEqual(["sam-caregiver"]);
-      expect(second.store.getPolicy().appGrants[0]!.sites).toEqual(["Riverside Hospital"]);
+      expect(second.store.shares().map(d => d.with)).toEqual(["user:sam-caregiver"]);
+      expect(second.store.approvals()[0]!.sites).toEqual(["Riverside Hospital"]);
 
       const search = await fetch(`${CONFIG.imagingUrl}/fhir/ImagingStudy?patient=josh-example`, { headers: { Authorization: `Bearer ${token.access_token}` } });
       expect(search.status).toBe(200);

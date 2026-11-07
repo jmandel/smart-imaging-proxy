@@ -56,6 +56,9 @@ export async function runScenarios(stack: any, clients: any) {
   const record = async (name: string, token: string | undefined, q: string) => { const r = await search(token, q); out[name] = { query: q, ...r, body: normalizeBody(r.body) }; return r; };
   const backendToken = async (id: string) => (await (await fetch(stack.auth.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "client_credentials", scope: "system/ImagingStudy.rs", client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: clientAssertion(clients[id], stack.auth.tokenUrl) }).toString() })).json() as any).access_token as string;
   const fresh = () => stack.resetAll();
+  /** One service-access policy, replacing any other. */
+  const service = (id: string, client: string, patients: string, allow: object, extra: object = {}) => stack.store.replacePolicies("service-access", [{ id, type: "service-access", service: `service:${client}`, patients, allow, ...extra }]);
+  const JOSH = "patient:josh-example";
   const ALL = "patient=josh-example&_include=ImagingStudy:endpoint";
 
   // Josh, with nothing restricted, and every query form.
@@ -95,7 +98,7 @@ export async function runScenarios(stack: any, clients: any) {
   const noScope = await scriptedLaunch("josh", "portal-app", { scope: "launch/patient online_access" });
   await record("josh: a token without imaging scope", noScope.access_token, ALL);
 
-  // App grants narrow the patient's own access.
+  // App approvals narrow the patient's own access.
   await fresh();
   await record("josh: app approved for Riverside", (await scriptedLaunch("josh", "portal-app", { sites: ["Riverside Hospital"] })).access_token, ALL);
   await fresh();
@@ -105,7 +108,7 @@ export async function runScenarios(stack: any, clients: any) {
 
   // Related people.
   await fresh();
-  stack.store.setPolicy({ delegations: [{ patient: "josh-example", grantedBy: "josh", delegate: "sam-caregiver", relationship: "caregiver", sites: ["Lakeside Imaging", "Riverside Hospital"] }] });
+  stack.store.putShare({ from: "user:josh", with: "user:sam-caregiver", patient: JOSH, sites: ["Lakeside Imaging", "Riverside Hospital"], label: "caregiver" });
   await record("sam: holds two sites, app given everything", (await scriptedLaunch("sam-caregiver", "portal-app", { patient: "josh-example" })).access_token, ALL);
   await record("sam: app given one held and one unheld site", (await scriptedLaunch("sam-caregiver", "portal-app", { sites: ["Lakeside Imaging", "Northside Pathology"], patient: "josh-example" })).access_token, ALL);
   await fresh();
@@ -117,55 +120,53 @@ export async function runScenarios(stack: any, clients: any) {
   await record("robin: own records are an empty result", robin, "patient=robin-example&_include=ImagingStudy:endpoint");
   await record("robin: josh's records", robin, ALL);
 
-  // Rules on a user-facing client.
+  // Another user-facing app, as its approval allows.
   await fresh();
-  stack.store.setPolicy({ rules: [{ id: "wrist-only", when: { client: "portal-app", user: "josh" }, allow: { studies: ["xr-wrist-left-2012"] } }] });
-  await record("rule: one study", (await scriptedLaunch("josh")).access_token, ALL);
+  await record("josh: separate viewer approved for all sites", (await scriptedLaunch("josh", "separate-viewer")).access_token, ALL);
   await fresh();
-  stack.store.setPolicy({ rules: [{ id: "viewer", when: { client: "separate-viewer" }, allow: { all: true } }] });
-  await record("rule: separate viewer allowed", (await scriptedLaunch("josh", "separate-viewer")).access_token, ALL);
-  await fresh();
-  stack.store.setPolicy({ rules: [{ id: "viewer", when: { client: "separate-viewer" }, allow: {} }] });
-  await record("rule: separate viewer allowed nothing", (await scriptedLaunch("josh", "separate-viewer")).access_token, ALL);
+  await record("josh: separate viewer approved for no sites", (await scriptedLaunch("josh", "separate-viewer", { sites: [] })).access_token, ALL);
 
   // Backend Services.
   await fresh();
   await record("backend: no rule", await backendToken("hand-referral-service"), ALL);
   await fresh();
-  stack.store.setPolicy({ rules: [{ id: "hand", when: { client: "hand-referral-service", patient: "josh-example" }, allow: { modalities: ["CR"] } }] });
+  service("hand", "hand-referral-service", JOSH, { modalities: ["CR"] });
   const hand = await backendToken("hand-referral-service");
   await record("backend: CR only", hand, ALL);
   await record("backend: another patient", hand, "patient=robin-example");
   await fresh();
-  stack.store.setPolicy({ rules: [{ id: "hand", when: { client: "hand-referral-service", patient: "josh-example" }, allow: { modalities: ["CR", "MR"] } }] });
+  service("hand", "hand-referral-service", JOSH, { modalities: ["CR", "MR"] });
   await record("backend: CR and MR", await backendToken("hand-referral-service"), ALL);
   await fresh();
-  stack.store.setPolicy({ rules: [{ id: "recent", when: { client: "research-donation" }, allow: { since: "2020-01-01" } }] });
+  service("recent", "research-donation", "any", { since: "2020-01-01" });
   await record("backend: since 2020", await backendToken("research-donation"), ALL);
   await fresh();
-  stack.store.setPolicy({ rules: [{ id: "sites", when: { client: "research-donation" }, allow: { sites: ["Riverside Hospital"] } }] });
+  service("sites", "research-donation", "any", { sites: ["Riverside Hospital"] });
   await record("backend: one site", await backendToken("research-donation"), ALL);
   const hideSome = ct.series.filter((s: any) => /Clinical Documents|Dose Report/.test(s.description)).map((s: any) => s.uid);
   await fresh();
-  stack.store.setPolicy({ rules: [{ id: "hide", when: { client: "outside-release-service", patient: "josh-example" }, allow: { studies: ["ct-abdomen-pelvis-2012"] }, withholdSeries: hideSome }] });
+  service("hide", "outside-release-service", JOSH, { studies: ["ct-abdomen-pelvis-2012"] }, { withholdSeries: hideSome });
   await record("backend: withheld series", await backendToken("outside-release-service"), ALL);
   await fresh();
-  stack.store.setPolicy({ rules: [{ id: "hide", when: { client: "outside-release-service", patient: "josh-example" }, allow: { studies: ["ct-abdomen-pelvis-2012"] }, withholdSeries: ct.series.map((s: any) => s.uid) }] });
+  service("hide", "outside-release-service", JOSH, { studies: ["ct-abdomen-pelvis-2012"] }, { withholdSeries: ct.series.map((s: any) => s.uid) });
   await record("backend: every series withheld", await backendToken("outside-release-service"), ALL);
   await fresh();
-  stack.store.setPolicy({ rules: [{ id: "long", when: { client: "outside-release-service", patient: "josh-example" }, allow: { studies: ["mri-brain-2020"] }, withholdSeries: [mri.series[0].uid] }], maxSeriesInContext: 12 });
+  service("long", "outside-release-service", JOSH, { studies: ["mri-brain-2020"] }, { withholdSeries: [mri.series[0].uid] });
+  stack.store.setSettings({ maxSeriesInContext: 12 });
   await record("backend: series list too long for the URL", await backendToken("outside-release-service"), ALL);
   await fresh();
-  stack.store.setPolicy({ rules: [{ id: "long", when: { client: "outside-release-service", patient: "josh-example" }, allow: { studies: ["mri-brain-2020"] }, withholdSeries: [mri.series[0].uid] }], maxSeriesInContext: 40 });
+  service("long", "outside-release-service", JOSH, { studies: ["mri-brain-2020"] }, { withholdSeries: [mri.series[0].uid] });
+  stack.store.setSettings({ maxSeriesInContext: 40 });
   await record("backend: series list fits in the URL", await backendToken("outside-release-service"), ALL);
   await fresh();
-  stack.store.setPolicy({ rules: [{ id: "form", when: { client: "research-donation" }, allow: { all: true }, contextForm: "restricted" }] });
+  service("form", "research-donation", "any", { all: true }, { contextForm: "restricted" });
   await record("backend: restricted form", await backendToken("research-donation"), ALL);
   await fresh();
-  stack.store.setPolicy({ rules: [{ id: "gone", when: { client: "research-donation" }, allow: { all: true }, withdrawn: true }] });
+  service("gone", "research-donation", "any", { all: true }, { withdrawn: true });
   await record("backend: withdrawn", await backendToken("research-donation"), ALL);
   await fresh();
-  stack.store.setPolicy({ contextLifetimeSeconds: 60, rules: [{ id: "short", when: { client: "research-donation" }, allow: { all: true } }] });
+  service("short", "research-donation", "any", { all: true });
+  stack.store.setSettings({ contextLifetimeSeconds: 60 });
   await record("backend: short context lifetime", await backendToken("research-donation"), ALL);
 
   // Decisions, as the proxy receives them, for a URL that doesn't answer on its own.
@@ -180,7 +181,7 @@ export async function runScenarios(stack: any, clients: any) {
   await fresh();
   await askFor("can_i: denied by sites", (await scriptedLaunch("josh", "portal-app", { sites: ["Lakeside Imaging"] })).access_token, wrist);
   await fresh();
-  stack.store.setPolicy({ rules: [{ id: "hide", when: { client: "outside-release-service", patient: "josh-example" }, allow: { studies: ["ct-abdomen-pelvis-2012"] }, withholdSeries: hideSome }] });
+  service("hide", "outside-release-service", JOSH, { studies: ["ct-abdomen-pelvis-2012"] }, { withholdSeries: hideSome });
   await askFor("can_i: series subset", await backendToken("outside-release-service"), ct);
 
   // Several patients, and one person choosing among them.
@@ -198,11 +199,11 @@ export async function runScenarios(stack: any, clients: any) {
   await record("sam: riley's records, app given one site", (await sam("riley-example", ["Northside Pathology"])).access_token, RILEY);
   out["sam: josh's records with no delegation"] = await sam("josh-example");
   await fresh();
-  stack.store.setPolicy({ delegations: [{ patient: "sam-example", grantedBy: "sam-caregiver", delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"] }] });
+  stack.store.putShare({ from: "user:sam-caregiver", with: "user:alex-neighbor", patient: "patient:sam-example", sites: ["Lakeside Imaging"], label: "neighbor" });
   await record("alex: part of sam's own records, shared by sam", (await scriptedLaunch("alex-neighbor", "portal-app", { patient: "sam-example" })).access_token, SAM);
   out["alex: riley's records, not shared"] = await scriptedLaunch("alex-neighbor", "portal-app", { patient: "riley-example" });
   await fresh();
-  stack.store.setPolicy({ rules: [{ id: "hand", when: { client: "hand-referral-service", patient: "josh-example" }, allow: { modalities: ["CR"] } }] });
+  service("hand", "hand-referral-service", JOSH, { modalities: ["CR"] });
   await record("backend: a rule for josh, asking for riley", await backendToken("hand-referral-service"), RILEY);
   await fresh();
   return out;

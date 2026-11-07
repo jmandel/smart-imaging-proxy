@@ -1,9 +1,10 @@
 // Everything a flow step does goes over HTTP to the real services, and is recorded for display.
-import { boundaryOf, readMultipart, type Rule } from "@smart-imaging-proxy/core";
+import { boundaryOf, createModel, readMultipart, ref, type AppApproval, type ServiceAccessPolicy, type Share } from "@smart-imaging-proxy/core";
 import { currentContext, startSpan, tfetch, traceparentOf, withSpan, check as traceCheck } from "../trace";
 import { accountUrl, buildAuthorization, submitConsent, submitDelegation, submitRevocation, tokenRequestBody } from "./oauth";
 import { clientAssertion, PATIENT_NAMES, USERS, type BackendClient } from "../auth-server";
-import type { World } from "../world";
+import { nameOf, type World } from "../world";
+import { patientAttributes } from "../stores";
 
 export interface Input { id: string; label: string; type: "select" | "multi" | "text"; options?: { value: string; label: string }[]; default?: any; clickDefault?: any; help?: string; }
 export interface Check { label: string; ok: boolean; detail?: string; }
@@ -83,8 +84,8 @@ export class Ctx {
     const who = this.signedIn;
     if (error !== "access_denied" || !who) return `The launch ended in ${error ?? "an error"}, so the app has no token`;
     const name = USERS[who]?.name.split(" ")[0] ?? who;
-    const policy = this.world.store.getPolicy();
-    const held = [...(USERS[who]?.patient ? [USERS[who]!.patient!] : []), ...policy.guardians.filter(g => g.guardian === who).map(g => g.patient), ...policy.delegations.filter(d => d.delegate === who).map(d => d.patient)];
+    const mine = this.world.store.personSnapshot(ref("user", who));
+    const held = [...(USERS[who]?.patient ? [USERS[who]!.patient!] : []), ...mine.relationships.filter(r => r.relation === "guardian_of").map(r => r.object.replace(/^patient:/, "")), ...mine.shares.filter(s => s.with === ref("user", who)).map(s => s.patient.replace(/^patient:/, ""))];
     if (!held.length) return `No patient has shared records with ${name}, so the app has no token`;
     if (this.askedPatient && !held.includes(this.askedPatient)) return `${(PATIENT_NAMES[this.askedPatient] ?? this.askedPatient).split(" ")[0]} hasn't shared records with ${name}, so the app has no token`;
     return `${name} chose not to approve the app, so it has no token`;
@@ -100,7 +101,21 @@ export class Ctx {
     this.accountNote = same ? undefined : `${actual ?? "No one"} signed in, and this step expected ${expected}`;
     this.check("Signed in with the account this step expects", same, this.accountNote ?? expected);
   }
-  async setRules(rules: Rule[]) { await this.world.policy.setRules(rules); }
+  /** Replaces this world's service-access policies. */
+  async setServicePolicies(policies: ServiceAccessPolicy[]) { await this.world.policy.replacePolicies("service-access", policies); }
+  /** A user's approval of an app, for one patient if named. */
+  approvalOf(user: string, client: string, patient?: string): AppApproval | undefined { return this.world.store.approvals().find(a => a.by === ref("user", user) && a.app === ref("app", client) && (!patient || a.patient === ref("patient", patient))); }
+  /** The patients a user has approved an app for. */
+  approvedPatients(user: string, client: string) { return this.world.store.approvals().filter(a => a.by === ref("user", user) && a.app === ref("app", client)).map(a => a.patient.replace(/^patient:/, "")); }
+  /** The share a user holds of a patient's records, if any. */
+  shareWith(user: string, patient?: string): Share | undefined { return this.world.store.shares().find(s => s.with === ref("user", user) && (!patient || s.patient === ref("patient", patient))); }
+  /** A patient's studies a guardian doesn't see, by the organization's policy for the patient's age and the studies' labels. */
+  hiddenFrom(user: string, patient: string): string[] {
+    const model = createModel({ patientOf: u => USERS[u]?.patient, attributesOf: patientAttributes, now: () => this.world.clock.now(), name: nameOf });
+    const snap = this.world.store.patientSnapshot(ref("patient", patient));
+    if (!model.guardianOf(snap, ref("user", user), ref("patient", patient))) return [];
+    return this.studies(patient).filter(st => !model.baseline(snap, ref("user", user), ref("patient", patient), st).ok).map(st => st.id);
+  }
   advanceClock(seconds: number) { this.world.clock.advance(seconds); }
   beginStep() { this.exchanges = []; this.checks = []; this.decisionStart = this.world.imaging.decisions.length; }
   endStep(narrative?: string): StepResult {
@@ -182,7 +197,7 @@ export class Ctx {
     let status = 303;
     if (opts.window) { await this.inWindow(url); this.checkAccount(this.world.auth.lastAccountSignIn, owner); }
     else status = (await withSpan("user", "action", `Browser: ${owner} signs in and shares with ${delegate}`, { sites: sites.join(", "), patient: opts.patient }, () => submitDelegation(url, { user: owner, delegate, relationship, sites, patient: opts.patient }, browserFetch))).status;
-    this.exchanges.push({ title: "Browser: sign in to the account page, and share", actor: "User's browser", method: "POST", url: url.replace(/[?&]demo_[^&]+/g, ""), requestHeaders: {}, status, responseHeaders: {}, summary: status === 303 ? `The delegation is kept at the Imaging Server, not in any token.` : `The account page refused to record this.` });
+    this.exchanges.push({ title: "Browser: sign in to the account page, and share", actor: "User's browser", method: "POST", url: url.replace(/[?&]demo_[^&]+/g, ""), requestHeaders: {}, status, responseHeaders: {}, summary: status === 303 ? `The share is kept at the Imaging Server, not in any token.` : `The account page refused to record this.` });
     return status;
   }
   async revokeDelegation(owner: string, delegate: string) {
