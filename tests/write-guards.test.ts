@@ -137,3 +137,19 @@ test("a refused store switch changes nothing", async () => {
   expect((await send("not json")).status).toBe(400);
   expect(stack.stores.activeName).toBe(before);
 });
+
+test("the demo's pages and read APIs answer only at its own addresses", async () => {
+  const demo = (path: string, headers: Record<string, string> = {}) => fetch(`http://127.0.0.1:${PORTS.demo}${path}`, { headers });
+  for (const path of ["/", "/browse", "/api/policy", "/api/backends", "/api/flows"]) {
+    expect((await demo(path, { host: "evil.example" })).status).toBe(403);
+    expect((await demo(path)).status).toBe(200);
+  }
+});
+
+test("the pages' fonts are served locally, by the demo and by the trace viewer", async () => {
+  for (const base of [`http://127.0.0.1:${PORTS.demo}`, CONFIG.traceUrl]) for (const font of ["atkinson-next", "atkinson-mono"]) {
+    const r = await fetch(`${base}/fonts/${font}.woff2`);
+    expect(r.status).toBe(200);
+    expect(new Uint8Array(await r.arrayBuffer()).slice(0, 4)).toEqual(new Uint8Array([0x77, 0x4f, 0x46, 0x32]));
+  }
+});

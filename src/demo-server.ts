@@ -5,7 +5,7 @@ import type { BackendName, Stack } from "./stack";
 import { FLOWS, flowById, runStep, startFlow } from "./flows";
 import { StepStopped, type Ctx } from "./flows/runtime";
 import { CONFIG } from "./config";
-import { adminApi, extraField, readJson, refuseWrite, BACKEND_NAMES } from "./admin-api";
+import { adminApi, extraField, readJson, refuseHost, refuseWrite, BACKEND_NAMES } from "./admin-api";
 import { PolicyValidationError } from "./policy-store";
 import type { BackendClient } from "./auth-server";
 import { createBrowse } from "./browse";
@@ -45,6 +45,8 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
   async function fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const p = url.pathname;
+    const foreign = refuseHost(req);
+    if (foreign) return foreign;
     if (p === "/" || p === "/index.html") return file("index.html");
     if (p === "/app.js") return file("app.js");
     if (p === "/styles.css") return file("styles.css");
