@@ -152,12 +152,11 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
 
   /** The sites a guardian can choose among, so that a confidential study's site doesn't give it away. */
   const guardianSites = (g: Guardian) => [...new Set([...candidates(opts.catalog(), { patient: g.patient })].filter(s => !g.excludedStudies?.includes(s.id)).flatMap(s => s.site ? [s.site] : []))];
-  /** Sites someone's access names, less any that only a study confidential from the guardian behind it could explain. */
-  const withinGuardian = (policy: Pick<PolicyRows, "guardians" | "delegations">, user: string, patient: string, sites: string[]) => {
-    const behind = policy.guardians.some(x => x.guardian === user && x.patient === patient) ? user : policy.delegations.find(d => d.delegate === user && d.patient === patient)?.grantedBy;
-    const g = policy.guardians.find(x => x.guardian === behind && x.patient === patient);
-    if (!g?.excludedStudies?.length) return sites;
-    const open = new Set(guardianSites(g));
+  /** Sites a page may name to anyone but the patient: never one that only a study confidential from a guardian is at. */
+  const withinGuardian = (policy: Pick<PolicyRows, "guardians">, user: string, patient: string, sites: string[]) => {
+    const guardians = policy.guardians.filter(x => x.patient === patient && x.excludedStudies?.length);
+    if (!guardians.length || opts.patientOf(user) === patient) return sites;
+    const open = new Set(guardians.flatMap(guardianSites));
     return sites.filter(s => open.has(s));
   };
   /** What one signed-in user can see and has shared, for the Authorization Server's pages. Their own record is first, then the people they're guardian for, then what's shared with them. */
@@ -199,8 +198,8 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
       client, user: user ?? undefined, fhirUser: fhirUser ?? undefined, patient, level: user ? "patient" : "system",
       searchAllowed: !!user || !!preAuthorizing(rule), rule: user ? rule : preAuthorizing(rule),
       guardian: user ? policy.guardians.find(g => g.guardian === user && g.patient === patient) : undefined,
-      delegation: user ? [policy.delegations.find(d => d.delegate === user && d.patient === patient)].flatMap(d => d ? [{ ...d, sites: withinGuardian(policy, user, patient, d.sites) }] : [])[0] : undefined,
-      appGrant: user ? policy.appGrants.find(g => g.client === client && g.user === user && g.patient === patient) : undefined,
+      delegation: user ? [policy.delegations.find(d => d.delegate === user && d.patient === patient)].flatMap(d => d && mayGrant(policy, d) ? [{ ...d, sites: withinGuardian(policy, user, patient, d.sites) }] : [])[0] : undefined,
+      appGrant: user ? [policy.appGrants.find(g => g.client === client && g.user === user && g.patient === patient)].flatMap(g => g ? [g.sites ? { ...g, sites: withinGuardian(policy, user, patient, g.sites) } : g] : [])[0] : undefined,
       studies,
     });
   }

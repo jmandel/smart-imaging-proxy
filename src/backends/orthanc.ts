@@ -171,8 +171,11 @@ export class OrthancBackend implements Backend {
         if (firstEnded) return;
         for await (const e of events) {
           if (e.type === "data") yield e.bytes;
-          else if (e.type === "end") return;
-          else break;
+          else if (e.type === "end") {
+            // More parts after a part this large would be encapsulated data this path can't frame.
+            if ((await events.next()).value?.type === "complete") return;
+            break;
+          } else break;
         }
         throw new Error("upstream ended before the bulk element was complete");
       } finally { await events.return(undefined); }

@@ -175,6 +175,19 @@ describe("the guardian", () => {
     expect((await accountPage("alex-neighbor")).html).not.toContain("Northside Pathology");
     stack.useStore("saved");
   }, 30000);
+  test("pages don't name a confidential study's site, from a grant or a row that grants nothing", async () => {
+    stack.useStore("scratch");
+    stack.imaging.setPolicy({ delegations: [], appGrants: [{ client: "portal-app", user: "alex-neighbor", patient: "riley-example", sites: ["Northside Pathology"] }] });
+    expect((await accountPage("alex-neighbor")).html).not.toContain("Northside Pathology");
+    stack.useStore("saved");
+    const saved = stack.stores.saved;
+    saved.setPolicy({ delegations: [{ patient: "riley-example", grantedBy: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"], asGuardian: true }], appGrants: [{ client: "portal-app", user: "alex-neighbor", patient: "riley-example", sites: ["Northside Pathology"] }] });
+    const granted = await stack.explain({ client: "portal-app", user: "alex-neighbor", fhirUser: "RelatedPerson/alex-neighbor", patient: "riley-example" });
+    expect(granted.appGrant.sites).toEqual([]);
+    saved.setPolicy({ delegations: [{ patient: "riley-example", grantedBy: "josh", delegate: "alex-neighbor", relationship: "neighbor", sites: ["Northside Pathology"] }] });
+    const refused = await stack.explain({ client: "portal-app", user: "alex-neighbor", fhirUser: "RelatedPerson/alex-neighbor", patient: "riley-example" });
+    expect(refused.delegation).toBeUndefined();
+  }, 30000);
   test("Orthanc serves encapsulated pixel data with the same bytes as the stores", async () => {
     const row = stack.catalogs.orthanc.allStudies().find(s => s.id === "slide-lung-2023")!;
     const hierarchy = stack.catalogs.orthanc.hierarchies([row.pk]).get(row.pk)!.series[0]!;
