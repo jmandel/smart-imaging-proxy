@@ -50,6 +50,7 @@ Running.
   Flows       ${CONFIG.demoUrl}/
   Admin       ${CONFIG.demoUrl}/admin
   Live trace  ${CONFIG.traceUrl}
+  FHIR base   ${CONFIG.authUrl}/fhir, for apps
 
 Log: ${LOG_FILE}
 Stop with \`bun run down\`.`);
