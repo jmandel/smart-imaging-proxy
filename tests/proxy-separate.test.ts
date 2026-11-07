@@ -6,7 +6,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_CATALOG_DB } from "../src/catalog";
-import { CONFIG, PORTS } from "../src/config";
+import { CONFIG, ONE_ORIGIN, PORTS } from "../src/config";
 import { scriptedLaunch } from "../src/flows/oauth";
 import { clientAssertion, DEMO_BACKEND_CLIENTS, DEMO_BACKEND_SCOPES, derivedBackendClient } from "../src/auth-server";
 import { boundaryOf, readMultipart } from "../src/multipart";
@@ -21,7 +21,7 @@ afterAll(() => { for (const p of running) p.kill("SIGKILL"); rmSync(scratch, { r
 
 function start(role: string, secret: string | undefined, extra: Record<string, string> = {}) {
   // Only what a process needs, plus PATH and HOME, so it can't be leaning on anything else from here.
-  const env: Record<string, string> = { PATH: process.env.PATH!, HOME: process.env.HOME!, DEMO_PORT_OFFSET: process.env.DEMO_PORT_OFFSET ?? "0", DEMO_TAILNET: "0", POLICY_STORE: "memory", TRACE_STORE: "memory", ARCHIVE_DIR: CONFIG.archive.dir, CATALOG_DB: catalogDb, ...extra };
+  const env: Record<string, string> = { PATH: process.env.PATH!, HOME: process.env.HOME!, DEMO_PORT_OFFSET: process.env.DEMO_PORT_OFFSET ?? "0", DEMO_ONE_ORIGIN: ONE_ORIGIN ? "1" : "0", DEMO_TAILNET: "0", POLICY_STORE: "memory", TRACE_STORE: "memory", ARCHIVE_DIR: CONFIG.archive.dir, CATALOG_DB: catalogDb, ...extra };
   if (secret) env.SERVICE_SECRET = secret;
   const p = Bun.spawn(["bun", join(root, "src/main.ts"), "--role", role], { cwd: root, env, stdout: "pipe", stderr: "pipe" });
   running.add(p);
@@ -53,7 +53,9 @@ for (const others of [["imaging,auth,trace"], ["imaging", "auth", "trace"]]) {
       const secret = randomBytes(24).toString("base64url");
       const rest = others.map(role => start(role, secret));
       const proxy = start("proxy", secret, { PROXY_BACKEND: "static-files" });
-      await waitFor([...SERVICE_URLS, `${CONFIG.proxyUrl}/wado/-/studies/1.2`]);
+      // The one origin apps are given, which outlives the others here, as a load balancer would.
+      const gateway = ONE_ORIGIN ? start("gateway", undefined) : undefined;
+      await waitFor([...SERVICE_URLS, `http://127.0.0.1:${PORTS.proxy}/wado/-/studies/1.2`]);
       expect(catalogDb).not.toBe(DEFAULT_CATALOG_DB);
       expect(existsSync(catalogDb)).toBe(true);
 
@@ -80,12 +82,13 @@ for (const others of [["imaging,auth,trace"], ["imaging", "auth", "trace"]]) {
 
       // With the others gone, a signed URL is still decided by the proxy's own copy of the keys.
       for (const p of rest) await stop(p);
-      expect(await reachable(SERVICE_URLS[1]!)).toBe(false);
+      expect(await reachable(`http://127.0.0.1:${PORTS.imaging}/.well-known/jwks.json`)).toBe(false);
       expect(await retrieve(signed, t.access_token)).toEqual({ status: 200, parts: study.numberOfInstances, complete: true });
       expect((await retrieve(`${CONFIG.proxyUrl}/wado/-/studies/${uid}`, "another-token")).status).toBe(503);
 
       await stop(proxy);
-      expect(await reachable(`${CONFIG.proxyUrl}/wado/-/studies/1.2`)).toBe(false);
+      expect(await reachable(`http://127.0.0.1:${PORTS.proxy}/wado/-/studies/1.2`)).toBe(false);
+      if (gateway) await stop(gateway);
     }, 60000);
   });
 }
@@ -94,6 +97,7 @@ describe("an auth process on its own", () => {
   test("registers the demo's Backend Services clients, whose keys its service credential derives", async () => {
     const secret = randomBytes(24).toString("base64url");
     const p = start("auth", secret);
+    const gateway = ONE_ORIGIN ? start("gateway", undefined) : undefined;
     await waitFor([SERVICE_URLS[0]!]);
     const conf: any = await (await fetch(SERVICE_URLS[0]!)).json();
     const ask = (key: ReturnType<typeof derivedBackendClient>) => fetch(conf.token_endpoint, { method: "POST", body: new URLSearchParams({ grant_type: "client_credentials", scope: DEMO_BACKEND_SCOPES[0]!, client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: clientAssertion(key, conf.token_endpoint) }) });
@@ -106,6 +110,7 @@ describe("an auth process on its own", () => {
     expect(wrongSecret.status).toBe(401);
     expect(await wrongSecret.json()).toEqual({ error: "invalid_client" });
     await stop(p);
+    if (gateway) await stop(gateway);
   }, 30000);
 });
 

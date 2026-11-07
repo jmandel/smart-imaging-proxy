@@ -37,6 +37,8 @@ Then open http://127.0.0.1:4600/browse and try these:
 
 Every service listens on `127.0.0.1`. If Tailscale is running, each one also listens on the tailnet IP and uses that IP in the URLs it issues, such as redirects and `Endpoint.address`.
 
+Apps are given one origin, port 4605, for the Authorization Server, Imaging Server, and proxy: the clinical FHIR base is `http://127.0.0.1:4605/fhir`, and the Imaging Server's is `http://127.0.0.1:4605/imaging/fhir`. Each service also keeps its own port. `DEMO_ONE_ORIGIN=0` gives apps those ports instead, the way separate systems would be deployed. Either way, each service answers CORS, so a browser app on another origin can call it.
+
 | Port | Service | Paths |
 |---|---|---|
 | 4600 | Demo | `/` flow player, `/browse` Browse, `/admin` admin screen |
@@ -44,7 +46,7 @@ Every service listens on `127.0.0.1`. If Tailscale is running, each one also lis
 | 4602 | Imaging Server | `/fhir/ImagingStudy`, `/fhir/metadata`, `/access/v1/evaluation`, `/.well-known/jwks.json`, `/.well-known/authzen-configuration` |
 | 4603 | Authorization Server | `/fhir/.well-known/smart-configuration`, `/authorize`, `/token`, `/introspect`, `/revoke`, `/account`, `/fhir/Patient/{id}` (with a token for that patient) |
 | 4604 | Live trace | `/` viewer, `/span.html` full exchange, `/log.html` HTTP log, `/api/sessions/{id}/export` |
-| 4605 | One-origin front | Only with `DEMO_ONE_ORIGIN=1`: `/imaging/...` to the Imaging Server, `/wado/...` to the proxy, and everything else to the Authorization Server |
+| 4605 | One origin for apps | `/imaging/...` to the Imaging Server, `/wado/...` to the proxy, and everything else to the Authorization Server |
 | 4610 | MinIO | Loopback only |
 | 4611 | Orthanc | Loopback only |
 
@@ -56,14 +58,11 @@ Every service listens on `127.0.0.1`. If Tailscale is running, each one also lis
 
 ## Connecting a browser app
 
-[SHLink DICOM Share](https://shlink-dicom.exe.xyz/share) can sign in here and pull studies through the proxy, as the public client `shlink-dicom-share`. Two things shape how:
-
-- **One origin:** the app sends its token only to the clinical or imaging server's origin, so it won't follow an `Endpoint.address` to a proxy on another port, though the guide allows that. `DEMO_ONE_ORIGIN=1` puts the services behind one origin, on port 4605, with CORS.
-- **Loopback:** the app accepts `http` only on `localhost` or `127.0.0.1`, so run a second copy that stays on loopback. After `bun run up`, it shares the archive, MinIO, and Orthanc, with its own SQLite files:
+[SHLink DICOM Share](https://shlink-dicom.exe.xyz/share) can sign in here and pull studies through the proxy, as the public client `shlink-dicom-share`. It accepts `http` only on `localhost` or `127.0.0.1`, so the tailnet address won't do: run a second copy that stays on loopback. After `bun run up`, it shares the archive, MinIO, and Orthanc, with its own SQLite files:
 
 ```sh
 S=/tmp/smart-imaging-share; mkdir -p $S
-DEMO_ONE_ORIGIN=1 DEMO_TAILNET=0 DEMO_PORT_OFFSET=100 \
+DEMO_TAILNET=0 DEMO_PORT_OFFSET=100 \
   POLICY_DB=$S/policy.sqlite TRACE_DB=$S/traces.sqlite CATALOG_DB=$S/catalog.sqlite bun run start
 ```
 
@@ -146,6 +145,7 @@ Then restart `bun run start`.
 |---|---|
 | `src/main.ts`, `src/roles.ts`, `src/stack.ts` | Startup, all at once or by `--role` |
 | `src/config.ts` | Ports, addresses, and backend credentials |
+| `src/gateway.ts`, `src/cors.ts` | The one origin apps are given, and the services' CORS |
 | `src/auth-server.ts` | SMART launch and Backend Services, sign-in, consent, account page, introspection |
 | `src/imaging-server.ts` | Search, policy evaluation, signed contexts, the decision API, JWKS |
 | `src/policy-store.ts` | SQLite policy, signing key, and hashed tokens, with saved and scratch stores |
@@ -171,7 +171,7 @@ Everything has a working default.
 |---|---|---|
 | `DEMO_TAILNET` | Detected | `0` stays on loopback |
 | `DEMO_PORT_OFFSET` | `0` | Added to ports 4600-4605, to run a second copy |
-| `DEMO_ONE_ORIGIN` | Off | `1` serves the auth, imaging, and proxy services through one origin, with CORS. See [Connecting a browser app](#connecting-a-browser-app) |
+| `DEMO_ONE_ORIGIN` | On | `0` gives apps each service's own port, rather than the one origin on 4605 |
 | `SHARE_REDIRECT_URIS` | The hosted and local SHLink DICOM Share callbacks | Comma-separated redirect URIs registered for the `shlink-dicom-share` client |
 | `DEMO_STORAGE` | `/tmp/smart-imaging-demo` | The default home of everything below, the Compose volumes, and `bun run up`'s log |
 | `MINIO_PORT`, `ORTHANC_PORT` | `4610`, `4611` | Where Compose publishes MinIO and Orthanc, and where the demo reaches them |
@@ -192,16 +192,16 @@ Everything has a working default.
 
 A second copy shares MinIO, Orthanc, and the default SQLite files, so give it its own `POLICY_DB`, `CATALOG_DB`, and `TRACE_DB`. For its own backends too, run `docker compose -p {name} up -d` with its own `DEMO_STORAGE`, `MINIO_PORT`, and `ORTHANC_PORT`, and its own `ARCHIVE_DIR`.
 
-**Splitting the services,** with each command in its own terminal and the same `SERVICE_SECRET` in both:
+**Splitting the services,** with each command in its own terminal and the same `SERVICE_SECRET` in both. `gateway` is the one origin on 4605, and needs no credential:
 
 ```sh
-bun src/main.ts --role imaging,auth,trace
+bun src/main.ts --role imaging,auth,trace,gateway
 PROXY_BACKEND=minio bun src/main.ts --role proxy
 ```
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `--role` | `all` | `all`, `demo` (the same as `all`), or a comma-separated list of `proxy`, `imaging`, `auth`, `trace` |
+| `--role` | `all` | `all`, `demo` (the same as `all`), or a comma-separated list of `proxy`, `imaging`, `auth`, `trace`, `gateway` |
 | `SERVICE_SECRET` | None | Required for `proxy`, `imaging`, and `auth`, and the same in each. With `all`, it's generated |
 | `PROXY_BACKEND` | `static-files` | `static-files`, `minio`, or `orthanc`. Set `orthanc` on `imaging` too, to use Orthanc's catalog |
 | `JWKS_TTL_SECONDS` | `60` | How long a split proxy trusts its copy of the keys |

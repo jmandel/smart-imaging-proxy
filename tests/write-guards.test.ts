@@ -109,9 +109,11 @@ describe("the Authorization Server's forms", () => {
     expect(new URL(decided.headers.get("location")!).searchParams.get("code")).toBeTruthy();
   });
   test("every address of the service works, and so does a request with no Host", async () => {
+    // The service's own port, not the one origin apps are given.
+    const direct = (headers: Record<string, string>) => fetch(`http://127.0.0.1:${PORTS.auth}/account/signin`, { method: "POST", headers: { ...FORM, ...headers }, body: "username=josh", redirect: "manual" });
     for (const host of [`127.0.0.1:${PORTS.auth}`, `localhost:${PORTS.auth}`]) {
-      expect((await form("/account/signin", { host }, "username=josh")).status).toBe(303);
-      expect((await form("/account/signin", { host, origin: `http://${host}` }, "username=josh")).status).toBe(303);
+      expect((await direct({ host })).status).toBe(303);
+      expect((await direct({ host, origin: `http://${host}` })).status).toBe(303);
     }
     const body = "username=josh";
     const reply = await new Promise<string>((resolve, reject) => {

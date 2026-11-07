@@ -14,6 +14,7 @@ import { OrthancBackend } from "./backends/orthanc";
 import type { Backend } from "./backends/types";
 import { CONFIG, ONE_ORIGIN, PORTS, serveOn } from "./config";
 import { gatewayFetch } from "./gateway";
+import { withCors } from "./cors";
 import { setTraceSink, tfetch } from "./trace";
 import { createCollector } from "./trace-collector";
 import type { TraceStoreConfig } from "./trace-store";
@@ -109,12 +110,12 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
 
   const servers = [
     ...serveOn(PORTS.trace, { fetch: collector.fetch, idleTimeout: 0 }),
-    ...serveOn(PORTS.auth, { fetch: auth.fetch, idleTimeout: 120 }),
-    ...serveOn(PORTS.imaging, { fetch: imaging.fetch, idleTimeout: 120 }),
-    // Not the streaming server, which reads no request bodies, and sign-in and token requests have them.
-    ...(ONE_ORIGIN ? serveOn(PORTS.gateway, { fetch: gatewayFetch, idleTimeout: 240 }) : []),
+    ...serveOn(PORTS.auth, { fetch: withCors(auth.fetch), idleTimeout: 120 }),
+    ...serveOn(PORTS.imaging, { fetch: withCors(imaging.fetch), idleTimeout: 120 }),
   ];
-  const proxyServer = await serveStreaming(PORTS.proxy, proxy.fetch);
+  const proxyServer = await serveStreaming(PORTS.proxy, withCors(proxy.fetch));
+  // The streaming server, so the proxy's exact Content-Length reaches the client.
+  const gatewayServer = ONE_ORIGIN ? await serveStreaming(PORTS.gateway, gatewayFetch) : undefined;
 
   /** Checks a backend works and reports what it declares. */
   async function selfTest(name: BackendName) {
@@ -159,7 +160,7 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
     setBackend(n: BackendName) { current = n; },
     setTruncateAfter(n: number | undefined) { truncateAfter = n; },
     selfTest,
-    stop() { clearInterval(purgeTimer); servers.forEach(s => s.stop(true)); proxyServer.stop(); stores.close(); collector.close(); catalogs.archive.close(); catalogs.orthanc.close(); },
+    stop() { clearInterval(purgeTimer); servers.forEach(s => s.stop(true)); proxyServer.stop(); gatewayServer?.stop(); stores.close(); collector.close(); catalogs.archive.close(); catalogs.orthanc.close(); },
     /** Replaces the signing key, then tells the proxy over HTTP, so it stops trusting the old one now. A proxy that isn't told learns within its TTL. */
     async rotateSigningKey() {
       const kid = imaging.rotateSigningKey();

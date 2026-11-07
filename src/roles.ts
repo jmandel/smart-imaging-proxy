@@ -1,7 +1,7 @@
 // Runs some of the services in this process, for a deployment that splits them. They find each other
 // through CONFIG, and act together only over HTTP.
 import { randomBytes } from "node:crypto";
-import { CONFIG, PORTS, serveOn } from "./config";
+import { CONFIG, ONE_ORIGIN, PORTS, serveOn } from "./config";
 import { DEMO_BACKEND_CLIENTS, DEMO_BACKEND_SCOPES, derivedBackendClient } from "./auth-server";
 import { createProxy } from "./proxy";
 import { DEFAULT_JWKS_TTL_SECONDS } from "./jwks";
@@ -12,9 +12,12 @@ import { buildAuthServer, buildBackend, buildImagingServer, openCatalogs, proxyL
 import { flushTraces, setTraceSink } from "./trace";
 import { createCollector } from "./trace-collector";
 import { traceStoreConfigFromEnv } from "./trace-store";
+import { withCors } from "./cors";
+import { gatewayFetch } from "./gateway";
 
-export type Role = "proxy" | "imaging" | "auth" | "trace";
-export const ROLES: Role[] = ["proxy", "imaging", "auth", "trace"];
+/** `gateway` is the one origin apps are given, which sits in front of the others like a load balancer. */
+export type Role = "proxy" | "imaging" | "auth" | "trace" | "gateway";
+export const ROLES: Role[] = ["proxy", "imaging", "auth", "trace", "gateway"];
 const BACKENDS: BackendName[] = ["static-files", "minio", "orthanc"];
 
 export async function startRoles(root: string, roles: Role[], env: Record<string, string | undefined> = process.env) {
@@ -36,14 +39,15 @@ export async function startRoles(root: string, roles: Role[], env: Record<string
     if (has("auth")) {
       const auth = buildAuthServer(stores, serviceSecret);
       for (const id of DEMO_BACKEND_CLIENTS) auth.registerBackendClient(id, DEMO_BACKEND_SCOPES, derivedBackendClient(id, serviceSecret).privateKey);
-      const servers = serveOn(PORTS.auth, { fetch: auth.fetch, idleTimeout: 120 });
+      // The one origin runs with the Authorization Server, whose base is its root.
+      const servers = serveOn(PORTS.auth, { fetch: withCors(auth.fetch), idleTimeout: 120 });
       stops.push(() => servers.forEach(s => s.stop(true)));
     }
     if (has("imaging")) {
       const catalogs = await openCatalogs(root, env.CATALOG_DB || DEFAULT_CATALOG_DB);
       const catalog = env.PROXY_BACKEND === "orthanc" ? catalogs.orthanc : catalogs.archive;
       const imaging = buildImagingServer(stores, serviceSecret, () => catalog);
-      const servers = serveOn(PORTS.imaging, { fetch: imaging.fetch, idleTimeout: 120 });
+      const servers = serveOn(PORTS.imaging, { fetch: withCors(imaging.fetch), idleTimeout: 120 });
       stops.push(() => { servers.forEach(s => s.stop(true)); catalogs.archive.close(); catalogs.orthanc.close(); });
     }
     stops.push(() => stores.close());
@@ -53,7 +57,12 @@ export async function startRoles(root: string, roles: Role[], env: Record<string
     if (!BACKENDS.includes(name)) throw new Error(`PROXY_BACKEND must be one of ${BACKENDS.join(", ")}, not "${name}"`);
     const backend = buildBackend(name);
     const proxy = createProxy({ ...proxyLinks, jwksTtlSeconds: Number(env.JWKS_TTL_SECONDS ?? DEFAULT_JWKS_TTL_SECONDS), serviceSecret, backend: () => backend });
-    const server = await serveStreaming(PORTS.proxy, proxy.fetch);
+    const server = await serveStreaming(PORTS.proxy, withCors(proxy.fetch));
+    stops.push(() => server.stop());
+  }
+  if (has("gateway")) {
+    if (!ONE_ORIGIN) throw new Error("--role gateway serves the one origin, which DEMO_ONE_ORIGIN=0 turns off");
+    const server = await serveStreaming(PORTS.gateway, gatewayFetch);
     stops.push(() => server.stop());
   }
   return { stop() { flushTraces(); for (const stop of stops.reverse()) stop(); } };

@@ -95,6 +95,8 @@ export function accessLevel(t: { patient?: string; sub?: string }): "patient" | 
  * here, and a restart turns cursors already issued into 400s, which a client handles by searching again.
  */
 export function createImagingServer(opts: { base: string; clinicalFhirBase: string; proxyBase: () => string; introspect: (token: string) => Promise<any>; patientOf: (user: string) => string | undefined; serviceSecret: string; catalog: () => CatalogStore; keyStore: PolicyStore; store: () => PolicyStore; cursorKey?: Uint8Array; pageBytes?: number }) {
+  // Where callers reach this server, which is behind the one origin unless DEMO_ONE_ORIGIN=0.
+  const serviceBase = opts.base.replace(/\/fhir$/, "");
   let key = opts.keyStore.currentSigningKey();
   // This server's own view. A proxy reads the same keys from /.well-known/jwks.json.
   const keys = new Map([[key.kid, key.publicKey]]);
@@ -532,7 +534,7 @@ export function createImagingServer(opts: { base: string; clinicalFhirBase: stri
       if (p === "/fhir/ImagingStudy" && req.method === "GET") return search(req, url);
       if (p === "/fhir/metadata") return Response.json({ resourceType: "CapabilityStatement", status: "active", date: CAPABILITY_DATE, kind: "instance", implementation: { description: "SMART Imaging proxy demo: Imaging FHIR Server", url: opts.base }, fhirVersion: "4.0.1", format: ["json"], instantiates: ["http://fhir.org/argonaut/smart-imaging/CapabilityStatement/smart-imaging-server"], rest: [{ mode: "server", resource: [{ type: "ImagingStudy", interaction: [{ code: "search-type" }], searchInclude: ["ImagingStudy:endpoint"], searchParam: [{ name: "patient", type: "reference" }, { name: "identifier", type: "token", documentation: "value, system|value, |value or system|. A comma means any of the values, and a repeated parameter means all of them." }, { name: "based-on", type: "reference", documentation: "Searched by order identifier, as based-on:identifier, which takes the same forms as identifier." }, { name: "_lastUpdated", type: "date", documentation: "The value each study's published version states, or otherwise midnight UTC on its study date. Only publishing a study with a different value changes it: in-place DICOM edits, deletions, reassignments and policy changes don't. Takes the prefixes eq, ne, gt, lt, ge, le, sa and eb, or none, and a repeated parameter means all of them. A value with no offset is in UTC, and a partial one covers its whole range." }, { name: "_count", type: "number", documentation: `Studies per page: ${DEFAULT_COUNT} by default, and larger values than ${MAX_COUNT} are treated as ${MAX_COUNT}. A page can hold fewer, to stay within its size limit. 0 returns only the total.` }, { name: "_cursor", type: "string", documentation: "Opaque, and supplied by a Bundle's next link. Use it with the same filters. It grants nothing, and policy applies again on every page." }] }] }] });
       if (p === "/access/v1/evaluation" && req.method === "POST") return evaluation(req);
-      if (p === "/.well-known/authzen-configuration") return Response.json({ policy_decision_point: url.origin, access_evaluation_endpoint: `${url.origin}/access/v1/evaluation` });
+      if (p === "/.well-known/authzen-configuration") return Response.json({ policy_decision_point: serviceBase, access_evaluation_endpoint: `${serviceBase}/access/v1/evaluation` });
       if (p === "/.well-known/jwks.json") return Response.json({ keys: [publicJwk(key)] });
       return new Response("not found", { status: 404 });
     }),

@@ -1,5 +1,5 @@
-// The one-origin front: routing, CORS, and the write guard it keeps. DEMO_ONE_ORIGIN changes the
-// URLs the whole stack issues, so those are checked in a fresh process.
+// The one origin apps are given: routing, the services' CORS through it, and the write guard it
+// keeps. DEMO_ONE_ORIGIN changes the URLs the whole stack issues, so those are checked in fresh processes.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { join } from "node:path";
 import { startStack, type Stack } from "../src/stack";
@@ -14,11 +14,15 @@ const G = `http://127.0.0.1:${PORTS.gateway}`;
 const via = (path: string, init: RequestInit = {}) => gatewayFetch(new Request(G + path, init));
 const SHARE = "https://shlink-dicom.exe.xyz";
 
-test("with DEMO_ONE_ORIGIN=1, every URL an app is given is on one origin", () => {
-  const r = Bun.spawnSync(["bun", "-e", `const { CONFIG } = await import("./src/config.ts"); console.log(JSON.stringify([CONFIG.authUrl, CONFIG.imagingUrl, CONFIG.proxyUrl]))`], { cwd: join(import.meta.dir, ".."), env: { ...process.env, DEMO_ONE_ORIGIN: "1", DEMO_TAILNET: "0" } });
-  const [auth, imaging, proxy] = JSON.parse(r.stdout.toString()) as string[];
-  const port = PORTS.gateway;
-  expect([auth, imaging, proxy]).toEqual([`http://127.0.0.1:${port}`, `http://127.0.0.1:${port}/imaging`, `http://127.0.0.1:${port}`]);
+const configWith = (one: string) => {
+  const r = Bun.spawnSync(["bun", "-e", `const { CONFIG } = await import("./src/config.ts"); console.log(JSON.stringify([CONFIG.authUrl, CONFIG.imagingUrl, CONFIG.proxyUrl]))`], { cwd: join(import.meta.dir, ".."), env: { ...process.env, DEMO_ONE_ORIGIN: one, DEMO_TAILNET: "0" } });
+  return JSON.parse(r.stdout.toString()) as string[];
+};
+
+test("by default, every URL an app is given is on one origin, and DEMO_ONE_ORIGIN=0 gives each service its own", () => {
+  const h = "http://127.0.0.1";
+  expect(configWith("")).toEqual([`${h}:${PORTS.gateway}`, `${h}:${PORTS.gateway}/imaging`, `${h}:${PORTS.gateway}`]);
+  expect(configWith("0")).toEqual([`${h}:${PORTS.auth}`, `${h}:${PORTS.imaging}`, `${h}:${PORTS.proxy}`]);
 });
 
 test("each path reaches its service", async () => {
@@ -32,6 +36,7 @@ test("each path reaches its service", async () => {
 });
 
 test("a page on another origin can call it, including from a public page to loopback", async () => {
+  // The services answer CORS themselves, so this holds on their own ports too.
   const pre = await via("/token", { method: "OPTIONS", headers: { origin: SHARE, "access-control-request-method": "POST", "access-control-request-headers": "content-type", "access-control-request-private-network": "true" } });
   expect(pre.status).toBe(204);
   expect(pre.headers.get("access-control-allow-origin")).toBe("*");
@@ -55,4 +60,11 @@ test("a form on the front's own origin passes the write guard, and one from else
   expect(own.status).not.toBe(403);
   const foreign = await via("/account/signin", { ...form, headers: { ...form.headers, origin: SHARE } });
   expect(foreign.status).toBe(403);
+});
+
+test("each service answers CORS on its own port", async () => {
+  for (const url of [`http://127.0.0.1:${PORTS.auth}/fhir/.well-known/smart-configuration`, `http://127.0.0.1:${PORTS.imaging}/fhir/ImagingStudy`, `http://127.0.0.1:${PORTS.proxy}/wado/x/studies/1.2.3`]) {
+    const res = await fetch(url, { headers: { origin: SHARE } });
+    expect([url, res.headers.get("access-control-allow-origin")]).toEqual([url, "*"]);
+  }
 });

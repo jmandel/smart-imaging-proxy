@@ -8,7 +8,8 @@ import { now } from "../../src/clock";
 import { scriptedLaunch } from "../../src/flows/oauth";
 
 const sha = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex").slice(0, 16);
-const hosts = (s: string) => s.replaceAll(CONFIG.imagingUrl, "{imaging}").replaceAll(CONFIG.proxyUrl, "{proxy}").replaceAll(CONFIG.authUrl, "{auth}");
+// With one origin, the proxy and Authorization Server share a base, so the proxy is told apart by its path.
+const hosts = (s: string) => s.replaceAll(CONFIG.imagingUrl, "{imaging}").replaceAll(`${CONFIG.proxyUrl}/wado/`, "{proxy}/wado/").replaceAll(CONFIG.authUrl, "{auth}").replaceAll(CONFIG.proxyUrl, "{proxy}");
 const payloadOf = (jws: string) => JSON.parse(Buffer.from(jws.split(".")[1]!, "base64url").toString());
 
 /** Replaces random and time-dependent values. Long instance lists become a count and hashes. */

@@ -12,17 +12,32 @@ import { FOREIGN_HOST, foreignHost, LISTEN_HOSTS } from "./config";
 
 export interface StreamingServer { port: number; stop(): void; }
 
+/** Enough for a sign-in form or a token request, which are the only bodies the one origin passes on. */
+const MAX_REQUEST_BODY = 64 * 1024;
+
+async function bodyOf(req: IncomingMessage): Promise<Uint8Array | undefined> {
+  if (req.method === "GET" || req.method === "HEAD") { req.resume(); return undefined; }
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const c of req) {
+    size += (c as Buffer).length;
+    if (size > MAX_REQUEST_BODY) throw new Error("request body too large");
+    chunks.push(c as Buffer);
+  }
+  return new Uint8Array(Buffer.concat(chunks));
+}
+
 async function send(req: IncomingMessage, res: ServerResponse, handler: (req: Request) => Promise<Response> | Response, stallMs: number) {
-  req.resume(); // No route here reads a request body.
   let response: Response;
   try {
     const hosts = req.rawHeaders.filter((_, i) => i % 2 === 0 && req.rawHeaders[i]!.toLowerCase() === "host").length;
-    if (hosts > 1 || foreignHost(req.headers.host, req.socket.localPort ?? 0)) response = FOREIGN_HOST();
-    else if (req.url === "/favicon.ico") response = new Response(null, { status: 204 });
+    if (hosts > 1 || foreignHost(req.headers.host, req.socket.localPort ?? 0)) { req.resume(); response = FOREIGN_HOST(); }
+    else if (req.url === "/favicon.ico") { req.resume(); response = new Response(null, { status: 204 }); }
     else {
     const headers = new Headers();
     for (let i = 0; i + 1 < req.rawHeaders.length; i += 2) headers.append(req.rawHeaders[i]!, req.rawHeaders[i + 1]!);
-    response = await handler(new Request(`http://${req.headers.host ?? "localhost"}${(req.url ?? "/").replace(/^[a-z]+:\/\/[^/]*/i, "") || "/"}`, { method: req.method, headers }));
+    const body = await bodyOf(req);
+    response = await handler(new Request(`http://${req.headers.host ?? "localhost"}${(req.url ?? "/").replace(/^[a-z]+:\/\/[^/]*/i, "") || "/"}`, { method: req.method, headers, body }));
     }
   } catch {
     res.writeHead(500).end();
