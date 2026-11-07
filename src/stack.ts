@@ -12,7 +12,8 @@ import { fileStore, s3Store } from "./archive/sources";
 import { withTruncation } from "./backends/truncation";
 import { OrthancBackend } from "./backends/orthanc";
 import type { Backend } from "./backends/types";
-import { CONFIG, PORTS, serveOn } from "./config";
+import { CONFIG, ONE_ORIGIN, PORTS, serveOn } from "./config";
+import { gatewayFetch } from "./gateway";
 import { setTraceSink, tfetch } from "./trace";
 import { createCollector } from "./trace-collector";
 import type { TraceStoreConfig } from "./trace-store";
@@ -110,6 +111,8 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
     ...serveOn(PORTS.trace, { fetch: collector.fetch, idleTimeout: 0 }),
     ...serveOn(PORTS.auth, { fetch: auth.fetch, idleTimeout: 120 }),
     ...serveOn(PORTS.imaging, { fetch: imaging.fetch, idleTimeout: 120 }),
+    // Not the streaming server, which reads no request bodies, and sign-in and token requests have them.
+    ...(ONE_ORIGIN ? serveOn(PORTS.gateway, { fetch: gatewayFetch, idleTimeout: 240 }) : []),
   ];
   const proxyServer = await serveStreaming(PORTS.proxy, proxy.fetch);
 

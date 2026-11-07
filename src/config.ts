@@ -3,7 +3,9 @@
 const offset = Number(process.env.DEMO_PORT_OFFSET ?? 0);
 /** Where everything the demo writes lives by default: archive, SQLite files, backend volumes, and `bun run up`'s log. */
 export const STORAGE = process.env.DEMO_STORAGE || "/tmp/smart-imaging-demo";
-export const PORTS = { demo: 4600 + offset, proxy: 4601 + offset, imaging: 4602 + offset, auth: 4603 + offset, trace: 4604 + offset };
+export const PORTS = { demo: 4600 + offset, proxy: 4601 + offset, imaging: 4602 + offset, auth: 4603 + offset, trace: 4604 + offset, gateway: 4605 + offset };
+/** One origin for the auth, imaging, and proxy services, in front of their own ports. See `src/gateway.ts`. */
+export const ONE_ORIGIN = process.env.DEMO_ONE_ORIGIN === "1";
 
 /** This machine on its tailnet, if Tailscale is running. Tests and `DEMO_TAILNET=0` stay on loopback. */
 function detectTailnet(): { name: string; ip: string } | undefined {
@@ -40,9 +42,9 @@ export const serveOn = (port: number, options: Omit<Parameters<typeof Bun.serve>
   } as any));
 export const CONFIG = {
   demoUrl: `${host}:${PORTS.demo}`,
-  proxyUrl: `${host}:${PORTS.proxy}`,
-  imagingUrl: `${host}:${PORTS.imaging}`,
-  authUrl: `${host}:${PORTS.auth}`,
+  proxyUrl: ONE_ORIGIN ? `${host}:${PORTS.gateway}` : `${host}:${PORTS.proxy}`,
+  imagingUrl: ONE_ORIGIN ? `${host}:${PORTS.gateway}/imaging` : `${host}:${PORTS.imaging}`,
+  authUrl: ONE_ORIGIN ? `${host}:${PORTS.gateway}` : `${host}:${PORTS.auth}`,
   traceUrl: `${host}:${PORTS.trace}`,
   minio: { endpoint: `http://127.0.0.1:${process.env.MINIO_PORT ?? 4610}`, accessKey: "demo-minio", secretKey: "demo-minio-secret" },
   archive: { dir: process.env.ARCHIVE_DIR ?? `${STORAGE}/archive`, bucket: "smart-imaging-archive" },
