@@ -157,13 +157,14 @@ export class Ctx {
     } finally { clearTimeout(timer); this.pendingAuthUrl = undefined; this.resolveCallback = undefined; this.cancelWindow = undefined; this.callbackContext = undefined; }
   }
   /**
-   * A redirect for the wait in progress ends it. A sign-in's redirect has to carry its `state`, and the
-   * account page's says it's done, so a forged redirect goes nowhere and the wait carries on.
+   * A redirect for the wait in progress ends it. It has to carry the `state` of that sign-in or account
+   * page, so a forged redirect goes nowhere and the wait carries on.
    */
   receiveCallback(back: URL) {
     if (!this.pendingAuthUrl || !this.resolveCallback) return false;
-    const state = new URL(this.pendingAuthUrl).searchParams.get("state");
-    if (state ? back.searchParams.get("state") !== state : back.searchParams.get("account") !== "done") return false;
+    const waiting = new URL(this.pendingAuthUrl).searchParams;
+    const state = waiting.get("state") ?? waiting.get("return_state");
+    if (!state || back.searchParams.get("state") !== state) return false;
     this.resolveCallback(back);
     return true;
   }

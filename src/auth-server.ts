@@ -175,7 +175,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
   const page = (title: string, body: string, status = 200, showStore = false) => new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)}</title><style>${PAGE_CSS}</style></head><body><p class="brand">Authorization Server</p><main>${body}</main>${showStore ? `<p class="store-line">Policy in use: ${esc(opts.storeLabel())}</p>` : ""}</body></html>`, { status, headers: { "content-type": "text/html; charset=utf-8" } });
   const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 
-  const demoQuery = (url: URL) => { const q = new URLSearchParams(); for (const k of ["demo_traceparent", "demo_session", "return"]) if (url.searchParams.get(k)) q.set(k, url.searchParams.get(k)!); const s = q.toString(); return s ? `&${s}` : ""; };
+  const demoQuery = (url: URL) => { const q = new URLSearchParams(); for (const k of ["demo_traceparent", "demo_session", "return", "return_state"]) if (url.searchParams.get(k)) q.set(k, url.searchParams.get(k)!); const s = q.toString(); return s ? `&${s}` : ""; };
   const redirectTo = (location: string) => new Response(null, { status: 303, headers: { Location: location } });
   const initials = (name: string) => name.split(/\s+/).map(w => w[0]).join("").slice(0, 2).toUpperCase();
   /** The account picker. It's a plain form, so it works with no script. */
@@ -319,7 +319,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
       <section><h2>Records you can access</h2>${records}</section>
       ${people}
       <section><h2>Apps you've authorized</h2>${apps}<p class="note">Anyone with access can authorize an app, and can give it only part of what they hold.</p></section>
-      <div class="buttons">${returnTo ? `<a class="button" href="${esc(returnTo)}?account=done">Done, back to the demo</a>` : ""}<form class="inline" method="post" action="/account/signout"><button>Sign out</button></form></div>`, 200, true);
+      <div class="buttons">${returnTo ? `<a class="button" href="${esc(returnTo)}?account=done&amp;state=${encodeURIComponent(url.searchParams.get("return_state") ?? "")}">Done, back to the demo</a>` : ""}<form class="inline" method="post" action="/account/signout"><button>Sign out</button></form></div>`, 200, true);
   }
 
   async function accountPost(url: URL, req: Request): Promise<Response> {

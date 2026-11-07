@@ -27,7 +27,7 @@ export function buildAuthorization(authorizationEndpoint: string, client: string
 export const tokenRequestBody = (a: AuthorizationRequest, code: string) => new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: a.redirectUri, client_id: a.client, code_verifier: a.verifier }).toString();
 
 export function accountUrl(user: string, trace?: Trace) {
-  const q = new URLSearchParams({ login_hint: user, return: CALLBACK });
+  const q = new URLSearchParams({ login_hint: user, return: CALLBACK, return_state: randomBytes(16).toString("base64url") });
   addTrace(q, trace);
   return `${CONFIG.authUrl}/account?${q}`;
 }

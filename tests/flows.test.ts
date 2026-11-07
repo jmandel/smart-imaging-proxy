@@ -145,7 +145,14 @@ describe("a redirect back to the app", () => {
     while (!c.pendingAuthUrl) await Bun.sleep(5);
     expect(c.receiveCallback(new URL(`${CALLBACK}?state=x&code=y`))).toBe(false);
     expect(c.pendingAuthUrl).toBeDefined();
-    expect(c.receiveCallback(new URL(`${CALLBACK}?account=done`))).toBe(true);
+    expect(c.receiveCallback(new URL(`${CALLBACK}?account=done`))).toBe(false);
+    expect(c.pendingAuthUrl).toBeDefined();
+    // The account page's own link carries the wait's state, through its sign-in.
+    const account = new URL(c.pendingAuthUrl!);
+    const signedIn = await fetch(new URL(`/account/signin${account.search}`, account), { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "username=josh", redirect: "manual" });
+    const page = await (await fetch(new URL(signedIn.headers.get("location")!, account), { headers: { cookie: signedIn.headers.get("set-cookie")!.split(";")[0]! } })).text();
+    const link = page.match(/href="([^"]*account=done[^"]*)"/)![1]!.replaceAll("&amp;", "&");
+    expect(c.receiveCallback(new URL(link))).toBe(true);
     expect((await running as any).checks.find((k: any) => k.label === "The Imaging Server holds the delegation").ok).toBe(false);
   });
 });
