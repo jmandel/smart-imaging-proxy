@@ -20,7 +20,7 @@ export type TokenKind = "access" | "refresh";
 /** `family` is shared by every token descended from one refresh token. It isn't derived from any token. */
 export interface TokenRecord { client_id: string; scope: string; patient?: string; sub?: string; fhirUser?: string; family?: string; exp?: number; revoked: boolean; }
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 export type Durability = "off" | "normal" | "full";
 const SYNCHRONOUS: Record<Durability, number> = { off: 0, normal: 1, full: 2 };
 export const DURABILITIES = Object.keys(SYNCHRONOUS) as Durability[];
@@ -107,6 +107,12 @@ export class PolicyStore {
       this.seedOnFile();
       this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     });
+    // Union semantics rely on guardian bands never overlapping, whatever wrote the file.
+    const overlaps = bandOverlaps(this.policies());
+    if (overlaps.length) {
+      this.db.close();
+      throw new Error(`The policy store at ${this.path} holds overlapping guardian-access policies (${overlaps.join("; ")}). Reset saved policy: delete ${this.path}, or point POLICY_DB at a new file.`);
+    }
   }
 
   private tx<T>(fn: () => T): T { return this.db.transaction(fn)(); }
@@ -197,18 +203,22 @@ export class PolicyStore {
   /** Adds a policy, or replaces the one with its id. Order is only for listing: access is the union of every policy. */
   putPolicy(p: OrgPolicy): Revision {
     checked([p], "policy", validateOrgPolicy);
-    const overlaps = bandOverlaps([...this.policies().filter(x => x.id !== p.id), p]);
-    if (overlaps.length) throw new PolicyValidationError(overlaps);
-    return this.policyWrite(() => this.putPolicyRow(p));
+    // Checked inside the write, so two writers sharing one file can't each add half an overlap.
+    return this.policyWrite(() => {
+      const overlaps = bandOverlaps([...this.policies().filter(x => x.id !== p.id), p]);
+      if (overlaps.length) throw new PolicyValidationError(overlaps);
+      this.putPolicyRow(p);
+    });
   }
   removePolicy(id: string): Revision | undefined { return this.db.query("SELECT 1 FROM policies WHERE id = ?").get(id) ? this.policyWrite(() => this.db.run("DELETE FROM policies WHERE id = ?", [id])) : undefined; }
   /** Replaces every policy of one type with these. */
   replacePolicies(type: OrgPolicy["type"], ps: OrgPolicy[]): Revision {
     const errors = validateDocument({ policies: ps });
     for (const [i, p] of ps.entries()) if (p.type !== type) errors.push(`policies[${i}].type must be ${type}`);
-    if (!errors.length) errors.push(...bandOverlaps([...this.policies().filter(x => x.type !== type), ...ps]));
     if (errors.length) throw new PolicyValidationError(errors);
     return this.policyWrite(() => {
+      const overlaps = bandOverlaps([...this.policies().filter(x => x.type !== type), ...ps]);
+      if (overlaps.length) throw new PolicyValidationError(overlaps);
       for (const p of this.policiesOf(type)) this.db.run("DELETE FROM policies WHERE id = ?", [p.id]);
       for (const p of ps) {
         if (this.db.query("SELECT 1 FROM policies WHERE id = ?").get(p.id)) throw new PolicyValidationError([`policy ${p.id} is already a policy of another type`]);

@@ -120,3 +120,15 @@ describe("a revocation", () => {
     expect(store.approvals().map(a => a.by)).toEqual(["user:parent"]);
   });
 });
+
+test("a store file holding overlapping guardian bands refuses to open, whatever wrote it", () => {
+  const { mkdtempSync } = require("node:fs") as typeof import("node:fs");
+  const { join } = require("node:path") as typeof import("node:path");
+  const { tmpdir } = require("node:os") as typeof import("node:os");
+  const path = join(mkdtempSync(join(tmpdir(), "bands-")), "policy.sqlite");
+  const s = new PolicyStore({ mode: "file", path, onFile: { policies: [TEENS] } });
+  const allMinors: OrgPolicy = { id: "all-minors", type: "guardian-access", when: { age: { max: 17 } }, allow: "all" };
+  (s as any).db.run("INSERT INTO policies (id, position, body) VALUES (?, ?, ?)", [allMinors.id, 99, JSON.stringify(allMinors)]);
+  s.close();
+  expect(() => new PolicyStore({ mode: "file", path })).toThrow(/overlapping guardian-access policies.*reset saved policy/is);
+});
