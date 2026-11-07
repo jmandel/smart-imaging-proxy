@@ -10,14 +10,14 @@ const WITHHELD_SERIES = /Clinical Documents|Dose (Report|Record)/;
 const handWristReferral: Rule = { id: "hand-referral", description: "Referral service: hand and wrist X-rays", when: { client: "hand-referral-service", patient: PATIENT }, allow: { modalities: ["CR"] } };
 const researchDonation: Rule = { id: "research-consent", description: "Josh's research donation consent", when: { client: "research-donation", patient: PATIENT }, allow: { all: true } };
 
-/** The CT with two series withheld, or nothing if this catalog doesn't hold the study or those series. */
+/** The CT with three series withheld, or nothing if this catalog doesn't hold the study or those series. */
 function outsideRelease(catalog: CatalogStore): Rule | undefined {
   const study = catalog.allStudies().find(s => s.id === CT);
   if (!study) return undefined;
   const series = catalog.hierarchies([study.pk]).get(study.pk)?.series ?? [];
   const withhold = series.filter(s => WITHHELD_SERIES.test(s.description ?? "")).map(s => s.uid);
   if (!withhold.length) return undefined;
-  return { id: "outside-release", description: "Outside release: CT without its dose report and clinical documents", when: { client: "outside-release-service", patient: PATIENT }, allow: { studies: [CT] }, withholdSeries: withhold };
+  return { id: "outside-release", description: "Outside release: CT without its dose report, dose record and clinical documents", when: { client: "outside-release-service", patient: PATIENT }, allow: { studies: [CT] }, withholdSeries: withhold };
 }
 
 export interface RuleSet {
@@ -41,7 +41,7 @@ export const RULE_SETS: RuleSet[] = [
   },
   {
     id: "outside-release", label: "Outside release: CT with series withheld",
-    description: "The outside release service can see Josh Example's abdomen and pelvis CT, without its Dose Report and Clinical Documents series. It sees nothing else of his.",
+    description: "The outside release service can see Josh Example's abdomen and pelvis CT, without its Dose Report, Dose Record and Clinical Documents series. It sees nothing else of his.",
     rules: catalog => { const rule = outsideRelease(catalog); return rule && [rule]; },
   },
   {

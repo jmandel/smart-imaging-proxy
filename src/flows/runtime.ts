@@ -158,8 +158,8 @@ export class Ctx {
     try {
       return await new Promise<URL>((resolve, reject) => {
         this.resolveCallback = resolve;
-        this.cancelWindow = why => reject(new Error(why));
-        timer = setTimeout(() => reject(new Error("timed out waiting for you in the other window")), 300000);
+        this.cancelWindow = why => reject(new StepStopped(why));
+        timer = setTimeout(() => reject(new StepStopped("Timed out waiting for you in the other window. Run the step again.")), 300000);
       });
     } finally { clearTimeout(timer); this.pendingAuthUrl = undefined; this.resolveCallback = undefined; this.cancelWindow = undefined; this.callbackContext = undefined; }
   }

@@ -252,5 +252,6 @@ test("a rotation survives a restart: the old key stays retired, with its private
   } finally {
     rmSync(dir, { recursive: true, force: true });
     stack = await startStack(root);
+    demo = createDemoServer(stack, registerClients(stack), root);
   }
 });

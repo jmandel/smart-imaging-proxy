@@ -201,9 +201,9 @@ describe("whose records, as Sam", () => {
       await choice(page, "riley-example").click();
       await whose(page, "riley-example");
       await page.locator("article.study").first().waitFor();
-      expect(await shown(page)).toEqual(["syn-riley-knee-mr-2022", "syn-riley-skin-slide-2023"]);
+      expect(await shown(page)).toEqual(["syn-riley-knee-mr-2022"]);
       expect(await page.locator(".whose-line").innerText()).toBe("Riley Example's records, which Sam holds as guardian");
-      expect(await page.locator(".outcome").innerText()).toContain("Sam is Riley's guardian, on file for the whole record");
+      expect(await page.locator(".outcome").innerText()).toContain("Sam is Riley's guardian, on file apart from what's confidential from them");
       expect(await choice(page, "riley-example").getAttribute("aria-current")).toBe("true");
       expect(await page.locator("article.study h3").first().innerText()).toStartWith("SYNTHETIC");
       const first: any = await page.evaluate(async () => (await (await fetch("/api/browse/session")).json()).session.name);
@@ -276,7 +276,7 @@ describe("whose records, as Sam", () => {
       expect(await page.locator("[data-sites-for=sam-example]").isVisible()).toBe(false);
       await page.locator("select[name=delegate]").selectOption("alex-neighbor");
       await page.locator("select[name=relationship]").selectOption("neighbor");
-      await page.locator('input[name="sites@riley-example"][value="Northside Pathology"]').uncheck();
+      expect(await page.locator('input[name="sites@riley-example"][value="Northside Pathology"]').count()).toBe(0);
       await page.getByRole("button", { name: "Share", exact: true }).click();
       await page.getByText("Riley Example's records: Lakeside Imaging").waitFor();
       expect(stack.stores.saved.delegations().find(d => d.delegate === "alex-neighbor")).toMatchObject({ patient: "riley-example", sites: ["Lakeside Imaging"], asGuardian: true });
@@ -361,6 +361,20 @@ describe("flows, in real windows", () => {
     await popup.close();
     await page.locator("[data-step=consent] .result").getByText("window closed").waitFor({ timeout: 15000 });
     expect(await page.locator("[data-run=consent]").isEnabled()).toBe(true);
+  });
+  test("signing out on the account page keeps the way back to the flow", async () => {
+    const page = await open("/");
+    await page.locator('.flow-choice[data-id=caregiver]').click();
+    await page.locator("[data-run=delegate]").waitFor();
+    const [popup] = await Promise.all([context!.waitForEvent("page"), page.locator("[data-run=delegate]").click()]);
+    await popup.waitForURL(/\/account/);
+    await popup.locator("input[name=username][value=josh]").check();
+    await popup.getByRole("button", { name: "Continue" }).click();
+    await popup.getByRole("link", { name: /Done, back to the demo/ }).waitFor();
+    await popup.getByRole("button", { name: "Sign out" }).click();
+    await popup.locator("input[name=username][value=josh]").check();
+    await popup.getByRole("button", { name: "Continue" }).click();
+    await popup.getByRole("link", { name: /Done, back to the demo/ }).waitFor();
   });
   test("an open exchange doesn't make a phone page scroll sideways", async () => {
     const page = await open("/", { viewport: PHONE });

@@ -16459,7 +16459,7 @@
   "body": {
    "resourceType": "Bundle",
    "type": "searchset",
-   "total": 2,
+   "total": 1,
    "link": [
     {
      "relation": "self",
@@ -16467,123 +16467,6 @@
     }
    ],
    "entry": [
-    {
-     "fullUrl": "{imaging}/fhir/ImagingStudy/syn-riley-skin-slide-2023",
-     "resource": {
-      "resourceType": "ImagingStudy",
-      "id": "syn-riley-skin-slide-2023",
-      "meta": {
-       "lastUpdated": "2023-11-08T00:00:00Z"
-      },
-      "identifier": [
-       {
-        "system": "urn:dicom:uid",
-        "value": "urn:oid:2.25.45068673053180483263287811730744710353"
-       },
-       {
-        "type": {
-         "coding": [
-          {
-           "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
-           "code": "ACSN"
-          }
-         ]
-        },
-        "system": "http://hospital.example.org/accession",
-        "value": "SYNRILEY2023"
-       }
-      ],
-      "status": "available",
-      "subject": {
-       "reference": "{auth}/fhir/Patient/riley-example"
-      },
-      "basedOn": [
-       {
-        "type": "ServiceRequest",
-        "identifier": {
-         "type": {
-          "coding": [
-           {
-            "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
-            "code": "ACSN"
-           }
-          ]
-         },
-         "system": "http://hospital.example.org/accession",
-         "value": "SYNRILEY2023"
-        }
-       }
-      ],
-      "started": "2023-11-08",
-      "modality": [
-       {
-        "system": "http://dicom.nema.org/resources/ontology/DCM",
-        "code": "SM"
-       }
-      ],
-      "description": "SYNTHETIC: Skin biopsy, slide photo",
-      "numberOfSeries": 1,
-      "numberOfInstances": 2,
-      "endpoint": [
-       {
-        "reference": "urn:uuid:{endpoint of syn-riley-skin-slide-2023}"
-       }
-      ],
-      "series": [
-       {
-        "uid": "2.25.298261192248900525170154601533705347449",
-        "number": 1,
-        "modality": {
-         "system": "http://dicom.nema.org/resources/ontology/DCM",
-         "code": "SM"
-        },
-        "description": "SYNTHETIC: Slide photo",
-        "numberOfInstances": 2,
-        "instanceCount": 2,
-        "instances": "36bf1066658361bd",
-        "instancesAnyOrder": "582d0831572efe5f"
-       }
-      ]
-     },
-     "search": {
-      "mode": "match"
-     }
-    },
-    {
-     "fullUrl": "urn:uuid:{endpoint of syn-riley-skin-slide-2023}",
-     "search": {
-      "mode": "include"
-     },
-     "resource": {
-      "resourceType": "Endpoint",
-      "id": "{uuid}",
-      "status": "active",
-      "name": "WADO-RS",
-      "connectionType": {
-       "system": "http://terminology.hl7.org/CodeSystem/endpoint-connection-type",
-       "code": "dicom-wado-rs"
-      },
-      "payloadType": [
-       {
-        "coding": [
-         {
-          "system": "http://terminology.hl7.org/CodeSystem/endpoint-payload-type",
-          "code": "any"
-         }
-        ]
-       }
-      ],
-      "address": "{proxy}/wado/{signed context}"
-     },
-     "context": {
-      "v": 1,
-      "iss": "imaging-server",
-      "study": "2.25.45068673053180483263287811730744710353",
-      "ver": 1,
-      "ath": "{token hash}",
-      "expiresInAbout": 300
-     }
-    },
     {
      "fullUrl": "{imaging}/fhir/ImagingStudy/syn-riley-knee-mr-2022",
      "resource": {
@@ -16767,132 +16650,14 @@
   "body": {
    "resourceType": "Bundle",
    "type": "searchset",
-   "total": 1,
+   "total": 0,
    "link": [
     {
      "relation": "self",
      "url": "{imaging}/fhir/ImagingStudy?patient=riley-example&_include=ImagingStudy:endpoint"
     }
    ],
-   "entry": [
-    {
-     "fullUrl": "{imaging}/fhir/ImagingStudy/syn-riley-skin-slide-2023",
-     "resource": {
-      "resourceType": "ImagingStudy",
-      "id": "syn-riley-skin-slide-2023",
-      "meta": {
-       "lastUpdated": "2023-11-08T00:00:00Z"
-      },
-      "identifier": [
-       {
-        "system": "urn:dicom:uid",
-        "value": "urn:oid:2.25.45068673053180483263287811730744710353"
-       },
-       {
-        "type": {
-         "coding": [
-          {
-           "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
-           "code": "ACSN"
-          }
-         ]
-        },
-        "system": "http://hospital.example.org/accession",
-        "value": "SYNRILEY2023"
-       }
-      ],
-      "status": "available",
-      "subject": {
-       "reference": "{auth}/fhir/Patient/riley-example"
-      },
-      "basedOn": [
-       {
-        "type": "ServiceRequest",
-        "identifier": {
-         "type": {
-          "coding": [
-           {
-            "system": "http://terminology.hl7.org/CodeSystem/v2-0203",
-            "code": "ACSN"
-           }
-          ]
-         },
-         "system": "http://hospital.example.org/accession",
-         "value": "SYNRILEY2023"
-        }
-       }
-      ],
-      "started": "2023-11-08",
-      "modality": [
-       {
-        "system": "http://dicom.nema.org/resources/ontology/DCM",
-        "code": "SM"
-       }
-      ],
-      "description": "SYNTHETIC: Skin biopsy, slide photo",
-      "numberOfSeries": 1,
-      "numberOfInstances": 2,
-      "endpoint": [
-       {
-        "reference": "urn:uuid:{endpoint of syn-riley-skin-slide-2023}"
-       }
-      ],
-      "series": [
-       {
-        "uid": "2.25.298261192248900525170154601533705347449",
-        "number": 1,
-        "modality": {
-         "system": "http://dicom.nema.org/resources/ontology/DCM",
-         "code": "SM"
-        },
-        "description": "SYNTHETIC: Slide photo",
-        "numberOfInstances": 2,
-        "instanceCount": 2,
-        "instances": "36bf1066658361bd",
-        "instancesAnyOrder": "582d0831572efe5f"
-       }
-      ]
-     },
-     "search": {
-      "mode": "match"
-     }
-    },
-    {
-     "fullUrl": "urn:uuid:{endpoint of syn-riley-skin-slide-2023}",
-     "search": {
-      "mode": "include"
-     },
-     "resource": {
-      "resourceType": "Endpoint",
-      "id": "{uuid}",
-      "status": "active",
-      "name": "WADO-RS",
-      "connectionType": {
-       "system": "http://terminology.hl7.org/CodeSystem/endpoint-connection-type",
-       "code": "dicom-wado-rs"
-      },
-      "payloadType": [
-       {
-        "coding": [
-         {
-          "system": "http://terminology.hl7.org/CodeSystem/endpoint-payload-type",
-          "code": "any"
-         }
-        ]
-       }
-      ],
-      "address": "{proxy}/wado/{signed context}"
-     },
-     "context": {
-      "v": 1,
-      "iss": "imaging-server",
-      "study": "2.25.45068673053180483263287811730744710353",
-      "ver": 1,
-      "ath": "{token hash}",
-      "expiresInAbout": 300
-     }
-    }
-   ]
+   "entry": []
   }
  },
  "sam: josh's records with no delegation": {

@@ -21,7 +21,8 @@ const root = join(import.meta.dir, "..");
 const BACKENDS: BackendName[] = (process.env.BACKENDS?.split(",") as BackendName[]) ?? ["static-files", "minio", "orthanc"];
 const JOSH = ["ct-abdomen-pelvis-2012", "mri-brain-2020", "slide-lung-2023", "xr-hand-right-2012", "xr-hand-wrist-right-2012", "xr-wrist-left-2012"];
 const SAM = ["syn-sam-chest-xr-2021", "syn-sam-ct-sinus-2024"];
-const RILEY = ["syn-riley-knee-mr-2022", "syn-riley-skin-slide-2023"];
+const CONFIDENTIAL = "syn-riley-skin-slide-2023";
+const RILEY = ["syn-riley-knee-mr-2022"]; // What Sam gets: the other study is confidential from Sam.
 const SAM_ACCOUNT = "sam-caregiver";
 const AUTH = CLINICAL_FHIR.replace("/fhir", "");
 
@@ -106,7 +107,7 @@ for (const backend of BACKENDS) {
 describe("the guardian", () => {
   const riley = STANDING_GUARDIANS[0]!;
   test("is what data/patient.json has on file, and Riley has no account", async () => {
-    expect(STANDING_GUARDIANS).toEqual([{ patient: "riley-example", guardian: SAM_ACCOUNT, relationship: "guardian" }]);
+    expect(STANDING_GUARDIANS).toEqual([{ patient: "riley-example", guardian: SAM_ACCOUNT, relationship: "guardian", excludedStudies: [CONFIDENTIAL] }]);
     expect((await fetch(`${AUTH}/account/signin`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "username=riley", redirect: "manual" })).status).toBe(401);
   });
   test("survives every reset, in saved and in scratch, and a reset still clears what people chose", async () => {
@@ -133,6 +134,33 @@ describe("the guardian", () => {
     expect((await launchFor("riley-example")).error).toBe("access_denied");
     stack.resetAll();
     expect((await search((await launchFor("riley-example")).access_token, "riley-example")).ids).toEqual(RILEY);
+  }, 60000);
+  test("a confidential study is left out everywhere for a guardian, with the token still Riley's", async () => {
+    const t = await launchFor("riley-example");
+    expect(t.patient).toBe("riley-example");
+    const r = await search(t.access_token, "riley-example");
+    expect(r.ids).toEqual(RILEY);
+    expect((await wado(CONFIG.proxyUrl + "/wado/-", uidOf(CONFIDENTIAL), t.access_token)).status).toBe(404);
+    expect((await accountPage(SAM_ACCOUNT)).html).not.toContain('value="Northside Pathology"');
+    const e = await stack.explain({ client: "portal-app", user: SAM_ACCOUNT, fhirUser: "Patient/sam-example", patient: "riley-example" });
+    expect(e.studies.find((s: any) => s.id === CONFIDENTIAL).reason).toContain("confidential");
+    expect(STANDING_GUARDIANS[0]!.excludedStudies).toEqual([CONFIDENTIAL]);
+  }, 60000);
+  test("a guardian can't share what's confidential from them, even by naming its site", async () => {
+    await submitDelegation(accountUrl(SAM_ACCOUNT), { user: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging", "Northside Pathology"], patient: "riley-example" });
+    expect(stack.imaging.getPolicy().delegations[0]!.sites).toEqual(["Lakeside Imaging"]);
+    stack.imaging.setPolicy({ delegations: [{ patient: "riley-example", grantedBy: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging", "Northside Pathology"], asGuardian: true }] });
+    const t = await launchFor("riley-example", "alex-neighbor");
+    expect((await search(t.access_token, "riley-example")).ids).toEqual(RILEY);
+  }, 60000);
+  test("a share made as guardian doesn't come back with the guardian", async () => {
+    const riley = stack.imaging.getPolicy().guardians;
+    await submitDelegation(accountUrl(SAM_ACCOUNT), { user: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"], patient: "riley-example" });
+    const t = await launchFor("riley-example", "alex-neighbor");
+    stack.imaging.setPolicy({ guardians: [] });
+    expect(stack.imaging.getPolicy().delegations).toEqual([]);
+    stack.imaging.setPolicy({ guardians: riley });
+    expect((await search(t.access_token, "riley-example")).ids).toEqual([]);
   }, 60000);
   test("what a guardian shared lasts only while they're the guardian", async () => {
     await submitDelegation(accountUrl(SAM_ACCOUNT), { user: SAM_ACCOUNT, delegate: "alex-neighbor", relationship: "neighbor", sites: ["Lakeside Imaging"], patient: "riley-example" });
@@ -182,7 +210,7 @@ describe("the guardian", () => {
   test("its chain reads plainly, in the Imaging Server's view", async () => {
     const x = await stack.explain({ client: "portal-app", user: SAM_ACCOUNT, fhirUser: "Patient/sam-example", patient: "riley-example" });
     expect(x.guardian).toEqual(riley);
-    expect(x.studies.map((s: any) => s.reason)).toEqual(RILEY.map(() => "sam-caregiver hasn't authorized portal-app"));
+    expect(x.studies.map((s: any) => s.reason).sort()).toEqual(["sam-caregiver hasn't authorized portal-app", "this study is confidential from sam-caregiver, so riley-example's guardian doesn't get it"]);
   });
 });
 
@@ -244,14 +272,15 @@ describe("choosing on the Authorization Server's pages", () => {
   });
   test("each person's sites are their own on the form, and only the chosen person's count", async () => {
     const { html, decision } = await consent("riley-example");
-    expect(html).toContain('name="sites@riley-example" value="Northside Pathology"');
+    expect(html).toContain('name="sites@riley-example" value="Lakeside Imaging"');
+    expect(html).not.toContain('name="sites@riley-example" value="Northside Pathology"');
     expect(html).toContain('name="sites@sam-example" value="Riverside Hospital"');
     const form = new URLSearchParams({ decision: "approve", patient: "riley-example", "sites_shown@riley-example": "1", "sites_shown@sam-example": "1" });
-    form.append("sites@riley-example", "Northside Pathology");
+    form.append("sites@riley-example", "Lakeside Imaging");
     form.append("sites@sam-example", "Lakeside Imaging");
     const r = await fetch(decision, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: form.toString(), redirect: "manual" });
     expect(new URL(r.headers.get("location")!).searchParams.get("code")).toBeTruthy();
-    expect(stack.imaging.getPolicy().appGrants).toEqual([{ client: "portal-app", user: SAM_ACCOUNT, patient: "riley-example", sites: ["Northside Pathology"] }]);
+    expect(stack.imaging.getPolicy().appGrants).toEqual([{ client: "portal-app", user: SAM_ACCOUNT, patient: "riley-example", sites: ["Lakeside Imaging"] }]);
   });
   test("a person holding one record sees the plain form", async () => {
     const html = (await accountPage("josh")).html;
@@ -310,7 +339,7 @@ describe("Browse", () => {
     expect(riley.name).not.toBe(own.name);
     expect(riley.whose).toMatchObject({ patient: "riley-example", plain: "Riley Example's records, which Sam holds as guardian" });
     expect(ids(riley)).toEqual(RILEY);
-    expect(riley.explain.chain).toBe("Sam is Riley's guardian, on file for the whole record; Sam gave the Health Records App everything Sam can see");
+    expect(riley.explain.chain).toBe("Sam is Riley's guardian, on file apart from what's confidential from them; Sam gave the Health Records App everything Sam can see");
     expect(riley.steps.map((x: any) => x.title)).toEqual(expect.arrayContaining(["Exchange the code, with the PKCE verifier", "Search ImagingStudy"]));
     const denied = await b.pick(SAM_ACCOUNT, { patient: "josh-example" });
     expect(denied.status).toBe("denied");
@@ -423,7 +452,7 @@ describe("the synthetic data", () => {
     const def = await Bun.file(join(root, "data/studies.source.json")).json();
     const real = def.studies.filter((s: any) => !s.synthetic);
     const studies = await load();
-    expect(studies.map(s => s.id).sort()).toEqual([...RILEY, ...SAM].sort());
+    expect(studies.map(s => s.id).sort()).toEqual([...RILEY, CONFIDENTIAL, ...SAM].sort());
     expect(new Set(studies.map(s => s.site)).size).toBe(3);
     for (const s of studies) expect(real.map((r: any) => r.site)).toContain(s.site);
     const people = await Bun.file(join(root, "data/patient.json")).json();
@@ -443,12 +472,12 @@ describe("the synthetic data", () => {
       return (await Promise.all(doc.series.map(async s => (await reader.seriesIndex(row.uid, v, s.uid)).instances))).flat().flatMap(i => i.offers.map(o => o.sha256));
     };
     const generated = (await load()).flatMap(study => study.series.flatMap(s => Array.from({ length: s.instances }, (_, i) => createHash("sha256").update(syntheticInstance(study, s, i + 1)).digest("hex"))));
-    const held = (await Promise.all([...SAM, ...RILEY].map(offers))).flat();
+    const held = (await Promise.all([...SAM, ...RILEY, CONFIDENTIAL].map(offers))).flat();
     expect(held.sort()).toEqual(generated.sort());
     const josh = new Set((await Promise.all(JOSH.map(offers))).flat());
     expect(held.filter(h => josh.has(h))).toEqual([]);
     for (const catalog of [stack.catalogs.archive, stack.catalogs.orthanc]) {
-      for (const id of [...SAM, ...RILEY]) {
+      for (const id of [...SAM, ...RILEY, CONFIDENTIAL]) {
         const row = catalog.allStudies().find(s => s.id === id)!;
         expect(row.description).toStartWith("SYNTHETIC");
         expect(row.title).toStartWith("SYNTHETIC");

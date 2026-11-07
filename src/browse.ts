@@ -62,9 +62,9 @@ function plainChain(x: any) {
   if (x.level === "system") return x.rule ? `${x.client} is pre-authorized for ${PATIENT_NAMES[x.patient] ?? x.patient} by the rule "${x.rule.description ?? x.rule.id}"` : `No rule in saved policy pre-authorizes ${x.client} for ${PATIENT_NAMES[x.patient] ?? x.patient}`;
   const who = firstName(x.user), links: string[] = [];
   if (x.fhirUser === `Patient/${x.patient}`) links.push(`${who} is the patient`);
-  else if (x.guardian) links.push(`${who} is ${patientFirst(x.patient)}'s ${x.guardian.relationship}, on file for the whole record`);
+  else if (x.guardian) links.push(`${who} is ${patientFirst(x.patient)}'s ${x.guardian.relationship}, on file ${x.guardian.excludedStudies?.length ? "apart from what's confidential from them" : "for the whole record"}`);
   else if (x.delegation) links.push(`${firstName(x.delegation.grantedBy)} shared ${x.delegation.sites.length ? list(x.delegation.sites) : "no sites"} with ${who}`);
-  else return `${patientFirst(x.patient)} hasn't shared anything with ${who}`;
+  else return Object.values(USERS).some(u => u.fhirUser === `Patient/${x.patient}`) ? `${patientFirst(x.patient)} hasn't shared anything with ${who}` : `Nothing of ${patientFirst(x.patient)}'s has been shared with ${who}`;
   if (x.appGrant) links.push(`${who} gave the ${appName(x.client)} ${x.appGrant.sites ? (x.appGrant.sites.length ? list(x.appGrant.sites) : "no sites") : `everything ${who} can see`}`);
   else links.push(`${who} hasn't authorized the ${appName(x.client)}`);
   if (x.rule) links.push(`the rule "${x.rule.description ?? x.rule.id}" also applies`);

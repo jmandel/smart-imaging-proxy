@@ -1,5 +1,6 @@
 // Writes outside the admin API stay on rails too, and refused requests have no side effects.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { connect } from "node:net";
 import { join } from "node:path";
 import { startStack, type Stack } from "../src/stack";
 import { registerClients } from "../src/flows";
@@ -171,8 +172,33 @@ test("the Bearer scheme is case-insensitive on the Clinical FHIR Server, and an 
 });
 
 test("a malformed step request isn't a server error", async () => {
+  await fetch(`http://127.0.0.1:${PORTS.demo}/api/flows/patient-sites/start`, { method: "POST" });
   const step = (name: string, body: string) => fetch(`http://127.0.0.1:${PORTS.demo}/api/flows/patient-sites/steps/${name}`, { method: "POST", headers: { "content-type": "application/json" }, body });
   expect((await step("constructor", "{}")).status).toBe(404);
   const nulled = await step("consent", "null");
   expect(nulled.status).toBeLessThan(500);
+});
+
+test("the proxy answers odd Hosts and request targets without a 500", async () => {
+  const { port, hostname } = new URL(CONFIG.proxyUrl);
+  const raw = (head: string) => new Promise<string>((resolve, reject) => {
+    let out = "";
+    const s = connect(Number(port), hostname, () => s.write(head));
+    s.on("data", d => { out += d; }); s.on("end", () => resolve(out)); s.on("error", reject);
+  });
+  const own = `${hostname}:${port}`;
+  const status = (r: string) => Number(r.split(" ")[1]);
+  expect(status(await raw(`GET http://evil.example/wado/-/studies/1 HTTP/1.1\r\nHost: ${own}\r\nConnection: close\r\n\r\n`))).toBe(401);
+  expect(status(await raw("GET / HTTP/1.1\r\nHost:\r\nConnection: close\r\n\r\n"))).toBe(403);
+  expect(status(await raw(`GET / HTTP/1.1\r\nHost: ${own}\r\nHost: evil.example\r\nConnection: close\r\n\r\n`))).toBeLessThan(500);
+  expect(status(await raw(`GET /wado/-/studies/1 HTTP/1.1\r\nHost: ${own}\r\nHost: evil.example\r\nConnection: close\r\n\r\n`))).not.toBe(401);
+});
+
+test("a step's input has to be one of its choices", async () => {
+  const start = await fetch(`http://127.0.0.1:${PORTS.demo}/api/flows/caregiver/start`, { method: "POST" });
+  expect(start.status).toBe(200);
+  const step = (name: string, inputs: unknown) => fetch(`http://127.0.0.1:${PORTS.demo}/api/flows/caregiver/steps/${name}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ inputs }) });
+  for (const inputs of [{ sites: null }, { sites: "notalist" }, "text", null]) expect((await step("delegate", inputs)).status).toBeLessThan(500);
+  expect((await step("sam-launch", { whose: ["x"] })).status).toBe(400);
+  expect((await step("sam-launch", { whose: "robin-example" })).status).toBe(400);
 });

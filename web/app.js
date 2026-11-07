@@ -101,6 +101,7 @@ function renderIntro(services) {
     routeNode(10, 20, "App", "token, signed URL") + routeNode(10, 150, "Proxy", "a key, no policy") + routeNode(10, 280, "Image store", "bytes only") + routeNode(240, 150, "Imaging Server", "all the policy"));
   history.replaceState(null, "", location.pathname);
   document.body.classList.remove("in-flow");
+  document.querySelector('.pages a[href="/"]')?.setAttribute("aria-current", "page");
   $("#main").innerHTML = `<section class="intro">
     <div class="hero">
       <h1>The proxy decides without ever holding the policy.</h1>
@@ -166,7 +167,9 @@ function showFlow(id, data) {
   current = { ...f, steps: data.steps };
   stepsDone = {};
   renderNav();
-  const next = flows.find(x => x.number === f.number + 1);
+  const order = FLOW_GROUPS.flatMap(([, numbers]) => flowsIn(numbers));
+  const next = order[order.indexOf(f) + 1];
+  document.querySelector('.pages a[href="/"]')?.removeAttribute("aria-current");
   $("#main").innerHTML = `<p class="back"><a href="/">All flows</a></p><h2 class="flow-title">${f.number}. ${esc(f.title)}</h2><p class="summary">${esc(f.summary)}</p><p class="shows">${esc(f.shows)}</p>
     <div class="toolbar"><button class="primary" id="run-rest">Run remaining steps</button><button class="secondary" id="restart">Start over</button></div>
     <div id="chain" class="chain"></div><details class="policy" id="policy"><summary>Imaging Server policy</summary><div class="inner"><p class="note"><span id="policy-note"></span> Active: <b id="policy-store"></b>.</p><textarea id="policy-text" spellcheck="false" aria-label="Policy JSON"></textarea><div><button class="secondary" id="apply-policy">Apply policy</button><span class="msg" id="policy-msg" role="status"></span></div></div></details>
@@ -186,7 +189,7 @@ function setPolicy(p) {
   if (!box) return;
   const sites = s => s?.length ? s.join(", ") : s ? "no sites" : "everything they can see";
   // Guardians are on file in every flow, and matter only where someone acts for another person.
-  const standing = (current?.number === 2 || current?.number === 15 ? p.guardians ?? [] : []).map(g => `${g.guardian} is ${g.patient}'s ${g.relationship}, on file: the whole record`);
+  const standing = (current?.number === 2 || current?.number === 15 ? p.guardians ?? [] : []).map(g => `${g.guardian} is ${g.patient}'s ${g.relationship}, on file: ${g.excludedStudies?.length ? "all but what's confidential from them" : "the whole record"}`);
   const lines = [...standing, ...p.delegations.map(d => `${d.grantedBy} → ${d.delegate} (${d.relationship}), ${d.patient}: ${sites(d.sites)}`), ...p.appGrants.map(g => `${g.user} → app ${g.client}, ${g.patient}: ${sites(g.sites)}`)];
   box.innerHTML = lines.length ? `<h3>Who holds what</h3><ul>${lines.map(l => `<li>${esc(l)}</li>`).join("")}</ul>` : "";
 }
@@ -288,7 +291,8 @@ async function runRemaining() {
 }
 async function runEvery() {
   const btn = $("#run-all");
-  for (const f of flows) { await openFlow(f.id); await runRemaining(); const b = $("#run-all"); if (b) b.textContent = `Ran through ${f.number} of ${flows.length}`; }
+  const order = FLOW_GROUPS.flatMap(([, numbers]) => flowsIn(numbers));
+  for (const [i, f] of order.entries()) { await openFlow(f.id); await runRemaining(); const b = $("#run-all"); if (b) b.textContent = `Ran ${i + 1} of ${order.length}`; }
 }
 function renderResult(r) {
   return `${r.exchanges.map(renderExchange).join("")}${r.decisions.map(renderDecision).join("")}

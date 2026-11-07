@@ -15,8 +15,8 @@ import { generateEd25519, signJws, ath } from "../src/jws";
 import { now } from "../src/clock";
 import { EVRLE, JPEG_BASELINE, JPEG_LOSSLESS, isStandard } from "../src/syntax";
 
-const SPEC_REPO = process.env.SPEC_REPO ?? "/home/jmandel/work/smart-imaging-spec-clarity";
-const SPEC_REF = process.env.SPEC_REF ?? "origin/spec-clarity-organization";
+const SPEC_REPO = process.env.SPEC_REPO ?? "/home/jmandel/work/smart-imaging-focused-access";
+const SPEC_REF = process.env.SPEC_REF ?? "origin/focused-access-updates";
 const specText = new TextDecoder().decode(Bun.spawnSync(["git", "-C", SPEC_REPO, "show", `${SPEC_REF}:input/pagecontent/specification.md`]).stdout);
 const says = (quote: string) => { if (!specText.includes(quote)) throw new Error(`Not in ${SPEC_REF}: ${quote}`); };
 

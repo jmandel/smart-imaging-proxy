@@ -385,7 +385,7 @@ export const policyFlows: Flow[] = [
         },
       },
       {
-        id: "guardian", title: "Sam opens Riley's records, as guardian", actor: "Guardian", doc: `<p>Riley is Sam's child, and has no account. Sam is Riley's guardian on file at the Imaging Server, so nobody has to share anything first. Choosing Riley is a new authorization with its own token and app grant. Riley's images are synthetic too.</p>`,
+        id: "guardian", title: "Sam opens Riley's records, as guardian", actor: "Guardian", doc: `<p>Riley is Sam's child, and has no account. Sam is Riley's guardian on file at the Imaging Server, so nobody has to share anything first. One of Riley's studies is marked confidential from Sam, so having Riley's patient context doesn't bring it. Choosing Riley is a new authorization with its own token and app grant. Riley's images are synthetic too.</p>`,
         inputs: () => [{ id: "mode", label: "Who signs in and approves", type: "select", options: [{ value: "window", label: "You, in a real window (Sam Example and Riley's records are preselected)" }, { value: "scripted", label: "Scripted" }], default: "scripted", clickDefault: "window" }],
         run: async (c, i) => {
           const policy = c.stack.imaging.getPolicy();
@@ -396,7 +396,9 @@ export const policyFlows: Flow[] = [
           c.check("The token is for Riley", t.patient === RILEY, t.patient === RILEY ? t.patient : `Sam approved ${firstOf(t.patient)}'s records in the window, and this step had Riley's selected`);
           const r = await c.search(c.state.riley, searchOf(t.patient));
           c.state.rileyStudies = r.studies;
-          c.check("The search returns that person's studies, and no one else's", Object.keys(r.studies).length === c.studies(t.patient).length && Object.keys(r.studies).every(id => c.study(id).patient === t.patient), Object.keys(r.studies).join(", "));
+          const hidden = c.stack.imaging.getPolicy().guardians.find(g => g.patient === t.patient && g.guardian === SAM_ACCOUNT)?.excludedStudies ?? [];
+          c.check("The search returns that person's studies, and no one else's", Object.keys(r.studies).length === c.studies(t.patient).length - hidden.length && Object.keys(r.studies).every(id => c.study(id).patient === t.patient), Object.keys(r.studies).join(", "));
+          if (hidden.length) c.check("A study marked confidential from Sam is left out, though the token is for Riley", hidden.every(id => !r.studies[id]), `${hidden.join(", ")} omitted`);
           const grants = c.stack.imaging.getPolicy().appGrants.filter(g => g.user === SAM_ACCOUNT && g.client === "portal-app").map(g => g.patient);
           c.check("Sam has a separate app grant for each person", new Set(grants).size === grants.length && grants.includes(t.patient), grants.join(", "));
           const s: any = Object.values(r.studies)[0];
@@ -436,7 +438,7 @@ export const policyFlows: Flow[] = [
             c.check("A URL signed for Sam's token for Josh doesn't help Riley's token", r.status === 404 && r.authz === "asked", `status ${r.status}, authorization: ${r.authz}`);
           }
           const own = await c.search(token, searchOf(c.state.rileyPatient), "App (Sam, for Riley)");
-          c.check("The same token still reads Riley's records", own.status === 200 && Object.keys(own.studies).length === c.studies(c.state.rileyPatient).length, `${Object.keys(own.studies).length} studies`);
+          c.check("The same token still reads Riley's records", own.status === 200 && Object.keys(own.studies).length === Object.keys(c.state.rileyStudies).length, `${Object.keys(own.studies).length} studies`);
         },
       },
       {
@@ -474,7 +476,9 @@ export const policyFlows: Flow[] = [
           const t = await c.launch("alex-neighbor", "portal-app", { patient: i.whose });
           const token = c.launched(t);
           const r = await c.search(token, searchOf(i.whose), "App (Alex)");
-          const expected = c.studies(i.whose).filter(s => i.sites.includes(s.site));
+          // Sam can share only what Sam holds, and a study confidential from Sam isn't part of that.
+          const hidden = c.stack.imaging.getPolicy().guardians.find(g => g.patient === i.whose && g.guardian === SAM_ACCOUNT)?.excludedStudies ?? [];
+          const expected = c.studies(i.whose).filter(s => i.sites.includes(s.site) && !hidden.includes(s.id));
           c.check("Alex sees only what Sam shared", Object.keys(r.studies).length === expected.length && Object.keys(r.studies).every(id => i.sites.includes(c.siteOf(id))), `${Object.keys(r.studies).length} of ${c.studies(i.whose).length} studies${expected.length ? "" : `. ${firstOf(i.whose)} has nothing at the sites ticked`}`);
         },
       },

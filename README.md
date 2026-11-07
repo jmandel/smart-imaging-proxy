@@ -1,6 +1,6 @@
 # SMART Imaging Proxy Demo
 
-A working prototype of a SMART Imaging deployment: an Authorization Server, an Imaging Server holding policy and a study catalog, and a WADO-RS proxy that enforces study-level policy without holding any of it. It runs on ten studies across three patients. It implements the `spec-clarity-organization` branch of the [SMART Imaging Access guide](https://github.com/argonautproject/smart-imaging). It isn't production code.
+A working prototype of a SMART Imaging deployment: an Authorization Server, an Imaging Server holding policy and a study catalog, and a WADO-RS proxy that enforces study-level policy without holding any of it. It runs on ten studies across three patients. It implements the `focused-access-updates` branch of the [SMART Imaging Access guide](https://github.com/argonautproject/smart-imaging). It isn't production code.
 
 ## Get running
 
@@ -50,7 +50,7 @@ Every service listens on `127.0.0.1`. If Tailscale is running, each one also lis
 - **App Launch:** discovery, authorization code with PKCE S256, required `state`, exact `redirect_uri`, single-use codes, and a consent page where the user picks a patient and sites.
 - **Backend Services:** ES256 client assertions, with each check traced separately: registered key, algorithm, `iss` and `sub`, `aud`, expiry, `jti`, signature, and scope.
 - **Delegation:** patient or guardian to related person to app, where each link can only narrow what the last one allows. What a patient shares with someone stops there: they can give an app part of it, and can't pass it on. The Imaging Server holds all of it.
-- **Guardians:** a standing relationship in the policy store, seeded from `data/patient.json`, that covers a patient's whole record with no one sharing first. The Imaging Server evaluates it like any other link. A policy reset clears what people chose and puts guardians back, and what a guardian shared ends if they stop being the guardian.
+- **Guardians:** a standing relationship in the policy store, seeded from `data/patient.json`, that covers a patient's record, apart from any study marked confidential from that guardian, with no one sharing first. Riley's skin biopsy is confidential from Sam: search omits it, retrieval refuses it, and Sam's shares and apps can't include it. The Imaging Server evaluates it like any other link. A policy reset clears what people chose and puts guardians back, and what a guardian shared ends if they stop being the guardian.
 - **One patient to a token:** whoever holds several records picks one at each launch, which makes its own token and its own app grant. Searching for another patient gets `403`, and retrieving another patient's study gets `404`.
 - **Search:** reads only the catalog, never a bucket. `_count` defaults to 20, with a maximum of 100. Each page's `next` link holds a signed cursor that grants nothing, because policy runs again on every page.
 - **Retrieval:** the proxy reads from the backend only as the client takes bytes. On the file and MinIO backends, it settles every `404`, `406`, and byte count from the indexes before opening an instance, and sends an exact `Content-Length`. A client sending `Accept-Encoding: zstd` gets stored zstd objects without decoding.
@@ -239,9 +239,9 @@ Sam Example's and Riley Example's are invented people, and they're the only ones
 
 ```sh
 bun test                         # every flow on every backend, and the rest
-
-`bun run test:ui` drives the pages in real Chromium: focus, overflow, contrast, popups, and what the pages draw from real responses. It runs its own stack in memory, and takes the browser from `CHROMIUM`, or `/usr/bin/chromium`.
 BACKENDS=static-files bun test   # flows, Browse, rotation, and conformance on one backend
 ```
+`bun run test:ui` drives the pages in real Chromium: focus, overflow, contrast, popups, and what the pages draw from real responses. It runs its own stack in memory, and takes the browser from `CHROMIUM`, or `/usr/bin/chromium`.
+
 
 The tests use the same ports as the demo, so stop `bun run start` first, or give the test run its own `DEMO_PORT_OFFSET`. They need the setup steps above, including Docker, even with `BACKENDS` set. Spec checks read the guide's text from a local clone, set with `SPEC_REPO` and `SPEC_REF`.

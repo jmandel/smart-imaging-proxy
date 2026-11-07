@@ -346,7 +346,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
       <section><h2>Records you can access</h2>${records}</section>
       ${people}
       <section><h2>Apps you've authorized</h2>${apps}<p class="note">Anyone with access can authorize an app, for one person's records at a time, and can give it only part of what they hold.</p></section>
-      <div class="buttons">${returnTo ? `<a class="button" href="${esc(returnTo)}?account=done&amp;state=${encodeURIComponent(url.searchParams.get("return_state") ?? "")}">Done, back to the demo</a>` : ""}<form class="inline" method="post" action="/account/signout"><button>Sign out</button></form></div>`, 200, true);
+      <div class="buttons">${returnTo ? `<a class="button" href="${esc(returnTo)}?account=done&amp;state=${encodeURIComponent(url.searchParams.get("return_state") ?? "")}">Done, back to the demo</a>` : ""}<form class="inline" method="post" action="/account/signout${q}"><button>Sign out</button></form></div>`, 200, true);
   }
 
   async function accountPost(url: URL, req: Request): Promise<Response> {

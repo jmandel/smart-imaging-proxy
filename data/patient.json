@@ -10,6 +10,6 @@
   "otherPatients": [
     { "id": "robin-example", "mrn": "REXAMPLE01", "_note": "Robin has an account and a Patient ID, and no studies link to it, so Robin's search is a real empty result." },
     { "id": "sam-example", "mrn": "SEXAMPLE01", "_note": "Invented. Sam has an account, fully synthetic studies, and cares for Riley." },
-    { "id": "riley-example", "mrn": "RYEXAMPLE01", "guardians": [{ "account": "sam-caregiver", "relationship": "guardian" }], "_note": "Invented. Riley is Sam's child, with fully synthetic studies and no account. The guardian on file is standing Imaging Server policy, which a policy reset puts back." }
+    { "id": "riley-example", "mrn": "RYEXAMPLE01", "guardians": [{ "account": "sam-caregiver", "relationship": "guardian", "excludedStudies": ["syn-riley-skin-slide-2023"] }], "_note": "Invented. Riley is Sam's child, with fully synthetic studies and no account. The guardian on file is standing Imaging Server policy, which a policy reset puts back." }
   ]
 }

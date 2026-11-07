@@ -16,12 +16,13 @@ async function send(req: IncomingMessage, res: ServerResponse, handler: (req: Re
   req.resume(); // No route here reads a request body.
   let response: Response;
   try {
-    if (foreignHost(req.headers.host, req.socket.localPort ?? 0)) response = FOREIGN_HOST();
+    const hosts = req.rawHeaders.filter((_, i) => i % 2 === 0 && req.rawHeaders[i]!.toLowerCase() === "host").length;
+    if (hosts > 1 || foreignHost(req.headers.host, req.socket.localPort ?? 0)) response = FOREIGN_HOST();
     else if (req.url === "/favicon.ico") response = new Response(null, { status: 204 });
     else {
     const headers = new Headers();
     for (let i = 0; i + 1 < req.rawHeaders.length; i += 2) headers.append(req.rawHeaders[i]!, req.rawHeaders[i + 1]!);
-    response = await handler(new Request(`http://${req.headers.host ?? "localhost"}${req.url}`, { method: req.method, headers }));
+    response = await handler(new Request(new URL((req.url ?? "/").replace(/^[a-z]+:\/\/[^/]*/i, "") || "/", `http://${req.headers.host ?? "localhost"}`), { method: req.method, headers }));
     }
   } catch {
     res.writeHead(500).end();

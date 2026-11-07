@@ -340,6 +340,7 @@ describe("the saved store", () => {
   const flow = (path: string, body: unknown = {}) => demo.fetch(new Request(`${CONFIG.demoUrl}${path}`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host, "content-type": "application/json" }, body: JSON.stringify(body) }));
   test("a session activates saved policy, and says so when it had to", async () => {
     stack.useStore("scratch");
+    stack.stores.scratch.resetPolicy();
     const b = browser();
     expect((await b.call("GET", "/api/browse/session")).json().store.active).toBe("scratch"); // Loading changes nothing.
     const s = await b.pick("josh");

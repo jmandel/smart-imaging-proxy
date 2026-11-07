@@ -38,7 +38,7 @@ function showStore(store) {
 
 function renderPick() {
   const busy = !!view?.running;
-  const current = view && (view.start.user ?? view.start.client);
+  const current = view && (view.who?.id ?? view.start.user ?? view.start.client);
   const viaWords = r => r.via === "self" ? "Own records" : r.via === "guardian" ? `As ${r.relationship ?? "guardian"}` : `Shared, as ${r.relationship ?? "a related person"}`;
   const whoseChoice = (p, r) => `<button class="whose-choice" data-whose="${esc(r.patient)}" data-for="${esc(p.id)}" data-fid="whose-${esc(p.id)}-${esc(r.patient)}" aria-current="${current === p.id && view?.patient === r.patient}" ${busy ? "disabled" : ""}><b>${esc(r.name)}</b><span>${esc(viaWords(r))}</span><span class="sr-only">Sign in again, and search these records</span></button>`;
   const whose = p => p.records.length > 1 ? `<div class="whose" role="group" aria-label="Whose records ${esc(p.first)} opens" data-records="${esc(p.id)}"><span class="whose-label">Whose records</span><div class="whose-choices">${p.records.map(r => whoseChoice(p, r)).join("")}</div>${p.unshared ? `<button class="whose-missing" data-whose-unshared="${esc(p.unshared.patient)}" data-for="${esc(p.id)}" data-fid="whose-${esc(p.id)}-unshared" ${busy ? "disabled" : ""}>${esc(p.unshared.name)} hasn't shared with ${esc(p.first)}</button>` : ""}</div>` : "";
@@ -64,6 +64,8 @@ function renderPick() {
 
 async function loadOptions() {
   options = await call("GET", "/options");
+  // Someone can lose a record they chose earlier, such as when a share is revoked.
+  for (const p of options.people) if (choices.records[p.id] && !p.records.some(r => r.patient === choices.records[p.id])) delete choices.records[p.id];
   $("#live-link").href = options.traceUrl;
   renderPick();
 }

@@ -63,7 +63,7 @@ function render(s) {
   const d = s.policy.delegations, g = s.policy.appGrants, standing = s.policy.guardians;
   $("#chain-list").innerHTML = `<p class="note">In ${esc(label)}</p>
     <h3>Guardians on file</h3>
-    <ul class="rows" id="guardians">${standing.map(x => `<li data-guardian="${esc(x.guardian)}"><span><b>${esc(x.guardian)}</b> is the ${esc(x.relationship)} of patient ${esc(x.patient)}: the whole record</span></li>`).join("") || '<li><span class="note">No guardians.</span></li>'}</ul>
+    <ul class="rows" id="guardians">${standing.map(x => `<li data-guardian="${esc(x.guardian)}"><span><b>${esc(x.guardian)}</b> is the ${esc(x.relationship)} of patient ${esc(x.patient)}: ${x.excludedStudies?.length ? `all but ${esc(x.excludedStudies.join(", "))}, which is confidential from them` : "the whole record"}</span></li>`).join("") || '<li><span class="note">No guardians.</span></li>'}</ul>
     <p class="note">Standing policy the Imaging Server evaluates, seeded from <code>data/patient.json</code>. No one chose it by sharing, so there's no one to revoke it here, and a policy reset puts it back.</p>
     <h3>Delegations</h3>
     <ul class="rows">${d.map(x => `<li><span><b>${esc(x.grantedBy)}</b> to <b>${esc(x.delegate)}</b> (${esc(x.relationship)}), patient ${esc(x.patient)}: ${esc(sites(x.sites))}</span><button class="secondary small" data-del-delegation="${esc(JSON.stringify({ patient: x.patient, delegate: x.delegate }))}">Delete</button></li>`).join("") || '<li><span class="note">No delegations.</span></li>'}</ul>

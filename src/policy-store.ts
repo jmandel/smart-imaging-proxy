@@ -20,10 +20,10 @@ export interface Rule {
 }
 /** A patient, or a patient's guardian, lets a related person sign in and see some of the patient's records. `asGuardian` makes it last only while the grantor is the guardian. */
 export interface Delegation { patient: string; grantedBy: string; delegate: string; relationship: string; sites: string[]; asGuardian?: boolean; }
-/** An account on file as able to act for a patient, covering their whole record. No one chose it by sharing. */
-export interface Guardian { patient: string; guardian: string; relationship: string; }
+/** An account on file as able to act for a patient, covering their record apart from `excludedStudies`, which are confidential from them. No one chose it by sharing. */
+export interface Guardian { patient: string; guardian: string; relationship: string; excludedStudies?: string[]; }
 /** The guardians on file in `data/patient.json`, which stands in for a registration office. */
-export const STANDING_GUARDIANS: Guardian[] = people.otherPatients.flatMap((p: { id: string; guardians?: { account: string; relationship: string }[] }) => (p.guardians ?? []).map(g => ({ patient: p.id, guardian: g.account, relationship: g.relationship })));
+export const STANDING_GUARDIANS: Guardian[] = people.otherPatients.flatMap((p: { id: string; guardians?: { account: string; relationship: string; excludedStudies?: string[] }[] }) => (p.guardians ?? []).map(g => ({ patient: p.id, guardian: g.account, relationship: g.relationship, ...(g.excludedStudies ? { excludedStudies: g.excludedStudies } : {}) })));
 /** A signed-in user lets an app act for them. No `sites` means everything that user can see. */
 export interface AppGrant { client: string; user: string; patient: string; sites?: string[]; }
 export interface Policy { rules: Rule[]; delegations: Delegation[]; guardians: Guardian[]; appGrants: AppGrant[]; contextLifetimeSeconds: number; maxSeriesInContext: number; }
@@ -38,7 +38,7 @@ export type TokenKind = "access" | "refresh";
 /** `family` is shared by every token descended from one refresh token. It isn't derived from any token. */
 export interface TokenRecord { client_id: string; scope: string; patient?: string; sub?: string; fhirUser?: string; family?: string; exp?: number; revoked: boolean; }
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 export type Durability = "off" | "normal" | "full";
 const SYNCHRONOUS: Record<Durability, number> = { off: 0, normal: 1, full: 2 };
 export const DEFAULT_POLICY_DB = "/tmp/smart-imaging-demo/policy.sqlite";
@@ -131,7 +131,8 @@ export function validatePolicy(p: unknown): string[] {
       p.guardians.forEach((g, i) => {
         const at = `guardians[${i}]`;
         if (!isObject(g)) { errors.push(`${at} must be an object`); return; }
-        unknownKeys(g, ["patient", "guardian", "relationship"], at, errors);
+        unknownKeys(g, ["patient", "guardian", "relationship", "excludedStudies"], at, errors);
+        if (g.excludedStudies !== undefined && !(Array.isArray(g.excludedStudies) && g.excludedStudies.every(isText))) errors.push(`${at}.excludedStudies must be an array of study IDs`);
         for (const k of ["patient", "guardian", "relationship"]) if (!isText(g[k])) errors.push(`${at}.${k} must be a non-empty string`);
       });
       duplicates(p.guardians, g => `patient ${g.patient} and guardian ${g.guardian}`, "guardians", errors);
@@ -159,7 +160,7 @@ const SCHEMA = `
     patient TEXT NOT NULL, delegate TEXT NOT NULL, granted_by TEXT NOT NULL, relationship TEXT NOT NULL, sites TEXT NOT NULL, as_guardian INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (patient, delegate));
   CREATE TABLE IF NOT EXISTS guardians (
-    patient TEXT NOT NULL, guardian TEXT NOT NULL, relationship TEXT NOT NULL,
+    patient TEXT NOT NULL, guardian TEXT NOT NULL, relationship TEXT NOT NULL, excluded_studies TEXT NOT NULL DEFAULT '[]',
     PRIMARY KEY (patient, guardian));
   CREATE TABLE IF NOT EXISTS app_grants (
     client TEXT NOT NULL, user TEXT NOT NULL, patient TEXT NOT NULL, sites TEXT,
@@ -197,8 +198,9 @@ export class PolicyStore {
       }
       if (found === 1 || found === 2) {
         this.db.exec("ALTER TABLE delegations ADD COLUMN as_guardian INTEGER NOT NULL DEFAULT 0");
-        this.db.exec("CREATE TABLE guardians (patient TEXT NOT NULL, guardian TEXT NOT NULL, relationship TEXT NOT NULL, PRIMARY KEY (patient, guardian))");
+        this.db.exec("CREATE TABLE guardians (patient TEXT NOT NULL, guardian TEXT NOT NULL, relationship TEXT NOT NULL, excluded_studies TEXT NOT NULL DEFAULT '[]', PRIMARY KEY (patient, guardian))");
       }
+      if (found === 3) this.db.exec("ALTER TABLE guardians ADD COLUMN excluded_studies TEXT NOT NULL DEFAULT '[]'");
       this.seedGuardians();
       this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     });
@@ -218,8 +220,8 @@ export class PolicyStore {
     return (this.db.query("SELECT patient, granted_by, delegate, relationship, sites, as_guardian FROM delegations ORDER BY rowid").all() as any[])
       .map(d => ({ patient: d.patient, grantedBy: d.granted_by, delegate: d.delegate, relationship: d.relationship, sites: JSON.parse(d.sites), ...(d.as_guardian ? { asGuardian: true } : {}) }));
   }
-  guardians(): Guardian[] { return this.db.query("SELECT patient, guardian, relationship FROM guardians ORDER BY rowid").all() as Guardian[]; }
-  private putGuardian(g: Guardian) { this.db.run("INSERT OR REPLACE INTO guardians (patient, guardian, relationship) VALUES (?, ?, ?)", [g.patient, g.guardian, g.relationship]); }
+  guardians(): Guardian[] { return (this.db.query("SELECT patient, guardian, relationship, excluded_studies FROM guardians ORDER BY rowid").all() as any[]).map(({ excluded_studies, ...g }) => { const excluded = JSON.parse(excluded_studies); return excluded.length ? { ...g, excludedStudies: excluded } : g; }); }
+  private putGuardian(g: Guardian) { this.db.run("INSERT OR REPLACE INTO guardians (patient, guardian, relationship, excluded_studies) VALUES (?, ?, ?, ?)", [g.patient, g.guardian, g.relationship, JSON.stringify(g.excludedStudies ?? [])]); }
   private seedGuardians() { for (const g of STANDING_GUARDIANS) this.putGuardian(g); }
   appGrants(): AppGrant[] {
     return (this.db.query("SELECT client, user, patient, sites FROM app_grants ORDER BY rowid").all() as any[])
@@ -243,6 +245,7 @@ export class PolicyStore {
         this.db.run("DELETE FROM guardians");
         for (const g of p.guardians) this.putGuardian(g);
       }
+      if (p.guardians) for (const d of this.delegations()) if (d.asGuardian && !p.guardians.some(g => g.guardian === d.grantedBy && g.patient === d.patient)) this.db.run("DELETE FROM delegations WHERE patient = ? AND granted_by = ? AND delegate = ?", [d.patient, d.grantedBy, d.delegate]);
       if (p.appGrants) {
         this.db.run("DELETE FROM app_grants");
         for (const g of p.appGrants) this.putAppGrant(g);

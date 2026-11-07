@@ -2,7 +2,7 @@
 import { join } from "node:path";
 import { traced } from "./trace";
 import type { BackendName, Stack } from "./stack";
-import { FLOWS, flowById, runStep, startFlow } from "./flows";
+import { FLOWS, flowById, runStep, startFlow, BadStepInput } from "./flows";
 import { StepStopped, type Ctx } from "./flows/runtime";
 import { CONFIG } from "./config";
 import { adminApi, extraField, readJson, refuseHost, refuseWrite, BACKEND_NAMES } from "./admin-api";
@@ -120,9 +120,10 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     const step = p.match(/^\/api\/flows\/([^/]+)\/steps\/([^/]+)$/);
     if (step && req.method === "POST") {
       const b: any = (await req.json().catch(() => undefined)) ?? {};
+      if (b.inputs !== undefined && (typeof b.inputs !== "object" || b.inputs === null || Array.isArray(b.inputs))) return json({ error: "inputs must be an object" }, 400);
       if (session && session.flowId !== step[1]) return json({ error: "another flow has started since this page loaded: reload to see it" }, 409);
       if (session?.running) return json({ error: `the step "${session.running}" is still running` }, 409);
-      if (session?.completed[step[2]!]) return json({ error: "this step has already run: reload to see its result" }, 409);
+      if (session && Object.hasOwn(session.completed, step[2]!)) return json({ error: "this step has already run: reload to see its result" }, 409);
       const held = browse.holdStore();
       if (held) return json({ error: held }, 409);
       if (session) session.running = step[2]!; // Set before anything can yield, so a second tab sees it.
@@ -133,7 +134,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         const result = await runStep(s.ctx, s.flow, step[2]!, b.inputs ?? {});
         s.session.completed[step[2]!] = { inputs: b.inputs ?? {}, result };
         return json({ result, steps: stepInfo(s.flow, s.ctx), policy: stack.imaging.getPolicy(), events: stack.proxy.events.slice(-12), store: storeStatus() });
-      } catch (e) { return json({ error: String((e as Error).message ?? e) }, e instanceof StepStopped ? 409 : /^no step /.test((e as Error).message) ? 404 : 500); }
+      } catch (e) { return json({ error: String((e as Error).message ?? e) }, e instanceof StepStopped ? 409 : e instanceof BadStepInput ? 400 : /^no step /.test((e as Error).message) ? 404 : 500); }
       finally { s.session.running = undefined; }
     }
     return new Response("not found", { status: 404 });

@@ -29,9 +29,16 @@ async function runInSessionNoted<T>(c: Ctx, run: () => Promise<T>): Promise<T> {
   catch (e) { if (c.accountNote) (e as Error).message = `${(e as Error).message}. ${c.accountNote}`; throw e; }
 }
 
+export class BadStepInput extends Error {}
 export async function runStep(c: Ctx, flow: Flow, stepId: string, inputs: Record<string, any>): Promise<StepResult> {
   const step = flow.steps.find(s => s.id === stepId);
   if (!step) throw new Error(`no step ${stepId}`);
+  for (const i of step.inputs?.(c) ?? []) {
+    const v = inputs[i.id];
+    if (v === undefined) continue;
+    const fits = i.type === "multi" ? Array.isArray(v) && v.every(x => typeof x === "string") : typeof v === "string" && (i.type !== "select" || !i.options || i.options.some(o => o.value === v));
+    if (!fits) throw new BadStepInput(`"${i.label}" isn't one of this step's choices.`);
+  }
   c.beginStep();
   // A request can leave out a step's choices, and a step always has them.
   inputs = { ...defaultsFor(c, flow, stepId), ...inputs };
