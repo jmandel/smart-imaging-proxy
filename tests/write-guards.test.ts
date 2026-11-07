@@ -21,11 +21,13 @@ const span = JSON.stringify([{ session: "guard-test", trace: "a".repeat(32), spa
 // The trace service's own port: these are its Host checks.
 const raw = (path: string, method: string, headers: Record<string, string>, body?: string) => fetch(`http://127.0.0.1:${PORTS.trace}${path}`, { method, headers, body });
 
-test("spans are refused from a browser or under another host name", async () => {
+test("spans are refused from a browser, under another host name, or without the services' credential", async () => {
   expect((await raw("/v1/spans", "POST", { origin: "https://evil.example" }, span)).status).toBe(403);
   expect((await raw("/v1/spans", "POST", { host: "evil.example" }, span)).status).toBe(403);
   expect(stack.collector.list().some(s => s.id === "guard-test")).toBe(false);
-  expect((await raw("/v1/spans", "POST", {}, span)).status).toBe(202);
+  expect((await raw("/v1/spans", "POST", {}, span)).status).toBe(401);
+  expect(stack.collector.list().some(s => s.id === "guard-test")).toBe(false);
+  expect((await raw("/v1/spans", "POST", { authorization: `Bearer ${stack.spanSecret}` }, span)).status).toBe(202);
 });
 
 test("traces can't be cleared from another origin or host name", async () => {

@@ -12,6 +12,7 @@ import { buildAuthorization, scriptedLaunch, submitConsent, tokenRequestBody } f
 import { CONFIG, localUrl, ONE_ORIGIN, PORTS, urlsFor } from "../src/config";
 import { createScopes, decodeSeed, encodeSeed, MAX_SEED_BYTES, MAX_SEED_CHARS, splitScope } from "../src/scopes";
 import { flushTraces } from "../src/trace";
+import { TraceStore } from "../src/trace-store";
 import { resetClock } from "../src/clock";
 import type { World } from "../src/world";
 
@@ -295,6 +296,55 @@ describe("scope lifetimes", () => {
     expect(splitScope("/s/x/a")).toEqual({ scope: "x", rest: "/a" });
     expect(splitScope("/s/x")).toEqual({ scope: "x", rest: "/" });
     expect(splitScope("/a/s/x")).toEqual({ rest: "/a/s/x" });
+  });
+});
+
+describe("trace sessions belong to the world that recorded them", () => {
+  const settle = async () => { flushTraces(); await Bun.sleep(150); };
+  test("each scope has its own unattributed bucket, and the root's stays the root's", async () => {
+    const w = stack.scopes.mint();
+    await get(`${CONFIG.imagingUrl}/fhir/metadata`);
+    await get(`${w.urls.imaging}/fhir/metadata`);
+    await settle();
+    expect(stack.collector.scopeOf("unattributed")).toBeUndefined();
+    const listed = ((await (await get(`${urlsFor(`/s/${w.scope}`).trace}/api/sessions`)).json()) as any[]).map(x => x.id);
+    expect(listed).not.toContain("unattributed");
+    expect(listed.length).toBe(1);
+    expect(stack.collector.scopeOf(listed[0])).toBe(w.scope);
+    expect([...stack.collector.sessions.get(listed[0])!.spans.values()].every(x => x.scope === w.scope)).toBe(true);
+  });
+  test("baggage naming a root session, sent to a scope, can't move that session into the scope", async () => {
+    const w = stack.scopes.mint();
+    const victim = `victim-${Date.now()}`;
+    const baggage = { baggage: `demo.session=${victim}` };
+    await get(`${CONFIG.imagingUrl}/fhir/metadata`, { headers: baggage });
+    await get(`${w.urls.imaging}/fhir/metadata`, { headers: baggage });
+    await settle();
+    expect(stack.collector.scopeOf(victim)).toBeUndefined();
+    expect([...stack.collector.sessions.get(victim)!.spans.values()].every(x => !x.scope)).toBe(true);
+    const listed = ((await (await get(`${urlsFor(`/s/${w.scope}`).trace}/api/sessions`)).json()) as any[]).map(x => x.id);
+    expect(listed).not.toContain(victim);
+  });
+  test("spans are taken only from the services, and never through the one origin", async () => {
+    const forged = JSON.stringify([{ session: "unattributed", scope: "x", trace: "t".repeat(32), span: "f".repeat(16), service: "demo", kind: "check", name: "forged", start: 1, end: 2, attrs: {} }]);
+    expect((await fetch(`http://127.0.0.1:${PORTS.trace}/v1/spans`, { method: "POST", headers: { "content-type": "application/json" }, body: forged })).status).toBe(401);
+    expect((await fetch(`http://127.0.0.1:${PORTS.trace}/v1/spans`, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer guess" }, body: forged })).status).toBe(401);
+    if (ONE_ORIGIN) expect((await get(`${CONFIG.traceUrl}/v1/spans`, { method: "POST", headers: { "content-type": "application/json" }, body: forged })).status).toBe(404);
+    await settle();
+    expect([...(stack.collector.sessions.get("unattributed")?.spans.values() ?? [])].some(x => x.name === "forged")).toBe(false);
+  });
+  test("the root keeps its own budget of sessions, whatever the scopes do", () => {
+    const store = new TraceStore({ mode: "memory", maxSessions: 2, flushMs: 1 });
+    const span = (session: string, start: number, scope?: string) => { const r = { session, trace: "t".repeat(32), span: `s${start}`, service: "demo" as const, kind: "check" as const, name: "n", start, end: start, attrs: {}, ...(scope ? { scope } : {}) }; store.put(r, JSON.stringify(r)); store.flush(); };
+    span("root-1", 1); span("root-2", 2);
+    for (let i = 0; i < 5; i++) span(`busy-${i}@S`, 10 + i, "S");
+    const ids = store.sessions().map(x => x.id);
+    expect(ids).toContain("root-1");
+    expect(ids).toContain("root-2");
+    expect(ids.filter(id => id.endsWith("@S")).length).toBe(2);
+    span("root-3", 30);
+    expect(store.sessions().map(x => x.id).filter(id => !id.includes("@")).sort()).toEqual(["root-2", "root-3"]);
+    store.close();
   });
 });
 

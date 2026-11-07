@@ -199,7 +199,7 @@ describe("the trace collector's clear and export", () => {
   const T = "http://collector.test";
   const span = (session: string) => ({ session, trace: "t".repeat(32), span: "s1", service: "demo", kind: "check", name: "n", start: 1, end: 2, attrs: {} });
   beforeAll(() => {
-    collector = createCollector(root);
+    collector = createCollector(root, undefined, "guard-spans");
     dir = mkdtempSync(join(tmpdir(), "trace-guard-"));
     canary = join(dir, "canary.txt");
     writeFileSync(canary, "untouched");
@@ -231,7 +231,7 @@ describe("the trace collector's clear and export", () => {
   });
   test("a stored session named like a path exports as a plain file name", async () => {
     const id = "../../etc/passwd";
-    await collector.fetch(new Request(`${T}/v1/spans`, { method: "POST", body: JSON.stringify([span(id)]) }));
+    await collector.fetch(new Request(`${T}/v1/spans`, { method: "POST", headers: { authorization: "Bearer guard-spans" }, body: JSON.stringify([span(id)]) }));
     const r = await get(`/api/sessions/${encodeURIComponent(id)}/export`);
     expect(r.status).toBe(200);
     const name = r.headers.get("content-disposition")!.match(/filename="([^"]+)"/)![1]!;
@@ -240,7 +240,7 @@ describe("the trace collector's clear and export", () => {
     expect((await r.json() as any).session.id).toBe(id);
   });
   test("clear takes no path: it empties the store, and nothing else", async () => {
-    await collector.fetch(new Request(`${T}/v1/spans`, { method: "POST", body: JSON.stringify([span("to-clear")]) }));
+    await collector.fetch(new Request(`${T}/v1/spans`, { method: "POST", headers: { authorization: "Bearer guard-spans" }, body: JSON.stringify([span("to-clear")]) }));
     const r = await collector.fetch(new Request(`${T}/api/sessions?path=${encodeURIComponent(canary)}`, { method: "DELETE", body: JSON.stringify({ path: canary }) }));
     expect(r.status).toBe(204);
     expect(collector.list()).toEqual([]);

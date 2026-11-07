@@ -10,6 +10,9 @@ import { createDemoServer } from "../src/demo-server";
 import { submitConsent } from "../src/flows/oauth";
 import { defaultsFor, FLOWS, registerClients, runStep, startFlow } from "../src/flows";
 import { createCollector, MAX_SPANS_BODY } from "../src/trace-collector";
+
+/** The span credential the collectors these tests build take. */
+const SPANS = "test-span-credential";
 import { DEFAULT_TRACE_DB, traceStoreConfigFromEnv } from "../src/trace-store";
 import { redactUrl, setCaptureLimitsForTest, traced, type SpanRecord } from "../src/trace";
 
@@ -256,12 +259,12 @@ const withHttp = (session: string, id: string, body = "the body", extra: Partial
   http: { method: "POST", url: "http://x.test/y", status: 200, request: { headers: { accept: "*/*" }, body: "asked", encoding: "text", bytes: 5 }, response: { headers: { "content-type": "text/plain" }, body, encoding: "text", bytes: body.length } },
   ...extra,
 });
-const send = (c: { fetch: (r: Request) => Promise<Response> }, records: SpanRecord[]) => c.fetch(new Request(`${T}/v1/spans`, { method: "POST", body: JSON.stringify(records) }));
+const send = (c: { fetch: (r: Request) => Promise<Response> }, records: SpanRecord[]) => c.fetch(new Request(`${T}/v1/spans`, { method: "POST", headers: { authorization: `Bearer ${SPANS}` }, body: JSON.stringify(records) }));
 const getJson = async (c: { fetch: (r: Request) => Promise<Response> }, path: string): Promise<any> => (await c.fetch(new Request(T + path))).json();
 
 test("traces survive closing and reopening, a later emit updates a span, and lists carry no bodies", async () => {
   const path = tempDb();
-  let c = createCollector(ROOT, { mode: "file", path });
+  let c = createCollector(ROOT, { mode: "file", path }, SPANS);
   await send(c, [withHttp("s1", "one", "first", { end: undefined, status: undefined })]);
   await send(c, [withHttp("s1", "one", "final body", { end: 1500 })]);
   await send(c, [span("s1", "two"), withHttp("s2", "other", "elsewhere", { trace: "b".repeat(32), start: 2000, end: 2001 })]);
@@ -280,7 +283,7 @@ test("traces survive closing and reopening, a later emit updates a span, and lis
   for (const f of [path, `${path}-wal`, `${path}-shm`]) if (existsSync(f)) expect(statSync(f).mode & 0o777).toBe(0o600);
   c.close();
 
-  c = createCollector(ROOT, { mode: "file", path });
+  c = createCollector(ROOT, { mode: "file", path }, SPANS);
   expect(c.store.stats().mode).toBe("file");
   expect((await getJson(c, "/api/sessions")).map((s: any) => s.id)).toEqual(["s2", "s1"]);
   expect((await getJson(c, "/api/sessions/s1/spans/one")).http.response.body).toBe("final body");
@@ -296,10 +299,10 @@ test("traces survive closing and reopening, a later emit updates a span, and lis
 
 test("a span the last run never finished stops reading as running after a restart", async () => {
   const path = tempDb();
-  let c = createCollector(ROOT, { mode: "file", path });
+  let c = createCollector(ROOT, { mode: "file", path }, SPANS);
   await send(c, [span("s", "cut", { end: undefined, status: undefined }), span("s", "done")]);
   c.close();
-  c = createCollector(ROOT, { mode: "file", path });
+  c = createCollector(ROOT, { mode: "file", path }, SPANS);
   const cut = await getJson(c, "/api/sessions/s/spans/cut");
   expect(cut.end).toBeDefined();
   expect(cut.status).toBe("error");
@@ -309,7 +312,7 @@ test("a span the last run never finished stops reading as running after a restar
 });
 
 test("the live stream carries sessions and spans without bodies, whatever the store does", async () => {
-  const c = createCollector(ROOT);
+  const c = createCollector(ROOT, undefined, SPANS);
   const res = await c.fetch(new Request(`${T}/stream`));
   const reader = res.body!.getReader();
   const next = async () => new TextDecoder().decode((await reader.read()).value);
@@ -336,7 +339,7 @@ test("the live stream carries sessions and spans without bodies, whatever the st
 test("an unusable path falls back to memory, and tracing carries on", async () => {
   const warn = console.warn; console.warn = () => {};
   try {
-    const c = createCollector(ROOT, { mode: "file", path: "/proc/nope/traces.sqlite" });
+    const c = createCollector(ROOT, { mode: "file", path: "/proc/nope/traces.sqlite" }, SPANS);
     expect((await send(c, [span("s", "a")])).status).toBe(202);
     const stats = await getJson(c, "/api/stats");
     expect(stats.mode).toBe("memory");
@@ -346,7 +349,7 @@ test("an unusable path falls back to memory, and tracing carries on", async () =
 });
 
 test("retention keeps to the session, per-session, and size limits, dropping the oldest", async () => {
-  const c = createCollector(ROOT, { mode: "memory", maxSessions: 2, maxSpansPerSession: 2 });
+  const c = createCollector(ROOT, { mode: "memory", maxSessions: 2, maxSpansPerSession: 2 }, SPANS);
   const res = await c.fetch(new Request(`${T}/stream`));
   const reader = res.body!.getReader();
   await send(c, [span("old", "a", { start: 1, end: 2 })]);
@@ -363,7 +366,7 @@ test("retention keeps to the session, per-session, and size limits, dropping the
   expect(text).toContain('["old"]');
   await reader.cancel(); c.close();
 
-  const small = createCollector(ROOT, { mode: "memory", maxBytes: 3000 });
+  const small = createCollector(ROOT, { mode: "memory", maxBytes: 3000 }, SPANS);
   await send(small, [withHttp("big-old", "a", "x".repeat(2500), { start: 1, end: 2 })]);
   await send(small, [withHttp("big-new", "a", "y".repeat(2500), { start: 5, end: 6 })]);
   const left = await getJson(small, "/api/sessions");
@@ -378,7 +381,7 @@ test("retention keeps to the session, per-session, and size limits, dropping the
 
 test("stats, export, and clear work, and a cross-site page can't clear", async () => {
   const path = tempDb();
-  const c = createCollector(ROOT, { mode: "file", path });
+  const c = createCollector(ROOT, { mode: "file", path }, SPANS);
   await send(c, [withHttp("flow 1/x", "a", "full body here")]);
   const stats = await getJson(c, "/api/stats");
   expect(stats).toMatchObject({ mode: "file", path, sessions: 1, spans: 1, limits: { sessions: 100, spansPerSession: 20000 } });
@@ -402,8 +405,8 @@ test("stats, export, and clear work, and a cross-site page can't clear", async (
 });
 
 test("the collector refuses a span the store couldn't keep, and takes nothing from that batch", async () => {
-  const c = createCollector(ROOT);
-  const post = (body: string, headers: Record<string, string> = {}) => c.fetch(new Request(`${T}/v1/spans`, { method: "POST", body, headers }));
+  const c = createCollector(ROOT, undefined, SPANS);
+  const post = (body: string, headers: Record<string, string> = {}) => c.fetch(new Request(`${T}/v1/spans`, { method: "POST", body, headers: { authorization: `Bearer ${SPANS}`, ...headers } }));
   const { session: _none, ...noSession } = span("s", "a");
   const bad: unknown[] = [noSession, { ...span("s", "a"), trace: 5 }, { ...span("s", "a"), span: "" }, { ...span("s", "a"), service: "elsewhere" }, { ...span("s", "a"), kind: "x" }, { ...span("s", "a"), start: "soon" }, { ...span("s", "a"), end: "later" }, { ...span("s", "a"), attrs: [] }, { ...span("s", "a"), status: "fine" }, { ...span("s", "a"), http: { method: "GET", url: "http://x.test", request: {} } }, { ...span("s", "a"), http: { method: "GET", url: "http://x.test", request: { headers: {} }, response: {} } }, "not a span", null];
   for (const r of bad) {
@@ -424,7 +427,7 @@ test("the collector refuses a span the store couldn't keep, and takes nothing fr
 });
 
 test("a session name that isn't valid percent-encoding gets a 400 on every route", async () => {
-  const c = createCollector(ROOT);
+  const c = createCollector(ROOT, undefined, SPANS);
   for (const path of ["/api/sessions/%/http", "/api/sessions/%/spans", "/api/sessions/%/spans/a", "/api/sessions/%/export", "/api/sessions/%E2/http"]) {
     expect([path, (await c.fetch(new Request(T + path))).status]).toEqual([path, 400]);
   }
@@ -432,7 +435,7 @@ test("a session name that isn't valid percent-encoding gets a 400 on every route
 });
 
 test("a row the database refuses is dropped and counted, without holding up the rest of its batch or anything later", () => {
-  const c = createCollector(ROOT);
+  const c = createCollector(ROOT, undefined, SPANS);
   const good = (id: string) => span("s", id);
   const put = (r: any) => c.store.put(r, JSON.stringify(r));
   const { session: _none, ...noSession } = good("bad");
@@ -453,7 +456,7 @@ test("a row the database refuses is dropped and counted, without holding up the 
 
 test("a busy database keeps the batch and writes it once the database is free", () => {
   const path = tempDb();
-  const c = createCollector(ROOT, { mode: "file", path });
+  const c = createCollector(ROOT, { mode: "file", path }, SPANS);
   (c.store as any).db.exec("PRAGMA busy_timeout = 1");
   const other = new Database(path);
   other.exec("BEGIN IMMEDIATE");
@@ -470,7 +473,7 @@ test("a busy database keeps the batch and writes it once the database is free", 
 });
 
 test("the queue stays bounded while the database is down", () => {
-  const c = createCollector(ROOT);
+  const c = createCollector(ROOT, undefined, SPANS);
   (c.store as any).db.exec("DROP TABLE spans");
   for (let i = 0; i < 5010; i++) { const r = span("s", `s${i}`); c.store.put(r, JSON.stringify(r)); }
   const stats = c.store.stats();

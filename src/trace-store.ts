@@ -208,21 +208,33 @@ export class TraceStore {
     if (!was) this.known.set(r.session, count + 1);
   }
 
-  /** Drops the sessions least recently active, past the session or size limit. The newest always stays. */
+  /**
+   * Drops the sessions least recently active, past the session or size limit. The root's sessions and
+   * the scopes' each have their own session budget, and past the size limit the scopes' go first, so
+   * scratch activity never pushes out the root's history. The root's newest always stays, and so does
+   * the newest of all.
+   */
   private applyRetention() {
     const totals = this.q.totals!.get() as { sessions: number; bytes: number };
-    let sessions = totals.sessions, bytes = totals.bytes;
-    if (sessions <= this.maxSessions && bytes <= this.maxBytes) return;
+    if (totals.sessions <= this.maxSessions && totals.bytes <= this.maxBytes) return;
+    const oldest = this.q.oldest!.all() as { id: string; bytes: number }[];
+    const scoped = (id: string) => id.includes("@");
+    const count = { root: oldest.filter(s => !scoped(s.id)).length, scoped: oldest.filter(s => scoped(s.id)).length };
+    let bytes = totals.bytes;
     const removed: string[] = [];
     this.db.transaction(() => {
-      for (const s of this.q.oldest!.all() as { id: string; bytes: number }[]) {
-        if (sessions <= 1 || (sessions <= this.maxSessions && bytes <= this.maxBytes)) break;
-        for (const t of ["bodies", "spans"]) this.db.query(`DELETE FROM ${t} WHERE session = ?`).run(s.id);
-        this.db.query("DELETE FROM sessions WHERE id = ?").run(s.id);
-        this.known.delete(s.id);
-        this.seen.delete(s.id);
-        removed.push(s.id);
-        sessions--; bytes -= s.bytes;
+      for (const kind of ["scoped", "root"] as const) {
+        for (const s of oldest) {
+          if (scoped(s.id) !== (kind === "scoped")) continue;
+          if ((kind === "root" && count.root <= 1) || count.root + count.scoped <= 1) break;
+          if (count[kind] <= this.maxSessions && bytes <= this.maxBytes) break;
+          for (const t of ["bodies", "spans"]) this.db.query(`DELETE FROM ${t} WHERE session = ?`).run(s.id);
+          this.db.query("DELETE FROM sessions WHERE id = ?").run(s.id);
+          this.known.delete(s.id);
+          this.seen.delete(s.id);
+          removed.push(s.id);
+          count[kind]--; bytes -= s.bytes;
+        }
       }
     })();
     this.db.exec("PRAGMA incremental_vacuum");

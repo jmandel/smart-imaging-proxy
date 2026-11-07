@@ -25,7 +25,7 @@ function target(path: string, prefix: string): string {
 }
 
 /** Service-to-service APIs, which callers reach on the services' own loopback ports, never through here. */
-const INTERNAL = /^\/imaging\/policy(\/|$)|^\/internal\//;
+const INTERNAL = /^\/imaging\/policy(\/|$)|^\/internal\/|^\/trace\/v1\//;
 
 export async function gatewayFetch(req: Request): Promise<Response> {
   const url = new URL(req.url);

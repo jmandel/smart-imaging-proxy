@@ -2,7 +2,8 @@
 // them in a TraceStore. The stream doesn't depend on the store, so a storage problem can't stop it.
 import { LISTEN_HOSTS, PORTS, TAILNET } from "./config";
 import { join } from "node:path";
-import { KINDS, SERVICES, STATUSES, type SpanRecord } from "./trace";
+import { sameSecret } from "@smart-imaging-proxy/core";
+import { KINDS, scopeOfSession, SERVICES, STATUSES, type SpanRecord } from "./trace";
 import { summaryOf, TraceStore, type TraceStoreConfig } from "./trace-store";
 
 const PAGES: Record<string, string> = { "/live.js": "web/live.js", "/live.css": "web/live.css", "/fonts/atkinson-next.woff2": "web/fonts/atkinson-next.woff2", "/fonts/atkinson-mono.woff2": "web/fonts/atkinson-mono.woff2", "/trace-view.js": "web/trace-view.js", "/span.html": "web/span.html", "/span.js": "web/span.js", "/log.html": "web/log.html", "/log.js": "web/log.js" };
@@ -40,34 +41,35 @@ function spanProblem(r: unknown) {
   if (r.parent !== undefined && typeof r.parent !== "string") return "parent must be a string";
   if (r.status !== undefined && !STATUSES.includes(r.status)) return `status must be one of ${STATUSES.join(", ")}`;
   if (!isObject(r.attrs)) return "attrs must be an object";
+  if (r.scope !== undefined && !isText(r.scope)) return "scope must be a non-empty string";
+  if (scopeOfSession(r.session) !== r.scope) return "the session must be its scope's own";
   if (r.http !== undefined) return httpProblem(r.http);
 }
 const decodable = (path: string) => { try { decodeURIComponent(path); return true; } catch { return false; } };
 
 /**
- * With no store config, traces are in memory: only src/main.ts reads the TRACE_* settings. Served for a
- * scope, it shows only that scope's sessions, and takes no spans.
+ * With no store config, traces are in memory: only src/main.ts reads the TRACE_* settings. Spans come in
+ * only with `spanSecret`, which the services hold, and none at all without one. Served for a scope, it
+ * shows only that scope's sessions, and takes no spans.
  */
-export function createCollector(root: string, config: TraceStoreConfig = { mode: "memory" }) {
+export function createCollector(root: string, config: TraceStoreConfig = { mode: "memory" }, spanSecret?: string) {
   const store = new TraceStore(config);
   const clients = new Set<{ session?: string; scope?: string; send: (s: string) => void }>();
-  // Which scope each session belongs to. Scopes live in memory, so this does too.
-  const scopeOf = new Map<string, string>();
+  const scopeOf = scopeOfSession;
   let seq = store.maxSeq();
-  const broadcast = (event: string, data: unknown, session?: string) => { for (const c of clients) if (!c.scope || (session !== undefined && scopeOf.get(session) === c.scope)) c.send(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
+  const broadcast = (event: string, data: unknown, session?: string) => { for (const c of clients) if (!c.scope || (session !== undefined && scopeOf(session) === c.scope)) c.send(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
   store.onRemoved = ids => broadcast("removed", ids);
 
   function ingest(records: SpanRecord[]) {
     for (const r of records) {
-      if (r.scope && !scopeOf.has(r.session)) scopeOf.set(r.session, r.scope);
       if (!store.knows(r.session)) broadcast("session", { id: r.session, startedAt: r.start, lastAt: r.start, spans: 0 }, r.session);
       r.seq = ++seq;
       const summary = JSON.stringify(summaryOf(r));
       store.put(r, summary);
-      for (const c of clients) if ((!c.session || c.session === r.session) && (!c.scope || scopeOf.get(r.session) === c.scope)) c.send(`event: span\ndata: ${summary}\n\n`);
+      for (const c of clients) if ((!c.session || c.session === r.session) && (!c.scope || scopeOf(r.session) === c.scope)) c.send(`event: span\ndata: ${summary}\n\n`);
     }
   }
-  const list = (scope?: string) => store.sessions().filter(s => !scope || scopeOf.get(s.id) === scope).map(publicSession);
+  const list = (scope?: string) => store.sessions().filter(s => !scope || scopeOf(s.id) === scope).map(publicSession);
 
   const page = (file: string) => new Response(Bun.file(join(root, file)), { headers: { "cache-control": "no-cache" } });
   const fetchHandler = async (req: Request, scope?: string): Promise<Response> => {
@@ -77,10 +79,11 @@ export function createCollector(root: string, config: TraceStoreConfig = { mode:
     // A scope's view reads only its own sessions, and changes nothing.
     if (scope && (p === "/v1/spans" || req.method !== "GET")) return new Response("not found", { status: 404 });
     const session = p.match(/^\/api\/sessions\/([^/]+)\//)?.[1];
-    if (scope && session && decodable(session) && scopeOf.get(decodeURIComponent(session)) !== scope) return new Response("not found", { status: 404 });
+    if (scope && session && decodable(session) && scopeOf(decodeURIComponent(session)) !== scope) return new Response("not found", { status: 404 });
     if (p === "/v1/spans" && req.method === "POST") {
       // Services send spans. A browser always names an origin, and has no reason to send any.
       if (req.headers.get("origin")) return new Response(null, { status: 403 });
+      if (!sameSecret(req.headers.get("authorization")?.match(/^bearer +(.+)$/i)?.[1], spanSecret)) return new Response(null, { status: 401 });
       if (Number(req.headers.get("content-length") ?? 0) > MAX_SPANS_BODY) return bad("too many spans at once", 413);
       const text = await req.text();
       if (text.length > MAX_SPANS_BODY) return bad("too many spans at once", 413);
@@ -146,5 +149,5 @@ export function createCollector(root: string, config: TraceStoreConfig = { mode:
     },
     has: (id: string) => !!store.session(id),
   };
-  return { fetch: fetchHandler, sessions, list, scopeOf: (session: string) => scopeOf.get(session), store, close: () => store.close() };
+  return { fetch: fetchHandler, sessions, list, scopeOf, store, close: () => store.close() };
 }

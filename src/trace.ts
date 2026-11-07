@@ -27,17 +27,26 @@ const als = new AsyncLocalStorage<Current>();
 /** The scope a request was routed to, for spans that start outside any trace context. */
 const scopes = new AsyncLocalStorage<string | undefined>();
 export const inScope = <T>(scope: string | undefined, fn: () => T) => scopes.run(scope, fn);
+/**
+ * A session's key, which says whose it is: a scope's end in `@{scope}`, and the root's hold no `@`. A
+ * span's scope is the world that recorded it, so a session named from outside, such as by baggage, can
+ * only ever be one of that world's own.
+ */
+export const sessionKey = (scope: string | undefined, session: string) => scope ? (session.endsWith(`@${scope}`) ? session : `${session}@${scope}`) : session.replaceAll("@", "_");
+/** The scope a session key belongs to, if any. */
+export const scopeOfSession = (session: string) => session.includes("@") ? session.slice(session.lastIndexOf("@") + 1) : undefined;
 
 let buffer: SpanRecord[] = [];
 let timer: ReturnType<typeof setTimeout> | undefined;
-let sinkUrl: string | undefined;
-export const setTraceSink = (url: string) => { sinkUrl = url; };
+let sinkUrl: string | undefined, sinkSecret: string | undefined;
+/** Where spans go, with the credential the collector takes them with. */
+export const setTraceSink = (url: string, secret?: string) => { sinkUrl = url; sinkSecret = secret; };
 const flush = () => {
   timer = undefined;
   if (!sinkUrl || !buffer.length) { buffer = []; return; }
   const body = JSON.stringify(buffer);
   buffer = [];
-  fetch(localUrl(`${sinkUrl}/v1/spans`), { method: "POST", headers: { "content-type": "application/json" }, body }).catch(() => {});
+  fetch(localUrl(`${sinkUrl}/v1/spans`), { method: "POST", headers: { "content-type": "application/json", ...(sinkSecret ? { authorization: `Bearer ${sinkSecret}` } : {}) }, body }).catch(() => {});
 };
 const emit = (s: SpanRecord) => { buffer.push({ ...s, attrs: { ...s.attrs }, http: s.http && { ...s.http } }); timer ??= setTimeout(flush, 25); };
 export const flushTraces = () => { if (timer) clearTimeout(timer); flush(); };
@@ -122,7 +131,7 @@ export interface SpanHandle { record: SpanRecord; ctx: Current; end(status?: Spa
 export function startSpan(service: Service, kind: Kind, name: string, attrs: Record<string, unknown> = {}, ctx?: Partial<Current>): SpanHandle {
   const p = ctx ?? als.getStore();
   const scope = p?.scope ?? scopes.getStore();
-  const record: SpanRecord = { session: p?.session ?? "unattributed", trace: p?.trace ?? hex(16), span: hex(8), parent: p?.span, service, kind, name, start: nowMs(), attrs, ...(scope ? { scope } : {}) };
+  const record: SpanRecord = { session: sessionKey(scope, p?.session ?? "unattributed"), trace: p?.trace ?? hex(16), span: hex(8), parent: p?.span, service, kind, name, start: nowMs(), attrs, ...(scope ? { scope } : {}) };
   emit(record);
   return {
     record, ctx: { session: record.session, trace: record.trace, span: record.span, ...(scope ? { scope } : {}) },

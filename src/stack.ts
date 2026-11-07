@@ -3,7 +3,7 @@
 // separate processes. Each service's listener sends `/s/{scope}/...` to that scope's own instance of
 // the same service, with the prefix taken off, and everything else to the root's.
 import { join } from "node:path";
-import { generateKeyPairSync, type KeyObject } from "node:crypto";
+import { generateKeyPairSync, randomBytes, type KeyObject } from "node:crypto";
 import { S3Client } from "bun";
 import { ArchiveBackend, catalogFromOrthanc, createCatalog, fileStore, orthancCatalogPath, OrthancBackend, rebuildFromArchive, s3Store, seedPatientLinks, type Backend, type CatalogStore, type StoreConfig } from "@smart-imaging-proxy/core";
 import { DEMO_BACKEND_CLIENTS } from "./auth-server";
@@ -72,8 +72,10 @@ export function scopedHandler(root: World, scopes: Scopes, serviceOf: (w: World)
 export async function startStack(root: string, opts: { store?: StoreConfig; traces?: TraceStoreConfig; purgeIntervalMs?: number; catalog?: string; scopes?: { idleMs?: number; max?: number } } = {}) {
   const store = openRootStore(opts.store);
   const catalogs = await openCatalogs(root, opts.catalog);
-  const collector = createCollector(root, opts.traces);
-  setTraceSink(CONFIG.traceSink);
+  // Only the services send spans: the one origin doesn't forward the route, and it takes this credential.
+  const spanSecret = randomBytes(24).toString("base64url");
+  const collector = createCollector(root, opts.traces, spanSecret);
+  setTraceSink(CONFIG.traceSink, spanSecret);
 
   const backends: Record<BackendName, Backend> = { "static-files": buildBackend("static-files"), s3: buildBackend("s3"), orthanc: buildBackend("orthanc") };
   const catalogFor = (b: BackendName): CatalogStore => b === "orthanc" ? catalogs.orthanc : catalogs.archive;
@@ -115,6 +117,8 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
   return {
     /** The root world, which holds the one real policy database. */
     root: rootWorld, scopes, store, backends, collector, catalogs, clientKeys,
+    /** The collector's credential for spans, which only the services hold. */
+    spanSecret,
     auth: rootWorld.auth, imaging: rootWorld.imaging, proxy: rootWorld.proxy, policy: rootWorld.policy,
     /** The listener a scope-aware service port uses, for the demo's own pages. */
     route,

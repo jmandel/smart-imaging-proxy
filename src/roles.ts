@@ -1,6 +1,6 @@
 // Runs some of the root world's services in this process, for a deployment that splits them. They find
 // each other through CONFIG, and act together only over HTTP. Scopes are the whole demo's, not a split one's.
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { createCatalog, DEFAULT_JWKS_TTL_SECONDS, PolicyStore } from "@smart-imaging-proxy/core";
 import { CONFIG, DEFAULT_CATALOG_DB, GATEWAY_HOSTS, ONE_ORIGIN, PORTS, serveOn, serveStreamingOn } from "./config";
 import { DEMO_BACKEND_CLIENTS, derivedBackendClient } from "./auth-server";
@@ -28,11 +28,13 @@ export async function startRoles(root: string, roles: Role[], env: Record<string
   // The policy API's credential, which the Imaging Server and the Authorization Server share, and the proxy never gets.
   const policySecret = env.POLICY_SECRET;
   if ((has("imaging") || has("auth")) && !policySecret) throw new Error(`--role ${roles.join(",")} needs POLICY_SECRET, the policy API's credential, which only the Imaging Server and the Authorization Server hold`);
-  setTraceSink(CONFIG.traceSink);
+  // The services send spans with a credential derived from the one they share.
+  const spanSecret = createHash("sha256").update(`smart-imaging-demo trace spans ${serviceSecret}`).digest("base64url");
+  setTraceSink(CONFIG.traceSink, spanSecret);
 
   const stops: (() => void)[] = [];
   if (has("trace")) {
-    const collector = createCollector(root, traceStoreConfigFromEnv(env));
+    const collector = createCollector(root, traceStoreConfigFromEnv(env), spanSecret);
     const servers = serveOn(PORTS.trace, { fetch: collector.fetch, idleTimeout: 0 });
     stops.push(() => { servers.forEach(s => s.stop(true)); collector.close(); });
   }

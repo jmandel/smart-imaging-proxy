@@ -5,7 +5,7 @@ import type { Stack } from "../stack";
 import type { World } from "../world";
 import type { BackendClient } from "../auth-server";
 import { randomBytes } from "node:crypto";
-import { flushTraces, inScope, runInSession, withSpan } from "../trace";
+import { flushTraces, inScope, runInSession, sessionKey, withSpan } from "../trace";
 
 export const FLOWS: Flow[] = [...policyFlows, ...protocolFlows];
 export const flowById = (id: string) => FLOWS.find(f => f.id === id);
@@ -19,7 +19,7 @@ export function startFlow(stack: Stack, clients: Record<string, BackendClient>, 
 }
 /** Starts a flow in `world`, which is a fresh scope. */
 export async function startFlowIn(world: World, clients: Record<string, BackendClient>, flow: Flow): Promise<Ctx> {
-  const session = `flow-${flow.number}-${flow.id}-${randomBytes(3).toString("hex")}`;
+  const session = sessionKey(world.scope, `flow-${flow.number}-${flow.id}-${randomBytes(3).toString("hex")}`);
   const c = new Ctx(world, clients);
   c.session = session;
   // Setup makes policy API calls, which belong to the flow's session.

@@ -10,7 +10,7 @@ import { ACCEPT_ANY, browserFetch, Ctx } from "./flows/runtime";
 import { boundaryOf, readMultipart } from "@smart-imaging-proxy/core";
 import type { Stack } from "./stack";
 import type { World } from "./world";
-import { flushTraces, runInSession, tfetch, withSpan } from "./trace";
+import { flushTraces, runInSession, sessionKey, tfetch, withSpan } from "./trace";
 
 export const PAGE_SIZES = [2, 5, 20];
 const MAX_SESSIONS = 20;
@@ -324,7 +324,7 @@ export function createBrowse(world: World, clients: Record<string, BackendClient
 
     const id = randomBytes(24).toString("base64url");
     const c = new Ctx(world, clients);
-    const name = `browse-${user ?? client}-${hex(3)}`;
+    const name = sessionKey(world.scope, `browse-${user ?? client}-${hex(3)}`);
     c.session = name;
     const s: Session = {
       id, name, c, launching: true, status: "signing-in", steps: [], pages: [], pageIndex: 0, count, studies: [], endpoints: new Map(), searching: false, retrievals: new Map(), retrieving: false, abort: new AbortController(), accountLinks: new Map(),
