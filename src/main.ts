@@ -50,7 +50,7 @@ if (whole) {
   const demoServers = serveOn(PORTS.demo, { idleTimeout: 240, fetch: demo.fetch });
   stopping = () => { demoServers.forEach(s => s.stop(true)); stack.stop(); };
   const info = stack.stores.saved.info();
-  console.log(`SMART Imaging sandbox: ${CONFIG.demoUrl}${TAILNET ? " (tailnet)" : ""}`);
+  console.log(`SMART Imaging Proxy: ${CONFIG.demoUrl}${TAILNET ? " (tailnet)" : ""}`);
   console.log(`Admin: ${CONFIG.demoUrl}/admin`);
   console.log(`Live trace: ${CONFIG.traceUrl}`);
   console.log(`Traces: ${stack.collector.store.path ?? "in memory"}`);

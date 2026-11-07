@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "smart-imaging-sandbox",
+      "name": "smart-imaging-proxy",
       "devDependencies": {
         "playwright-core": "^1.65.0",
       },

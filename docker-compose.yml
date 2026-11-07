@@ -1,5 +1,5 @@
 # Backends for the demo. Storage is under /tmp by default, so it is disposable.
-name: smart-imaging-sandbox
+name: smart-imaging-proxy
 services:
   minio:
     image: minio/minio:latest

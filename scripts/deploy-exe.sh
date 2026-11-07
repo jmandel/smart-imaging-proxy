@@ -23,12 +23,21 @@ field() { bun -e 'console.log(JSON.parse(process.argv[1])[process.argv[2]] ?? ""
 DEST="$(field ssh_dest)"; URL="$(field https_url)"
 [ -n "$DEST" ] && [ -n "$URL" ] || { echo "deploy: exe.dev didn't list $VM's addresses" >&2; exit 1; }
 echo "== $VM: ssh $DEST, $URL"
+# exe.dev VMs present exe.dev's own host key. Pin it for this VM, from the exe.dev entry this machine
+# already trusts, and only if that entry has exe.dev's published fingerprint.
+HOST="$(field ssh_host)"
+if ! ssh-keygen -F "$HOST" >/dev/null; then
+  KEY="$(ssh-keygen -F exe.dev | grep -v '^#' | head -1 | cut -d' ' -f2-)"
+  [ "$(ssh-keygen -lf <(echo "exe.dev $KEY") | cut -d' ' -f2)" = "SHA256:JJOP/lwiBGOMilfONPWZCXUrfK154cnJFXcqlsi6lPo" ] \
+    || { echo "deploy: exe.dev's host key here doesn't have its published fingerprint; run ssh exe.dev once and check it" >&2; exit 1; }
+  echo "$HOST $KEY" >> ~/.ssh/known_hosts
+fi
 for _ in $(seq 1 60); do ssh -o BatchMode=yes -o ConnectTimeout=10 "$DEST" true 2>/dev/null && break; sleep 5; done
 
 echo "== Copying $(git rev-parse --short HEAD)"
-REL="smart-imaging-sandbox/releases/$(git rev-parse --short HEAD)"
-git archive --format=tar HEAD | ssh "$DEST" "mkdir -p ~/$REL && tar -x -C ~/$REL && ln -sfn ~/$REL ~/smart-imaging-sandbox/current"
+REL="smart-imaging-proxy/releases/$(git rev-parse --short HEAD)"
+git archive --format=tar HEAD | ssh "$DEST" "mkdir -p ~/$REL && tar -x -C ~/$REL && ln -sfn ~/$REL ~/smart-imaging-proxy/current"
 
-ssh "$DEST" "cd ~/smart-imaging-sandbox/current && DEMO_PUBLIC_URL=$(printf %q "$URL") DEMO_APP_CLIENTS=$(printf %q "${DEMO_APP_CLIENTS:-}") bash deploy/install.sh"
+ssh "$DEST" "cd ~/smart-imaging-proxy/current && DEMO_PUBLIC_URL=$(printf %q "$URL") DEMO_APP_CLIENTS=$(printf %q "${DEMO_APP_CLIENTS:-}") bash deploy/install.sh"
 ssh exe.dev share port "$VM" 4605 >/dev/null
 echo "== Done: $URL/browse (private until: ssh exe.dev share set-public $VM)"

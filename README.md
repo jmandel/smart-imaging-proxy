@@ -1,4 +1,4 @@
-# SMART Imaging Sandbox
+# SMART Imaging Proxy
 
 A working prototype of a SMART Imaging deployment: an Authorization Server, an Imaging Server holding policy and a study catalog, and a WADO-RS proxy that enforces study-level policy without holding any of it. It runs on ten studies across three patients. It implements the `focused-access-updates` branch of the [SMART Imaging Access guide](https://github.com/argonautproject/smart-imaging). It isn't production code.
 
@@ -7,7 +7,7 @@ A working prototype of a SMART Imaging deployment: an Authorization Server, an I
 You need Bun (developed on 1.4.3), Docker with Compose, DCMTK (`dcmconv`, `dcmcjpeg`, `dcmodify`), `curl`, and `tar`. Allow roughly 3 GB of disk, an estimate from one machine's copy.
 
 ```sh
-git clone https://github.com/jmandel/smart-imaging-sandbox && cd smart-imaging-sandbox
+git clone https://github.com/jmandel/smart-imaging-proxy && cd smart-imaging-proxy
 bun run up      # sets everything up, starts it in the background, and prints the URLs
 bun run down    # stops the demo, MinIO, and Orthanc, keeping their data
 ```
@@ -27,7 +27,7 @@ bun run start           # builds any empty catalog, then prints the URLs, in the
 
 Each step is safe to repeat. Everything except the downloads lives under `/tmp/smart-imaging-demo` by default, so after a reboot, run `bun run up` again.
 
-Then open http://127.0.0.1:4600/browse and try these:
+Then open http://127.0.0.1:4605/browse and try these:
 
 1. **Josh, the patient:** shows all six of his studies. Retrieve one through the proxy, and follow its link to the live trace.
 2. **Sam, a patient and a caregiver:** right under Sam, choose Sam's own records or Riley's as guardian. Each choice is a real new sign-in and search. Josh's aren't Sam's until Josh shares: choose "Josh Example hasn't shared with Sam", and the page offers to share, and then Josh is a third choice, showing only the shared sites.
@@ -37,7 +37,7 @@ Then open http://127.0.0.1:4600/browse and try these:
 
 Every service listens on `127.0.0.1`. If Tailscale is running, each one also listens on the tailnet IP and uses that IP in the URLs it issues, such as redirects and `Endpoint.address`.
 
-Apps are given one origin, port 4605, for the Authorization Server, Imaging Server, and proxy: the clinical FHIR base is `http://127.0.0.1:4605/fhir`, and the Imaging Server's is `http://127.0.0.1:4605/imaging/fhir`. Each service also keeps its own port. `DEMO_ONE_ORIGIN=0` gives apps those ports instead, the way separate systems would be deployed. Either way, each service answers CORS, so a browser app on another origin can call it.
+Everything is at one origin, port 4605: the demo's pages, the live trace at `/trace/`, the clinical FHIR base at `/fhir`, and the Imaging Server at `/imaging/fhir`. Each service also keeps its own port. `DEMO_ONE_ORIGIN=0` gives people and apps those ports instead, the way separate systems would be deployed. Either way, each service answers CORS, so a browser app on another origin can call it.
 
 | Port | Service | Paths |
 |---|---|---|
@@ -46,7 +46,7 @@ Apps are given one origin, port 4605, for the Authorization Server, Imaging Serv
 | 4602 | Imaging Server | `/fhir/ImagingStudy`, `/fhir/metadata`, `/access/v1/evaluation`, `/.well-known/jwks.json`, `/.well-known/authzen-configuration` |
 | 4603 | Authorization Server | `/fhir/.well-known/smart-configuration`, `/authorize`, `/token`, `/introspect`, `/revoke`, `/account`, `/fhir/Patient/{id}` (with a token for that patient) |
 | 4604 | Live trace | `/` viewer, `/span.html` full exchange, `/log.html` HTTP log, `/api/sessions/{id}/export` |
-| 4605 | One origin for apps | `/imaging/...` to the Imaging Server, `/wado/...` to the proxy, and everything else to the Authorization Server |
+| 4605 | One origin | `/imaging/...` Imaging Server, `/wado/...` proxy, `/trace/...` live trace, `/fhir/...`, `/authorize`, `/token`, `/introspect`, `/revoke`, and `/account` Authorization Server, and everything else the demo |
 | 4610 | MinIO | Loopback only |
 | 4611 | Orthanc | Loopback only |
 
@@ -58,15 +58,32 @@ Apps are given one origin, port 4605, for the Authorization Server, Imaging Serv
 
 ## Connecting a browser app
 
-[SHLink DICOM Share](https://shlink-dicom.exe.xyz/share) can sign in here and pull studies through the proxy, as the public client `shlink-dicom-share`. It accepts `http` only on `localhost` or `127.0.0.1`, so the tailnet address won't do: run a second copy that stays on loopback. After `bun run up`, it shares the archive, MinIO, and Orthanc, with its own SQLite files:
+The demo's own clients, `portal-app` and `separate-viewer`, are always registered. `DEMO_APP_CLIENTS` adds other public clients, as comma-separated `client_id=redirect_uri` pairs, with an id repeated for each of its redirect URIs. None are added by default.
+
+For example, [SHLink DICOM Share](https://shlink-dicom.exe.xyz/share) signs in as `shlink-dicom-share`, so a deployment it should reach sets:
+
+```sh
+DEMO_APP_CLIENTS=shlink-dicom-share=https://shlink-dicom.exe.xyz/share/smart-callback/
+```
+
+That page accepts a portal on `https`, or on `http` only at `localhost` or `127.0.0.1`. To try it against this machine, run a second copy that stays on loopback. After `bun run up`, it shares the archive, MinIO, and Orthanc, with its own SQLite files:
 
 ```sh
 S=/tmp/smart-imaging-share; mkdir -p $S
-DEMO_TAILNET=0 DEMO_PORT_OFFSET=100 \
+DEMO_TAILNET=0 DEMO_PORT_OFFSET=100 DEMO_APP_CLIENTS=shlink-dicom-share=https://shlink-dicom.exe.xyz/share/smart-callback/ \
   POLICY_DB=$S/policy.sqlite TRACE_DB=$S/traces.sqlite CATALOG_DB=$S/catalog.sqlite bun run start
 ```
 
 In a browser on the same machine, open the share page, choose **Connect to a patient portal**, and enter `http://127.0.0.1:4705/fhir`. Chrome asks once whether the page may reach this device: allow it. The app finds no `DiagnosticReport` here, and carries on without reports.
+
+## Deploying
+
+The one origin is what a host in front of the machine forwards to: give it the public origin with `DEMO_PUBLIC_URL`, and it listens on every interface, with the other services on loopback. Its URLs, discovery documents, and Host checks then use that origin, and nothing else about DNS is assumed.
+
+- **Any Linux machine with systemd and Docker:** `DEMO_PUBLIC_URL=https://imaging.example.org deploy/install.sh` from a checkout. It installs DCMTK and a pinned Bun if they're missing, builds the data under `/var/lib/smart-imaging-proxy`, starts MinIO and Orthanc, and runs the app as the `smart-imaging-proxy` service. Its settings go to `/etc/smart-imaging-proxy.env`. Repeating it updates the machine.
+- **An exe.dev VM:** `scripts/deploy-exe.sh <vm-name>` creates the VM if it doesn't exist, copies this checkout's committed code, runs the installer with the VM's HTTPS URL from exe.dev's own listing, and points the VM's web proxy at port 4605. The proxy stays private, behind exe.dev's login, until you run `ssh exe.dev share set-public <vm-name>`. `DEMO_APP_CLIENTS` set when you run it goes to the VM.
+
+The demo's pages, live trace, and admin screen have no login of their own. Anyone who can reach the origin can read traces and change saved policy, so choose who can reach it at the host.
 
 ## How it works
 
@@ -171,11 +188,13 @@ Everything has a working default.
 |---|---|---|
 | `DEMO_TAILNET` | Detected | `0` stays on loopback |
 | `DEMO_PORT_OFFSET` | `0` | Added to ports 4600-4605, to run a second copy |
-| `DEMO_ONE_ORIGIN` | On | `0` gives apps each service's own port, rather than the one origin on 4605 |
-| `SHARE_REDIRECT_URIS` | The hosted and local SHLink DICOM Share callbacks | Comma-separated redirect URIs registered for the `shlink-dicom-share` client |
+| `DEMO_ONE_ORIGIN` | On | `0` gives people and apps each service's own port, rather than the one origin on 4605 |
+| `DEMO_PUBLIC_URL` | None | The origin people and apps use, when a host in front of the machine gives it one. See [Deploying](#deploying) |
+| `DEMO_APP_CLIENTS` | None | Public clients beyond the demo's own, as `client_id=redirect_uri` pairs. See [Connecting a browser app](#connecting-a-browser-app) |
 | `DEMO_STORAGE` | `/tmp/smart-imaging-demo` | The default home of everything below, the Compose volumes, and `bun run up`'s log |
 | `MINIO_PORT`, `ORTHANC_PORT` | `4610`, `4611` | Where Compose publishes MinIO and Orthanc, and where the demo reaches them |
 | `ARCHIVE_DIR` | `/tmp/smart-imaging-demo/archive` | The local archive |
+| `SOURCES_DIR` | `data/sources` | Where `bun run fetch-data` keeps the downloads, and ingest reads them |
 | `INGEST_WORK` | The OS temp directory | Ingest's working files |
 | `CATALOG_DB` | `/tmp/smart-imaging-demo/catalog.sqlite` | The archive catalog. Orthanc's sits beside it, named `-orthanc` |
 | `POLICY_STORE` | `file` | `file` or `memory` |
