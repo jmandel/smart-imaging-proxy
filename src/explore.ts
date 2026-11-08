@@ -432,7 +432,9 @@ export function createExplore(world: World, clients: Record<string, BackendClien
             if (n.value.type === "data") { c.enqueue(n.value.bytes); return; }
           }
         },
-        cancel() { parts.return?.(undefined); },
+        // The page went away: stop reading. The upstream fetch is aborted with it, so closing the
+        // reader can reject, and that is the expected end, not an error.
+        async cancel() { await parts.return?.(undefined)?.catch(() => {}); },
       });
       return new Response(body, { headers: { "content-type": "application/dicom", "cache-control": "no-store", "x-instance": instance, "x-modality": ep.series.find(x => x.uid === pick.series)?.modality ?? ep.modality } });
     }, { session: s.name, trace: hex(16) }));

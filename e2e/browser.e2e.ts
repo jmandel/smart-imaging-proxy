@@ -348,7 +348,8 @@ describe("activity", () => {
       expect(await page.locator(".session-row").count()).toBeGreaterThan(0);
       await page.locator(".tile[data-type=searches]").click();
       await page.waitForURL(/type=searches/);
-      expect(await page.locator("#h-events").innerText()).toBe("Searches");
+      // The URL changes first; the list redraws once its events arrive.
+      await page.locator("#h-events", { hasText: /^Searches$/ }).waitFor();
       expect(await page.locator(".events th").allInnerTexts()).toEqual(["Time", "Who", "Status", "Returned", "Withheld", "Query"]);
       await page.locator("tr.ev td.t button").first().click();
       await page.locator("tr.detail .ev-links a", { hasText: /^token / }).first().click();
