@@ -94,6 +94,14 @@ describe("every page, on desktop and phone, in light and dark", () => {
       }
       expect(problems).toEqual([]);
     });
+    test(`${name} ${colorScheme}: the story cards' small diagram text keeps its contrast on the film`, async () => {
+      const page = await open("/", { viewport, colorScheme });
+      await page.locator(".story .layers").first().waitFor();
+      for (const sel of [".story .ly-site", ".story .ly-count", ".story .ly-box.off", ".story .ly-row.choice .ly-box.on", ".key .ly-legend p"]) {
+        expect([sel, (await contrast(page, sel)) >= 4.5]).toEqual([sel, true]);
+      }
+      expect(problems).toEqual([]);
+    });
     test(`${name} ${colorScheme}: Explore's text keeps its contrast, on the box, the chain and the film`, async () => {
       const page = await open("/explore", { viewport, colorScheme });
       await pick(page, "josh");
@@ -316,7 +324,7 @@ describe("Tours", () => {
   });
   test("Run checks runs the protocol flows as one pass or fail list, each opening its activity", async () => {
     const page = await open("/");
-    await page.getByRole("button", { name: "Run checks" }).click();
+    await page.getByRole("button", { name: "Run all checks" }).click();
     await page.locator(".checks-panel .row .verdict", { hasText: "passed" }).waitFor({ timeout: 110000 });
     expect(await page.locator(".checks-panel .row .verdict").innerText()).toBe("8 of 8 passed");
     const link = page.locator(".check-list a").first();

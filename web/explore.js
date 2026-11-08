@@ -101,7 +101,7 @@ function viewHtml() {
     <div class="headline"><h1 id="headline" tabindex="-1">${esc(view.headline ?? "")}</h1>
       ${view.detail ? `<p class="note">${esc(view.detail)}</p>` : ""}</div>
     ${view.tech ? `<details class="tech-detail"><summary>Technical detail</summary><p>${esc(view.tech)}</p></details>` : ""}
-    ${view.chain?.rows?.length ? `<div class="why"><h2 class="why-head">Why ${view.who.kind === "service" ? "the service finds" : "the app sees"} what it does</h2>${Layers.chain(view.chain, { label: `Why ${view.who.kind === "service" ? "the service finds" : "the app sees"} what it does` })}${Layers.legend()}</div>` : ""}
+    ${view.chain?.rows?.length ? `<div class="why"><h2 class="why-head">${esc(view.whyTitle)}</h2>${Layers.chain(view.chain, { label: view.whyTitle })}${Layers.legend({ cited: view.chain.columns.some(c => c.cited) })}</div>` : ""}
     ${pageError ? `<p class="error" role="alert">${esc(pageError)}</p>` : ""}
     ${view.sheets?.length ? `<ul class="sheets" aria-label="Studies">${view.sheets.map(sheetHtml).join("")}</ul>` : ""}
     ${empty}${formHtml()}
@@ -120,7 +120,7 @@ function studyHtml() {
         <ul class="series-list">${s.series.map(x => `<li>${esc(x.modality)} ${esc(x.description ?? `Series ${x.number}`)}, ${plural(x.instances, "image")}</li>`).join("")}</ul>
       </div>
       <div><button type="button" class="primary" id="retrieve" ${r?.running ? "disabled" : ""}>${r ? (r.running ? "Retrieving…" : "Retrieve again") : "Retrieve the whole study"}</button></div>
-      ${r ? `<div class="retrieval"><h3>${r.running ? "Retrieving" : r.status === 200 && r.complete ? "Retrieved" : `The proxy answered ${esc(r.status ?? "nothing")}`}</h3><dl>
+      ${r ? `<div class="retrieval"><h3>${r.running ? "Retrieving" : r.status === 200 && r.complete ? "Retrieved" : `Not retrieved (HTTP ${esc(r.status ?? "none")})`}</h3><dl>
         <dt>Parts</dt><dd>${esc(r.parts)}</dd><dt>On the wire</dt><dd>${esc(bytes(r.wireBytes))}${r.encoding === "zstd" ? ", zstd" : ""}</dd><dt>DICOM</dt><dd>${esc(bytes(r.dicomBytes))}</dd>
         ${r.authz ? `<dt>Decided</dt><dd>${esc(r.authz === "instant" ? "from the signed link, with no call" : r.authz === "cached" ? "from a cached decision" : "by asking the Imaging Server")}</dd>` : ""}
         ${r.ms !== undefined ? `<dt>Took</dt><dd>${esc(r.ms)} ms</dd>` : ""}${r.error ? `<dt>Problem</dt><dd class="error">${esc(r.error)}</dd>` : ""}</dl></div>` : ""}

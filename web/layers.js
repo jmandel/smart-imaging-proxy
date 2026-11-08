@@ -21,7 +21,9 @@ const Layers = (() => {
     for (const c of columns) { const g = out.at(-1); if (g && g.site === c.site) g.cols.push(c); else out.push({ site: c.site, cols: [c] }); }
     return out;
   }
-  const box = (x, state, level) => `<span class="ly-box ${state} ${x.locked ? "locked" : ""}" role="img" aria-label="${esc(`${x.title}${x.locked ? ", labeled confidential" : ""}: ${state === "on" ? "included" : "not included"}`)}" title="${esc(`${x.title}${x.locked ? " (labeled confidential)" : ""}`)}">${esc(x.modality ?? "")}${x.locked ? LOCK : ""}</span>`;
+  /** The star that tells the cited study's box apart from others of its kind, here and in its row's sentence. */
+  const STAR = `<span class="ly-star" aria-hidden="true">★</span>`;
+  const box = (x, state, level) => `<span class="ly-box ${state} ${x.locked ? "locked" : ""} ${x.cited ? "cited" : ""}" role="img" aria-label="${esc(`${x.title}${x.locked ? ", labeled confidential" : ""}${x.cited ? ", the study the referral cites" : ""}: ${state === "on" ? "included" : "not included"}`)}" title="${esc(`${x.title}${x.locked ? " (labeled confidential)" : ""}`)}">${esc(x.modality ?? "")}${x.locked ? LOCK : ""}${x.cited ? STAR : ""}</span>`;
   /** A group's width: its boxes, or for one box, enough for a site's name to wrap in. */
   const groupStyle = g => `style="--n:${g.cols.length}"`;
 
@@ -41,7 +43,7 @@ const Layers = (() => {
         : c.viewer || r.boxes === false || ["records", "label", "referral"].includes(r.kind) || r.missing ? "" : `${has.size} of ${studies(total)}`;
       const cells = boxes && r.boxes !== false ? `<span class="ly-boxes">${gs.map(g => `<span class="ly-group" ${groupStyle(g)}>${g.cols.map(x => box(x, has.has(x.id) ? "on" : "off", r.level)).join("")}</span>`).join("")}</span>` : "";
       return `<li class="ly-row ${esc(r.level)} ${r.missing ? "missing" : ""} ${cells ? "" : "bare"}">
-        <span class="ly-say">${mark(r.level, r.missing)}<span class="ly-name">${esc(outcome ? `${r.name}:` : r.name)}${outcome ? ` <b class="ly-total">${esc(count)}</b>` : ""}</span>${!outcome && count ? `<span class="ly-count">${esc(count)}</span>` : ""}</span>
+        <span class="ly-say">${mark(r.level, r.missing)}<span class="ly-name">${esc(outcome ? `${r.name}:` : r.name)}${r.kind === "referral" ? ` ${STAR}` : ""}${outcome ? ` <b class="ly-total">${esc(count)}</b>` : ""}</span>${!outcome && count ? `<span class="ly-count">${esc(count)}</span>` : ""}</span>
         ${cells}</li>`;
     }).join("");
     return `<figure class="layers ${film ? "film" : ""}" aria-label="${esc(label)}"><div class="ly-sheet">${sites}<ol class="ly-rows">${rows}</ol></div></figure>`;
@@ -53,11 +55,12 @@ const Layers = (() => {
    * What the marks and boxes mean, in one compact key. `locked` adds the confidential label's mark,
    * for a narrator's chain that shows one.
    */
-  function legend({ film = false, locked = false } = {}) {
-    const sample = (state, extra = "") => `<span class="ly-box ${state} ${extra}" aria-hidden="true">MR${extra ? LOCK : ""}</span>`;
+  function legend({ film = false, locked = false, cited = false } = {}) {
+    const sample = (state, extra = "") => `<span class="ly-box ${state} ${extra}" aria-hidden="true">${extra === "cited" ? "CR" : "MR"}${extra === "locked" ? LOCK : extra === "cited" ? STAR : ""}</span>`;
+    const L = film ? "layers film" : "layers";
     return `<div class="ly-legend ${film ? "film" : ""}" role="note" aria-label="How to read these diagrams">
       <ul>${["fact", "policy", "choice"].map(l => `<li>${mark(l)}<span>${esc(LEVEL[l])}</span></li>`).join("")}<li>${mark("policy", true)}${mark("choice", true)}<span>Hollow: a rule or choice that isn't there</span></li><li>${mark("outcome")}<span>Last row: the result, what the rules and choices above all allow</span></li></ul>
-      <ul><li><span class="layers ${film ? "film" : ""}"><span class="ly-row choice">${sample("on")}</span></span><span>A study the row includes</span></li><li><span class="layers ${film ? "film" : ""}"><span class="ly-row outcome">${sample("on")}</span></span><span>A study in the result</span></li><li><span class="layers ${film ? "film" : ""}"><span class="ly-row fact">${sample("off")}</span></span><span>A study the row leaves out</span></li>${locked ? `<li><span class="layers ${film ? "film" : ""}"><span class="ly-row fact">${sample("off", "locked")}</span></span><span>Labeled confidential</span></li>` : ""}</ul>
+      <ul><li><span class="${L} ly-samples"><span class="ly-row fact">${sample("on")}</span><span class="ly-row policy">${sample("on")}</span><span class="ly-row choice">${sample("on")}</span></span><span>A study the row includes, in the row's color</span></li><li><span class="layers ${film ? "film" : ""}"><span class="ly-row outcome">${sample("on")}</span></span><span>A study in the result</span></li><li><span class="layers ${film ? "film" : ""}"><span class="ly-row fact">${sample("off")}</span></span><span>A study the row leaves out</span></li>${locked ? `<li><span class="layers ${film ? "film" : ""}"><span class="ly-row fact">${sample("off", "locked")}</span></span><span>Labeled confidential</span></li>` : ""}${cited ? `<li><span class="${L}"><span class="ly-row fact">${sample("off", "cited")}</span></span><span>The study a referral cites</span></li>` : ""}</ul>
       <p>Each box is one study, marked with its kind of image (MR: MRI, CR: X-ray, which titles call XR, CT: CT scan, SM: pathology slide), under the site that holds it. The imaging network is the organization that runs these sites and sets the rules.</p></div>`;
   }
   return { chain, chains, legend, mark, LEVEL };

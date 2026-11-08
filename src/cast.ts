@@ -4,7 +4,7 @@
 /** People, by account id. */
 export const PEOPLE_LINES: Record<string, string> = {
   josh: "A patient with studies at three imaging sites. His are the real, de-identified images in this demo.",
-  "sam-caregiver": "Riley's parent and guardian, and a patient too. Josh can share his studies with Sam.",
+  "sam-caregiver": "Riley's parent and guardian, and a patient too. Josh can share his studies with Sam. Sam's and Riley's studies are synthetic images, made for this demo.",
   "alex-neighbor": "Josh's neighbor, with no records of Alex's own, who sees only what someone shares.",
   robin: "A patient with no studies, so a search for Robin finds nothing.",
 };

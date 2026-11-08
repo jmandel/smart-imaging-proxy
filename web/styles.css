@@ -208,7 +208,7 @@ button.sheet:hover { background:var(--film-raised); }
 .cast dl div { display:flex; flex-direction:column; }
 .cast dt { font-weight:700; }
 .cast dd { margin:0; color:var(--muted); font-size:.88rem; line-height:1.35; }
-.compare .tech, .tech-detail p { font-size:.84rem; color:var(--muted); overflow-wrap:anywhere; }
+.compare .tech, .tech-detail p { font-size:.9rem; color:var(--ink); overflow-wrap:anywhere; }
 .tech-detail summary { cursor:pointer; color:var(--accent); min-height:2rem; display:flex; align-items:center; }
 .tech-detail p { margin:.2rem 0 0; }
 .tour-main { display:flex; flex-direction:column; gap:1.1rem; min-width:0; }
@@ -313,13 +313,13 @@ tr.detail > td { background:var(--box); max-width:none; padding:.6rem .8rem .8re
 .ly-sites, .ly-boxes { display:flex; gap:var(--ggap); }
 /* A site's column is as wide as its boxes, and wide enough for a one-box site's name to wrap in. */
 .ly-group, .ly-site { flex:none; width:max(calc(var(--n) * var(--box) + (var(--n) - 1) * var(--gap)), 3.6rem); }
-.ly-site { font-size:.7rem; line-height:1.15; color:var(--ly-dim); border-bottom:1px solid var(--ly-ghost); padding-bottom:.2rem; overflow-wrap:break-word; hyphens:auto; align-self:end; }
+.ly-site { font-size:.76rem; line-height:1.15; color:var(--ly-ink); border-bottom:1px solid var(--ly-ghost); padding-bottom:.2rem; overflow-wrap:break-word; hyphens:auto; align-self:end; }
 .ly-rows { list-style:none; margin:.45rem 0 0; padding:0; display:flex; flex-direction:column; gap:.55rem; }
 .ly-row { display:flex; flex-direction:column; gap:.25rem; }
 .ly-say { display:flex; align-items:baseline; gap:.45rem; font-size:.86rem; line-height:1.3; }
 .ly-say .ly-mark { align-self:flex-start; margin-top:.15rem; }
 .ly-name { min-width:0; overflow-wrap:anywhere; }
-.ly-count { margin-left:auto; padding-left:.5rem; color:var(--ly-dim); font-variant-numeric:tabular-nums; white-space:nowrap; font-size:.78rem; }
+.ly-count { margin-left:auto; padding-left:.5rem; color:var(--ly-ink); font-variant-numeric:tabular-nums; white-space:nowrap; font-size:.82rem; }
 .ly-mark { width:14px; height:14px; flex:none; }
 .ly-mark.fact { fill:var(--ly-fact, var(--fact)); } .ly-mark.policy { fill:var(--ly-policy, var(--policy)); } .ly-mark.choice { fill:var(--ly-choice, var(--choice)); } .ly-mark.outcome { fill:var(--ly-result, var(--ink)); }
 .ly-mark.missing { fill:none; stroke-width:1.5; }
@@ -327,7 +327,11 @@ tr.detail > td { background:var(--box); max-width:none; padding:.6rem .8rem .8re
 .ly-row.missing .ly-name { color:var(--ly-dim); }
 .ly-group { display:flex; gap:var(--gap); }
 /* A study: its kind of image, filled in the row's color when the row includes it. */
-.ly-box { flex:none; width:var(--box); height:1.45rem; box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center; gap:2px; border-radius:3px; border:1px solid var(--ly-ghost); color:var(--ly-dim); font:700 .66rem/1 var(--sans); letter-spacing:.02em; }
+.ly-box { flex:none; width:var(--box); height:1.45rem; box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center; gap:2px; border-radius:3px; border:1px solid var(--ly-ghost); color:var(--ly-ink); font:700 .72rem/1 var(--sans); letter-spacing:.02em; }
+.ly-box.off { color:var(--ly-dim); }
+.ly-star { font-size:.7rem; line-height:1; }
+.ly-name .ly-star { color:var(--ly-ink); }
+.ly-samples { gap:3px; }
 .ly-box.on { color:var(--ly-on-ink); }
 .ly-row.fact .ly-box.on { background:var(--ly-fact); border-color:var(--ly-fact); }
 .ly-row.policy .ly-box.on { background:var(--ly-policy); border-color:var(--ly-policy); }
@@ -354,7 +358,9 @@ tr.detail > td { background:var(--box); max-width:none; padding:.6rem .8rem .8re
 .ly-legend ul { display:flex; flex-wrap:wrap; gap:.3rem 1rem; list-style:none; margin:0; padding:0; }
 .ly-legend li { display:inline-flex; align-items:center; gap:.35rem; }
 .ly-legend p { margin:0; max-width:60ch; }
-.ly-legend .layers { display:inline-flex; container-type:normal; }
+.ly-legend .layers { display:inline-flex; flex:none; gap:3px; container-type:normal; }
+/* A sample box takes its row's colors, without the row's own layout. */
+.ly-legend .ly-row { display:contents; }
 .ly-legend.film { color:var(--on-film-dim); }
 .ly-legend.film .layers { --ly-fact:var(--fact-film); --ly-ghost:var(--film-line); --ly-dim:var(--on-film-dim); --ly-on-ink:var(--film); }
 .ly-legend.film .ly-mark.fact { fill:var(--fact-film); } .ly-legend.film .ly-mark.policy { fill:var(--policy-film); } .ly-legend.film .ly-mark.choice { fill:var(--choice-film); } .ly-legend.film .ly-mark.outcome { fill:var(--on-film); }

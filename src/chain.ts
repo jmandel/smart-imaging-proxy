@@ -21,7 +21,8 @@ export type RowKind = "records" | "relationship" | "age" | "label" | "referral" 
  * for a guardian's or a share's row, whose route it is.
  */
 export interface ChainRow { level: Level; kind: RowKind; name: string; has: string[]; boxes?: false; missing?: true; by?: string; route?: string; }
-export interface ChainColumn { id: string; site?: string; title: string; modality: string; locked?: true; }
+/** `cited` marks the study a referral cites, so its box can be told apart from others of its kind. */
+export interface ChainColumn { id: string; site?: string; title: string; modality: string; locked?: true; cited?: true; }
 /** `viewer` says the chain is a viewer's own, which counts only what they may know of. */
 export interface Chain { columns: ChainColumn[]; rows: ChainRow[]; viewer: boolean; }
 export type Viewer = { user: string; patient: string; app: string } | { service: string; patient: string; cited?: string };
@@ -65,7 +66,7 @@ export function chainFor(input: { snap: Snapshot; studies: CatalogStudy[]; now: 
   const sitesText = (sites: string[]) => list([...sites].sort().filter(x => !known || knownSites.has(x)).map(siteWord)) || "no site";
   const name = patientFirst(viewer.patient);
   const rows: ChainRow[] = [];
-  const columns = (): ChainColumn[] => all.map(s => ({ id: s.id, site: s.site, title: titleOf(s), modality: modalityOf(s), ...(narrator && (s.labels ?? []).length ? { locked: true as const } : {}) }));
+  const columns = (): ChainColumn[] => all.map(s => ({ id: s.id, site: s.site, title: titleOf(s), modality: modalityOf(s), ...(narrator && (s.labels ?? []).length ? { locked: true as const } : {}), ...("cited" in viewer && viewer.cited === s.id ? { cited: true as const } : {}) }));
   const done = (): Chain => ({ columns: columns(), rows, viewer: !narrator });
   // The narrator's chain starts from every study the patient has. A viewer's never counts them.
   if (narrator) rows.push({ level: "fact", kind: "records", name: `${name}'s studies: ${all.length}`, has: ids(() => true) });
@@ -73,13 +74,13 @@ export function chainFor(input: { snap: Snapshot; studies: CatalogStudy[]; now: 
   if ("service" in viewer) {
     const service = nameOf(ref("service", viewer.service));
     const cited = viewer.cited ? all.find(s => s.id === viewer.cited) : undefined;
-    if (cited) rows.push({ level: "fact", kind: "referral", name: `The referral cites ${name}'s study ${quoted(titleOf(cited))}, and the service searches for that one study`, has: [cited.id] });
+    if (cited) rows.push({ level: "fact", kind: "referral", name: `The referral cites ${name}'s study ${quoted(titleOf(cited))}`, has: [cited.id] });
     const ps = model.preAuthorized(snap, viewer.service, viewer.patient) as ServiceAccessPolicy[];
     const t = { client_id: viewer.service };
     rows.push(ps.length
       ? { level: "policy", kind: "service", name: `Imaging network rule: ${service} can see ${ps.map(p => serviceWhat(p, name, all, titleOf)).join(", and ")}`, has: ids(s => model.evaluate(snap, t, s).release !== "none") }
       : { level: "policy", kind: "service", name: `No rule lets ${service} see ${name}'s studies`, has: [], missing: true });
-    rows.push({ level: "outcome", kind: "outcome", name: "What the service found", has: ids(s => (!viewer.cited || s.id === viewer.cited) && model.evaluate(snap, t, s).release !== "none") });
+    rows.push({ level: "outcome", kind: "outcome", name: cited ? "What the service found when it searched for that study" : "What the service found", has: ids(s => (!viewer.cited || s.id === viewer.cited) && model.evaluate(snap, t, s).release !== "none") });
     return done();
   }
 
@@ -90,7 +91,7 @@ export function chainFor(input: { snap: Snapshot; studies: CatalogStudy[]; now: 
   /** A guardian's route: the relationship on file, the patient's age, labels, and the rule for that age. */
   const guardianRows = (who: string) => {
     const rel = model.guardianOf(snap, ref("user", who), P);
-    rows.push({ level: "fact", kind: "relationship", name: `${userFirst(who)} is ${name}'s guardian, on file`, has: [], boxes: false });
+    rows.push({ level: "fact", kind: "relationship", name: `${userFirst(who)} is on file as ${name}'s guardian`, has: [], boxes: false });
     const age = ageOn(patientAttributes(viewer.patient)?.birthDate, input.now);
     if (age !== undefined) rows.push({ level: "fact", kind: "age", name: `${name} is ${age}`, has: [], boxes: false });
     if (narrator) for (const s of all) for (const label of s.labels ?? []) rows.push({ level: "fact", kind: "label", name: `${name}'s study ${quoted(titleOf(s))} is labeled ${LABEL_WORDS[label] ?? label.replaceAll("-", " ")}`, has: [s.id] });
@@ -100,7 +101,7 @@ export function chainFor(input: { snap: Snapshot; studies: CatalogStudy[]; now: 
       return;
     }
     const ok = (s: CatalogStudy) => model.baseline(snap, ref("user", who), P, s).ok;
-    rows.push({ level: "policy", kind: "guardian", name: `Imaging network rule: ${guardianWhat(policies[0] as GuardianAccessPolicy, narrator)}`, has: ids(ok), by: who, route: rel?.id });
+    rows.push({ level: "policy", kind: "guardian", name: `Imaging network rule: ${guardianWhat(policies[0] as GuardianAccessPolicy)}`, has: ids(ok), by: who, route: rel?.id });
   };
 
   const share = snap.shares.find(s => s.with === U && s.patient === P);
@@ -126,11 +127,14 @@ export function chainFor(input: { snap: Snapshot; studies: CatalogStudy[]; now: 
       rows.push({ level: "choice", kind: "share", name: `${sharer} shares ${what} with ${viewerName}`, has: ids(s => model.userRoute(snap, U, P, s, fhirUser, [share.id ?? ""]).ok), by: viewer.user, route: share.id });
     } else rows.push({ level: "choice", kind: "share", name: sharerIsPatient ? `${userFirst(from!)} doesn't share ${whose(viewer.patient, from)} studies with ${viewerName}` : `No one shares ${name}'s studies with ${viewerName}`, has: [], missing: true });
   }
+  // A person may let an app see only what they can see themselves: the approval says what that is.
+  const sharer = share && userFirst(share.from.replace(/^user:/, ""));
+  const within = isPatient ? "" : guardian ? `, out of what ${viewerName} can see as ${name}'s guardian` : share ? `, out of what ${sharer} shares with ${viewerName}` : "";
   const approval = snap.approvals.find(a => a.by === U && a.app === ref("app", viewer.app) && a.patient === P);
   const app = APP_NAMES[viewer.app] ?? viewer.app;
   const theirs = whose(viewer.patient, viewer.user);
   rows.push(approval
-    ? { level: "choice", kind: "approval", name: `${viewerName} lets the ${app} see ${theirs} studies at ${approval.sites ? sitesText(approval.sites) : "every site"}`, has: atSites(approval.sites) }
+    ? { level: "choice", kind: "approval", name: `${viewerName} lets the ${app} see ${theirs} studies at ${approval.sites ? sitesText(approval.sites) : "every site"}${within}`, has: atSites(approval.sites) }
     : { level: "choice", kind: "approval", name: `No approval from ${viewerName} lets the ${app} see ${theirs} studies`, has: [], missing: true });
   const t = { client_id: viewer.app, sub: viewer.user, fhirUser, patient: viewer.patient };
   rows.push({ level: "outcome", kind: "outcome", name: "What the app can see", has: ids(s => model.evaluate(snap, t, s).release !== "none") });
@@ -140,14 +144,13 @@ export function chainFor(input: { snap: Snapshot; studies: CatalogStudy[]; now: 
 /** Who a sharing rule lets share. */
 const sharingWho = (from: ("patient" | "guardian")[]) => from.length === 2 ? "patients and guardians" : from[0] === "guardian" ? "guardians" : "patients";
 /**
- * A guardian-access rule as a sentence: the ages it covers, and what it lets guardians see. Only the
- * narrator's names the labels it excepts: a viewer's never names a label.
+ * A guardian-access rule as a sentence: the ages it covers, and what it lets guardians see. It's the
+ * rule's general text, the same whether or not any study carries the label, so it names no study.
  */
-function guardianWhat(p: GuardianAccessPolicy, narrator: boolean) {
+function guardianWhat(p: GuardianAccessPolicy) {
   const band = bandText(p.when.age);
   const ages = band.startsWith("under") ? band : band.startsWith("aged") ? band : `aged ${band}`;
   const except = (p.except ?? []).map(l => `studies labeled ${LABEL_WORDS[l] ?? l.replaceAll("-", " ")}`);
-  if (except.length && !narrator) return `guardians of patients ${ages} can see their studies, except any marked private to the patient`;
   return `guardians of patients ${ages} can see ${except.length ? `everything except ${list(except)}` : "all the patient's studies"}`;
 }
 /** What a service-access rule lets a service see, as a sentence names it. */

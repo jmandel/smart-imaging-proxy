@@ -141,7 +141,7 @@ for (const backend of BACKENDS) {
       expect(shared.chain.rows.map((r: any) => [r.level, r.name, r.has.length])).toEqual([
         ["policy", "Imaging network rule: patients and guardians can share the studies they can see", 5],
         ["choice", "Josh shares his studies at Lakeside and Riverside with Sam", 5],
-        ["choice", "Sam lets the Health Records App see Josh's studies at every site", 5],
+        ["choice", "Sam lets the Health Records App see Josh's studies at every site, out of what Josh shares with Sam", 5],
         ["outcome", "What the app can see", 5],
       ]);
       // A study at a site Josh didn't share isn't Sam's to see, or to hear about.
@@ -356,7 +356,7 @@ describe("services", () => {
     expect(after.status).toBe("results");
     expect(after.headline).toBe("Hand referral service can see the study this referral cites");
     expect(b.released(after)).toEqual([SMALL]);
-    expect(after.chain.rows.map((r: any) => [r.level, r.name, r.has])).toEqual([["fact", "The referral cites Josh's study “XR wrist left, 3 views”, and the service searches for that one study", [SMALL]], ["policy", "Imaging network rule: the hand referral service can see Josh's X-rays", [SMALL]], ["outcome", "What the service found", [SMALL]]]);
+    expect(after.chain.rows.map((r: any) => [r.level, r.name, r.has])).toEqual([["fact", "The referral cites Josh's study “XR wrist left, 3 views”", [SMALL]], ["policy", "Imaging network rule: the hand referral service can see Josh's X-rays", [SMALL]], ["outcome", "What the service found when it searched for that study", [SMALL]]]);
     expect(stack.store.policiesOf("service-access").map(p => p.id)).toEqual(["hand-referral"]);
     expect((await b.retrieve(SMALL)).status).toBe(200);
   }, 120000);

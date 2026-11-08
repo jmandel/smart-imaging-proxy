@@ -410,8 +410,14 @@ describe("Explore", () => {
     expect([riley.headline, riley.detail]).toEqual(["Riley's studies Sam can see", "The Health Records App can see this one."]);
     expect(ids(riley)).toEqual(RILEY);
     // The chain names the guardian's age band, and no label: the one study Sam may know of passes every row.
-    expect(riley.chain.rows.map((r: any) => [r.level, r.name, r.has])).toEqual([["fact", "Sam is Riley's guardian, on file", []], ["fact", expect.stringMatching(/^Riley is 1[5-7]$/), []], ["policy", "Imaging network rule: guardians of patients aged 13 to 17 can see their studies, except any marked private to the patient", RILEY], ["choice", "Sam lets the Health Records App see Riley's studies at every site", RILEY], ["outcome", "What the app can see", RILEY]]);
-    expect(JSON.stringify(riley)).not.toContain("confidential");
+    expect(riley.chain.rows.map((r: any) => [r.level, r.name, r.has])).toEqual([["fact", "Sam is on file as Riley's guardian", []], ["fact", expect.stringMatching(/^Riley is 1[5-7]$/), []], ["policy", "Imaging network rule: guardians of patients aged 13 to 17 can see everything except studies labeled confidential", RILEY], ["choice", "Sam lets the Health Records App see Riley's studies at every site, out of what Sam can see as Riley's guardian", RILEY], ["outcome", "What the app can see", RILEY]]);
+    // The rule's general text names a label, whether or not any study carries it. Nothing that identifies the hidden study is here:
+    // not its id, UID, title or site, no lock, no label row, and no count that includes it.
+    const hidden = stack.catalog.allStudies().find(x => x.id === "syn-riley-skin-slide-2023")!;
+    for (const trace of [hidden.id, hidden.uid, hidden.title!, "Skin biopsy", "skin biopsy", "Northside", "confidential-adolescent", "keeps it from guardians"]) expect([trace, JSON.stringify(riley).includes(trace)]).toEqual([trace, false]);
+    expect(riley.chain.columns.some((c: any) => c.locked)).toBe(false);
+    expect(riley.chain.rows.some((r: any) => r.kind === "label" || r.kind === "records")).toBe(false);
+    expect(riley.sheets.length).toBe(1);
     const denied = await b.pick(SAM_ACCOUNT, { patient: "josh-example" });
     expect(denied.status).toBe("no-access");
     expect(denied.headline).toBe("Sam can't see Josh's studies");

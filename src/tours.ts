@@ -40,7 +40,6 @@ const first = (user: string) => USERS[user]?.name.split(" ")[0] ?? user;
 const list = (items: string[]) => items.length < 2 ? items.join("") || "nothing" : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const sorted = (xs: Iterable<string>) => [...xs].sort();
-const cap = (s: string) => s && s[0]!.toUpperCase() + s.slice(1);
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 /** What a check compares: a value, how it reads in plain words, and its technical detail. */
@@ -258,15 +257,17 @@ function shareStep(id: string, sites: (r: Run) => string[], title: Text): TourSt
 
 /** The referral this tour's service works from, and one for a study outside its rule. */
 const referralOf = (w: World, modality: string) => referralsFrom(w.catalog, w.urls.clinicalFhir).find(x => { const st = w.catalog.allStudies().find(s => s.id === x.study)!; return st.patient === JOSH_PATIENT && st.series.some(s => s.modality === modality); });
+const REFUSED_NO_RULE = "Refused: there's no rule yet that lets the service see any of Josh's studies";
+const notCovered = (title: string) => `It finds nothing: the service's rule covers Josh's X-rays only, and the referral cites ${title}`;
 function serviceSearchStep(id: string, modality: string, title: Text): TourStep {
   return {
     id, title, actor: "The service",
     expect(r, m) {
       const ref = referralOf(r.world, modality);
       if (!ref) return { value: "none", text: "No referral here cites such a study" };
-      if (!m.serviceMaySearch(SERVICE, JOSH_PATIENT)) return { value: 403, text: "Refused: no rule lets the service search Josh's studies", detail: "HTTP 403 Forbidden" };
+      if (!m.serviceMaySearch(SERVICE, JOSH_PATIENT)) return { value: 403, text: REFUSED_NO_RULE, detail: "HTTP 403 Forbidden" };
       const ids = m.serviceReach(SERVICE, JOSH_PATIENT).filter(s => s.id === ref.study).map(s => s.id);
-      return { value: ids, text: ids.length ? `It finds the study the referral cites: ${r.title(ref.study)}` : `It finds nothing: no rule lets it see ${r.title(ref.study)}` };
+      return { value: ids, text: ids.length ? `It finds the study the referral cites: ${r.title(ref.study)}` : notCovered(r.title(ref.study)), detail: ids.length ? "HTTP 200, with the study" : "HTTP 200, with no studies" };
     },
     async act(r) {
       const ref = referralOf(r.world, modality);
@@ -276,10 +277,10 @@ function serviceSearchStep(id: string, modality: string, title: Text): TourStep 
       const query = new URLSearchParams({ patient: cited.patientRef!, identifier: `${cited.system}|${cited.accession}`, _include: "ImagingStudy:endpoint" }).toString();
       const s = await r.c.search(r.state.service, query, SERVICE);
       r.state.serviceFound = s.studies;
-      const detail = `A FHIR search by patient and the report's accession number, ${cited.accession}. HTTP ${s.status}.`;
-      if (s.status !== 200) return { value: s.status, text: "Refused: no rule lets the service search Josh's studies", detail };
+      const detail = `A FHIR search by patient and the report's accession number, ${cited.accession}. HTTP ${s.status}${s.status === 200 ? `, with ${Object.keys(s.studies).length ? "the study" : "no studies"}` : ""}.`;
+      if (s.status !== 200) return { value: s.status, text: REFUSED_NO_RULE, detail };
       const ids = Object.keys(s.studies);
-      return { value: ids, text: ids.length ? `It finds the study the referral cites: ${r.title(ids[0]!)}` : `It finds nothing: no rule lets it see ${r.title(ref.study)}`, detail };
+      return { value: ids, text: ids.length ? `It finds the study the referral cites: ${r.title(ids[0]!)}` : notCovered(r.title(ref.study)), detail };
     },
   };
 }
@@ -335,8 +336,8 @@ const TOURS: Tour[] = [
   },
   {
     id: "revoke", title: "Josh stops sharing with Sam",
-    premise: () => "Before, the app Sam uses sees all of Josh's studies. Josh stops sharing, and Sam's approval of the app goes with the share, so after it the app sees none. A study link it already has works until it expires.",
-    summary: "Josh stops sharing with Sam, and Sam's approval of the app goes with the share. The app's next search finds nothing. A study link the app already had keeps working until it expires, a few minutes later, and is then refused too.",
+    premise: () => "Josh has shared all his studies with Sam, and the app Sam uses sees them. Then Josh stops sharing, Sam's approval of the app goes with the share, and the app sees none. A study link the app already had keeps working for a few minutes, until it expires.",
+    summary: "Josh has shared all his studies with Sam, and the app Sam uses sees them. Then Josh stops sharing, and Sam's approval of the app goes with the share. The app's next search finds nothing. A study link the app already had keeps working for a few minutes, until it expires, and is then refused too.",
     detail: "A study link is a signed URL. Until it expires, the proxy answers from the URL alone. After that, it asks the Imaging Server, and current policy decides.",
     knows: joshStudies,
     viewer: { user: SAM, patient: JOSH_PATIENT, app: APP },
@@ -417,7 +418,7 @@ const TOURS: Tour[] = [
       launchStep("launch", SAM, RILEY, () => undefined, "Sam signs in, picks Riley, and lets the app see Riley's studies"),
       searchStep("search", SAM, RILEY, "The app searches Riley's studies"),
       {
-        id: "birthday", title: "The demo clock moves to the day after Riley's 18th birthday", actor: "The clock",
+        id: "birthday", title: "The demo clock moves to the day after Riley's 18th birthday", actor: "Setting: the demo clock",
         quiet: "Only the demo clock moved. No request was made.",
         expect: r => { const m = modelOf(r.world, undefined, Math.max(r.world.clock.now(), eighteenth(RILEY) + 86400)); return canSeeText(SAM, RILEY, m.approvableSites(SAM, RILEY)); },
         async act(r) { r.world.clock.advance(Math.max(0, eighteenth(RILEY) + 86400 - r.world.clock.now())); return accessOf(r, SAM, RILEY); },
@@ -430,13 +431,13 @@ export const tourById = (id: string) => TOURS.find(t => t.id === id);
 export const PROTOCOL_CHECKS = FLOWS.filter(f => f.group === "protocol");
 /** Each protocol check in plain words, for the home page: a title, and what it shows in one line. */
 const CHECK_WORDS: Record<string, { title: string; summary: string }> = {
-  "token-refresh": { title: "An app renews its sign-in", summary: "The app gets a fresh access token and keeps using the same study links." },
+  "token-refresh": { title: "An app renews its sign-in", summary: "The app's sign-in is renewed, and the study links it already has keep working." },
   viewer: { title: "An app hands a study link to an image viewer", summary: "A viewer inside the app can use the app's access. A separate viewer app needs its own approval." },
-  "decision-outage": { title: "The Imaging Server can't be reached", summary: "Study links that haven't expired keep working, and everything else is refused." },
-  attacks: { title: "Altered links and borrowed tokens get nothing", summary: "Tries to get around the checks on study links and tokens are all refused." },
-  "transfer-syntax": { title: "Asking for images in different formats", summary: "Each image format an app asks for gets the answer the SMART Imaging guide calls for." },
-  truncation: { title: "An image store stops partway", summary: "When the store behind the proxy stops partway through a study, the app can tell the study is incomplete." },
-  metadata: { title: "Study details hide internal addresses", summary: "Study details pass through the proxy without exposing internal server names, and their links still work." },
+  "decision-outage": { title: "The service that decides access is down", summary: "Study links that haven't expired keep working, and everything else is refused." },
+  attacks: { title: "Altered links and borrowed sign-ins get nothing", summary: "Attempts to get around the checks on study links and sign-ins are all refused." },
+  "transfer-syntax": { title: "Asking for images in different formats", summary: "Each image format an app asks for gets the answer the guide calls for." },
+  truncation: { title: "An image store stops partway", summary: "When the store holding the images stops partway through a study, the app can tell the study is incomplete." },
+  metadata: { title: "Study details hide internal addresses", summary: "Study details don't expose the names of internal servers, and their links still work." },
   "paged-search": { title: "Searching a few studies at a time", summary: "The app pages through search results, and the rules apply again on every page." },
 };
 
@@ -467,9 +468,8 @@ export function createTours(world: World, clients: Record<string, BackendClient>
     return [
       ...["josh", SAM].map(u => ({ name: first(u), line: PEOPLE_LINES[u]! })),
       { name: "Riley", line: RILEY_LINE },
-      ...["alex-neighbor", "robin"].map(u => ({ name: first(u), line: PEOPLE_LINES[u]! })),
       { name: "Health Records App", line: APP_LINE },
-      ...Object.entries(SERVICE_LINES).map(([id, line]) => ({ name: cap(id.replaceAll("-", " ")), line })),
+      { name: "Hand referral service", line: SERVICE_LINES[SERVICE]! },
       { name: "The imaging network", line: `${NETWORK_LINE} Its sites are ${list(sites)}.` },
     ];
   };

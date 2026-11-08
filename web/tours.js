@@ -10,8 +10,9 @@ const windowMode = () => signInMode() === "window";
 
 function checksHtml() {
   const done = Object.values(checks).filter(c => c.ok !== undefined), busy = Object.values(checks).some(c => c.running);
-  return `<section class="checks-panel" aria-labelledby="h-checks"><h2 id="h-checks">Protocol checks</h2>
-      <div class="row"><button type="button" class="secondary" id="run-checks" ${busy ? "disabled" : ""}>Run checks</button>
+  return `<section class="checks-panel" aria-labelledby="h-checks"><h2 id="h-checks">Checks against the guide</h2>
+      <p class="note">This demo follows the SMART Imaging Access guide, a published standard for how apps and services get medical images. Each check below acts out one situation the guide covers and says whether the demo did what the guide asks.</p>
+      <div class="row"><button type="button" class="secondary" id="run-checks" ${busy ? "disabled" : ""}>Run all checks</button>
         ${busy ? `<span class="note" role="status">${done.length} of ${list.checks.length} run</span>` : done.length ? `<span class="${done.every(c => c.ok) ? "verdict ok" : "verdict bad"}" role="status">${done.filter(c => c.ok).length} of ${done.length} passed</span>` : ""}</div>
       <ul class="check-list">${list.checks.map(c => { const r = checks[c.id]; return `<li><span class="verdict ${r?.ok ? "ok" : r?.ok === false ? "bad" : ""}">${r?.running ? '<span class="spinner" aria-hidden="true"></span>' : r ? (r.ok ? "Pass" : "Fail") : ""}</span><span class="check-what"><b>${esc(c.title)}</b><span>${esc(c.summary)}</span></span>${r?.activityUrl ? `<a href="${esc(r.activityUrl)}">Activity log</a>` : ""}${r?.failures?.length ? `<span class="fail-detail">${r.failures.map(f => esc(`${f.step}: ${f.label}${f.detail ? ` (${f.detail})` : ""}`)).join("<br>")}</span>` : ""}</li>`; }).join("")}</ul>
     </section>`;
@@ -19,16 +20,17 @@ function checksHtml() {
 
 // The home page: who's who, then a card per story, on film, with the chain it ends on.
 function homeHtml() {
-  const locked = list.tours.some(t => t.chains.some(c => c.chain.columns.some(x => x.locked)));
+  const has = k => list.tours.some(t => t.chains.some(c => c.chain.columns.some(x => x[k])));
+  const locked = has("locked"), cited = has("cited");
   return `<div class="home-head"><h1 id="tour-title" tabindex="-1">Tours</h1><a href="/explore">Explore on your own</a></div>
     ${pageError ? `<p class="error" role="alert">${esc(pageError)}</p>` : ""}
     <section class="cast" aria-labelledby="h-cast"><h2 id="h-cast">Who's who</h2><dl>${list.cast.map(c => `<div><dt>${esc(c.name)}</dt><dd>${esc(c.line)}</dd></div>`).join("")}</dl></section>
-    <section class="key film" aria-labelledby="h-key"><h2 id="h-key">Reading the diagrams</h2>${Layers.legend({ locked, film: true })}</section>
+    <section class="key film" aria-labelledby="h-key"><h2 id="h-key">Reading the diagrams</h2>${Layers.legend({ locked, cited, film: true })}</section>
     <ul class="stories">${list.tours.map(t => `<li class="story">
       <h2><button type="button" class="story-go" data-start="${esc(t.id)}">${esc(t.title)}</button></h2>
       <p>${esc(t.premise)}</p>
       ${Layers.chains(t.chains, { film: true, label: `${t.title}: why the app sees what it sees` })}
-      <span class="story-steps">${esc(plural(t.steps, "step"))}</span></li>`).join("")}</ul>
+</li>`).join("")}</ul>
     ${checksHtml()}`;
 }
 
@@ -62,7 +64,7 @@ function standingHtml() {
   const body = change >= 0 && steps[change].result
     ? Layers.chains([{ label: state.tour.change.before, chain: chainBefore(change) }, { label: state.tour.change.after, chain: latest }])
     : `<p class="ly-pane-label">${esc(caption)}</p>${Layers.chain(latest)}`;
-  return `<div class="tour-chain"><h2 class="sr-only">Why the app sees what it sees</h2>${body}${Layers.legend({ locked })}</div>`;
+  return `<div class="tour-chain"><h2 class="sr-only">Why the app sees what it sees</h2>${body}${Layers.legend({ locked, cited: latest.columns.some(x => x.cited) })}</div>`;
 }
 
 function runnerHtml() {

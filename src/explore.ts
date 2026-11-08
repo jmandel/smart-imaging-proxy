@@ -352,12 +352,20 @@ export function createExplore(world: World, clients: Record<string, BackendClien
     return { session: s };
   }
 
+  /** The diagram's title, from what it shows: who sees what, or who can't. */
+  function whyTitle(s: Session) {
+    const st = s.start, shown = s.sheets.filter(x => x.released).length, app = APP_NAMES[APP];
+    if (st.kind === "service") return `Why the ${serviceName(st.client).toLowerCase()} finds ${shown ? "this study" : "nothing"}`;
+    const who = first(s.signedIn ?? st.user), whose = s.patient ? possessive(patientFirst(s.patient)) : "anyone's";
+    if (s.status !== "results") return `Why ${who} can't see ${whose} studies`;
+    return shown ? `Why the ${app} sees ${shown === 1 ? "this study" : "these studies"}` : `Why the ${app} sees none of ${whose} studies`;
+  }
   function view(s: Session) {
     const st = s.start;
     const who = st.kind === "user" ? { kind: "user", id: s.signedIn ?? st.user, name: first(s.signedIn ?? st.user), first: first(s.signedIn ?? st.user), asked: st.user } : { kind: "service", id: st.client, name: serviceName(st.client), first: serviceName(st.client), referral: st.referral };
     return {
       session: s.name, running: s.running, status: s.status, who, patient: s.patient, patientName: s.patient && patientFirst(s.patient),
-      headline: s.running ? undefined : s.headline, detail: s.detail, tech: s.running ? undefined : s.tech, chain: s.running ? undefined : s.chain, sheets: s.sheets, empty: s.empty, actions: s.actions,
+      headline: s.running ? undefined : s.headline, detail: s.detail, tech: s.running ? undefined : s.tech, whyTitle: whyTitle(s), chain: s.running ? undefined : s.chain, sheets: s.sheets, empty: s.empty, actions: s.actions,
       authUrl: s.c.pendingAuthUrl ?? null, mode: st.kind === "user" ? st.mode : "scripted", tokenHash: s.tokenHash,
       activityUrl: `${world.prefix}/activity?session=${encodeURIComponent(s.name)}`,
       retrievals: [...s.retrievals.values()],
