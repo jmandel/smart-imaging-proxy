@@ -1,4 +1,4 @@
-// The demo's own web server: Explore, Tours and the activity log, backed by the real services, and the
+// The demo's own web server: the tours, which are its home page, Explore, and the activity log, backed by the real services, and the
 // flow API the checks and tests run flows through. `/s/{scope}/...` is that scope's own: its Explore,
 // its tour, its activity, its settings and its redirects. Starting a tour or a flow mints a scope for it.
 import { join } from "node:path";
@@ -118,8 +118,8 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     async function fetch(req: Request): Promise<Response> {
       const url = new URL(req.url);
       const p = url.pathname;
-      if (p === "/" || p === "/index.html") return file("index.html");
-      if (p === "/tours") return file("tours.html");
+      if (p === "/" || p === "/tours") return file("tours.html");
+      if (p === "/explore") return file("index.html");
       if (p === "/activity") return file("activity.html");
       if (p.startsWith("/api/explore/")) return explore.fetch(req, url);
       if (p === "/api/tours" || p.startsWith("/api/tours/") || p.startsWith("/api/checks/")) {
@@ -231,7 +231,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
   }
 
   // The same files in every world: the pages work out their scope from their own URL.
-  const STATIC: Record<string, string> = Object.fromEntries(["styles.css", "page.js", "event-words.js", "explore.js", "tours.js", "activity.js", "thumbs.js", "fonts/atkinson-next.woff2", "fonts/atkinson-mono.woff2"].map(f => [`/${f}`, f]));
+  const STATIC: Record<string, string> = Object.fromEntries(["styles.css", "page.js", "event-words.js", "layers.js", "explore.js", "tours.js", "activity.js", "thumbs.js", "fonts/atkinson-next.woff2", "fonts/atkinson-mono.woff2"].map(f => [`/${f}`, f]));
   /**
    * viewer-kit's files, from the pinned download, never from the repository: checked once, here at
    * startup, and served only as the bytes that were checked. With none that check out, every one is a

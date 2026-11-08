@@ -1,4 +1,5 @@
-// Tours: four short stories, each in a scope of its own. A step is an action only. What it should come
+// Tours: six short stories, the demo's curated set, each in a scope of its own. Each one's card on the
+// home page draws the layer chain its story ends on. A step is an action only. What it should come
 // to is computed by the reference model (src/reference-model.ts) from the scope's policy and catalog at
 // that moment, and the check compares the system's real answer with the model's. "Run checks" runs the
 // protocol flows in src/flows as one pass/fail list.
@@ -10,25 +11,29 @@ import { Ctx, StepStopped } from "./flows/runtime";
 import { cascade, referenceModel, type RefStudy } from "./reference-model";
 import { citedBy, referralsFrom, reportTitle } from "./referrals";
 import { RULE_SETS } from "./rule-presets";
-import { patientAttributes } from "./stores";
+import { GUARDIANS_ON_FILE, POLICIES_ON_FILE, patientAttributes } from "./stores";
+import { chainFor, type Chain, type Viewer } from "./chain";
 import { inScope, recordEvent, runInSession, sessionKey, traceSettled, withSpan, type EventRecord } from "./trace";
 import { forViewer, viewerKnows } from "./viewer-events";
 import type { World } from "./world";
 import type { Stack } from "./stack";
 
 const APP = "portal-app";
-const JOSH = "josh", SAM = "sam-caregiver", JOSH_PATIENT = "josh-example";
+const JOSH = "josh", SAM = "sam-caregiver", JOSH_PATIENT = "josh-example", RILEY = "riley-example";
 const SERVICE = "hand-referral-service";
 
 /** A world's policy document now, with every row's id and basis. */
 const documentOf = (world: World): PolicyDocument => { const { revision: _r, ...doc } = world.store.snapshot(); return doc; };
-/** The reference model over a world as it is now, or with its document changed as given. */
-export function modelOf(world: World, change?: (doc: PolicyDocument) => PolicyDocument) {
+/** A catalog's studies, as the reference model reads them. */
+export const refStudies = (world: World): RefStudy[] => world.catalog.allStudies().map(st => ({ id: st.id, patient: st.patient, site: st.site, labels: st.labels, date: st.date, modalities: [...new Set(st.series.map(x => x.modality))], seriesUids: st.series.map(x => x.uid) }));
+/** The reference model over a world as it is now, or with its document changed as given, or at another time. */
+export function modelOf(world: World, change?: (doc: PolicyDocument) => PolicyDocument, at?: number) {
   const snap = documentOf(world);
   const doc = change ? change(snap) : snap;
-  const studies: RefStudy[] = world.catalog.allStudies().map(st => ({ id: st.id, patient: st.patient, site: st.site, labels: st.labels, date: st.date, modalities: [...new Set(st.series.map(x => x.modality))], seriesUids: st.series.map(x => x.uid) }));
-  return referenceModel({ doc, studies, now: world.clock.now(), birthDate: p => patientAttributes(p)?.birthDate, patientOf: u => USERS[u]?.patient });
+  return referenceModel({ doc, studies: refStudies(world), now: at ?? world.clock.now(), birthDate: p => patientAttributes(p)?.birthDate, patientOf: u => USERS[u]?.patient });
 }
+/** Seconds since the epoch at a patient's 18th birthday, at midnight UTC. */
+const eighteenth = (patient: string) => { const [y, m, d] = patientAttributes(patient)!.birthDate!.split("-").map(Number); return Date.UTC(y! + 18, m! - 1, d!) / 1000; };
 
 const first = (user: string) => USERS[user]?.name.split(" ")[0] ?? user;
 const list = (items: string[]) => items.length < 2 ? items.join("") || "nothing" : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
@@ -45,6 +50,8 @@ interface Run {
 }
 interface TourStep {
   id: string; title: string; actor: string;
+  /** A step whose action is a person signing in, which can happen in a window of their own. */
+  signsIn?: boolean;
   /** The policy as it will be once this step's action is done: the expectation comes from it, and the store's policy after the step must match it. */
   intends?: (r: Run, doc: PolicyDocument) => PolicyDocument;
   expect(r: Run, m: ReturnType<typeof modelOf>): Answer;
@@ -52,9 +59,21 @@ interface TourStep {
 }
 interface Tour {
   id: string; title: string; summary: string; note?: string; steps: TourStep[];
+  /** One line, for its card. */
+  premise: string;
   /** The studies the person taking the tour knows of, beyond what its events show: those of the patient they act as, or that a referral cites. */
   knows(r: Run): string[];
+  /** Whose access the story follows, for its layer chain. */
+  viewer: Viewer;
+  /** Where the story ends: the policy on file with the story's rows added, and the time, which its card's chain is drawn from. */
+  scene(world: World): { doc: PolicyDocument; now?: number };
 }
+
+/** What's on file, with ids, as a story's scene starts from it. */
+const onFile = (): PolicyDocument => ({ relationships: GUARDIANS_ON_FILE.map((r, i) => ({ ...r, id: `on-file-${i}` })), policies: [...POLICIES_ON_FILE], shares: [], approvals: [] });
+const relId = (doc: PolicyDocument, user: string, patient: string) => doc.relationships.find(r => r.subject === `user:${user}` && r.relation === "guardian_of" && r.object === `patient:${patient}`)!.id!;
+const sitesOf = (world: World, patient: string) => sorted(new Set(world.catalog.allStudies().filter(s => s.patient === patient).flatMap(s => s.site ? [s.site] : [])));
+const approve = (doc: PolicyDocument, user: string, patient: string, basis: string[], sites?: string[]): PolicyDocument => ({ ...doc, approvals: [...doc.approvals, { id: `scene-approval-${user}`, by: `user:${user}`, app: `app:${APP}`, patient: `patient:${patient}`, ...(sites ? { sites } : {}), basis }] });
 
 const studyText = (r: Run, ids: string[]) => ids.length ? `${plural(ids.length, "study", "studies")}: ${list(ids.map(id => r.title(id)))}` : "no studies";
 const reachText = (r: Run, ids: string[]) => ({ value: sorted(ids), text: studyText(r, sorted(ids)) });
@@ -110,7 +129,7 @@ const approvalText = (sites: string[] | undefined) => sites === undefined ? "eve
 function launchStep(id: string, user: string, patient: string, sites: (r: Run) => string[] | undefined, title: string): TourStep {
   const allSites = (r: Run) => sorted(new Set(r.world.catalog.allStudies().filter(s => s.patient === patient).flatMap(s => s.site ? [s.site] : [])));
   return {
-    id, title, actor: first(user),
+    id, title, actor: first(user), signsIn: true,
     expect(r, m) {
       if (!m.holds(user, patient)) return { value: { token: false }, text: `No token: ${first(user)} holds no record of ${PATIENT_NAMES[patient]}` };
       const asked = sites(r);
@@ -199,7 +218,7 @@ const accessOf = async (r: Run, user: string, patient: string) => {
 const holdsText = (user: string, patient: string, sites: string[]) => sites.length ? { value: sorted(sites), text: `${first(user)} holds ${PATIENT_NAMES[patient]}'s records at ${list(sorted(sites))}` } : { value: [], text: `${first(user)} holds none of ${PATIENT_NAMES[patient]}'s records` };
 function shareStep(id: string, sites: (r: Run) => string[], title: string): TourStep {
   return {
-    id, title, actor: first(JOSH), intends: (r, doc) => withShare(sites(r))(r, doc),
+    id, title, actor: first(JOSH), signsIn: true, intends: (r, doc) => withShare(sites(r))(r, doc),
     expect: (_r, m) => holdsText(SAM, JOSH_PATIENT, m.approvableSites(SAM, JOSH_PATIENT)),
     async act(r) {
       const status = await r.c.delegate(JOSH, SAM, "caregiver", sites(r), { window: r.mode === "window", patient: JOSH_PATIENT });
@@ -235,12 +254,42 @@ function serviceSearchStep(id: string, modality: string, title: string): TourSte
   };
 }
 
-/** Josh's studies: in a tour where he acts, as the patient, he knows of all of them. */
+
 const joshStudies = (r: Run) => r.world.catalog.allStudies().filter(s => s.patient === JOSH_PATIENT).map(s => s.id);
+const rileyStudies = (r: Run) => r.world.catalog.allStudies().filter(s => s.patient === RILEY).map(s => s.id);
+/** In a tour, the person taking it is its narrator, and knows of every study of the patient it follows. */
 
 const TOURS: Tour[] = [
   {
-    id: "caregiver", title: "Josh shares with a caregiver", summary: "Josh shares some sites with Sam. Sam gives an app one of them. Each link can only narrow what the one before allowed.", knows: joshStudies,
+    id: "own", premise: "An app sees what Josh approves: every site, then one.", title: "Josh sees his own records", summary: "Josh approves an app for every site, then for one. The app sees what each approval releases.", knows: joshStudies,
+    viewer: { user: JOSH, patient: JOSH_PATIENT, app: APP },
+    scene: w => ({ doc: approve(onFile(), JOSH, JOSH_PATIENT, ["self"], sitesOf(w, JOSH_PATIENT).slice(-1)) }),
+    steps: [
+      launchStep("launch", JOSH, JOSH_PATIENT, () => undefined, "Josh signs in and approves the app for every site"),
+      searchStep("search", JOSH, JOSH_PATIENT, "The app searches Josh's studies"),
+      launchStep("narrow", JOSH, JOSH_PATIENT, r => joshSites(r).slice(-1), "Josh signs in again and approves one site"),
+      searchStep("search-again", JOSH, JOSH_PATIENT, "The app searches again"),
+      plainRetrieveStep("outside", JOSH, JOSH_PATIENT, (_r, m) => m.userReach(JOSH, JOSH_PATIENT).find(s => !m.appReach(JOSH, APP, JOSH_PATIENT).some(x => x.id === s.id))?.id, "The app asks for a study at a site Josh didn't approve"),
+    ],
+  },
+  {
+    id: "guardian", premise: "Sam signs in as Riley's guardian, and Riley is 15.", title: "A guardian at 15", summary: "Sam is Riley's guardian, and Riley is 15. Guardian access covers every study but those labeled confidential.", knows: rileyStudies,
+    viewer: { user: SAM, patient: RILEY, app: APP },
+    scene: () => { const doc = onFile(); return { doc: approve(doc, SAM, RILEY, [relId(doc, SAM, RILEY)]) }; },
+    steps: [
+      launchStep("launch", SAM, RILEY, () => undefined, "Sam signs in, picks Riley's records, and approves the app"),
+      searchStep("search", SAM, RILEY, "The app searches Riley's studies"),
+      plainRetrieveStep("labeled", SAM, RILEY, (r, m) => rileyStudies(r).find(id => !m.userReach(SAM, RILEY).some(s => s.id === id)), "The app asks for the study the label keeps from guardians"),
+    ],
+  },
+  {
+    id: "caregiver", premise: "Josh shares some sites with Sam, and Sam gives an app one.", title: "Each link narrows", summary: "Josh shares some sites with Sam. Sam gives an app one of them. Each link can only narrow what the one before allowed.", knows: joshStudies,
+    viewer: { user: SAM, patient: JOSH_PATIENT, app: APP },
+    scene: w => {
+      const some = sitesOf(w, JOSH_PATIENT).slice(0, -1);
+      const doc = { ...onFile(), shares: [{ id: "scene-share", from: `user:${JOSH}`, with: `user:${SAM}`, patient: `patient:${JOSH_PATIENT}`, sites: some, label: "caregiver", basis: "self" }] };
+      return { doc: approve(doc, SAM, JOSH_PATIENT, ["scene-share"], some.slice(0, 1)) };
+    },
     steps: [
       shareStep("share", someSites, "Josh shares some of his sites with Sam, on his account page"),
       launchStep("launch", SAM, JOSH_PATIENT, r => someSites(r).slice(0, 1), "Sam signs in, picks Josh's records, and gives the app one site"),
@@ -249,16 +298,10 @@ const TOURS: Tour[] = [
     ],
   },
   {
-    id: "app-consent", title: "An app sees only the sites Josh approves", summary: "Consent at sign-in is kept as Imaging Server policy, not in the token. Search and retrieval both follow it.", knows: joshStudies,
-    steps: [
-      launchStep("launch", JOSH, JOSH_PATIENT, r => joshSites(r).slice(-1), "Josh signs in and approves the app for one site"),
-      searchStep("search", JOSH, JOSH_PATIENT, "The app searches Josh's studies"),
-      signedRetrieveStep("signed", JOSH, JOSH_PATIENT, "The app retrieves a study with the signed URL search gave it"),
-      plainRetrieveStep("outside", JOSH, JOSH_PATIENT, (_r, m) => m.userReach(JOSH, JOSH_PATIENT).find(s => !m.appReach(JOSH, APP, JOSH_PATIENT).some(x => x.id === s.id))?.id, "The app asks for a study at a site Josh didn't approve"),
-    ],
-  },
-  {
-    id: "revoke", title: "Revoking takes effect", summary: "Search changes at once. A signed URL already given out works until it expires, and then the proxy asks.", knows: joshStudies,
+    id: "revoke", premise: "Josh stops sharing, and what rested on the share goes with it.", title: "Revoking a share", summary: "Search changes at once. A signed URL already given out works until it expires, and then the proxy asks.", knows: joshStudies,
+    viewer: { user: SAM, patient: JOSH_PATIENT, app: APP },
+    // Once the share goes, the approval that rested on it goes too.
+    scene: () => ({ doc: onFile() }),
     steps: [
       shareStep("share", r => joshSites(r), "Josh shares all his sites with Sam"),
       launchStep("launch", SAM, JOSH_PATIENT, () => undefined, "Sam signs in, picks Josh's records, and approves the app"),
@@ -276,9 +319,11 @@ const TOURS: Tour[] = [
     ],
   },
   {
-    id: "backend", title: "A service works from a referral", summary: "A consult referral names the patient on the clinical FHIR server and cites the imaging report, with its accession number. The service searches for exactly that study, and its service-access policy decides what it sees.",
+    id: "backend", premise: "A referral service searches under a service-access policy.", title: "A service with a referral", summary: "A consult referral names the patient on the clinical FHIR server and cites the imaging report, with its accession number. The service searches for exactly that study, and its service-access policy decides what it sees.",
     note: "Across organizations, a referral would carry an MRN instead, and the service would first resolve it with Patient?identifier=. That isn't shown here.",
     knows: r => ["CR", "CT"].flatMap(m => referralOf(r, m)?.study ?? []),
+    viewer: { service: SERVICE, patient: JOSH_PATIENT },
+    scene: w => ({ doc: { ...onFile(), policies: [...POLICIES_ON_FILE, ...RULE_SETS.find(s => s.id === "hand-wrist-referral")!.rules(w.catalog)!] } }),
     steps: [
       {
         id: "check", title: "The referral arrives, and the service checks the patient is on the FHIR server it's authorized for", actor: "The service",
@@ -318,6 +363,21 @@ const TOURS: Tour[] = [
       serviceSearchStep("outside", "CT", "A second referral cites a CT, which the policy doesn't cover"),
     ],
   },
+  {
+    id: "turns-18", premise: "Riley turns 18, and Sam's guardian access ends.", title: "Riley turns 18", summary: "Sam's guardian access follows Riley's age. On Riley's 18th birthday no guardian-access policy covers Sam, and Sam holds nothing of Riley's.", knows: rileyStudies,
+    viewer: { user: SAM, patient: RILEY, app: APP },
+    scene: () => { const doc = onFile(); return { doc: approve(doc, SAM, RILEY, [relId(doc, SAM, RILEY)]), now: eighteenth(RILEY) + 86400 }; },
+    steps: [
+      launchStep("launch", SAM, RILEY, () => undefined, "Sam signs in, picks Riley's records, and approves the app"),
+      searchStep("search", SAM, RILEY, "The app searches Riley's studies"),
+      {
+        id: "birthday", title: "The demo clock moves to the day after Riley's 18th birthday", actor: "The clock",
+        expect: r => { const m = modelOf(r.world, undefined, Math.max(r.world.clock.now(), eighteenth(RILEY) + 86400)); return holdsText(SAM, RILEY, m.approvableSites(SAM, RILEY)); },
+        async act(r) { r.world.clock.advance(Math.max(0, eighteenth(RILEY) + 86400 - r.world.clock.now())); return accessOf(r, SAM, RILEY); },
+      },
+      launchStep("again", SAM, RILEY, () => undefined, "Sam tries to sign in for Riley again"),
+    ],
+  },
 ];
 export const tourById = (id: string) => TOURS.find(t => t.id === id);
 export const PROTOCOL_CHECKS = FLOWS.filter(f => f.group === "protocol");
@@ -337,6 +397,10 @@ export function createTours(world: World, clients: Record<string, BackendClient>
     run = { tour, r, results: {}, session };
     return run;
   }
+  /** The chain a story ends on, for its card, drawn from its scene by core's model. */
+  const cardChain = (tour: Tour): Chain => { const scene = tour.scene(world); return chainFor({ snap: scene.doc, studies: world.catalog.allStudies(), now: scene.now ?? world.clock.now(), viewer: tour.viewer, title: s => reportTitle(s) }); };
+  /** The chain a story's viewer has now, in the tour's world, as its narrator sees it. */
+  const chainNow = (tour: Tour): Chain => chainFor({ snap: world.store.snapshot(), studies: world.catalog.allStudies(), now: world.clock.now(), viewer: tour.viewer, title: s => reportTitle(s) });
   /** The studies the person taking this world's tour knows of, beyond its events, if the session is the tour's. */
   const knownIn = (session: string) => run && run.session === session ? run.tour.knows(run.r) : undefined;
   /** Events of the tour's session, as the person taking it may see them. */
@@ -357,8 +421,9 @@ export function createTours(world: World, clients: Record<string, BackendClient>
     if (next) { try { expect = next.expect(r, r.model(next.intends ? doc => next.intends!(r, doc) : undefined)).text; } catch (e) { expect = String((e as Error).message ?? e); } }
     return {
       scope: { id: world.scope, base: world.prefix }, session: started?.session ?? null, activityUrl: started ? activityUrl(started.session) : null, running: started?.running ?? null, pendingAuthUrl: started ? r.c.pendingAuthUrl ?? null : null,
-      tour: { id: tour.id, title: tour.title, summary: tour.summary, note: tour.note },
-      steps: tour.steps.map(s => ({ id: s.id, title: s.title, actor: s.actor, ...(s === next ? { expect } : {}), ...(results[s.id] ? { result: results[s.id] } : {}) })),
+      tour: { id: tour.id, title: tour.title, summary: tour.summary, note: tour.note, premise: tour.premise },
+      chain: chainNow(tour),
+      steps: tour.steps.map(s => ({ id: s.id, title: s.title, actor: s.actor, ...(s.signsIn ? { signsIn: true } : {}), ...(s === next ? { expect } : {}), ...(results[s.id] ? { result: results[s.id] } : {}) })),
     };
   }
   async function step(id: string, mode: "scripted" | "window") {
@@ -382,6 +447,7 @@ export function createTours(world: World, clients: Record<string, BackendClient>
     // The step's events stay in the activity log: the step carries how many its taker may see, and the link.
     result.eventCount = viewerEvents(run!.session, stack.collector.store.events({ session: run!.session, trace })).length;
     result.activityUrl = `${activityUrl(run!.session)}&trace=${trace}`;
+    result.chain = chainNow(tour);
     run!.results[id] = result;
     return result;
   }
@@ -408,7 +474,7 @@ export function createTours(world: World, clients: Record<string, BackendClient>
     callbackContext() { return run?.r.c.callbackContext; },
     async fetch(req: Request, url: URL): Promise<Response> {
       const p = url.pathname;
-      if (p === "/api/tours" && req.method === "GET") return json({ tours: TOURS.map(t => ({ id: t.id, title: t.title, summary: t.summary, steps: t.steps.length })), checks: PROTOCOL_CHECKS.map(f => ({ id: f.id, title: f.title, summary: f.summary })), current: run?.tour.id ?? null, scope: world.scope ? { id: world.scope, base: world.prefix } : null });
+      if (p === "/api/tours" && req.method === "GET") return json({ tours: TOURS.map(t => ({ id: t.id, title: t.title, summary: t.summary, premise: t.premise, steps: t.steps.length, chain: cardChain(t) })), checks: PROTOCOL_CHECKS.map(f => ({ id: f.id, title: f.title, summary: f.summary })), current: run?.tour.id ?? null, scope: world.scope ? { id: world.scope, base: world.prefix } : null });
       if (p === "/api/tours/state" && req.method === "GET") {
         // A scope minted for a tour shows its steps, and what the model expects of the first, before any runs. Reading it starts nothing.
         const want = tourById(url.searchParams.get("tour") ?? "");

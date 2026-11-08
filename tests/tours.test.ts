@@ -13,6 +13,7 @@ import { nameOf } from "../src/world";
 import { ageAt, cascade, referenceModel, type RefStudy } from "../src/reference-model";
 import { RULE_SETS } from "../src/rule-presets";
 import { Ctx } from "../src/flows/runtime";
+import { refStudies, tourById } from "../src/tours";
 
 const root = join(import.meta.dir, "..");
 let stack: Stack; let demo: ReturnType<typeof createDemoServer>;
@@ -23,7 +24,7 @@ const call = async (method: string, path: string, body?: unknown) => {
   const r = await demo.fetch(new Request(`${CONFIG.demoUrl}${path}`, { method, headers: { host: new URL(CONFIG.demoUrl).host, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }));
   return { status: r.status, body: await r.json() as any };
 };
-const TOURS = ["caregiver", "app-consent", "revoke", "backend"];
+const TOURS = ["own", "guardian", "caregiver", "revoke", "backend", "turns-18"];
 async function start(tour: string) {
   const r = await call("POST", `/api/tours/${tour}/start`, {});
   expect(r.status).toBe(201);
@@ -49,7 +50,8 @@ describe("each tour", () => {
       for (const s of state.steps) {
         expect([s.id, s.result.ok, s.result.actual]).toEqual([s.id, true, s.result.actual]);
         expect(s.result.expected).toBeTruthy();
-        expect(s.result.eventCount).toBeGreaterThan(0);
+        // Every step records events, but the clock's and a sign-in that ends with no token, which reach no service that records any.
+        if (s.id !== "birthday" && !s.result.actual.startsWith("No token")) expect([s.id, s.result.eventCount > 0]).toEqual([s.id, true]);
         // A step's events are in the log, filtered to the tour's session and that step.
         expect(s.result.activityUrl).toBe(`${base}/activity?session=${encodeURIComponent(state.session)}&trace=${s.result.trace}`);
         const logged = await call("GET", s.result.activityUrl.replace("/activity?", "/api/activity?"));
@@ -149,6 +151,36 @@ describe("checks", () => {
     expect(r.body.activityUrl).toMatch(new RegExp(`^/s/${r.body.scope}/activity\\?session=`));
     expect((await call("POST", "/api/checks/patient-sites", {})).status).toBe(404);
   }, 60000);
+});
+
+describe("the layer chain", () => {
+  test("each card's chain, drawn with core's model, matches the reference model, and no link lets through more than the one before", async () => {
+    const list = (await call("GET", "/api/tours")).body;
+    expect(list.tours.map((t: any) => t.id)).toEqual(TOURS);
+    const world = stack.root;
+    for (const card of list.tours) {
+      const tour = tourById(card.id)!, scene = tour.scene(world), v: any = (tour as any).viewer;
+      const m = referenceModel({ doc: scene.doc, studies: refStudies(world), now: scene.now ?? world.clock.now(), birthDate: p => patientAttributes(p)?.birthDate, patientOf: u => USERS[u]?.patient });
+      const ids = (xs: { id: string }[]) => xs.map(x => x.id).sort();
+      const all = ids(refStudies(world).filter(s => s.patient === v.patient));
+      expect([card.id, card.chain.columns.map((c: any) => c.id).sort()]).toEqual([card.id, all]);
+      let before = all;
+      for (const row of card.chain.rows) {
+        const has = [...row.has].sort();
+        expect([card.id, row.name, has.every((x: string) => before.includes(x))]).toEqual([card.id, row.name, true]);
+        const want = row.kind === "records" ? all
+          : row.kind === "guardian" || row.kind === "share" ? (row.route ? ids(m.userReach(row.by, v.patient, [row.route])) : [])
+          : row.kind === "approval" ? ids(m.appReach(v.user, v.app, v.patient))
+          : row.kind === "service" ? ids(m.serviceReach(v.service, v.patient))
+          : before;
+        expect([card.id, row.name, has]).toEqual([card.id, row.name, want]);
+        before = has;
+      }
+    }
+    // The guardian card, a narrator's, shows the study the label cuts out.
+    const guardian = list.tours.find((t: any) => t.id === "guardian").chain;
+    expect(guardian.rows.find((r: any) => r.kind === "guardian").cut).toEqual(["syn-riley-skin-slide-2023"]);
+  });
 });
 
 describe("the reference model", () => {

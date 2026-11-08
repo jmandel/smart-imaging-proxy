@@ -47,7 +47,7 @@ function tileParts(id, t) {
 function splitBar(split) {
   const parts = split.filter(([, v]) => v > 0), total = parts.reduce((n, [, v]) => n + v, 0);
   if (!total || parts.length < 2) return "";
-  return `<div class="split" role="img" aria-label="${esc(parts.map(([k, v]) => `${k}: ${v}`).join(", "))}">${parts.map(([k, v, c]) => `<span class="seg ${c}" style="flex-grow:${v}" title="${esc(`${k}: ${num(v)}`)}"></span>`).join("")}</div>`;
+  return `<div class="split" role="img" aria-label="${esc(parts.map(([k, v]) => `${k}: ${v}`).join(", "))}">${parts.map(([k, v, c]) => `<span class="split-seg ${c}" style="flex-grow:${v}" title="${esc(`${k}: ${num(v)}`)}"></span>`).join("")}</div>`;
 }
 function tilesHtml() {
   const chosen = q().get("type");
@@ -116,7 +116,7 @@ function cells(e, type) {
       : [study, d.via === "cached" ? "Cached decision" : "Decision call", d.unavailable ? status("no answer", false) : status(d.allowed ? "allowed" : "refused", d.allowed), d.denial];
     case "retrievals": return [study, d.resource, status(d.status, d.status < 400 && (e.kind !== "stream.done" || d.complete)), e.kind === "stream.done" ? num(d.parts) : "", e.kind === "stream.done" ? bytes(d.bytes) : "", d.encoding, AUTHZ[d.authz] ?? d.authz, e.ms !== undefined ? num(Math.round(e.ms)) : ""];
     case "decisions": return [study, whoName(e.who) || clientName(d.client), status(d.decision ? "allow" : "deny", d.decision), d.why];
-    case "writes": { const x = W.written(d); return [x.what, d.level, status(d.status)]; }
+    case "writes": { const x = W.written(d); return [x.what, ["fact", "policy", "choice"].includes(d.level) ? html(`<span class="lvl">${Layers.mark(d.level)} ${esc(Layers.LEVEL[d.level])}</span>`) : LEVELS[d.level] ?? d.level, status(d.status)]; }
     default: return [KIND_WORDS[e.kind] ?? e.kind, PARTY[e.service] ?? e.service, html(`${e.outcome === "ok" || e.outcome === "info" ? "" : `<span class="tag ${esc(e.outcome)}">${esc(e.outcome === "error" ? "failed" : e.outcome)}</span> `}${esc(w.summary)}`)];
   }
 }
@@ -139,7 +139,9 @@ function detailHtml(e) {
   const w = W.describe(e);
   const links = W.linksOf(e);
   const keep = q().get("session");
-  return `<div class="ev-detail"><p class="ev-summary"><b>${esc(w.summary)}</b> <span class="note">${esc(PARTY[e.service] ?? e.service)}, ${esc(new Date(e.at).toLocaleString())}</span></p>
+  // A policy write's level, and a decision, which organization policy makes, wear the level's mark.
+  const level = e.kind === "policy.written" ? (["fact", "policy", "choice"].includes(e.data.level) ? e.data.level : undefined) : e.kind === "decision.answered" ? "policy" : undefined;
+  return `<div class="ev-detail"><p class="ev-summary">${level ? `${Layers.mark(level)} ` : ""}<b>${esc(w.summary)}</b> <span class="note">${esc(PARTY[e.service] ?? e.service)}, ${esc(new Date(e.at).toLocaleString())}</span></p>
     ${w.fields.length ? `<dl>${w.fields.map(([a, b]) => `<dt>${esc(a)}</dt><dd>${esc(b)}</dd>`).join("")}</dl>` : ""}
     ${links.length ? `<p class="ev-links">${links.map(l => `<a href="${esc(`${BASE}/activity?${new URLSearchParams({ ...(keep ? { session: keep } : {}), link: l.link })}`)}" title="${esc(l.title)}">${esc(l.words)}</a>`).join("")}</p>` : ""}
     <details><summary>Raw payload</summary><pre>${esc(JSON.stringify({ kind: e.kind, ...e.data }, null, 2))}</pre></details>

@@ -15,7 +15,12 @@ const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const studyDate = d => d ? String(d).slice(0, 10) : "";
 const announce = text => { const el = $("#announce"); if (el) { el.textContent = ""; setTimeout(() => { el.textContent = text; }, 30); } };
 
-// The settings menu: where images come from, the demo clock, and resets, for this page's world.
+/** How people sign in: done for them, or by themselves in a window that a Sign in button opens. Kept in this browser. */
+const SIGNIN_KEY = "smart-imaging-signin";
+function signInMode() { try { return localStorage.getItem(SIGNIN_KEY) === "window" ? "window" : "auto"; } catch { return "auto"; } }
+function setSignInMode(mode) { try { localStorage.setItem(SIGNIN_KEY, mode); } catch {} document.dispatchEvent(new CustomEvent("signin-mode", { detail: mode })); }
+
+// The settings menu: how people sign in, where images come from, the demo clock, and resets, for this page's world.
 const BACKEND_LABELS = { "static-files": "Local files", s3: "S3 bucket", orthanc: "Orthanc" };
 function initSettings() {
   const button = $("#settings-button"), panel = $("#settings");
@@ -36,10 +41,11 @@ async function renderSettings(message = "") {
   const panel = $("#settings");
   let st;
   try { st = await api("GET", "/api/settings/status"); } catch (e) { panel.innerHTML = `<p class="error">${esc(e.message)}</p>`; return; }
-  const where = st.scope ? "this tour's own scope" : "saved policy";
   panel.innerHTML = `
     <h2 tabindex="-1">Settings</h2>
-    <p>These act on ${esc(where)}.</p>
+    <section><h3 id="h-signin">Signing in</h3>
+      <div class="row" role="radiogroup" aria-labelledby="h-signin">${[["auto", "Automatic"], ["window", "In a window"]].map(([v, l]) => `<label class="radio"><input type="radio" name="signin" value="${v}" ${signInMode() === v ? "checked" : ""}> ${l}</label>`).join("")}</div></section>
+    <p class="group">${st.scope ? "This tour's scope" : "Saved policy"}</p>
     <section><h3><label for="set-backend">Images come from</label></h3>
       <div class="row"><select id="set-backend">${st.backend.names.map(n => `<option value="${esc(n)}" ${n === st.backend.current ? "selected" : ""}>${esc(BACKEND_LABELS[n] ?? n)}</option>`).join("")}</select></div>
       <p id="backend-health"></p></section>
@@ -51,6 +57,7 @@ async function renderSettings(message = "") {
       <div class="row"><button class="secondary" data-end="/tokens/revoke-all">Revoke every token</button><button class="secondary" data-end="/proxy/flush">Flush cached decisions</button><button class="secondary" data-end="/signing-key/rotate">Rotate the signing key</button></div></section>
     <p class="msg" role="status">${esc(message)}</p>`;
   const act = async (route, body, said) => { try { await api("POST", `/api/settings${route}`, body); await renderSettings(said); document.dispatchEvent(new CustomEvent("settings-changed")); } catch (e) { $("#settings .msg").textContent = e.message; } };
+  for (const r of $$("input[name=signin]", panel)) r.addEventListener("change", () => setSignInMode(r.value));
   $("#set-backend").addEventListener("change", e => act("/backend", { backend: e.target.value }, `Images now come from ${BACKEND_LABELS[e.target.value] ?? e.target.value}.`));
   for (const b of $$("[data-advance]", panel)) b.addEventListener("click", () => act("/clock", { advanceSeconds: Number(b.dataset.advance) }, "The clock moved ahead."));
   $("[data-clock-reset]", panel).addEventListener("click", () => act("/clock", { reset: true }, "The clock is back to real time."));
