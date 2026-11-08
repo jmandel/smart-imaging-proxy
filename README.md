@@ -2,7 +2,7 @@
 
 A working prototype of a SMART Imaging deployment: an Authorization Server, an Imaging Server holding policy and a study catalog, and a WADO-RS proxy that enforces study-level policy without holding any of it. It runs on ten studies across three patients. It implements the `focused-access-updates` branch of the [SMART Imaging Access guide](https://github.com/argonautproject/smart-imaging). It isn't production code.
 
-The proxy, its backends, the archive, and the Imaging Server are a package of their own, [`packages/core`](packages/core/README.md), which knows nothing of the demo. The demo around it supplies the sign-in, the pages, the tours, the activity view and live trace, and the configuration.
+The proxy, its backends, the archive, and the Imaging Server are a package of their own, [`packages/core`](packages/core/README.md), which knows nothing of the demo. The demo around it supplies the sign-in, the pages, the tours, the activity log and live trace, and the configuration.
 
 ## Get running
 
@@ -33,7 +33,7 @@ Each step is safe to repeat. Everything except the downloads lives under `/tmp/s
 
 Then open http://127.0.0.1:4605/ and try these:
 
-1. **Josh, the patient:** Explore shows all six of his studies, each with a thumbnail decoded in the page. Open one, retrieve it through the proxy, and read what happened.
+1. **Josh, the patient:** Explore shows all six of his studies, each with a thumbnail decoded in the page. Open one, retrieve it through the proxy, and follow its line into the activity log.
 2. **Sam, a patient and a caregiver:** "Whose records" switches between Sam's own and Riley's, as guardian. Each choice is a real new sign-in and search. Josh's aren't Sam's until Josh shares: choose "Josh, not shared", and the page offers Josh's share.
 3. **A service:** picks a referral to work from, and gets a `403` until the page applies the service-access policy the referral needs.
 4. **Tours:** four stories, each in a scope of its own, checked step by step against a reference model, and Run checks for the protocol flows.
@@ -46,7 +46,7 @@ Everything is at one origin, port 4605: the demo's pages, the live trace at `/tr
 
 | Port | Service | Paths |
 |---|---|---|
-| 4600 | Demo | `/` Explore, `/tours` Tours, `/activity` the activity view, `/api/flows/...` the flows |
+| 4600 | Demo | `/` Explore, `/tours` Tours, `/activity` the activity log, `/api/activity/summary` its rollups, `/api/flows/...` the flows |
 | 4601 | WADO-RS proxy | `/wado/{signed-context}/studies/...`, opaque to clients |
 | 4602 | Imaging Server | `/fhir/ImagingStudy`, `/fhir/metadata`, `/access/v1/evaluation`, `/policy/v2/...`, `/.well-known/jwks.json`, `/.well-known/authzen-configuration` |
 | 4603 | Authorization Server | `/fhir/.well-known/smart-configuration`, `/authorize`, `/token`, `/introspect`, `/revoke`, `/account`, `/fhir/Patient/{id}` (with a token for that patient) |
@@ -57,12 +57,12 @@ Everything is at one origin, port 4605: the demo's pages, the live trace at `/tr
 
 `/s/{scope}` in front of any of these paths, on any of these ports, reaches a [policy scope](#policy-scopes) instead.
 
-- **Explore:** pick a person or a service, and for a person holding more than one record, whose records. The demo server runs a real launch, or for a service the work it starts from, then a real search, holding the token itself. The headline says what they can see, and chips give the Imaging Server's reasons, one for each level of policy. Studies are film sheets, with thumbnails decoded in the browser. A study a route reaches and the app doesn't shows as withheld, with its reason, and one no route reaches never shows. An empty view offers the action its reason calls for: a share, an approval, or a service-access policy. Opening a study retrieves it on request, and shows what happened, from the recorded events. At `/` it works on saved policy, and at `/s/{scope}/`, on that scope's.
+- **Explore:** pick a person or a service, and for a person holding more than one record, whose records. The demo server runs a real launch, or for a service the work it starts from, then a real search, holding the token itself. The headline says what they can see, and chips give the Imaging Server's reasons, one for each level of policy. Studies are film sheets, with thumbnails decoded in the browser. A study a route reaches and the app doesn't shows as withheld, with its reason, and one no route reaches never shows. An empty view offers the action its reason calls for: a share, an approval, or a service-access policy. Opening a study retrieves it on request, and says in one line what happened, from the recorded events, with a link to them in the activity log. At `/` it works on saved policy, and at `/s/{scope}/`, on that scope's.
 - **Services work from referrals:** the demo makes a consult referral for each sample study with an accession number: a `ServiceRequest` whose `subject` is the patient on the clinical FHIR server, as an absolute reference, and whose `supportingInfo` cites the imaging report, which carries the order's accession number with its system. The service checks the reference is on the FHIR base it's authorized for, searches `ImagingStudy?patient={reference}&identifier={system}|{accession}`, and retrieves. Its service-access policy decides what it sees. The page gets the referrals only once a service is chosen, from `/api/explore/referrals?service={id}`, so no person's view is sent a study's title.
 - **Tours:** four stories, caregiver share, app consent, revoking, and a service working from a referral, each in a scope minted for it. A step is an action. What it should come to is computed before it runs by a reference model, `src/reference-model.ts`, written apart from core's evaluation, from the scope's policy and catalog at that moment, or for a step that changes policy, from the policy it intends. The step passes when the system's real answer matches, and for a step that changes policy, when the store then holds the policy it intended. Run checks runs the protocol flows, each in a scope of its own with its usual choices, as one pass or fail list. A person can sign in in a real window, and an automated run never opens one.
 - **Settings menu:** in the header of every page, for the world the page is in: where images come from, the demo clock, resetting policy, and ending access (revoking tokens, flushing decisions, rotating the key).
-- **Activity:** every typed event the services recorded, as one card per kind, newest first, filtered by scope, person, kind and outcome. A card links through the values events share, such as a token's hash, and opens the raw exchange, with JWTs and signed links decoded, bundles laid out, multipart responses as parts, and tokens only as hashes.
-- **One session's activity is its viewer's:** Explore and the tours link to a session's activity, which shows what the person or service it acts as may see, by the same filter as Explore's panel and a tour's steps (`src/viewer-events.ts`). A study their routes don't reach, or one a label keeps from them, appears nowhere in it: not by id, title, site, label or reason, and not in the exchanges its cards open. Every session at once is the operator's view, which alone links to the live trace.
+- **Activity log:** at `/activity`, in the header of every page. At a glance, a tile per type of event with its numbers rolled up (tokens by client, studies returned and withheld, proxy checks instant or by decision call, retrievals' parts and bytes, allows and denials, policy writes, and errors and denials), and a timeline laned by party. Below, one row per session or tour run, with who, which app or service, when, and its totals: choosing one filters the page to it. Choosing a tile lists that type as a table with its own columns, newest first, a page at a time. A row opens the event: its fields, the values it shares with other events, its raw payload, and the exchange behind it, with JWTs and signed links decoded, bundles laid out, multipart responses as parts, and tokens only as hashes. Filters are in the query string, `session`, `type`, `study`, `trace`, `link` and `scope`, so Explore and the tours link here filtered to a session, a study or a step. The rollups come from `/api/activity/summary`, over the newest 10,000 matching events.
+- **One session's activity is its viewer's:** with a session, the log, its rollups, Explore's one line and a tour step's count show what the person or service the session acts as may see, all through one filter (`src/viewer-events.ts`). A study their routes don't reach, or one a label keeps from them, appears nowhere in it: not by id, title, site, label or reason, not in a count, and not in the exchanges its events open. Every session at once is the operator's view, which alone links to the live trace.
 - **Flows:** 15 flows in `src/flows`, run through `/api/flows`, which Run checks and the tests use. Every run mints a scope of its own.
 - **Account page:** at `/account`, a patient or guardian picks whose records to share, shares sites with a related person, and revokes people and apps.
 - **Live trace:** spans from every service, with inline previews. They're kept in SQLite and survive a restart.
@@ -201,9 +201,10 @@ Then restart `bun run start`.
 | `src/gateway.ts`, `src/cors.ts` | The one origin apps are given, and the services' CORS |
 | `src/auth-server.ts` | SMART launch and Backend Services, sign-in, consent, account page, introspection |
 | `src/flows/` | The flows, shared by the web page and tests, and the launch client |
-| `src/explore.ts` | Explore's sessions and API: sign-in, search, withheld studies, actions, thumbnails, and what happened |
+| `src/explore.ts` | Explore's sessions and API: sign-in, search, withheld studies, actions, thumbnails, and a study's chain in one line |
 | `src/tours.ts`, `src/reference-model.ts` | The tours and checks, and the reference model the tours are checked against |
-| `src/viewer-events.ts` | What a session's viewer may see of its events, for Explore's panel, the tours and the activity view |
+| `src/viewer-events.ts` | What a session's viewer may see of its events, for Explore, the tours and the activity log |
+| `src/activity.ts` | The activity log's rollups: each type's numbers, the timeline, the sessions, and Explore's one line |
 | `src/referrals.ts` | The referrals and reports the services work from |
 | `src/settings-api.ts`, `src/rule-presets.ts` | The settings menu's API and the write guards, and named rule sets of service-access policies |
 | `src/vendor.ts`, `scripts/viewer-kit.ts` | viewer-kit's pin, and its download |

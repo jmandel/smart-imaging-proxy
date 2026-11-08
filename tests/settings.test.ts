@@ -41,16 +41,16 @@ const setSaved = (x: { rules?: any[]; shares?: any[]; approvals?: any[] }) => {
 };
 
 describe("pages", () => {
-  test("Explore, Tours and the activity view are served, with the header's two links, and the old pages are gone", async () => {
+  test("Explore, Tours and the activity log are served, each with the header's three links, and the old pages are gone", async () => {
     for (const [path, title] of [["/", "Explore"], ["/tours", "Tours"], ["/activity", "Activity"]]) {
       const html = await (await call("GET", path)).text();
       expect(html).toContain(`<title>${title}`);
-      expect(html).toMatch(/<nav class="pages" aria-label="Pages"><a href="\/"[^>]*>Explore<\/a><a href="\/tours"[^>]*>Tours<\/a><\/nav>/);
+      expect(html).toMatch(/<nav class="pages" aria-label="Pages"><a href="\/"[^>]*>Explore<\/a><a href="\/tours"[^>]*>Tours<\/a><a href="\/activity"[^>]*>Activity<\/a><\/nav>/);
       expect(html).toContain('id="settings-button"');
       expect(html).not.toContain("store-badge");
     }
-    for (const path of ["/explore.js", "/tours.js", "/activity.js", "/cards.js", "/page.js", "/thumbs.js", "/styles.css"]) expect((await call("GET", path)).status).toBe(200);
-    for (const path of ["/browse", "/admin", "/app.js", "/admin.js", "/browse.js", "/api/browse/options", "/api/admin/status"]) expect([path, (await call("GET", path)).status]).toEqual([path, 404]);
+    for (const path of ["/explore.js", "/tours.js", "/activity.js", "/event-words.js", "/page.js", "/thumbs.js", "/styles.css"]) expect((await call("GET", path)).status).toBe(200);
+    for (const path of ["/browse", "/admin", "/app.js", "/admin.js", "/browse.js", "/cards.js", "/api/explore/events", "/api/browse/options", "/api/admin/status"]) expect([path, (await call("GET", path)).status]).toEqual([path, 404]);
   });
 });
 

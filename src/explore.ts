@@ -15,6 +15,7 @@ import { nameOf, type World } from "./world";
 import { patientAttributes } from "./stores";
 import { recordEvent, runInSession, sessionKey, tfetch, traceSettled, withSpan } from "./trace";
 import { forViewer, viewerKnows } from "./viewer-events";
+import { chainLine } from "./activity";
 import type { Stack } from "./stack";
 
 const MAX_SESSIONS = 20;
@@ -435,7 +436,7 @@ export function createExplore(world: World, clients: Record<string, BackendClien
     const all = stack.collector.store.events({ session: s.name });
     return forViewer(events ?? all, viewerKnows(all, knownOf(s)), idOfUid);
   }
-  /** What happened in this session, as recorded events, as its viewer may see them, and for a study, only what's about it. */
+  /** What happened in this session, as recorded events, as its viewer may see them, and for a study, only what's about it: the same events the activity log shows for the session and study. */
   async function happened(s: Session, study?: string) {
     await traceSettled();
     const uid = study ? s.endpoints.get(study)?.uid ?? world.catalog.allStudies().find(x => x.id === study)?.uid : undefined;
@@ -477,10 +478,11 @@ export function createExplore(world: World, clients: Record<string, BackendClien
         const s = sessionOf(req);
         if (p === "/session") return json({ session: s ? view(s) : null, scope, backend: world.backend });
         if (!s) return gone();
-        if (p === "/events") {
-          const study = url.searchParams.get("study") ?? undefined;
-          if (study && !s.sheets.some(x => x.id === study)) return json({ error: "that study isn't on this page" }, 404);
-          return json({ events: await happened(s, study), activityUrl: view(s).activityUrl });
+        if (p === "/happened") {
+          // One line for a study's chain, and the link to it in the activity log.
+          const study = url.searchParams.get("study") ?? "";
+          if (!s.sheets.some(x => x.id === study)) return json({ error: "that study isn't on this page" }, 404);
+          return json({ line: chainLine(await happened(s, study)), activityUrl: `${view(s).activityUrl}&study=${encodeURIComponent(study)}` });
         }
         if (p === "/thumbnail") {
           const study = url.searchParams.get("study") ?? "";

@@ -379,7 +379,9 @@ export function createTours(world: World, clients: Record<string, BackendClient>
     } catch (e) { result = { ok: false, expected: "", actual: String((e as Error).message ?? e), stopped: e instanceof StepStopped }; }
     await traceSettled();
     result.trace = trace;
-    result.events = viewerEvents(run!.session, stack.collector.store.events({ session: run!.session, trace }));
+    // The step's events stay in the activity log: the step carries how many its taker may see, and the link.
+    result.eventCount = viewerEvents(run!.session, stack.collector.store.events({ session: run!.session, trace })).length;
+    result.activityUrl = `${activityUrl(run!.session)}&trace=${trace}`;
     run!.results[id] = result;
     return result;
   }

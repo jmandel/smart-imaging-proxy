@@ -1,4 +1,4 @@
-// The demo's own web server: Explore, Tours and the activity view, backed by the real services, and the
+// The demo's own web server: Explore, Tours and the activity log, backed by the real services, and the
 // flow API the checks and tests run flows through. `/s/{scope}/...` is that scope's own: its Explore,
 // its tour, its activity, its settings and its redirects. Starting a tour or a flow mints a scope for it.
 import { join } from "node:path";
@@ -9,8 +9,10 @@ import { StepStopped, type Ctx } from "./flows/runtime";
 import { extraField, readJson, refuseHost, refuseWrite, settingsApi, BACKEND_NAMES } from "./settings-api";
 import type { BackendClient } from "./auth-server";
 import { createExplore } from "./explore";
-import { createTours } from "./tours";
+import { createTours, tourById } from "./tours";
 import { eventQueryOf } from "./trace-collector";
+import { EVENT_SUMMARY_MAX, type EventQuery } from "./trace-store";
+import { activityType, sessionRows, studiesNamed, tiles, timeline, ACTIVITY_TYPES } from "./activity";
 import { scopeOfSession, type EventRecord } from "./trace";
 import { forViewer, viewerKnows } from "./viewer-events";
 import { loadViewerKit, VIEWER_KIT_FILES } from "./vendor";
@@ -45,9 +47,54 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     const explore = createExplore(world, clients, stack);
     const tours = createTours(world, clients, stack);
     /** A session's events as its viewer may see them: an Explore view's person or service, a tour's taker, or whoever a flow acts as. */
+    const idOfUid = (uid: string) => world.catalog.studyByUid(uid)?.id;
     const viewerEvents = (session: string, events: EventRecord[]) => {
-      const all = stack.collector.store.events({ session, limit: 2000 });
-      return forViewer(events, viewerKnows(all, explore.knownIn(session) ?? tours.knownIn(session) ?? []), uid => world.catalog.studyByUid(uid)?.id);
+      const all = stack.collector.store.events({ session, limit: EVENT_SUMMARY_MAX }, EVENT_SUMMARY_MAX);
+      return forViewer(events, viewerKnows(all, explore.knownIn(session) ?? tours.knownIn(session) ?? []), idOfUid);
+    };
+    /**
+     * The log's filters. A scope's log is its own, and the root's covers every world, filtered by
+     * scope. With a session, a study keeps that study's events and the session's events about no
+     * study, as Explore tells its chain. With none, it keeps only events that name the study.
+     */
+    function activityQuery(url: URL): EventQuery | string {
+      const q = eventQueryOf(url);
+      if (world.scope) q.scope = world.scope;
+      const study = url.searchParams.get("study");
+      if (study) {
+        const uid = world.catalog.allStudies().find(s => s.id === study)?.uid;
+        if (q.session) q.about = { study, uid };
+        else q.anyLink = [`study:${study}`, ...(uid ? [`uid:${uid}`] : [])];
+      }
+      const typeId = url.searchParams.get("type");
+      if (typeId) {
+        const type = activityType(typeId);
+        if (!type) return "that isn't one of the log's types";
+        if ("kinds" in type) q.kinds = [...type.kinds]; else q.outcomes = [...type.outcomes];
+      }
+      return q;
+    }
+    /** What a session is, in words: Explore, a tour, a flow, or one of the protocol checks. */
+    const sessionLabel = (session: string) => {
+      const name = session.replace(/@[^@]*$/, "");
+      if (name.startsWith("explore-")) return "Explore";
+      const tour = name.match(/^tour-(.+)-[0-9a-f]{6}$/);
+      if (tour) return `Tour: ${tourById(tour[1]!)?.title ?? tour[1]}`;
+      const flow = name.match(/^flow-\d+-(.+)-[0-9a-f]{6}$/);
+      if (flow) return `Flow: ${flowById(flow[1]!)?.title ?? flow[1]}`;
+      if (name === "unattributed") return "Outside any session";
+      return name;
+    };
+    /** Events as the log shows them: with the study each names, by id, and how long a retrieval's exchange took. */
+    const shown = (events: EventRecord[]) => {
+      const spans = new Map<string, string[]>();
+      for (const e of events) if (e.span && (e.kind === "stream.done" || e.kind === "retrieval.answered")) spans.set(e.session, [...(spans.get(e.session) ?? []), e.span]);
+      const ms = new Map([...spans].flatMap(([session, list]) => Object.entries(stack.collector.store.spanDurations(session, list)).map(([span, v]) => [`${session} ${span}`, v] as const)));
+      return events.map(e => {
+        const study = typeof e.data.study === "string" ? e.data.study : typeof e.data.studyUid === "string" ? idOfUid(e.data.studyUid) : undefined;
+        const took = e.span ? ms.get(`${e.session} ${e.span}`) : undefined;
+        return { ...e, ...(study ? { study } : {}), ...(took !== undefined ? { ms: took } : {}) };
+      });
     };
     const callback = traced("app", async req => {
       const back = new URL(req.url);
@@ -81,20 +128,36 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       }
       if (p.startsWith("/api/settings/")) return settingsApi(stack, world, req, url);
       if (p === "/api/activity" && req.method === "GET") {
-        // A scope's activity is its own. The root's covers every world, and filters by scope. One
-        // session's is what its viewer may see; every session's at once is the operator's, which alone
-        // links to the live trace.
-        const q = eventQueryOf(url);
-        if (world.scope) q.scope = world.scope;
-        const events = stack.collector.store.events(q);
-        if (q.session) return json({ events: viewerEvents(q.session, events), facets: stack.collector.store.eventFacets(world.scope), viewer: true });
-        return json({ events, facets: stack.collector.store.eventFacets(world.scope), traceUrl: world.urls.trace });
+        // One page of events, oldest first, ending at `before`. One session's is what its viewer may
+        // see; every session's at once is the operator's, which alone links to the live trace.
+        const q = activityQuery(url);
+        if (typeof q === "string") return json({ error: q }, 400);
+        const limit = Math.min(Math.max(1, q.limit ?? 100), 500);
+        const page = stack.collector.store.events({ ...q, limit: limit + 1 });
+        const more = page.length > limit;
+        const raw = more ? page.slice(1) : page;
+        const events = shown(q.session ? viewerEvents(q.session, raw) : raw);
+        return json({ events, more, before: raw[0]?.seq ?? null, ...(q.session ? { viewer: true } : { traceUrl: world.urls.trace }) });
+      }
+      if (p === "/api/activity/summary" && req.method === "GET") {
+        // The rollups, from the same events the log lists, through the same filter, for every type at once.
+        const q = activityQuery(url);
+        if (typeof q === "string") return json({ error: q }, 400);
+        const { kinds: _k, outcomes: _o, before: _b, after: _a, limit: _l, ...base } = q;
+        const read = stack.collector.store.events({ ...base, limit: EVENT_SUMMARY_MAX }, EVENT_SUMMARY_MAX);
+        const events = base.session ? viewerEvents(base.session, read) : read;
+        return json({
+          viewer: !!base.session, total: events.length, capped: read.length >= EVENT_SUMMARY_MAX,
+          types: ACTIVITY_TYPES.map(t => t.id), tiles: tiles(events), timeline: timeline(events),
+          sessions: sessionRows(events, sessionLabel).slice(0, 200), studies: studiesNamed(events, idOfUid),
+          ...(base.session ? {} : { scopes: world.scope ? [] : stack.collector.store.eventFacets().scopes, traceUrl: world.urls.trace }),
+        });
       }
       if (p === "/api/activity/span" && req.method === "GET") {
         // The exchange behind an event its session's viewer may see, and no other.
         const session = url.searchParams.get("session") ?? "", span = url.searchParams.get("span") ?? "";
         if (world.scope && scopeOfSession(session) !== world.scope) return json({ error: "not found" }, 404);
-        if (!span || !viewerEvents(session, stack.collector.store.events({ session, limit: 2000 })).some(e => e.span === span)) return json({ error: "not found" }, 404);
+        if (!span || !viewerEvents(session, stack.collector.store.events({ session, limit: EVENT_SUMMARY_MAX }, EVENT_SUMMARY_MAX)).some(e => e.span === span)) return json({ error: "not found" }, 404);
         const r = stack.collector.store.span(session, span);
         return r ? json(r) : json({ error: "not found" }, 404);
       }
@@ -168,7 +231,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
   }
 
   // The same files in every world: the pages work out their scope from their own URL.
-  const STATIC: Record<string, string> = Object.fromEntries(["styles.css", "page.js", "cards.js", "explore.js", "tours.js", "activity.js", "thumbs.js", "fonts/atkinson-next.woff2", "fonts/atkinson-mono.woff2"].map(f => [`/${f}`, f]));
+  const STATIC: Record<string, string> = Object.fromEntries(["styles.css", "page.js", "event-words.js", "explore.js", "tours.js", "activity.js", "thumbs.js", "fonts/atkinson-next.woff2", "fonts/atkinson-mono.woff2"].map(f => [`/${f}`, f]));
   /**
    * viewer-kit's files, from the pinned download, never from the repository: checked once, here at
    * startup, and served only as the bytes that were checked. With none that check out, every one is a

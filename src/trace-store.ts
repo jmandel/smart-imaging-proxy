@@ -7,8 +7,17 @@ import { chmodSync, existsSync, mkdirSync, statSync, writeFileSync } from "node:
 import { dirname } from "node:path";
 import type { EventRecord, SpanRecord } from "./trace";
 
-/** What the activity view filters events by. `scope: ""` is the root's alone. */
-export interface EventQuery { session?: string; scope?: string; kind?: string; outcome?: string; who?: string; trace?: string; link?: string; after?: number; limit?: number; }
+/**
+ * What the activity view filters events by. `scope: ""` is the root's alone. `kinds` and `outcomes`
+ * match any one given, as does `anyLink`. `about` keeps a study's own events, by id or UID, with every search and every
+ * event that names no study at all. `before` and `after` are bounds on `seq`.
+ */
+export interface EventQuery {
+  session?: string; scope?: string; kind?: string; kinds?: string[]; outcome?: string; outcomes?: string[]; who?: string; trace?: string; link?: string; anyLink?: string[];
+  about?: { study: string; uid?: string }; after?: number; before?: number; limit?: number;
+}
+/** The most events one read returns, and the most a summary reads. */
+export const EVENT_PAGE_MAX = 2000, EVENT_SUMMARY_MAX = 10000;
 
 export const DEFAULT_TRACE_DB = `${STORAGE}/traces.sqlite`;
 export const TRACE_LIMITS = { maxSessions: 100, maxSpansPerSession: 20000, maxBytes: 512 * 1024 * 1024 };
@@ -294,17 +303,31 @@ export class TraceStore {
     } catch (e) { this.counters.failures++; this.lastError = (e as Error).message; }
   }
   /** Events in order, matching every filter given: a link value matches any of an event's links. */
-  events(q: EventQuery = {}): EventRecord[] {
+  events(q: EventQuery = {}, max = EVENT_PAGE_MAX): EventRecord[] {
     const where: string[] = [], args: (string | number)[] = [];
     if (q.session) { where.push("session = ?"); args.push(q.session); }
     if (q.scope !== undefined) { if (q.scope === "") where.push("scope IS NULL"); else { where.push("scope = ?"); args.push(q.scope); } }
     for (const [col, v] of [["kind", q.kind], ["outcome", q.outcome], ["who", q.who], ["trace", q.trace]] as const) if (v) { where.push(`${col} = ?`); args.push(v); }
+    for (const [col, vs] of [["kind", q.kinds], ["outcome", q.outcomes]] as const) if (vs?.length) { where.push(`${col} IN (${vs.map(() => "?").join(", ")})`); args.push(...vs); }
     if (q.link) { where.push("instr(links, ?) > 0"); args.push(` ${q.link} `); }
+    if (q.anyLink?.length) { where.push(`(${q.anyLink.map(() => "instr(links, ?) > 0").join(" OR ")})`); args.push(...q.anyLink.map(l => ` ${l} `)); }
+    if (q.about) {
+      where.push("(kind = 'search.returned' OR (instr(links, ' study:') = 0 AND instr(links, ' uid:') = 0) OR instr(links, ?) > 0 OR instr(links, ?) > 0)");
+      args.push(` study:${q.about.study} `, q.about.uid ? ` uid:${q.about.uid} ` : ` study:${q.about.study} `);
+    }
     if (q.after) { where.push("seq > ?"); args.push(q.after); }
-    const limit = Math.min(Math.max(1, q.limit ?? 500), 2000);
+    if (q.before) { where.push("seq < ?"); args.push(q.before); }
+    const limit = Math.min(Math.max(1, q.limit ?? 500), max);
     // The newest `limit`, oldest first.
     const rows = this.db.query(`SELECT * FROM (SELECT * FROM events ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY seq DESC LIMIT ${limit}) ORDER BY seq`).all(...args) as any[];
     return rows.map(r => ({ seq: r.seq, session: r.session, ...(r.scope ? { scope: r.scope } : {}), trace: r.trace, ...(r.span ? { span: r.span } : {}), service: r.service, at: r.at, kind: r.kind, outcome: r.outcome, ...(r.who ? { who: r.who } : {}), links: r.links.trim().split(" ").filter(Boolean), data: JSON.parse(r.data) }));
+  }
+  /** How long each span took, in milliseconds, for those of a session that have ended. */
+  spanDurations(session: string, spans: string[]): Record<string, number> {
+    if (!spans.length) return {};
+    this.flush();
+    const rows = this.db.query(`SELECT span, json_extract(summary, '$.end') - start AS ms FROM spans WHERE session = ? AND span IN (${spans.map(() => "?").join(", ")})`).all(session, ...spans) as { span: string; ms: number | null }[];
+    return Object.fromEntries(rows.filter(r => typeof r.ms === "number").map(r => [r.span, Math.round(r.ms! * 10) / 10]));
   }
   /** The values events can be filtered by, for the activity view's choices. */
   eventFacets(scope?: string) {

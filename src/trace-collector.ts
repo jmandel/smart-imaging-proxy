@@ -64,7 +64,7 @@ export function eventQueryOf(url: URL): EventQuery {
   // `-` is the root's alone.
   const scope = url.searchParams.get("scope");
   if (scope) q.scope = scope === "-" ? "" : scope;
-  for (const k of ["after", "limit"] as const) { const v = Number(url.searchParams.get(k)); if (url.searchParams.has(k) && Number.isInteger(v)) q[k] = v; }
+  for (const k of ["after", "before", "limit"] as const) { const v = Number(url.searchParams.get(k)); if (url.searchParams.has(k) && Number.isInteger(v)) q[k] = v; }
   return q;
 }
 const decodable = (path: string) => { try { decodeURIComponent(path); return true; } catch { return false; } };

@@ -49,7 +49,12 @@ describe("each tour", () => {
       for (const s of state.steps) {
         expect([s.id, s.result.ok, s.result.actual]).toEqual([s.id, true, s.result.actual]);
         expect(s.result.expected).toBeTruthy();
-        expect(s.result.events.length).toBeGreaterThan(0);
+        expect(s.result.eventCount).toBeGreaterThan(0);
+        // A step's events are in the log, filtered to the tour's session and that step.
+        expect(s.result.activityUrl).toBe(`${base}/activity?session=${encodeURIComponent(state.session)}&trace=${s.result.trace}`);
+        const logged = await call("GET", s.result.activityUrl.replace("/activity?", "/api/activity?"));
+        expect([s.id, logged.body.events.length]).toEqual([s.id, s.result.eventCount]);
+        expect(logged.body.events.every((e: any) => e.trace === s.result.trace)).toBe(true);
       }
       expect(state.scope.base).toBe(base);
       // A tour's scope is its own: saved policy has none of what it did.

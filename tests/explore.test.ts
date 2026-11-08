@@ -65,8 +65,16 @@ function browser(base = "") {
     expect(r.status).toBe(202);
     return (await settled()).retrievals.find((x: any) => x.study === study);
   };
-  const events = async (study?: string) => (await call("GET", `/api/explore/events${study ? `?study=${study}` : ""}`)).json().events as any[];
-  return { call, session, settled, post, pick, service, released, withheld, retrieve, events, seen, get cookie() { return cookie; } };
+  /** The session's events as the activity log lists them, for a study as Explore links there. */
+  const events = async (study?: string) => {
+    const s = await session();
+    await traceSettled();
+    const r = await call("GET", `/api/activity?${new URLSearchParams({ session: s.session, limit: "500", ...(study ? { study } : {}) })}`);
+    expect(r.status).toBe(200);
+    return r.json().events as any[];
+  };
+  const happened = async (study: string) => { const r = await call("GET", `/api/explore/happened?study=${study}`); expect(r.status).toBe(200); return r.json(); };
+  return { call, session, settled, post, pick, service, released, withheld, retrieve, events, happened, seen, get cookie() { return cookie; } };
 }
 const SHARE = ["Lakeside Imaging", "Riverside Hospital"];
 const rule = (client: string, allow: any = { all: true }, extra: any = {}) => ({ id: `${client}-rule`, type: "service-access" as const, service: `service:${client}`, patients: "patient:josh-example", allow, ...extra });
@@ -114,6 +122,11 @@ for (const backend of BACKENDS) {
       const done = happened.filter(e => e.kind === "stream.done").at(-1);
       expect(done.data).toMatchObject({ resource: "study", parts: sheet.instanceCount, complete: true });
       expect(done.links).toContain(`token:${s.tokenHash}`);
+      expect(done).toMatchObject({ study: SMALL, ms: expect.any(Number) });
+      // Explore's one line for the chain says the same, and links into the log filtered to it.
+      const chain = await b.happened(SMALL);
+      expect(chain.line).toMatch(new RegExp(`^Searched, signed link made, checked by the proxy with no policy call; ${sheet.instanceCount} parts, [0-9.]+ [KMG]?B\\.$`));
+      expect(chain.activityUrl).toBe(`/activity?session=${encodeURIComponent(s.session)}&study=${SMALL}`);
     }, 120000);
     test("Sam sees nothing of Josh's until Josh shares, then what Josh shared, then what Sam gave the app", async () => {
       const b = browser();
@@ -209,9 +222,9 @@ const BIOPSY_TRACES = () => {
   const st = stack.catalog.allStudies().find(x => x.id === CONFIDENTIAL)!;
   return [CONFIDENTIAL, st.uid, st.title!, "skin biopsy", "Skin biopsy", "SKIN BIOPSY", "Northside", "confidential-adolescent", "confidential adolescent", "keeps it from guardians", "doesn't reach"].filter(Boolean);
 };
-/** The text of everything a session's activity view, and each exchange behind its cards, gives. */
+/** The text of everything a session's activity log gives: its events, its rollups, each exchange behind an event, and Explore's line for each study. */
 async function activityText(b: ReturnType<typeof browser>, session: string) {
-  const r = await b.call("GET", `/api/activity?session=${encodeURIComponent(session)}`);
+  const r = await b.call("GET", `/api/activity?session=${encodeURIComponent(session)}&limit=500`);
   expect(r.status).toBe(200);
   const body = r.json();
   expect(body.events.some((e: any) => e.kind === "search.returned")).toBe(true);
@@ -223,7 +236,14 @@ async function activityText(b: ReturnType<typeof browser>, session: string) {
     expect([e.kind, span.status]).toEqual([e.kind, 200]);
     texts.push(span.text);
   }
-  texts.push((await b.call("GET", "/api/explore/events")).text);
+  // The rollups, whole and for each type, and with a study filter for the hidden one: none may count it.
+  const summary = await b.call("GET", `/api/activity/summary?session=${encodeURIComponent(session)}`);
+  expect(summary.status).toBe(200);
+  texts.push(summary.text);
+  for (const type of summary.json().types) texts.push((await b.call("GET", `/api/activity?session=${encodeURIComponent(session)}&type=${type}`)).text, (await b.call("GET", `/api/activity/summary?session=${encodeURIComponent(session)}&type=${type}`)).text);
+  const hidden = await b.call("GET", `/api/activity/summary?session=${encodeURIComponent(session)}&study=${CONFIDENTIAL}`);
+  expect(hidden.json().tiles.searches.withheld).toBe(summary.json().tiles.searches.withheld);
+  for (const sheet of (await b.session()).sheets) texts.push((await b.call("GET", `/api/explore/happened?study=${sheet.id}`)).text);
   return texts.join("\n");
 }
 const expectNoTrace = (who: string, text: string) => { for (const hidden of BIOPSY_TRACES()) expect([who, hidden, text.includes(hidden)]).toEqual([who, hidden, false]); };
@@ -235,8 +255,14 @@ describe("the activity of a viewer's session", () => {
     expect(s.status).toBe("results");
     await traceSettled();
     expectNoTrace("Sam", await activityText(b, s.session));
+    // Sam's rollups count no study withheld: the one a label keeps from him isn't his to know of.
+    const sam = (await b.call("GET", `/api/activity/summary?session=${encodeURIComponent(s.session)}`)).json();
+    expect(sam.tiles.searches).toMatchObject({ returned: s.sheets.length, withheld: 0 });
+    expect(sam.studies).not.toContain(CONFIDENTIAL);
     // The operator's view of every session holds it, which is what the filter takes out.
-    expect((await b.call("GET", "/api/activity")).text).toContain(CONFIDENTIAL);
+    expect((await b.call("GET", `/api/activity?session=&limit=500`)).text).toContain(CONFIDENTIAL);
+    const operator = (await b.call("GET", `/api/activity/summary?link=${encodeURIComponent(`patient:riley-example`)}`)).json();
+    expect(operator.tiles.searches.withheld).toBeGreaterThan(0);
   }, 60000);
   test("as Alex, after Sam shares Lakeside, holds no trace of it either", async () => {
     stack.store.putShare({ from: "user:sam-caregiver", with: "user:alex-neighbor", patient: "patient:riley-example", sites: ["Lakeside Imaging"], label: "neighbor" });
@@ -546,10 +572,11 @@ describe("the token stays on the server", () => {
     await b.call("GET", `/api/explore/thumbnail?study=${SMALL}`);
     await b.call("GET", "/api/explore/options");
     await b.events(SMALL);
+    await b.happened(SMALL);
     await b.pick("alex-neighbor");
     setSaved({ rules: [rule("research-donation")] });
     await b.service("research-donation", "referral-xr-wrist-left-2012");
-    for (const path of ["/", "/explore.js", "/styles.css", "/tours", `/api/activity?session=${encodeURIComponent(josh.session)}`]) await b.call("GET", path);
+    for (const path of ["/", "/explore.js", "/styles.css", "/tours", `/api/activity?session=${encodeURIComponent(josh.session)}`, `/api/activity/summary?session=${encodeURIComponent(josh.session)}`, "/api/activity/summary", "/activity"]) await b.call("GET", path);
     expect(issued.size).toBeGreaterThanOrEqual(3);
     const sent = b.seen.join("\n");
     for (const token of issued) expect(sent.includes(token)).toBe(false);
@@ -567,7 +594,7 @@ describe("the token stays on the server", () => {
     expect((await browser().call("GET", "/api/explore/session")).json().session).toBeNull();
   }, 60000);
   test("no one else's session can be read or acted on", async () => {
-    for (const [method, path] of [["GET", "/api/explore/events"], ["GET", `/api/explore/thumbnail?study=${SMALL}`], ["POST", "/api/explore/retrieve"], ["POST", "/api/explore/revoke-app"]] as const) {
+    for (const [method, path] of [["GET", `/api/explore/happened?study=${SMALL}`], ["GET", `/api/explore/thumbnail?study=${SMALL}`], ["POST", "/api/explore/retrieve"], ["POST", "/api/explore/revoke-app"]] as const) {
       expect((await browser().call(method, path, method === "POST" ? { study: SMALL } : undefined)).status).toBe(404);
     }
   });

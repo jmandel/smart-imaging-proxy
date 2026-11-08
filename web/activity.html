@@ -2,28 +2,40 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Activity · SMART Imaging</title>
+<title>Activity log · SMART Imaging</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Crect width='20' height='20' rx='3' fill='%230f2a3d'/%3E%3Ccircle cx='10' cy='10' r='4' fill='%23e8f1f6'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <header class="topbar">
-  <a class="mark" href="/"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2" y="2" width="16" height="16" rx="3"/><circle cx="10" cy="10" r="3.2"/></svg>SMART Imaging</a>
-  <nav class="pages" aria-label="Pages"><a href="/">Explore</a><a href="/tours">Tours</a></nav>
+  <a class="mark" href="/"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2" y="2" width="16" height="16" rx="3"/><circle cx="10" cy="10" r="3.2"/></svg><span class="name">SMART Imaging</span></a>
+  <nav class="pages" aria-label="Pages"><a href="/">Explore</a><a href="/tours">Tours</a><a href="/activity" aria-current="page">Activity</a></nav>
   <div class="bar-end"><span class="where" id="where"></span>
     <button type="button" id="settings-button" aria-label="Settings" aria-expanded="false" aria-controls="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg><span class="label">Settings</span></button>
   </div>
   <div class="settings" id="settings" role="region" aria-label="Settings" hidden></div>
 </header>
-<main class="activity">
-  <h1 id="title" tabindex="-1">Activity</h1>
-  <p class="note">Every event the services recorded: sign-ins, searches, signed links, decisions, retrievals, and policy changes.</p>
-  <form class="filters" id="filters" aria-label="Filter the activity"></form>
-  <div id="events"><p class="note">Loading…</p></div>
+<main class="log">
+  <div class="log-head">
+    <h1 id="title" tabindex="-1">Activity log</h1>
+    <p class="note" id="view-line"></p>
+    <form class="filters" id="filters" aria-label="Filter the log"></form>
+  </div>
+  <section class="glance" aria-labelledby="h-glance">
+    <h2 id="h-glance" class="sr-only">At a glance</h2>
+    <ul class="tiles" id="tiles" aria-label="Each type of event, rolled up. Choose one to list it."></ul>
+    <figure class="timeline" id="timeline"></figure>
+  </section>
+  <p class="note" id="capped" hidden>These rollups cover the newest 10,000 events that match.</p>
+  <div class="log-body">
+    <section class="sessions" aria-labelledby="h-sessions"><h2 id="h-sessions">Sessions</h2><div id="sessions"><p class="note">Loading…</p></div></section>
+    <section class="events" aria-labelledby="h-events"><h2 id="h-events">All events</h2><div id="events"><p class="note">Loading…</p></div>
+      <button type="button" class="secondary" id="more" hidden>Show older events</button></section>
+  </div>
 </main>
 <p id="announce" class="sr-only" role="status"></p>
 <script src="/page.js"></script>
-<script src="/cards.js"></script>
+<script src="/event-words.js"></script>
 <script src="/activity.js"></script>
 </body>
 </html>

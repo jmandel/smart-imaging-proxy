@@ -1,7 +1,7 @@
 // Explore: pick a person or a service, and see what they can see, from a real sign-in and a real
 // search the demo server runs. The server holds the token: this page sends choices and shows answers.
 let options, view = null, shown = "", timer, popup, popupSent = false, closedPolls = 0, wantFocus = false, pageError = "";
-let open = null, openEvents = null, form = null, mode = "scripted";
+let open = null, chain = null, form = null, mode = "scripted";
 const picked = { records: {}, referral: {} };
 /** Each service's referrals, asked for once that service is chosen. */
 const referralsFor = {}, askedReferrals = new Set();
@@ -36,7 +36,6 @@ function renderWho() {
 
 async function loadOptions() {
   options = await api("GET", "/api/explore/options");
-  Cards.setNames(options.names);
   renderWho();
 }
 
@@ -82,7 +81,7 @@ function formHtml() {
 function viewHtml() {
   if (pageError && !view) return `<div class="headline"><h1 id="headline" tabindex="-1">Something went wrong</h1></div><p class="error" role="alert">${esc(pageError)}</p>`;
   if (!view) return `<div class="headline"><h1 id="headline" tabindex="-1">Pick someone to see what they can see</h1></div>
-    <div class="empty"><p>Each choice is a real sign-in and search against the Authorization Server, the Imaging Server and the proxy, and every study opens with what happened.</p></div>`;
+    <div class="empty"><p>Each choice is a real sign-in and search against the Authorization Server, the Imaging Server and the proxy. The activity log records every step.</p></div>`;
   if (view.running) return `${whoseHtml()}<div class="headline"><h1 id="headline" tabindex="-1"><span class="spinner" aria-hidden="true"></span>${view.authUrl ? "Waiting for you in the sign-in window" : view.who.kind === "user" ? `Signing ${esc(view.who.first)} in and searching` : "Working from the referral"}</h1></div>
     ${view.authUrl ? `<div class="empty"><p>Sign in and approve in the window that opened. <a href="${esc(view.authUrl)}" target="smart-imaging-authorize" rel="opener">Open it again</a></p><button type="button" class="secondary" id="stop-waiting">Stop waiting</button></div>` : ""}`;
   if (open) return studyHtml();
@@ -94,7 +93,7 @@ function viewHtml() {
     ${pageError ? `<p class="error" role="alert">${esc(pageError)}</p>` : ""}
     ${view.sheets?.length ? `<ul class="sheets" aria-label="Studies">${view.sheets.map(sheetHtml).join("")}</ul>` : ""}
     ${empty}${formHtml()}
-    <div class="actions">${(view.actions ?? []).map((a, i) => actionButton(a, i)).join("")}<span class="note"><a href="${esc(view.activityUrl)}">What happened, in full</a></span></div>`;
+    <div class="actions">${(view.actions ?? []).map((a, i) => actionButton(a, i)).join("")}<span class="note"><a href="${esc(view.activityUrl)}">See it in the activity log</a></span></div>`;
 }
 
 function studyHtml() {
@@ -102,7 +101,6 @@ function studyHtml() {
   const r = view.retrievals?.find(x => x.study === open);
   return `<button type="button" class="back" id="back">Back to ${esc(view.who.kind === "user" && view.patientName ? `${view.patientName.split(" ")[0]}'s studies` : "the studies")}</button>
   <div class="study-open">
-    <div class="study-main">
       <div class="study-hero">
         <div class="thumb" data-study="${esc(s.id)}" data-label="${esc(s.title)}"><span class="placeholder">${esc(s.modalities?.[0] ?? "")}</span></div>
         <span class="meta">${esc([(s.modalities ?? []).join(" "), studyDate(s.date), s.site, `${plural(s.instanceCount ?? 0, "image")} in ${plural(s.seriesCount ?? 0, "series", "series")}`, s.partial].filter(Boolean).join(" · "))}</span>
@@ -114,23 +112,18 @@ function studyHtml() {
         <dt>Parts</dt><dd>${esc(r.parts)}</dd><dt>On the wire</dt><dd>${esc(bytes(r.wireBytes))}${r.encoding === "zstd" ? ", zstd" : ""}</dd><dt>DICOM</dt><dd>${esc(bytes(r.dicomBytes))}</dd>
         ${r.authz ? `<dt>Decided</dt><dd>${esc(r.authz === "instant" ? "from the signed link, with no call" : r.authz === "cached" ? "from a cached decision" : "by asking the Imaging Server")}</dd>` : ""}
         ${r.ms !== undefined ? `<dt>Took</dt><dd>${esc(r.ms)} ms</dd>` : ""}${r.error ? `<dt>Problem</dt><dd class="error">${esc(r.error)}</dd>` : ""}</dl></div>` : ""}
-    </div>
-    <aside class="happened" aria-labelledby="h-happened"><h2 id="h-happened">What happened</h2>
-      ${openEvents ? Cards.list(openEvents) : `<p class="note"><span class="spinner" aria-hidden="true"></span>Loading…</p>`}
-      <a href="${esc(view.activityUrl)}">See all the activity</a></aside>
+    <p class="chain" id="chain">${chain ? `${esc(chain.line)} <a href="${esc(chain.activityUrl)}">See it in the activity log</a>` : `<span class="spinner" aria-hidden="true"></span>Loading…`}</p>
   </div>`;
 }
 
 function render(force = false) {
-  const key = JSON.stringify([view, open, openEvents?.length, form, pageError]);
+  const key = JSON.stringify([view, open, chain, form, pageError]);
   if (!force && key === shown) return;
   shown = key;
   const focusedAction = document.activeElement?.closest?.("#view") && document.activeElement.id;
   $("#view").innerHTML = viewHtml();
   if (options) renderWho();
   Thumbs.watch($("#view"));
-  Cards.setSession(view?.session);
-  Cards.wire($("#view"));
   if (focusedAction && document.getElementById(focusedAction)) document.getElementById(focusedAction).focus();
   if (view && !view.running && wantFocus) { wantFocus = false; $("#headline")?.focus({ preventScroll: innerWidth > 720 }); announce(view.headline ?? ""); }
 }
@@ -149,7 +142,7 @@ function syncPopup() {
 }
 
 async function call(path, body) {
-  pageError = ""; open = null; openEvents = null; form = null; wantFocus = true;
+  pageError = ""; open = null; chain = null; form = null; wantFocus = true;
   Thumbs.reset();
   if (mode === "window" && (path === "/start" || path === "/approve")) openPopup(); else popup = null;
   try { const r = await api("POST", `/api/explore${path}`, body); view = r.session; render(); poll(); }
@@ -162,12 +155,13 @@ function poll() {
       const r = await api("GET", "/api/explore/session");
       view = r.session; syncPopup(); render();
       const busy = view?.running || view?.retrievals?.some(x => x.running);
-      if (!busy) { clearInterval(timer); timer = undefined; loadOptions(); if (open) loadEvents(); }
+      if (!busy) { clearInterval(timer); timer = undefined; loadOptions(); if (open) loadChain(); }
     } catch (e) { clearInterval(timer); timer = undefined; pageError = e.message; render(true); }
   }, 300);
 }
-async function loadEvents() {
-  try { openEvents = (await api("GET", `/api/explore/events?study=${encodeURIComponent(open)}`)).events; } catch (e) { openEvents = []; pageError = e.message; }
+/** The study's chain in one line, from the same events the activity log shows for it. */
+async function loadChain() {
+  try { chain = await api("GET", `/api/explore/happened?study=${encodeURIComponent(open)}`); } catch (e) { chain = null; pageError = e.message; }
   render();
 }
 
@@ -180,7 +174,7 @@ document.addEventListener("click", e => {
   } else if (t.dataset.client) call("/start", { client: t.dataset.client, ...(picked.referral[t.dataset.client] ? { referral: picked.referral[t.dataset.client] } : {}) });
   else if (t.dataset.whose) { picked.records[view.who.asked] = t.dataset.whose; call("/start", { user: view.who.asked, mode, patient: t.dataset.whose }); }
   else if (t.dataset.referral) { picked.referral[view.who.id] = t.dataset.referral; call("/start", { client: view.who.id, referral: t.dataset.referral }); }
-  else if (t.dataset.open) { open = t.dataset.open; openEvents = null; wantFocus = true; render(); loadEvents(); }
+  else if (t.dataset.open) { open = t.dataset.open; chain = null; wantFocus = true; render(); loadChain(); }
   else if (t.id === "back") { const was = open; open = null; render(); $(`[data-open="${CSS.escape(was)}"]`)?.focus(); }
   else if (t.id === "retrieve") { api("POST", "/api/explore/retrieve", { study: open }).then(r => { view = r.session; render(); poll(); }, err => { pageError = err.message; render(true); }); }
   else if (t.id === "stop-waiting") { popup?.close(); api("POST", "/api/explore/cancel", { stopped: true }).catch(() => {}); }

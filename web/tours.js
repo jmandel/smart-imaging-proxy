@@ -14,7 +14,7 @@ function listHtml() {
       <p class="note">Each flow runs in a scope of its own, every step with its usual choices, and every check it makes has to pass.</p>
       <div class="row"><button type="button" class="secondary" id="run-checks" ${Object.values(checks).some(c => c.running) ? "disabled" : ""}>Run checks</button>
         ${running ? `<span class="note" role="status">${done.length} of ${list.checks.length} run</span>` : done.length ? `<span class="${done.every(c => c.ok) ? "verdict ok" : "verdict bad"}" role="status">${done.filter(c => c.ok).length} of ${done.length} passed</span>` : ""}</div>
-      <ul class="check-list">${list.checks.map(c => { const r = checks[c.id]; return `<li><span class="verdict ${r?.ok ? "ok" : r?.ok === false ? "bad" : ""}">${r?.running ? '<span class="spinner" aria-hidden="true"></span>' : r ? (r.ok ? "Pass" : "Fail") : ""}</span><span>${esc(c.title)}</span>${r?.activityUrl ? `<a href="${esc(r.activityUrl)}">What happened</a>` : ""}${r?.failures?.length ? `<span class="fail-detail">${r.failures.map(f => esc(`${f.step}: ${f.label}${f.detail ? ` (${f.detail})` : ""}`)).join("<br>")}</span>` : ""}</li>`; }).join("")}</ul>
+      <ul class="check-list">${list.checks.map(c => { const r = checks[c.id]; return `<li><span class="verdict ${r?.ok ? "ok" : r?.ok === false ? "bad" : ""}">${r?.running ? '<span class="spinner" aria-hidden="true"></span>' : r ? (r.ok ? "Pass" : "Fail") : ""}</span><span>${esc(c.title)}</span>${r?.activityUrl ? `<a href="${esc(r.activityUrl)}">Activity log</a>` : ""}${r?.failures?.length ? `<span class="fail-detail">${r.failures.map(f => esc(`${f.step}: ${f.label}${f.detail ? ` (${f.detail})` : ""}`)).join("<br>")}</span>` : ""}</li>`; }).join("")}</ul>
     </section>`;
 }
 
@@ -26,7 +26,7 @@ function stepHtml(s, i, steps) {
     <span class="what"><b>${esc(s.title)}</b><span>${esc(s.actor)}${next && s.expect ? `. The model expects: ${esc(s.expect)}` : ""}</span></span>
     ${r ? `<span class="verdict ${r.ok ? "ok" : "bad"}">${r.ok ? "Matches the model" : r.stopped ? "Stopped" : "Differs from the model"}</span>` : next ? `<button type="button" class="primary" data-step="${esc(s.id)}" ${running ? "disabled" : ""}>${running ? "Running…" : "Run"}</button>` : "<span></span>"}
     ${r ? `<dl class="compare">${r.expected ? `<dt>Expected</dt><dd>${esc(r.expected)}</dd>` : ""}<dt>Got</dt><dd>${esc(r.actual)}</dd>${r.write ? `<dt>Policy written</dt><dd>${esc(r.write)}</dd>` : ""}</dl>
-      <div class="result"><details><summary>What happened, ${plural(r.events.length, "event")}</summary>${Cards.list(r.events)}</details></div>` : ""}
+      ${r.activityUrl ? `<p class="result"><a href="${esc(r.activityUrl)}">This step in the activity log</a>, ${esc(plural(r.eventCount ?? 0, "event"))}</p>` : ""}` : ""}
   </li>`;
 }
 
@@ -48,17 +48,15 @@ function tourHtml() {
       ${left ? `<button type="button" class="secondary" id="run-rest" ${running ? "disabled" : ""}>Run the rest</button>` : `<span class="verdict ${steps.every(s => s.result.ok) ? "ok" : "bad"}" role="status">${steps.every(s => s.result.ok) ? "Every step matched the model" : "Some steps differ from the model"}</span>`}
       <button type="button" class="secondary" id="start">Start over</button>
       <label class="note"><input type="checkbox" id="window-mode"> Sign in yourself, in a window</label>
-      ${state.activityUrl ? `<a href="${esc(state.activityUrl)}">All the activity</a>` : ""}</div>`;
+      ${state.activityUrl ? `<a href="${esc(state.activityUrl)}">This tour in the activity log</a>` : ""}</div>`;
 }
 
 function render() {
   const mode = windowMode();
   const focused = document.activeElement?.id || document.activeElement?.dataset?.step;
   $("#tour-list").innerHTML = listHtml();
-  Cards.setSession(state?.session);
   $("#tour").innerHTML = tourHtml();
   if ($("#window-mode")) $("#window-mode").checked = mode;
-  Cards.wire($("#tour"));
   if (wantFocus) { wantFocus = false; $("#tour-title")?.focus(); }
   else if (focused) (document.getElementById(focused) ?? $(`[data-step]`))?.focus();
 }

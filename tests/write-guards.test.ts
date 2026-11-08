@@ -152,7 +152,7 @@ test("a refused scope mint makes no scope", async () => {
 
 test("the demo's pages and read APIs answer only at its own addresses", async () => {
   const demo = (path: string, headers: Record<string, string> = {}) => fetch(`http://127.0.0.1:${PORTS.demo}${path}`, { headers });
-  for (const path of ["/", "/tours", "/activity", "/api/policy", "/api/backends", "/api/flows", "/api/explore/options", "/api/settings/status"]) {
+  for (const path of ["/", "/tours", "/activity", "/api/activity", "/api/activity/summary", "/api/policy", "/api/backends", "/api/flows", "/api/explore/options", "/api/settings/status"]) {
     expect((await demo(path, { host: "evil.example" })).status).toBe(403);
     expect((await demo(path)).status).toBe(200);
   }
