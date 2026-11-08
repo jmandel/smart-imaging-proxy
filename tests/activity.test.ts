@@ -29,6 +29,9 @@ describe("a session, study by study", () => {
     // Where each study stood when the session ended: a later search no longer found b.
     expect(after!.b).toMatchObject({ search: [{ is: "gone", n: 1 }], end: "gone" });
     expect(f.ends.sort()).toEqual(["gone", "refused"]);
+    // Each study's own time order: a search's result goes ahead of the links it made.
+    expect(before!.a.steps.map(x => `${x.stage} ${x.is}`)).toEqual(["search found", "link link", "check instant", "get sent"]);
+    expect(after!.a.steps.map(x => `${x.stage} ${x.is}`)).toEqual(["search gone", "check instant", "get sent", "check refused", "get refused"]);
   });
   test("a study withheld after it was found says so, and a search of another patient says nothing of it", () => {
     const f = sessionStudies([

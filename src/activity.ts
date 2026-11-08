@@ -117,7 +117,9 @@ export function sessionRows(events: EventRecord[], labelOf: (session: string) =>
 export type StudyEnd = "sent" | "refused" | "linked" | "found" | "withheld" | "gone";
 /** One outcome at a stage, and how many times in a row it came out that way. */
 export type StageStep = { is: string; n: number; bytes?: number };
-type StudyRow = { study: string; patient?: string; search: StageStep[]; links: number; check: StageStep[]; get: StageStep[]; parts: number; bytes: number; cut: number };
+/** A step in a study's own time order: which stage, and what came of it. */
+export type TimedStep = StageStep & { stage: "search" | "link" | "check" | "get" };
+type StudyRow = { study: string; patient?: string; search: StageStep[]; links: number; check: StageStep[]; get: StageStep[]; steps: (TimedStep & { trace?: string })[]; parts: number; bytes: number; cut: number };
 
 /**
  * A session, study by study, each stage's outcomes in the order they happened: what each search
@@ -127,26 +129,37 @@ type StudyRow = { study: string; patient?: string; search: StageStep[]; links: n
  * in the order the session first touched them; `ends` is where each one stood when the session ended.
  */
 export function sessionStudies(events: EventRecord[], idOfUid: (uid: string) => string | undefined) {
-  type Phase = { writes: unknown[]; rows: Map<string, StudyRow> };
+  type Phase = { writes: unknown[]; rows: Map<string, StudyRow>; from?: number; to?: number };
   const phases: Phase[] = [{ writes: [], rows: new Map() }];
   const patientOf = new Map<string, string | undefined>();
   let phase = phases[0]!;
   const row = (study: string) => {
     let r = phase.rows.get(study);
-    if (!r) phase.rows.set(study, r = { study, search: [], links: 0, check: [], get: [], parts: 0, bytes: 0, cut: 0 });
+    if (!r) phase.rows.set(study, r = { study, search: [], links: 0, check: [], get: [], steps: [], parts: 0, bytes: 0, cut: 0 });
     return r;
   };
   // A run of the same outcome is one step that counts its repeats.
-  const step = (list: StageStep[], is: string, bytes?: number) => {
-    const last = list.at(-1);
-    if (last?.is === is) { last.n++; if (bytes !== undefined) last.bytes = (last.bytes ?? 0) + bytes; }
-    else list.push({ is, n: 1, ...(bytes !== undefined ? { bytes } : {}) });
+  const add = <T extends StageStep>(list: T[], next: T, same: (x: T) => boolean, at = list.length) => {
+    const last = list[at - 1];
+    if (last && same(last)) { last.n++; if (next.bytes !== undefined) last.bytes = (last.bytes ?? 0) + next.bytes; }
+    else list.splice(at, 0, next);
+  };
+  let trace: string | undefined;
+  /** Records an outcome at a stage, in the stage's list and in the study's time order. */
+  const step = (r: StudyRow, stage: TimedStep["stage"], is: string, bytes?: number) => {
+    const extra = bytes !== undefined ? { bytes } : {};
+    if (stage !== "link") add(r[stage], { is, n: 1, ...extra }, x => x.is === is);
+    // A search's links are recorded before the search itself: its result goes ahead of them.
+    let at = r.steps.length;
+    if (stage === "search") while (at > 0 && r.steps[at - 1]!.stage === "link" && r.steps[at - 1]!.trace === trace) at--;
+    add(r.steps, { stage, is, n: 1, ...extra, trace }, x => x.stage === stage && x.is === is, at);
   };
   const unreached = new Set<string>();
   const other = { tokens: 0, referrals: 0, refusedReferrals: 0, writes: {} as Record<string, number>, refusedWrites: 0 };
   for (const e of events) {
     const d = e.data as any;
     const study = typeof d.study === "string" ? d.study : typeof d.studyUid === "string" ? idOfUid(d.studyUid) : undefined;
+    trace = e.trace;
     switch (e.kind) {
       case "token.issued": other.tokens++; break;
       case "referral.checked": other.referrals++; if (!d.ok) other.refusedReferrals++; break;
@@ -154,35 +167,36 @@ export function sessionStudies(events: EventRecord[], idOfUid: (uid: string) => 
         if (d.status >= 300) { other.refusedWrites++; break; }
         count(other.writes, d.level);
         if (!patientOf.size) break;
-        if (phase.rows.size) phases.push(phase = { writes: [], rows: new Map() });
+        if (phase.rows.size) phases.push(phase = { writes: [], rows: new Map(), from: e.at });
         phase.writes.push(d);
         break;
       case "search.returned": {
         if (d.status !== 200) break;
         const patient = new URLSearchParams(String(d.query ?? "")).get("patient") ?? undefined;
         const said = new Set<string>();
-        const saw = (s: string, is: string) => { if (!patientOf.get(s)) patientOf.set(s, patient); step(row(s).search, is); said.add(s); };
+        const saw = (s: string, is: string) => { if (!patientOf.get(s)) patientOf.set(s, patient); step(row(s), "search", is); said.add(s); };
         for (const s of (d.found as string[] | undefined) ?? []) saw(s, "found");
         // Withheld from the app although the person reaches it. A study no route reaches is listed only if the session went after it.
         for (const w of (d.withheld as Listed) ?? []) saw(w.study, "withheld");
         for (const w of (d.unreached as Listed) ?? []) if (patientOf.has(w.study)) saw(w.study, "gone"); else unreached.add(w.study);
         // A later search of the same patient that doesn't list a study found it no more.
-        if (patient) for (const [s, p] of patientOf) if (p === patient && !said.has(s)) step(row(s).search, "gone");
+        if (patient) for (const [s, p] of patientOf) if (p === patient && !said.has(s)) step(row(s), "search", "gone");
         break;
       }
-      case "context.signed": if (study) row(study).links++; break;
-      case "proxy.fast-path": if (study && d.taken) step(row(study).check, "instant"); break;
-      case "proxy.decision": if (study) step(row(study).check, d.unavailable ? "no answer" : !d.allowed ? "refused" : d.via === "cached" ? "cached" : "asked"); break;
+      case "context.signed": if (study) { row(study).links++; step(row(study), "link", "link"); } break;
+      case "proxy.fast-path": if (study && d.taken) step(row(study), "check", "instant"); break;
+      case "proxy.decision": if (study) step(row(study), "check", d.unavailable ? "no answer" : !d.allowed ? "refused" : d.via === "cached" ? "cached" : "asked"); break;
       case "stream.done":
       case "retrieval.answered":
         if (study) {
           const r = row(study), ok = d.status < 400 && (e.kind !== "stream.done" || d.complete);
           if (e.kind === "stream.done") { r.parts += d.parts ?? 0; r.bytes += d.bytes ?? 0; if (!d.complete) r.cut++; }
-          step(r.get, ok ? "sent" : "refused", e.kind === "stream.done" ? d.bytes ?? 0 : undefined);
+          step(r, "get", ok ? "sent" : "refused", e.kind === "stream.done" ? d.bytes ?? 0 : undefined);
         }
         break;
     }
     if (study && !patientOf.has(study) && e.kind !== "policy.written") patientOf.set(study, undefined);
+    if (e.kind !== "token.issued" && e.kind !== "referral.checked" && (phase.writes.length || phase.rows.size)) { phase.from ??= e.at; phase.to = e.at; }
   }
   const end = (r: StudyRow): StudyEnd => {
     const got = r.get.at(-1)?.is, checked = r.check.at(-1)?.is;
@@ -194,12 +208,12 @@ export function sessionStudies(events: EventRecord[], idOfUid: (uid: string) => 
   };
   const ends = new Map<string, StudyEnd>();
   const shown = phases.filter(p => p.rows.size || p.writes.length).map(p => ({
-    writes: p.writes,
+    writes: p.writes, from: p.from, to: p.to,
     studies: [...p.rows.values()].map(r => {
-      if (!r.search.length && unreached.has(r.study)) r.search.push({ is: "unreached", n: 1 });
+      if (!r.search.length && unreached.has(r.study)) { r.search.push({ is: "unreached", n: 1 }); r.steps.unshift({ stage: "search", is: "unreached", n: 1 }); }
       const e = end(r);
       ends.set(r.study, e);
-      return { ...r, end: e };
+      return { ...r, steps: r.steps.map(({ trace: _t, ...x }) => x), end: e };
     }),
   }));
   return { other, phases: shown, ends: [...ends.values()] };

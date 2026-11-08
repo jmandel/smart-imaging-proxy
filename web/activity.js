@@ -16,8 +16,8 @@ const TYPES = {
 };
 const ALL_COLS = ["Time", "Type", "Party", "Summary"];
 const KIND_WORDS = { "token.issued": "Token issued", "referral.checked": "Referral checked", "search.returned": "Search", "context.signed": "Signed link", "decision.answered": "Policy decision", "proxy.fast-path": "Proxy check", "proxy.decision": "Proxy check", "stream.done": "Retrieval", "retrieval.answered": "Retrieval", "policy.written": "Policy write" };
-const PARTY = { "authorization-server": "Authorization Server", "imaging-fhir": "Imaging Server", policy: "Policy", "dicomweb-proxy": "Proxy", app: "App" };
-const AUTHZ = { instant: "signed link", cached: "cached decision", asked: "decision call", "no token": "no token" };
+const PARTY = { "authorization-server": "Authorization Server", "imaging-fhir": "Imaging Server", policy: "Imaging Server policy", "dicomweb-proxy": "Proxy", app: "App" };
+const AUTHZ = { instant: "signed link", cached: "cached answer", asked: "asked the Imaging Server", "no token": "no token" };
 const LEVELS = { fact: "facts", policy: "organization policy", choice: "choices", settings: "settings", document: "whole document", reset: "resets" };
 
 let names = {}, summary = null, events = [], more = false, before = null, openSeq = null;
@@ -36,10 +36,10 @@ function tileParts(id, t) {
     case "referrals": return { lines: [t.count ? `${num(t.ok)} on the authorized server, ${num(t.refused)} not` : "None checked"], split: [["On the server", t.ok, "a"], ["Not on it", t.refused, "bad"]] };
     case "searches": return { lines: [`${num(t.returned)} ${t.returned === 1 ? "study" : "studies"} returned, ${num(t.withheld)} withheld`, t.refused ? `${num(t.refused)} refused` : ""], split: [["Returned", t.returned, "a"], ["Withheld", t.withheld, "b"]] };
     case "links": return { lines: [t.count ? topOf(t.byForm, 3) : "None made"] };
-    case "checks": return { lines: [`${num(t.instant)} instant, ${num(t.cached)} cached, ${num(t.asked)} decision ${t.asked === 1 ? "call" : "calls"}`, t.refused ? `${num(t.refused)} refused` : ""], split: [["Instant", t.instant, "a"], ["Cached", t.cached, "b"], ["Decision call", t.asked, "c"]] };
-    case "retrievals": return { lines: [`${num(t.parts)} parts, ${bytes(t.bytes)} on the wire`, [t.zstd ? `${num(t.zstd)} zstd passthrough` : "", t.refused ? `${num(t.refused)} refused` : "", t.cut ? `${num(t.cut)} cut off` : ""].filter(Boolean).join(", ")] };
+    case "checks": return { lines: [t.count ? [t.instant && `${num(t.instant)} by the signed link alone`, t.cached && `${num(t.cached)} by a cached answer`, t.asked && `${num(t.asked)} asked the Imaging Server`].filter(Boolean).join(", ") : "None", t.refused ? `${num(t.refused)} refused` : ""], split: [["Signed link alone", t.instant, "a"], ["Cached answer", t.cached, "b"], ["Asked the Imaging Server", t.asked, "c"]] };
+    case "retrievals": return { lines: [t.count ? (t.bytes ? `${bytes(t.bytes)} sent to apps` : "Nothing sent") : "None", [t.refused ? `${num(t.refused)} refused` : "", t.cut ? `${num(t.cut)} cut off` : ""].filter(Boolean).join(", ")] };
     case "decisions": return { lines: [`${num(t.allow)} allow, ${num(t.deny)} deny`], split: [["Allow", t.allow, "good"], ["Deny", t.deny, "bad"]] };
-    case "writes": return { lines: [t.count ? `${num(t.ok)} written${t.refused ? `, ${num(t.refused)} refused` : ""}` : "None", t.count ? topOf(t.byLevel, 2, k => LEVELS[k] ?? k) : ""] };
+    case "writes": return { lines: [t.count ? `${num(t.ok)} written${t.refused ? `, ${num(t.refused)} refused` : ""}` : "None", t.count ? topOf(t.byLevel, 2, k => `to ${LEVELS[k] ?? k}`) : ""] };
     case "problems": return { lines: [`${num(t.denied)} denied, ${num(t.error)} failed`, t.count ? topOf(t.byKind, 2, k => KIND_WORDS[k]?.toLowerCase() ?? k) : ""] };
   }
   return { lines: [] };
@@ -139,20 +139,59 @@ function flowHtml() {
     }).join("");
     return `<li class="fl-row end-${esc(r.end)}"><a class="fl-study" href="${esc(href({ study: r.study, type: null }))}"><b>${esc(r.title)}</b>${r.site ? `<span>${esc(r.site)}</span>` : ""}</a>${cells}</li>`;
   };
-  // Each change of policy after the session began heads what happened after it.
-  const phased = f.phases.length > 1;
-  const rows = f.phases.map((p, i) => {
-    const head = p.writes.length
-      ? `<li class="fl-phase"><span>Then</span> ${p.writes.map(d => { const w = W.written(d); return `<b>${esc(w.what)}${Array.isArray(d.body?.sites) ? `, at ${esc(w.sites)}` : ""}</b>`; }).join("; ")}</li>`
-      : phased && i === 0 ? `<li class="fl-phase"><span>At first</span></li>` : "";
-    return head + (p.studies.length ? p.studies.map(studyRow).join("") : `<li class="fl-quiet">Nothing reached a study after this.</li>`);
+  // A step in a study's time order: its stage, its mark, and a word or two.
+  const stepSay = (x, sum) => {
+    if (x.stage === "link") return ["done", x.n === 1 ? "link made" : `${num(x.n)} links made`];
+    if (x.stage === "get") return x.is === "sent" ? ["sent", `sent${sum ? ` ${bytes(sum)}` : ""}${times(x.n)}`] : ["refused", `refused${times(x.n)}`];
+    const [k, w] = SAY[x.is] ?? ["done", x.is];
+    return [k, `${w}${times(x.n)}`];
+  };
+  const STAGE_NAME = Object.fromEntries(STAGES.map(st => [st.id, st.name]));
+  // Studies whose steps came out the same share a line; bytes add up across them.
+  const groupsOf = studies => {
+    const groups = new Map();
+    for (const r of studies) {
+      const key = r.steps.map(x => `${x.stage}:${x.is}:${x.n}`).join(" ");
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(r);
+    }
+    return [...groups.values()];
+  };
+  const chain = rs => `<ol class="fl-chain">${rs[0].steps.map((x, i) => {
+    const sum = x.stage === "get" ? rs.reduce((t, r) => t + (r.steps[i]?.bytes ?? 0), 0) : 0;
+    const [k, w] = stepSay(x, sum);
+    return `<li class="fl-step ${esc(k)}"><small>${esc(STAGE_NAME[x.stage])}</small><span>${dot(k)}${esc(w)}</span></li>`;
+  }).join("")}</ol>`;
+  const who = rs => rs.length === 1
+    ? `<a class="fl-who" href="${esc(href({ study: rs[0].study, type: null }))}"><b>${esc(rs[0].title)}</b><span>${esc(rs[0].site ?? "")}</span></a>`
+    : `<div class="fl-who"><b>${esc(plural(rs.length, "study", "studies"))}</b><span>${esc([...new Set(rs.map(r => r.site).filter(Boolean))].join(", "))}</span></div>`;
+  const grid = studies => `<div class="fl-grid-wrap"><ol class="fl-grid" aria-label="Each study's path: search, link, check, retrieve">
+      <li class="fl-head" aria-hidden="true"><span></span>${STAGES.map(st => `<span><b>${esc(st.name)}</b>${esc(st.party)}</span>`).join("")}</li>${studies.map(studyRow).join("")}</ol>
+      <p class="fl-key"><span class="fl-key-none"><span class="fl-none"></span>didn't happen</span> <span class="fl-key-line"><i></i>went on to the next stage</span> <span class="fl-key-line dotted"><i></i>skipped a stage</span></p></div>`;
+  // One card for each stretch of the session, in time order: what changed, then how the studies went.
+  const cards = f.phases.map((p, i) => {
+    const changes = p.writes.map(d => { const w = W.written(d); return `${w.what}${Array.isArray(d.body?.sites) ? `, at ${w.sites}` : ""}`; });
+    const ends = p.studies.map(r => r.end);
+    const did = stage => p.studies.some(r => r.steps.some(x => x.stage === stage));
+    const title = changes.length ? changes.join("; ") : did("get") ? "The app searches and retrieves" : did("check") ? "The app searches and asks for studies" : "The app searches";
+    // Later cards say how long after the first they began: a tour's run takes seconds.
+    const start = f.phases[0]?.from, gap = p.from && start ? p.from - start : 0;
+    const at = !p.from ? "" : i === 0 || gap >= 60000 ? when(p.from) : gap < 1000 ? "a moment later" : `${Math.round(gap / 1000)} s later`;
+    return `<li class="fl-card">
+      <p class="fl-when">${at ? `<time>${esc(at)}</time>` : ""}</p>
+      <div class="fl-body">
+        <p class="fl-kicker">${i === 0 ? "At first" : "Then"}${at ? ` <time class="k-time">${esc(at)}</time>` : ""}</p>
+        <h3>${esc(title)}</h3>
+        ${ends.length ? `<p class="fl-outcome">${esc(endsLine(ends))}</p>` : `<p class="fl-outcome">Nothing reached a study after this.</p>`}
+        ${p.studies.length ? `<ul class="fl-groups">${groupsOf(p.studies).map(rs => `<li>${who(rs)}${chain(rs)}</li>`).join("")}</ul>
+        <details class="fl-more"><summary>Each study, stage by stage</summary>${grid(p.studies)}</details>` : ""}
+      </div></li>`;
   }).join("");
   const any = f.phases.some(p => p.studies.length);
   return `<figcaption><span class="fl-title">How each study went</span><span class="fl-sum">${esc(f.ends.length ? `When the session ended, of ${plural(f.ends.length, "study", "studies")}: ${endsLine(f.ends)}` : "No study yet")}</span></figcaption>
     ${other.length ? `<p class="fl-other"><span>Also in this session:</span> ${other.join("")}</p>` : ""}
-    ${any ? `<ol class="fl-grid" aria-label="Each study's path: search, link, check, retrieve">
-      <li class="fl-head" aria-hidden="true"><span></span>${STAGES.map(s => `<span><b>${esc(s.name)}</b>${esc(s.party)}</span>`).join("")}</li>${rows}</ol>
-    <p class="fl-key">${[["done", "happened"], ["sent", "sent to the app"], ["refused", "refused"], ["withheld", "withheld from the app"], ["gone", "not found by a later search"]].map(([k, w]) => `<span class="fl-key-item">${dot(k, w)}</span>`).join("")} <span class="fl-key-none"><span class="fl-none"></span>didn't happen</span> <span class="fl-key-line"><i></i>the study went on to the next stage</span> <span class="fl-key-line dotted"><i></i>it skipped a stage</span></p>` : ""}`;
+    ${any ? `<ol class="fl-cards">${cards}</ol>
+    <p class="fl-key">${[["done", "happened"], ["sent", "sent to the app"], ["refused", "refused"], ["withheld", "withheld from the app"], ["gone", "not found by a later search"]].map(([k, w]) => `<span class="fl-key-item">${dot(k, w)}</span>`).join("")}</p>` : ""}`;
 }
 
 // Sessions: one row each, who and with what, when, and a mark per study for where its path ended.
@@ -168,7 +207,7 @@ function sessionsHtml() {
     const who = whoName(r.who), client = r.client && `client:${r.client}` !== r.who ? clientName(r.client) : "";
     return `<li><a class="session-row" href="${esc(href({ session: r.session === current ? null : r.session, study: null, trace: null }))}" ${r.session === current ? 'aria-current="true"' : ""}>
       <span class="s-who"><b>${esc(who || "No one named")}</b>${client ? `<span> with ${esc(client)}</span>` : ""}</span><span class="s-when">${esc(when(r.to))}</span>
-      <span class="s-label">${esc(r.label)}${r.scope ? `, in scope ${esc(r.scope.slice(0, 6))}` : ""}</span>
+      <span class="s-label">${esc(r.label)}</span>
       ${endsStrip(r.ends)}${r.problems ? `<span class="s-problems">${esc(plural(r.problems, "denial or failure", "denials or failures"))}</span>` : ""}</a></li>`;
   }).join("")}</ol>`;
 }
@@ -233,7 +272,8 @@ function filtersHtml() {
   return `${scopeSel}${studySel}${chips.length ? `<ul class="chosen" aria-label="Filters in use">${chips.map(([k, words]) => `<li><span>${esc(words)}</span><a href="${esc(href({ [k]: null }))}" aria-label="${esc(`Remove the filter: ${words}`)}">×</a></li>`).join("")}</ul>` : ""}`;
 }
 function viewLine() {
-  if (summary.viewer) return `One session, as the person or service it acts as may see it. <a href="${esc(`${BASE}/activity`)}">Every session</a>`;
+  const who = summary.viewer && whoName(summary.sessions[0]?.who);
+  if (summary.viewer) return `One session, showing only what ${esc(who || "its person or service")} may see. <a href="${esc(`${BASE}/activity`)}">Every session</a>`;
   return `Every session, as the operator sees it.${summary.traceUrl ? ` <a href="${esc(summary.traceUrl)}">Open the live trace</a>` : ""}`;
 }
 
@@ -260,8 +300,10 @@ async function load() {
   $("#view-line").innerHTML = viewLine();
   $("#filters").innerHTML = filtersHtml();
   $("#tiles").innerHTML = tilesHtml();
+  // One session's events come seconds apart: the study-by-study picture shows their order instead of a timeline.
   $("#flow").innerHTML = flowHtml(); $("#flow").hidden = !summary.flow;
-  $("#timeline").innerHTML = timelineHtml();
+  $("#timeline").hidden = !!summary.flow; $(".glance").classList.toggle("one", !!summary.flow);
+  if (!summary.flow) $("#timeline").innerHTML = timelineHtml();
   $("#capped").hidden = !summary.capped;
   $("#sessions").innerHTML = sessionsHtml();
   $("#h-sessions").textContent = summary.viewer ? "This session" : `Sessions, ${num(summary.sessions.length)}`;
@@ -297,7 +339,7 @@ $("#filters").addEventListener("change", e => { history.pushState(null, "", href
 $("#more").addEventListener("click", async () => { await loadEvents(true); renderTable(); });
 addEventListener("popstate", load);
 let resized;
-addEventListener("resize", () => { clearTimeout(resized); resized = setTimeout(() => { if (summary) $("#timeline").innerHTML = timelineHtml(); }, 150); });
+addEventListener("resize", () => { clearTimeout(resized); resized = setTimeout(() => { if (summary && !summary.flow) $("#timeline").innerHTML = timelineHtml(); }, 150); });
 (async () => {
   try { names = (await api("GET", "/api/explore/options")).names; W.setNames(names); } catch {}
   await load();

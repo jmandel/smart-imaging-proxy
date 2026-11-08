@@ -7,6 +7,19 @@ const EventWords = (() => {
   const time = at => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   const SERVICE = { "authorization-server": "Authorization Server", "imaging-fhir": "Imaging Server", policy: "Imaging Server, policy", "dicomweb-proxy": "Proxy", app: "The app", demo: "Demo", user: "Browser" };
 
+  // The proxy's fast-path checks, by name, as what went wrong when one fails.
+  const LINK_FAILED = {
+    "URL carries a signed context": "the request carries no signed link",
+    "signature verifies": "its signature doesn't verify",
+    "context isn't marked restricted": "it's marked restricted",
+    "context hasn't expired": "it has expired",
+    "requested study is in the context": "it doesn't cover this study",
+    "token hash matches ath": "it was made for another token",
+    "requested series is released": "it doesn't release this series",
+    "study version is understood": "it names a study version the proxy doesn't know",
+  };
+  const linkFailed = f => { const k = String(f ?? "").replace(/^fast path: /, ""); return LINK_FAILED[k] ?? (k || "it didn't cover the request"); };
+
   /** Each kind's summary and fields. */
   const KINDS = {
     "token.issued": e => ({ summary: `Token issued${e.data.user ? ` to ${nameOf(`user:${e.data.user}`)}` : ` to ${nameOf(`client:${e.data.client}`)}`}${e.data.patient ? `, for ${nameOf(`patient:${e.data.patient}`)}` : ""}`,
@@ -20,11 +33,11 @@ const EventWords = (() => {
     "context.signed": e => ({ summary: `Signed link made for ${e.data.study}`, fields: [["Form", e.data.form], ["Series listed", e.data.series], ["Expires", e.data.exp && new Date(e.data.exp * 1000).toLocaleTimeString()], ["Key", e.data.kid]] }),
     "decision.answered": e => ({ summary: `The Imaging Server ${e.data.decision ? "allowed" : "refused"} ${e.data.study ?? e.data.studyUid ?? "the request"}`,
       fields: [["Why", e.data.why], ["Release", typeof e.data.response?.context?.release === "object" ? `${e.data.response.context.release.series.length} series` : e.data.response?.context?.release], ["Denial", e.data.response?.context?.denial], ["Good for", e.data.response?.context?.max_age_seconds !== undefined && `${e.data.response.context.max_age_seconds} s`]] }),
-    "proxy.fast-path": e => ({ summary: e.data.taken ? "The proxy checked the signed link, with no network call" : `No fast path: ${e.data.failed ?? "the link didn't cover it"}`, fields: [["Study", e.data.studyUid]] }),
+    "proxy.fast-path": e => ({ summary: e.data.taken ? "The proxy checked the signed link, with no network call" : `The signed link wasn't enough (${linkFailed(e.data.failed)}), so the proxy asks the Imaging Server`, fields: [["Study", e.data.studyUid], ["Check that failed", e.data.failed]] }),
     "proxy.decision": e => ({ summary: `The proxy ${e.data.via === "cached" ? "used a cached decision" : "asked the Imaging Server"}: ${e.data.unavailable ? "no answer" : e.data.allowed ? "allowed" : "refused"}`, fields: [["Denial", e.data.denial], ["Study", e.data.studyUid]] }),
-    "stream.done": e => ({ summary: `${plural(e.data.parts, "part")} streamed, ${bytes(e.data.bytes)}${e.data.encoding === "zstd" ? ", zstd passed through" : ""}${e.data.complete ? "" : ", cut off"}`,
-      fields: [["What", e.data.resource], ["Decided", e.data.authz], ["Syntaxes", (e.data.syntaxes ?? []).join(", ")], ["Note", e.data.note]] }),
-    "retrieval.answered": e => ({ summary: `Retrieval answered ${e.data.status}`, fields: [["What", e.data.resource], ["Decided", e.data.authz], ["Denial", e.data.denial], ["Note", e.data.note]] }),
+    "stream.done": e => ({ summary: `${bytes(e.data.bytes)} sent to the app${e.data.complete ? "" : ", cut off before the end"}`,
+      fields: [["What", e.data.resource], ["Parts", e.data.parts], ["Encoding", e.data.encoding], ["Decided", e.data.authz], ["Syntaxes", (e.data.syntaxes ?? []).join(", ")], ["Note", e.data.note]] }),
+    "retrieval.answered": e => ({ summary: e.data.status >= 400 ? `Retrieval refused (HTTP ${e.data.status})` : `Retrieval answered HTTP ${e.data.status}`, fields: [["What", e.data.resource], ["Decided", e.data.authz], ["Denial", e.data.denial], ["Note", e.data.note]] }),
     "policy.written": e => { const w = written(e.data); return { summary: `${e.data.status < 300 ? "" : "Refused: "}${w.what}`, fields: [["Who", w.who], ["Sites", w.sites], ["Patient", e.data.patient && nameOf(`patient:${e.data.patient}`)], ["Level", LEVEL_WORDS[e.data.level] ?? e.data.level], ["Why", e.data.error], ["Call", e.data.operation]], raw: e.data.body ?? e.data.query }; },
   };
   const LEVEL_WORDS = { fact: "A fact", policy: "Organization policy", choice: "A person's choice", settings: "Settings", document: "The whole document", reset: "A reset" };
