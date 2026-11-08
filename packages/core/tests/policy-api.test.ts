@@ -139,7 +139,7 @@ describe("guardian-access, by age band", () => {
     ]);
     expect(hidden.why).toContain("guardians-13-to-17");
     expect(x.studies.find((s: any) => s.id === "study-6.1").because.map((b: any) => b.level)).toEqual(["fact", "policy", "choice"]);
-    expect(x.studies.find((s: any) => s.id === "study-6.1").because[2]).toEqual({ level: "choice", ref: `approval:${store.approvals()[0]!.id}`, text: "Parent approved the Viewer for all sites", restsOn: "Parent's guardian relationship, recorded 2026-11-07" });
+    expect(x.studies.find((s: any) => s.id === "study-6.1").because[2]).toEqual({ level: "choice", ref: `approval:${store.approvals()[0]!.id}`, text: "Parent approved the Viewer for all sites", restsOn: `Parent's guardian relationship, recorded ${store.snapshot().relationships.find(r => r.relation === "guardian_of")!.recordedAt!.slice(0, 10)}` });
   });
   test("past the top of every band, a guardian sees nothing, and a choice for that patient is refused naming the policy", async () => {
     const r = await approveViewer("adult");
