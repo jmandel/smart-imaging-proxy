@@ -221,6 +221,7 @@ button.sheet:hover { background:var(--film-raised); }
 .step .what { min-width:0; overflow-wrap:anywhere; }
 .step .what b { display:block; color:var(--ink); }
 .step .what span { font-size:.9rem; }
+.step .what .expect { display:block; margin-top:.15rem; }
 .step .verdict { font-weight:700; }
 .step .verdict.ok { color:var(--good); } .step .verdict.bad { color:var(--bad); }
 .step .compare { grid-column:1 / -1; display:grid; grid-template-columns:max-content minmax(0,1fr); gap:.1rem .8rem; font-size:.92rem; margin:0; }
@@ -359,6 +360,8 @@ tr.detail > td { background:var(--box); max-width:none; padding:.6rem .8rem .8re
 }
 @media (max-width:900px) {
   .tours, .log-body { grid-template-columns:minmax(0,1fr); }
+  /* On a narrow screen the story in progress comes first, and the others after it. */
+  .tour-list { order:2; }
   .session-list { max-height:24rem; }
 }
 @media (max-width:720px) {

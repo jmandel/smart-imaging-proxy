@@ -40,6 +40,7 @@ const first = (user: string) => USERS[user]?.name.split(" ")[0] ?? user;
 const list = (items: string[]) => items.length < 2 ? items.join("") || "nothing" : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 const sorted = (xs: Iterable<string>) => [...xs].sort();
+const cap = (s: string) => s && s[0]!.toUpperCase() + s.slice(1);
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 /** What a check compares: a value, how it reads in plain words, and its technical detail. */
@@ -76,7 +77,7 @@ interface Tour {
   /** Where the story ends: the policy on file with the story's rows added, and the time, which its card's chain is drawn from. */
   scene(world: World): { doc: PolicyDocument; now?: number };
   /** A story about a change: the scene before it, and the step that makes it, so the card and the runner show both. */
-  change?: { before(world: World): { doc: PolicyDocument; now?: number }; step: string; after: string };
+  change?: { before(world: World): { doc: PolicyDocument; now?: number }; step: string; beforeLabel: string; after: string };
 }
 
 /** What's on file, with ids, as a story's scene starts from it. */
@@ -150,6 +151,7 @@ function launchStep(id: string, user: string, patient: string, sites: (r: Run) =
   const refused = (error: string): Answer => ({ value: { token: false }, text: `${first(user)} can't sign in for ${patientFirst(patient)}: ${first(user)} can see none of ${patientFirst(patient)}'s studies`, detail: `The sign-in ends with ${error}, and the app gets no access token` });
   return {
     id, title, actor: first(user), signsIn: true,
+    quiet: `The sign-in was refused before ${first(user)} could approve anything, so no request reached the imaging services.`,
     expect(r, m) {
       if (!m.holds(user, patient)) return refused("access_denied");
       const asked = sites(r);
@@ -185,7 +187,7 @@ function searchStep(id: string, user: string, patient: string, title: Text): Tou
 /** Asking for a study by its UID alone, as an app would after learning it elsewhere: the proxy asks the Imaging Server. */
 function plainRetrieveStep(id: string, user: string, patient: string, pick: (r: Run, m: ReturnType<typeof modelOf>) => string | undefined, title: Text): TourStep {
   const chosen = (r: Run) => r.state[`pick:${id}`] ??= pick(r, r.model());
-  const answer = (r: Run, study: string, status: number): Answer => ({ value: status, text: status === 200 ? `The app gets ${r.title(study)}` : `Refused, the same way as a study that doesn't exist: ${r.title(study)}`, detail: status === 404 ? "HTTP 404 Not Found. The app can't tell a study it may not see from one that isn't there." : `HTTP ${status}` });
+  const answer = (r: Run, study: string, status: number): Answer => ({ value: status, text: status === 200 ? `The app gets ${r.title(study)}` : `${r.title(study)}: refused, the same way as a study that doesn't exist`, detail: status === 404 ? "HTTP 404 Not Found. The app can't tell a study it may not see from one that isn't there." : `HTTP ${status}` });
   return {
     id, title, actor: "The app",
     expect(r, m) {
@@ -211,7 +213,7 @@ const smallestFound = (r: Run) => Object.keys(r.state.found ?? {}).sort((a, b) =
 function signedRetrieveStep(id: string, user: string, patient: string, title: Text, after = 0): TourStep {
   const answer = (r: Run, study: string, status: number, how: string): Answer => ({
     value: status,
-    text: status === 200 ? `The app gets ${r.title(study)}${how === "alone" ? ": the link it was given still works" : ""}` : status === 401 ? "Refused: the app's sign-in has expired" : `Refused: the link has expired, and ${first(user)} can't see ${r.title(study)}`,
+    text: status === 200 ? `The app gets ${r.title(study)}${how === "alone" ? ": the link it was given still works" : ""}` : status === 401 ? "Refused: the app's sign-in has expired" : `Refused: the link has expired, and the app can't see ${r.title(study)}`,
     detail: `HTTP ${status}. ${how === "alone" ? "The signed URL hasn't expired, so the proxy answers from the URL alone, without asking the Imaging Server." : how === "token" ? "The access token has expired." : how === "cached" ? "The proxy used a decision the Imaging Server gave earlier." : status === 200 ? "The signed URL has expired, so the proxy asks the Imaging Server, which allows it." : "The signed URL has expired, so the proxy asks the Imaging Server, and current policy releases nothing."}`,
   });
   return {
@@ -333,14 +335,14 @@ const TOURS: Tour[] = [
   },
   {
     id: "revoke", title: "Josh stops sharing with Sam",
-    premise: () => "Before, the app Sam uses sees all of Josh's studies. After Josh stops sharing, it sees none.",
+    premise: () => "Before, the app Sam uses sees all of Josh's studies. Josh stops sharing, and Sam's approval of the app goes with the share, so after it the app sees none. A study link it already has works until it expires.",
     summary: "Josh stops sharing with Sam, and Sam's approval of the app goes with the share. The app's next search finds nothing. A study link the app already had keeps working until it expires, a few minutes later, and is then refused too.",
     detail: "A study link is a signed URL. Until it expires, the proxy answers from the URL alone. After that, it asks the Imaging Server, and current policy decides.",
     knows: joshStudies,
     viewer: { user: SAM, patient: JOSH_PATIENT, app: APP },
     // Once the share goes, the approval that rested on it goes too.
     scene: () => ({ doc: onFile() }),
-    change: { before: w => ({ doc: approve(sharedScene(sitesOf(w, JOSH_PATIENT)), SAM, JOSH_PATIENT, ["scene-share"]) }), step: "revoke", after: "After Josh stops sharing" },
+    change: { before: w => ({ doc: approve(sharedScene(sitesOf(w, JOSH_PATIENT)), SAM, JOSH_PATIENT, ["scene-share"]) }), step: "revoke", beforeLabel: "Before Josh stops sharing", after: "After Josh stops sharing" },
     steps: [
       shareStep("share", r => joshSites(r), "Josh shares all his studies with Sam"),
       launchStep("launch", SAM, JOSH_PATIENT, () => undefined, "Sam signs in, picks Josh, and lets the app see Josh's studies"),
@@ -406,7 +408,7 @@ const TOURS: Tour[] = [
   },
   {
     id: "turns-18", title: "Riley turns 18",
-    premise: () => "Riley is 18, and no rule lets guardians see an adult's studies. The app Sam approved sees nothing.",
+    premise: () => "Riley is 18, and no rule lets guardians see an adult's studies. Sam's approval of the app stays on file, but it reaches nothing, and Sam can't sign in for Riley.",
     summary: "The imaging network's rules for guardians stop at age 17. Once Riley turns 18, no rule lets Sam see Riley's studies, and the app Sam approved sees none of them.",
     knows: rileyStudies,
     viewer: { user: SAM, patient: RILEY, app: APP },
@@ -432,7 +434,7 @@ const CHECK_WORDS: Record<string, { title: string; summary: string }> = {
   viewer: { title: "An app hands a study link to an image viewer", summary: "A viewer inside the app can use the app's access. A separate viewer app needs its own approval." },
   "decision-outage": { title: "The Imaging Server can't be reached", summary: "Study links that haven't expired keep working, and everything else is refused." },
   attacks: { title: "Altered links and borrowed tokens get nothing", summary: "Tries to get around the checks on study links and tokens are all refused." },
-  "transfer-syntax": { title: "Asking for images in different formats", summary: "Each image format an app asks for gets the answer the guide says it should." },
+  "transfer-syntax": { title: "Asking for images in different formats", summary: "Each image format an app asks for gets the answer the SMART Imaging guide calls for." },
   truncation: { title: "An image store stops partway", summary: "When the store behind the proxy stops partway through a study, the app can tell the study is incomplete." },
   metadata: { title: "Study details hide internal addresses", summary: "Study details pass through the proxy without exposing internal server names, and their links still work." },
   "paged-search": { title: "Searching a few studies at a time", summary: "The app pages through search results, and the rules apply again on every page." },
@@ -458,7 +460,7 @@ export function createTours(world: World, clients: Record<string, BackendClient>
   /** The chain a story ends on, for its card, drawn from its scene by core's model. */
   const cardChain = (tour: Tour): Chain => sceneChain(tour, tour.scene(world));
   /** A story about a change: its card shows the chain before it, and after, each with its label. */
-  const cardChains = (tour: Tour) => tour.change ? [{ label: "Before", chain: sceneChain(tour, tour.change.before(world)) }, { label: tour.change.after, chain: cardChain(tour) }] : [{ chain: cardChain(tour) }];
+  const cardChains = (tour: Tour) => tour.change ? [{ label: tour.change.beforeLabel, chain: sceneChain(tour, tour.change.before(world)) }, { label: tour.change.after, chain: cardChain(tour) }] : [{ chain: cardChain(tour) }];
   /** Who's who, for the home page: people by first name, the app, the service the stories follow, and the imaging network with its sites. */
   const cast = () => {
     const sites = sorted(new Set(world.catalog.allStudies().flatMap(s => s.site ? [s.site] : [])));
@@ -467,7 +469,7 @@ export function createTours(world: World, clients: Record<string, BackendClient>
       { name: "Riley", line: RILEY_LINE },
       ...["alex-neighbor", "robin"].map(u => ({ name: first(u), line: PEOPLE_LINES[u]! })),
       { name: "Health Records App", line: APP_LINE },
-      { name: "Hand referral service", line: SERVICE_LINES[SERVICE]! },
+      ...Object.entries(SERVICE_LINES).map(([id, line]) => ({ name: cap(id.replaceAll("-", " ")), line })),
       { name: "The imaging network", line: `${NETWORK_LINE} Its sites are ${list(sites)}.` },
     ];
   };
@@ -493,7 +495,7 @@ export function createTours(world: World, clients: Record<string, BackendClient>
     if (next) { try { const e = next.expect(r, r.model(next.intends ? doc => next.intends!(r, doc) : undefined)); expect = e.text; expectDetail = e.detail; } catch (e) { expect = String((e as Error).message ?? e); } }
     return {
       scope: { id: world.scope, base: world.prefix }, session: started?.session ?? null, activityUrl: started ? activityUrl(started.session) : null, running: started?.running ?? null, pendingAuthUrl: started ? r.c.pendingAuthUrl ?? null : null,
-      tour: { id: tour.id, title: tour.title, summary: textOf(tour.summary, world), detail: tour.detail, premise: tour.premise(world), ...(tour.change ? { change: { step: tour.change.step, after: tour.change.after } } : {}) },
+      tour: { id: tour.id, title: tour.title, summary: textOf(tour.summary, world), detail: tour.detail, premise: tour.premise(world), ...(tour.change ? { change: { step: tour.change.step, before: tour.change.beforeLabel, after: tour.change.after } } : {}) },
       chain: chainNow(tour),
       steps: tour.steps.map(s => ({ id: s.id, title: textOf(s.title, world), actor: s.actor, ...(s.signsIn ? { signsIn: true } : {}), ...(s === next ? { expect, expectDetail } : {}), ...(results[s.id] ? { result: results[s.id] } : {}) })),
     };

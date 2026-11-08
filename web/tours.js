@@ -41,7 +41,7 @@ function stepHtml(s, i, steps) {
   const changed = r?.chain && JSON.stringify(r.chain.rows) !== JSON.stringify(before?.rows);
   const label = s.signsIn && windowMode() ? "Sign in" : "Run";
   return `<li class="${cls}">
-    <span class="what"><b>${esc(s.title)}</b><span>${esc(s.actor)}${next && s.expect ? `. Expected: ${esc(s.expect)}` : ""}</span></span>
+    <span class="what"><b>${esc(s.title)}</b><span>${esc(s.actor)}</span>${next && s.expect ? `<span class="expect">Expected: ${esc(s.expect)}</span>` : ""}</span>
     ${r ? `<span class="verdict ${r.ok ? "ok" : "bad"}">${r.ok ? "As expected" : r.stopped ? "Stopped" : "Not as expected"}</span>` : next ? `<button type="button" class="primary" data-step="${esc(s.id)}" ${running ? "disabled" : ""}>${running ? "Running…" : label}</button>` : "<span></span>"}
     ${r ? `<dl class="compare">${r.expected ? `<dt>Expected</dt><dd>${esc(r.expected)}</dd>` : ""}<dt>Got</dt><dd>${esc(r.actual)}</dd>${r.detail ? `<dt>Technical detail</dt><dd class="tech">${esc(r.detail)}</dd>` : ""}${r.write ? `<dt>Policy written</dt><dd>${esc(r.write)}</dd>` : ""}</dl>
       ${changed ? `<div class="step-chain"><p class="ly-pane-label">After this step</p>${Layers.chain(r.chain, { label: "After this step: why the app sees what it sees" })}</div>` : ""}
@@ -58,9 +58,9 @@ function standingHtml() {
   const latest = doneAt >= 0 ? steps[doneAt].result.chain : state.chain;
   const change = state.tour.change && steps.findIndex(s => s.id === state.tour.change.step);
   const locked = latest.columns.some(x => x.locked);
-  const caption = doneAt < 0 ? "Before the first step" : doneAt === steps.length - 1 ? "Where the story ends" : `After step ${doneAt + 1}: ${steps[doneAt].title}`;
+  const caption = doneAt < 0 ? "At the start, before any step runs" : doneAt === steps.length - 1 ? "Where the story ends" : `After step ${doneAt + 1}: ${steps[doneAt].title}`;
   const body = change >= 0 && steps[change].result
-    ? Layers.chains([{ label: "Before", chain: chainBefore(change) }, { label: state.tour.change.after, chain: latest }])
+    ? Layers.chains([{ label: state.tour.change.before, chain: chainBefore(change) }, { label: state.tour.change.after, chain: latest }])
     : `<p class="ly-pane-label">${esc(caption)}</p>${Layers.chain(latest)}`;
   return `<div class="tour-chain"><h2 class="sr-only">Why the app sees what it sees</h2>${body}${Layers.legend({ locked })}</div>`;
 }

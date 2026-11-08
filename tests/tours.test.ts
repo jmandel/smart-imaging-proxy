@@ -200,7 +200,7 @@ describe("the layer chain", () => {
     expect(guardian.columns.filter((c: any) => c.locked).map((c: any) => c.id)).toEqual(["syn-riley-skin-slide-2023"]);
     expect(guardian.rows.find((r: any) => r.kind === "label").has).toEqual(["syn-riley-skin-slide-2023"]);
     // The revoke card shows before and after the change.
-    expect(list.tours.find((t: any) => t.id === "revoke").chains.map((c: any) => [c.label, c.chain.rows.at(-1).has.length])).toEqual([["Before", 6], ["After Josh stops sharing", 0]]);
+    expect(list.tours.find((t: any) => t.id === "revoke").chains.map((c: any) => [c.label, c.chain.rows.at(-1).has.length])).toEqual([["Before Josh stops sharing", 6], ["After Josh stops sharing", 0]]);
     // The service's rule grants its X-rays, and the outcome is the one the referral cites.
     const service = list.tours.find((t: any) => t.id === "backend").chains[0].chain;
     expect(service.rows.map((r: any) => [r.kind, r.has.length])).toEqual([["records", 6], ["referral", 1], ["service", 3], ["outcome", 1]]);

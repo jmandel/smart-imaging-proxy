@@ -51,7 +51,7 @@ const sheetHtml = s => {
 function whoseHtml(user, patient, disabled) {
   const p = personOf(user);
   if (!p) return "";
-  const held = p.records.map(r => ({ patient: r.patient, label: r.via === "self" ? "Own studies" : `${r.name}'s, as ${r.via === "guardian" ? "guardian" : r.relationship}` }));
+  const held = p.records.map(r => ({ patient: r.patient, label: r.via === "self" ? "Own studies" : `${r.name}'s studies, as ${r.via === "guardian" ? "guardian" : r.relationship}` }));
   const others = p.others;
   if (held.length + others.length < 2) return "";
   return `<div class="whose">${held.length > 1 || (held.length && others.length) ? `<div class="seg" role="group" aria-label="Whose records">${held.map(c => `<button type="button" data-whose="${esc(c.patient)}" aria-pressed="${patient === c.patient}" ${disabled ? "disabled" : ""}>${esc(c.label)}</button>`).join("")}</div>` : ""}

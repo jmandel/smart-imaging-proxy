@@ -266,7 +266,7 @@ describe("Tours", () => {
     expect(await page.locator(".story").count()).toBe(6);
     expect(await page.locator(".story .layers").count()).toBe(7);
     expect(await page.locator(".story", { hasText: "Sam, guardian of 15-year-old Riley" }).locator(".ly-box.locked").count()).toBeGreaterThan(0);
-    expect(await page.locator(".story", { hasText: "Josh stops sharing with Sam" }).locator(".ly-pane-label").allInnerTexts()).toEqual(["Before", "After Josh stops sharing"]);
+    expect(await page.locator(".story", { hasText: "Josh stops sharing with Sam" }).locator(".ly-pane-label").allInnerTexts()).toEqual(["Before Josh stops sharing", "After Josh stops sharing"]);
     expect(await page.locator(".cast dt").allInnerTexts()).toContain("The imaging network");
     expect(await overflow(page)).toBe(0);
     expect(problems).toEqual([]);

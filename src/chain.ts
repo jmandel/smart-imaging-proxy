@@ -73,7 +73,7 @@ export function chainFor(input: { snap: Snapshot; studies: CatalogStudy[]; now: 
   if ("service" in viewer) {
     const service = nameOf(ref("service", viewer.service));
     const cited = viewer.cited ? all.find(s => s.id === viewer.cited) : undefined;
-    if (cited) rows.push({ level: "fact", kind: "referral", name: `The referral cites ${name}'s study ${quoted(titleOf(cited))}`, has: [cited.id] });
+    if (cited) rows.push({ level: "fact", kind: "referral", name: `The referral cites ${name}'s study ${quoted(titleOf(cited))}, and the service searches for that one study`, has: [cited.id] });
     const ps = model.preAuthorized(snap, viewer.service, viewer.patient) as ServiceAccessPolicy[];
     const t = { client_id: viewer.service };
     rows.push(ps.length

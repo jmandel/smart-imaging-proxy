@@ -356,7 +356,7 @@ describe("services", () => {
     expect(after.status).toBe("results");
     expect(after.headline).toBe("Hand referral service can see the study this referral cites");
     expect(b.released(after)).toEqual([SMALL]);
-    expect(after.chain.rows.map((r: any) => [r.level, r.name, r.has])).toEqual([["fact", "The referral cites Josh's study “XR wrist left, 3 views”", [SMALL]], ["policy", "Imaging network rule: the hand referral service can see Josh's X-rays", [SMALL]], ["outcome", "What the service found", [SMALL]]]);
+    expect(after.chain.rows.map((r: any) => [r.level, r.name, r.has])).toEqual([["fact", "The referral cites Josh's study “XR wrist left, 3 views”, and the service searches for that one study", [SMALL]], ["policy", "Imaging network rule: the hand referral service can see Josh's X-rays", [SMALL]], ["outcome", "What the service found", [SMALL]]]);
     expect(stack.store.policiesOf("service-access").map(p => p.id)).toEqual(["hand-referral"]);
     expect((await b.retrieve(SMALL)).status).toBe(200);
   }, 120000);
