@@ -14,7 +14,7 @@ import { nameOf } from "./world";
 
 export type Level = "fact" | "policy" | "choice" | "outcome";
 /** What a row checks, so a test can compare it with the reference model. */
-export type RowKind = "records" | "relationship" | "age" | "label" | "referral" | "guardian" | "sharing" | "share" | "app-rule" | "approval" | "service" | "outcome";
+export type RowKind = "records" | "relationship" | "age" | "label" | "referral" | "guardian" | "sharing" | "share" | "app-rule" | "approval" | "service" | "outcome" | "links";
 /**
  * One row. `has` is what this row itself holds or grants. `boxes: false` is a fact about people, which
  * holds no study. `missing` is a rule or choice that isn't on file, drawn hollow. `by` and `route` name,

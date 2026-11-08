@@ -5,7 +5,6 @@ const EventWords = (() => {
   const nameOf = who => { if (!who) return ""; const id = who.slice(who.indexOf(":") + 1); return names[who] ?? names[id] ?? id; };
   const short = v => String(v ?? "");
   const time = at => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  const listOf = xs => xs.length ? xs.join(", ") : "none";
   const SERVICE = { "authorization-server": "Authorization Server", "imaging-fhir": "Imaging Server", policy: "Imaging Server, policy", "dicomweb-proxy": "Proxy", app: "The app", demo: "Demo", user: "Browser" };
 
   /** Each kind's summary and fields. */
@@ -16,7 +15,7 @@ const EventWords = (() => {
       fields: [["Patient", e.data.reference], ["Authorized for", e.data.authorizedBase], ["Accession", e.data.accession && `${e.data.system}|${e.data.accession}`]] }),
     "search.returned": e => e.data.status === 200
       ? { summary: `Search returned ${plural(e.data.total ?? 0, "study", "studies")}${e.data.withheld?.length ? `, with ${e.data.withheld.length} withheld` : ""}`,
-          fields: [["Query", e.data.query], ["Found", listOf(e.data.found ?? [])], ...(e.data.withheld ?? []).map(w => [`Withheld ${w.study}`, w.why])] }
+          fields: [["Query", e.data.query], ["Found", e.data.found ?? []], ...(e.data.withheld ?? []).map(w => [`Withheld ${w.study}`, w.why])] }
       : { summary: `Search answered ${e.data.status}`, fields: [["Why", e.data.reason], ["Query", e.data.query]] },
     "context.signed": e => ({ summary: `Signed link made for ${e.data.study}`, fields: [["Form", e.data.form], ["Series listed", e.data.series], ["Expires", e.data.exp && new Date(e.data.exp * 1000).toLocaleTimeString()], ["Key", e.data.kid]] }),
     "decision.answered": e => ({ summary: `The Imaging Server ${e.data.decision ? "allowed" : "refused"} ${e.data.study ?? e.data.studyUid ?? "the request"}`,

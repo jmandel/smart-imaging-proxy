@@ -22,10 +22,11 @@ function checksHtml() {
 function homeHtml() {
   const has = k => list.tours.some(t => t.chains.some(c => c.chain.columns.some(x => x[k])));
   const locked = has("locked"), cited = has("cited");
+  const linked = list.tours.some(t => t.chains.some(c => c.chain.rows.some(r => r.kind === "links" && r.has.length)));
   return `<div class="home-head"><h1 id="tour-title" tabindex="-1">Tours</h1><a href="/explore">Explore on your own</a></div>
     ${pageError ? `<p class="error" role="alert">${esc(pageError)}</p>` : ""}
     <section class="cast" aria-labelledby="h-cast"><h2 id="h-cast">Who's who</h2><dl>${list.cast.map(c => `<div><dt>${esc(c.name)}</dt><dd>${esc(c.line)}</dd></div>`).join("")}</dl></section>
-    <section class="key film" aria-labelledby="h-key"><h2 id="h-key">Reading the diagrams</h2>${Layers.legend({ locked, cited, film: true })}</section>
+    <section class="key film" aria-labelledby="h-key"><h2 id="h-key">Reading the diagrams</h2>${Layers.legend({ locked, cited, linked, film: true })}</section>
     <ul class="stories">${list.tours.map(t => `<li class="story">
       <h2><button type="button" class="story-go" data-start="${esc(t.id)}">${esc(t.title)}</button></h2>
       <p>${esc(t.premise)}</p>
@@ -43,9 +44,9 @@ function stepHtml(s, i, steps) {
   const changed = r?.chain && JSON.stringify(r.chain.rows) !== JSON.stringify(before?.rows);
   const label = s.signsIn && windowMode() ? "Sign in" : "Run";
   return `<li class="${cls}">
-    <span class="what"><b>${esc(s.title)}</b><span>${esc(s.actor)}</span>${next && s.expect ? `<span class="expect">Expected: ${esc(s.expect)}</span>` : ""}</span>
+    <span class="what"><b>${esc(s.title)}</b><span>${esc(s.actor)}</span>${next && s.expect ? `<span class="expect">${s.expectItems ? studyList(s.expectItems, `Expected: ${s.expect}`) : `Expected: ${esc(s.expect)}`}</span>` : ""}</span>
     ${r ? `<span class="verdict ${r.ok ? "ok" : "bad"}">${r.ok ? "As expected" : r.stopped ? "Stopped" : "Not as expected"}</span>` : next ? `<button type="button" class="primary" data-step="${esc(s.id)}" ${running ? "disabled" : ""}>${running ? "Running…" : label}</button>` : "<span></span>"}
-    ${r ? `<dl class="compare">${r.expected ? `<dt>Expected</dt><dd>${esc(r.expected)}</dd>` : ""}<dt>Got</dt><dd>${esc(r.actual)}</dd>${r.detail ? `<dt>Technical detail</dt><dd class="tech">${esc(r.detail)}</dd>` : ""}${r.write ? `<dt>Policy written</dt><dd>${esc(r.write)}</dd>` : ""}</dl>
+    ${r ? `<dl class="compare">${r.expected ? `<dt>Expected</dt><dd>${r.expectedItems ? studyList(r.expectedItems, r.expected) : esc(r.expected)}</dd>` : ""}<dt>Got</dt><dd>${r.actualItems ? studyList(r.actualItems, r.actual) : esc(r.actual)}</dd>${r.detail ? `<dt>Technical detail</dt><dd class="tech">${esc(r.detail)}</dd>` : ""}${r.write ? `<dt>Policy written</dt><dd>${esc(r.write)}</dd>` : ""}</dl>
       ${changed ? `<div class="step-chain"><p class="ly-pane-label">After this step</p>${Layers.chain(r.chain, { label: "After this step: why the app sees what it sees" })}</div>` : ""}
       ${r.eventCount ? `<p class="result"><a href="${esc(r.activityUrl)}">Activity log</a>, ${esc(plural(r.eventCount, "event"))}</p>` : r.quiet ? `<p class="result note">${esc(r.quiet)}</p>` : ""}` : ""}
   </li>`;
@@ -58,13 +59,12 @@ function standingHtml() {
   const steps = state.steps;
   const doneAt = steps.findLastIndex(s => s.result?.chain);
   const latest = doneAt >= 0 ? steps[doneAt].result.chain : state.chain;
-  const change = state.tour.change && steps.findIndex(s => s.id === state.tour.change.step);
   const locked = latest.columns.some(x => x.locked);
   const caption = doneAt < 0 ? "At the start, before any step runs" : doneAt === steps.length - 1 ? "Where the story ends" : `After step ${doneAt + 1}: ${steps[doneAt].title}`;
-  const body = change >= 0 && steps[change].result
-    ? Layers.chains([{ label: state.tour.change.before, chain: chainBefore(change) }, { label: state.tour.change.after, chain: latest }])
-    : `<p class="ly-pane-label">${esc(caption)}</p>${Layers.chain(latest)}`;
-  return `<div class="tour-chain"><h2 class="sr-only">Why the app sees what it sees</h2>${body}${Layers.legend({ locked, cited: latest.columns.some(x => x.cited) })}</div>`;
+  // A story about a change shows its panels, from the server, once the change has run.
+  const body = state.panels ? Layers.chains(state.panels) : `<p class="ly-pane-label">${esc(caption)}</p>${Layers.chain(latest)}`;
+  const linked = (state.panels ?? []).some(p => p.chain.rows.some(r => r.kind === "links" && r.has.length));
+  return `<div class="tour-chain"><h2 class="sr-only">Why the app sees what it sees</h2>${body}${Layers.legend({ locked, cited: latest.columns.some(x => x.cited), linked })}</div>`;
 }
 
 function runnerHtml() {

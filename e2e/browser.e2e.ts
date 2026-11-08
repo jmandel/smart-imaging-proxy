@@ -97,9 +97,17 @@ describe("every page, on desktop and phone, in light and dark", () => {
     test(`${name} ${colorScheme}: the story cards' small diagram text keeps its contrast on the film`, async () => {
       const page = await open("/", { viewport, colorScheme });
       await page.locator(".story .layers").first().waitFor();
-      for (const sel of [".story .ly-site", ".story .ly-count", ".story .ly-box.off", ".story .ly-row.choice .ly-box.on", ".key .ly-legend p"]) {
+      for (const sel of [".story .ly-site", ".story .ly-count", ".story .ly-box.off", ".story .ly-row.choice .ly-box.on", ".story .ly-row.outcome .ly-box.on", ".story .ly-box.linked", ".key .ly-row.outcome .ly-box", ".key .ly-legend p"]) {
         expect([sel, (await contrast(page, sel)) >= 4.5]).toEqual([sel, true]);
       }
+      // A study in the result looks the same on the dark cards, in their key, and on a light page.
+      const fill = (sel: string) => page.locator(sel).first().evaluate(el => getComputedStyle(el).backgroundColor);
+      const onCard = await fill(".story .ly-row.outcome .ly-box.on");
+      expect(await fill(".key .ly-row.outcome .ly-box")).toBe(onCard);
+      await page.goto(`${DEMO}/explore`);
+      await pick(page, "josh");
+      expect(await fill(".why .ly-row.outcome .ly-box.on")).toBe(onCard);
+      expect(await contrast(page, ".why .ly-row.outcome .ly-box.on")).toBeGreaterThanOrEqual(4.5);
       expect(problems).toEqual([]);
     });
     test(`${name} ${colorScheme}: Explore's text keeps its contrast, on the box, the chain and the film`, async () => {

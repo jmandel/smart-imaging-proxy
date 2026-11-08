@@ -73,12 +73,22 @@ describe("each tour", () => {
     await call("POST", `${base}/api/tours/caregiver/steps/share`, {});
     await call("POST", `${base}/api/tours/caregiver/steps/launch`, {});
     const now = (await call("GET", `${base}/api/tours/state`)).body;
-    expect(now.steps.find((s: any) => s.id === "search").expect).toBe("1 study: MRI brain without contrast");
+    expect(now.steps.find((s: any) => s.id === "search")).toMatchObject({ expect: "1 study:", expectItems: ["MRI brain without contrast"] });
     // Change the scope's policy behind the tour's back, and the model's expectation follows it.
     const world = (stack.scopes.resolve(base.slice(3)) as any).world;
     await world.policy.approveApp({ by: "user:sam-caregiver", app: "app:portal-app", patient: "patient:josh-example", sites: ["Lakeside Imaging", "Northside Pathology"] });
-    expect((await call("GET", `${base}/api/tours/state`)).body.steps.find((s: any) => s.id === "search").expect).toBe("2 studies: MRI brain without contrast and Lung, digital slide, H&E");
+    expect((await call("GET", `${base}/api/tours/state`)).body.steps.find((s: any) => s.id === "search")).toMatchObject({ expect: "2 studies:", expectItems: ["MRI brain without contrast", "Lung, digital slide, H&E"] });
   }, 60000);
+  test("the revoke story's panels come from its run: the links the app really held, and once they expire, nothing", async () => {
+    const { state } = await runAll("revoke");
+    const outcomes = (c: any) => c.rows.filter((r: any) => r.level === "outcome").map((r: any) => [r.kind, [...r.has].sort()]);
+    const found = state.steps.find((s: any) => s.id === "search").result.actualItems;
+    expect(state.panels.map((p: any) => p.label)).toEqual(["Before Josh stops sharing", "After Josh stops sharing", "Once those study links expire"]);
+    const linked = state.panels[1].chain.rows.find((r: any) => r.kind === "links").has;
+    expect(linked.length).toBe(found.length);
+    expect(outcomes(state.panels[1].chain)[0]).toEqual(["outcome", []]);
+    expect(outcomes(state.panels[2].chain)).toEqual([["outcome", []], ["links", []]]);
+  }, 120000);
   test("a step whose real answer isn't the model's says so", async () => {
     const base = await start("revoke");
     for (const s of ["share", "launch", "search", "revoke", "search-again"]) expect((await call("POST", `${base}/api/tours/revoke/steps/${s}`, {})).status).toBe(200);
@@ -163,8 +173,11 @@ describe("the layer chain", () => {
     const world = stack.root;
     for (const card of list.tours) {
       const tour = tourById(card.id)!, v: any = typeof tour.viewer === "function" ? tour.viewer(world) : tour.viewer;
-      const scenes = tour.change ? [tour.change.before(world), tour.scene(world)] : [tour.scene(world)];
+      // A change's panels: before it, after it, and when links outlast it, once they expire, which is the after scene again.
+      const scenes = tour.change ? [tour.change.before(world), tour.scene(world), ...(tour.change.links ? [tour.scene(world)] : [])] : [tour.scene(world)];
       expect([card.id, card.chains.length]).toEqual([card.id, scenes.length]);
+      // The links the app already had: what a search in the before scene released to it.
+      const linked = tour.change?.links ? (() => { const b = tour.change!.before(world); return referenceModel({ doc: b.doc, studies: refStudies(world), now: b.now ?? world.clock.now(), birthDate: p => patientAttributes(p)?.birthDate, patientOf: u => USERS[u]?.patient }).appReach(v.user, v.app, v.patient).map(x => x.id).sort(); })() : [];
       scenes.forEach((scene, i) => {
         const chain = card.chains[i].chain;
         expect(chain.viewer).toBe(false);
@@ -174,11 +187,12 @@ describe("the layer chain", () => {
         const all = ids(mine);
         expect([card.id, chain.columns.map((c: any) => c.id).sort()]).toEqual([card.id, all]);
         const approval = v.user && scene.doc.approvals.find(a => a.by === `user:${v.user}` && a.app === `app:${v.app}` && a.patient === `patient:${v.patient}`);
-        const outcome = chain.rows.at(-1);
+        const outcome = chain.rows.find((r: any) => r.kind === "outcome");
         expect([card.id, outcome.kind]).toEqual([card.id, "outcome"]);
         for (const row of chain.rows) {
           const has = [...row.has].sort();
-          const want = row.kind === "records" ? all
+          const want = row.kind === "links" ? (i === 1 ? linked : [])
+            : row.kind === "records" ? all
             : row.kind === "label" ? has.filter((x: string) => mine.find(s => s.id === x)!.labels?.length)
             : row.kind === "referral" ? [v.cited]
             : ["relationship", "age"].includes(row.kind) ? []
@@ -192,7 +206,7 @@ describe("the layer chain", () => {
             : ids(m.appReach(v.user, v.app, v.patient));
           expect([card.id, row.name, has]).toEqual([card.id, row.name, want]);
           // What the outcome holds survives every row that holds or grants studies.
-          if (!["relationship", "age", "label", "outcome"].includes(row.kind)) expect([card.id, row.name, outcome.has.every((x: string) => has.includes(x))]).toEqual([card.id, row.name, true]);
+          if (!["relationship", "age", "label", "outcome", "links"].includes(row.kind)) expect([card.id, row.name, outcome.has.every((x: string) => has.includes(x))]).toEqual([card.id, row.name, true]);
         }
       });
     }
@@ -201,7 +215,13 @@ describe("the layer chain", () => {
     expect(guardian.columns.filter((c: any) => c.locked).map((c: any) => c.id)).toEqual(["syn-riley-skin-slide-2023"]);
     expect(guardian.rows.find((r: any) => r.kind === "label").has).toEqual(["syn-riley-skin-slide-2023"]);
     // The revoke card shows before and after the change.
-    expect(list.tours.find((t: any) => t.id === "revoke").chains.map((c: any) => [c.label, c.chain.rows.at(-1).has.length])).toEqual([["Before Josh stops sharing", 6], ["After Josh stops sharing", 0]]);
+    // The revoke card shows before and after the change: a new search finds nothing, and the links the app
+    // already had work until they expire, and then nothing does.
+    expect(list.tours.find((t: any) => t.id === "revoke").chains.map((c: any) => [c.label, c.chain.rows.filter((r: any) => r.level === "outcome").map((r: any) => [r.kind, r.has.length])])).toEqual([
+      ["Before Josh stops sharing", [["outcome", 6]]],
+      ["After Josh stops sharing", [["outcome", 0], ["links", 6]]],
+      ["Once those study links expire", [["outcome", 0], ["links", 0]]],
+    ]);
     // The service's rule grants its X-rays, and the outcome is the one the referral cites.
     const service = list.tours.find((t: any) => t.id === "backend").chains[0].chain;
     expect(service.rows.map((r: any) => [r.kind, r.has.length])).toEqual([["records", 6], ["referral", 1], ["service", 3], ["outcome", 1]]);

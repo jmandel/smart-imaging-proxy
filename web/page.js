@@ -12,6 +12,8 @@ async function api(method, path, body) {
 }
 const bytes = n => { const v = Number(n ?? 0); return v >= 1e9 ? `${(v / 1e9).toFixed(2)} GB` : v >= 1e6 ? `${(v / 1e6).toFixed(1)} MB` : v >= 1e3 ? `${(v / 1e3).toFixed(1)} KB` : `${v} B`; };
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+/** A list of studies, one per line under its count: study titles carry commas, so they are never joined. */
+const studyList = (items, lead = plural(items.length, "study", "studies") + ":") => `${esc(lead)}<ul class="study-list">${items.map(t => `<li>${esc(t)}</li>`).join("")}</ul>`;
 const studyDate = d => d ? String(d).slice(0, 10) : "";
 const announce = text => { const el = $("#announce"); if (el) { el.textContent = ""; setTimeout(() => { el.textContent = text; }, 30); } };
 

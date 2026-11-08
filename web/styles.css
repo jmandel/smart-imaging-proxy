@@ -11,6 +11,10 @@
   --stripe-a:#e3ebf0; --stripe-b:#e9f0f5;
   /* The three levels of policy, on the page and on film. */
   --fact:#0a6a9c; --policy:#0b7560; --choice:#a06a00; --choice-fill:#8a5b00; --fact-film:#7cc4ea; --policy-film:#63e0c3; --choice-film:#f2c55c;
+  /* A study in the result: one violet fill with a heavy edge, on the page and on film, in both themes. A
+     study whose link still works until it expires: a pale tint of the same violet, with a dashed edge. */
+  --result-fill:#6d3fc0; --result-ink:#ffffff; --result-edge:#3d1d7a; --result-edge-film:#c9b3ff;
+  --result-tint:#ece4fb; --result-tint-ink:#3d1d7a; --result-tint-film:#2a1f4a; --result-tint-ink-film:#e2d6ff;
   --sans:"Atkinson Next",system-ui,-apple-system,"Segoe UI",sans-serif; --mono:"Atkinson Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
 }
 @media (prefers-color-scheme:dark) { :root {
@@ -20,6 +24,7 @@
   --good:#63e0c3; --good-soft:#123a33; --warn:#f2c55c; --warn-soft:#3a2f10; --bad:#ff9d92; --bad-soft:#42201d;
   --stripe-a:#10232f; --stripe-b:#0d1e29;
   --fact:#6cbfe8; --policy:#63e0c3; --choice:#f2c55c; --choice-fill:#f2c55c;
+  --result-edge:#c9b3ff; --result-tint:#2a1f4a; --result-tint-ink:#e2d6ff;
 } }
 * { box-sizing:border-box; }
 html { -webkit-text-size-adjust:100%; }
@@ -186,6 +191,8 @@ button.sheet:hover { background:var(--film-raised); }
 .story .ly-pane-label { color:var(--on-film); }
 .story-steps { margin-top:auto; font-size:.78rem; color:var(--on-film-dim); }
 .tour-chain { display:flex; flex-direction:column; gap:.6rem; background:var(--plate); border:1px solid var(--line); border-radius:10px; padding:.85rem 1rem; max-width:44rem; }
+/* Before, after, and once links expire: room for the panels side by side. */
+.tour-chain:has(.ly-pair) { max-width:none; }
 .step-chain { grid-column:1 / -1; max-width:40rem; padding:.5rem 0 .2rem; }
 .checks-panel { margin-top:.8rem; padding:1rem; border-radius:10px; background:var(--plate); border:1px solid var(--line); display:flex; flex-direction:column; gap:.6rem; }
 .checks-panel h2 { margin:0; font-size:1rem; letter-spacing:0; text-transform:none; color:var(--ink); }
@@ -224,6 +231,9 @@ button.sheet:hover { background:var(--film-raised); }
 .step .what b { display:block; color:var(--ink); }
 .step .what span { font-size:.9rem; }
 .step .what .expect { display:block; margin-top:.15rem; }
+/* A list of studies: one title per line, since titles carry commas. */
+.study-list { margin:.15rem 0 0; padding-left:1.2rem; }
+.study-list li { margin:.05rem 0; }
 .step .verdict { font-weight:700; }
 .step .verdict.ok { color:var(--good); } .step .verdict.bad { color:var(--bad); }
 .step .compare { grid-column:1 / -1; display:grid; grid-template-columns:max-content minmax(0,1fr); gap:.1rem .8rem; font-size:.92rem; margin:0; }
@@ -306,9 +316,9 @@ tr.detail > td { background:var(--box); max-width:none; padding:.6rem .8rem .8re
 .ev-detail summary { cursor:pointer; color:var(--accent); min-height:2rem; display:flex; align-items:center; }
 
 /* The layer chain: one sentence per row, and under it one box per study, in its site's column. */
-.layers { --ly-ink:var(--ink); --ly-dim:var(--muted); --ly-ghost:var(--line); --ly-fact:var(--fact); --ly-policy:var(--policy); --ly-choice:var(--choice); --ly-on-ink:var(--plate); --ly-result:var(--ink); --ly-choice-fill:var(--choice-fill);
+.layers { --ly-ink:var(--ink); --ly-dim:var(--muted); --ly-ghost:var(--line); --ly-fact:var(--fact); --ly-policy:var(--policy); --ly-choice:var(--choice); --ly-on-ink:var(--plate); --ly-result:var(--result-fill); --ly-result-edge:var(--result-edge); --ly-result-tint:var(--result-tint); --ly-result-tint-ink:var(--result-tint-ink); --ly-choice-fill:var(--choice-fill);
   --box:2.75rem; --gap:4px; --ggap:10px; margin:0; min-width:0; color:var(--ly-ink); container-type:inline-size; }
-.layers.film { --ly-ink:var(--on-film); --ly-dim:var(--on-film-dim); --ly-ghost:var(--film-line); --ly-fact:var(--fact-film); --ly-policy:var(--policy-film); --ly-choice:var(--choice-film); --ly-on-ink:var(--film); --ly-result:var(--on-film); --ly-choice-fill:var(--choice-film); }
+.layers.film { --ly-ink:var(--on-film); --ly-dim:var(--on-film-dim); --ly-ghost:var(--film-line); --ly-fact:var(--fact-film); --ly-policy:var(--policy-film); --ly-choice:var(--choice-film); --ly-on-ink:var(--film); --ly-result-edge:var(--result-edge-film); --ly-result-tint:var(--result-tint-film); --ly-result-tint-ink:var(--result-tint-ink-film); --ly-choice-fill:var(--choice-film); }
 .ly-sheet { display:grid; grid-template-columns:minmax(0,1fr); }
 .ly-sites, .ly-boxes { display:flex; gap:var(--ggap); }
 /* A site's column is as wide as its boxes, and wide enough for a one-box site's name to wrap in. */
@@ -321,7 +331,7 @@ tr.detail > td { background:var(--box); max-width:none; padding:.6rem .8rem .8re
 .ly-name { min-width:0; overflow-wrap:anywhere; }
 .ly-count { margin-left:auto; padding-left:.5rem; color:var(--ly-ink); font-variant-numeric:tabular-nums; white-space:nowrap; font-size:.82rem; }
 .ly-mark { width:14px; height:14px; flex:none; }
-.ly-mark.fact { fill:var(--ly-fact, var(--fact)); } .ly-mark.policy { fill:var(--ly-policy, var(--policy)); } .ly-mark.choice { fill:var(--ly-choice, var(--choice)); } .ly-mark.outcome { fill:var(--ly-result, var(--ink)); }
+.ly-mark.fact { fill:var(--ly-fact, var(--fact)); } .ly-mark.policy { fill:var(--ly-policy, var(--policy)); } .ly-mark.choice { fill:var(--ly-choice, var(--choice)); } .ly-mark.outcome { fill:var(--ly-result-edge, var(--result-edge)); }
 .ly-mark.missing { fill:none; stroke-width:1.5; }
 .ly-mark.missing.fact { stroke:var(--ly-fact, var(--fact)); } .ly-mark.missing.policy { stroke:var(--ly-policy, var(--policy)); } .ly-mark.missing.choice { stroke:var(--ly-choice, var(--choice)); }
 .ly-row.missing .ly-name { color:var(--ly-dim); }
@@ -336,11 +346,15 @@ tr.detail > td { background:var(--box); max-width:none; padding:.6rem .8rem .8re
 .ly-row.fact .ly-box.on { background:var(--ly-fact); border-color:var(--ly-fact); }
 .ly-row.policy .ly-box.on { background:var(--ly-policy); border-color:var(--ly-policy); }
 .ly-row.choice .ly-box.on { background:var(--ly-choice-fill, var(--ly-choice)); border-color:var(--ly-choice-fill, var(--ly-choice)); }
-.ly-row.outcome .ly-box.on { background:var(--ly-result); border-color:var(--ly-result); }
+.ly-row.outcome .ly-box.on { background:var(--result-fill); border:2px solid var(--ly-result-edge); color:var(--result-ink); }
+.ly-box.linked { background:var(--ly-result-tint); border:2px dashed var(--ly-result-edge); color:var(--ly-result-tint-ink); }
+.ly-clock { width:9px; height:9px; fill:currentColor; }
 .ly-lock { width:8px; height:10px; fill:currentColor; }
-/* The outcome: set off by a rule, in the ink of the page. */
-.ly-row.outcome { margin-top:.2rem; padding-top:.55rem; border-top:2px solid var(--ly-result); }
+/* The outcome: set off by a rule, in the result's violet. Links already given out follow it directly. */
+.ly-row.outcome { margin-top:.2rem; padding-top:.55rem; border-top:2px solid var(--ly-result-edge); }
 .ly-row.outcome .ly-name { font-weight:700; }
+.ly-row.outcome.links { margin-top:0; padding-top:0; border-top:0; }
+.ly-mark.links { fill:var(--ly-result-tint-ink, var(--result-tint-ink)); }
 .ly-total { font-variant-numeric:tabular-nums; }
 @container (min-width:44rem) {
   .ly-sheet { grid-template-columns:minmax(0,1fr) auto; column-gap:1.2rem; }
@@ -363,7 +377,8 @@ tr.detail > td { background:var(--box); max-width:none; padding:.6rem .8rem .8re
 .ly-legend .ly-row { display:contents; }
 .ly-legend.film { color:var(--on-film-dim); }
 .ly-legend.film .layers { --ly-fact:var(--fact-film); --ly-ghost:var(--film-line); --ly-dim:var(--on-film-dim); --ly-on-ink:var(--film); }
-.ly-legend.film .ly-mark.fact { fill:var(--fact-film); } .ly-legend.film .ly-mark.policy { fill:var(--policy-film); } .ly-legend.film .ly-mark.choice { fill:var(--choice-film); } .ly-legend.film .ly-mark.outcome { fill:var(--on-film); }
+.ly-legend.film .ly-mark.fact { fill:var(--fact-film); } .ly-legend.film .ly-mark.policy { fill:var(--policy-film); } .ly-legend.film .ly-mark.choice { fill:var(--choice-film); } .ly-legend.film .ly-mark.outcome { fill:var(--result-edge-film); }
+.ly-legend.film .ly-mark.links { fill:var(--result-tint-ink-film); }
 .ly-legend.film .ly-mark.missing.policy { fill:none; stroke:var(--policy-film); }
 .ly-legend.film .ly-mark.missing.choice { fill:none; stroke:var(--choice-film); }
 

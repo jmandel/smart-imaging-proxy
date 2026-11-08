@@ -42,8 +42,8 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 const sorted = (xs: Iterable<string>) => [...xs].sort();
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
-/** What a check compares: a value, how it reads in plain words, and its technical detail. */
-interface Answer { value: unknown; text: string; detail?: string; }
+/** What a check compares: a value, how it reads in plain words, any studies it lists, and its technical detail. */
+interface Answer { value: unknown; text: string; items?: string[]; detail?: string; }
 interface Run {
   world: World; c: Ctx; mode: "scripted" | "window"; state: Record<string, any>;
   model(change?: (doc: PolicyDocument) => PolicyDocument): ReturnType<typeof modelOf>;
@@ -76,7 +76,11 @@ interface Tour {
   /** Where the story ends: the policy on file with the story's rows added, and the time, which its card's chain is drawn from. */
   scene(world: World): { doc: PolicyDocument; now?: number };
   /** A story about a change: the scene before it, and the step that makes it, so the card and the runner show both. */
-  change?: { before(world: World): { doc: PolicyDocument; now?: number }; step: string; beforeLabel: string; after: string };
+  change?: {
+    before(world: World): { doc: PolicyDocument; now?: number }; step: string; beforeLabel: string; after: string;
+    /** For a change that study links outlast: the step that tries a link once it has expired, and that panel's label. */
+    links?: { expiredStep: string; expiredLabel: string };
+  };
 }
 
 /** What's on file, with ids, as a story's scene starts from it. */
@@ -85,8 +89,8 @@ const relId = (doc: PolicyDocument, user: string, patient: string) => doc.relati
 const sitesOf = (world: World, patient: string) => sorted(new Set(world.catalog.allStudies().filter(s => s.patient === patient).flatMap(s => s.site ? [s.site] : [])));
 const approve = (doc: PolicyDocument, user: string, patient: string, basis: string[], sites?: string[]): PolicyDocument => ({ ...doc, approvals: [...doc.approvals, { id: `scene-approval-${user}`, by: `user:${user}`, app: `app:${APP}`, patient: `patient:${patient}`, ...(sites ? { sites } : {}), basis }] });
 
-const studyText = (r: Run, ids: string[]) => ids.length ? `${plural(ids.length, "study", "studies")}: ${list(ids.map(id => r.title(id)))}` : "No studies";
-const reachText = (r: Run, ids: string[]) => ({ value: sorted(ids), text: studyText(r, sorted(ids)) });
+/** Studies as a check reads them: a count, and their titles as a list, never joined, since titles carry commas. */
+const reachText = (r: Run, ids: string[]): Answer => { const xs = sorted(ids); return xs.length ? { value: xs, text: `${plural(xs.length, "study", "studies")}:`, items: xs.map(id => r.title(id)) } : { value: xs, text: "No studies" }; };
 /** A retrieval's answer, for whoever asked. */
 const statusText = (who: string, status: number): Answer => ({ value: status, text: status === 200 ? `${who} gets the images` : `Refused: ${who.toLowerCase()} gets no images`, detail: `HTTP ${status}` });
 /** A patient's first name. */
@@ -343,7 +347,7 @@ const TOURS: Tour[] = [
     viewer: { user: SAM, patient: JOSH_PATIENT, app: APP },
     // Once the share goes, the approval that rested on it goes too.
     scene: () => ({ doc: onFile() }),
-    change: { before: w => ({ doc: approve(sharedScene(sitesOf(w, JOSH_PATIENT)), SAM, JOSH_PATIENT, ["scene-share"]) }), step: "revoke", beforeLabel: "Before Josh stops sharing", after: "After Josh stops sharing" },
+    change: { before: w => ({ doc: approve(sharedScene(sitesOf(w, JOSH_PATIENT)), SAM, JOSH_PATIENT, ["scene-share"]) }), step: "revoke", beforeLabel: "Before Josh stops sharing", after: "After Josh stops sharing", links: { expiredStep: "expired", expiredLabel: "Once those study links expire" } },
     steps: [
       shareStep("share", r => joshSites(r), "Josh shares all his studies with Sam"),
       launchStep("launch", SAM, JOSH_PATIENT, () => undefined, "Sam signs in, picks Josh, and lets the app see Josh's studies"),
@@ -353,7 +357,8 @@ const TOURS: Tour[] = [
         // The share goes, and with it what rested only on it.
         intends: (_r, doc) => cascade({ ...doc, shares: doc.shares.filter(s => !(s.from === ref("user", JOSH) && s.with === ref("user", SAM))) }),
         expect: (_r, m) => canSeeText(SAM, JOSH_PATIENT, m.approvableSites(SAM, JOSH_PATIENT)),
-        async act(r) { await r.c.revokeDelegation(JOSH, SAM); return accessOf(r, SAM, JOSH_PATIENT); },
+        // The study links the app holds when the share goes: the ones its last search gave it.
+        async act(r) { r.state.linked = Object.keys(r.state.found ?? {}); await r.c.revokeDelegation(JOSH, SAM); return accessOf(r, SAM, JOSH_PATIENT); },
       },
       searchStep("search-again", SAM, JOSH_PATIENT, "The app searches again, without Sam signing in again"),
       signedRetrieveStep("signed", SAM, JOSH_PATIENT, "The app opens a study link it was given before"),
@@ -441,6 +446,20 @@ const CHECK_WORDS: Record<string, { title: string; summary: string }> = {
   "paged-search": { title: "Searching a few studies at a time", summary: "The app pages through search results, and the rules apply again on every page." },
 };
 
+/**
+ * The panels of a story about a change: before, after, and when study links outlast the change, once they
+ * expire. `linked` is the studies whose links the app had when the change came.
+ */
+function changePanels(tour: Tour, before: Chain, after: Chain, linked?: string[], expired = false) {
+  const c = tour.change!;
+  if (!linked) return [{ label: c.beforeLabel, chain: before }, { label: c.after, chain: after }];
+  const split = (gone: boolean): Chain => ({ ...after, rows: [
+    ...after.rows.map(r => r.kind === "outcome" ? { ...r, name: "What a new search finds" } : r),
+    { level: "outcome", kind: "links", name: gone ? "Study links the app already had: expired, and refused" : "Study links the app already had: work for a few minutes, until they expire", has: gone ? [] : linked },
+  ] });
+  return [{ label: c.beforeLabel, chain: before }, { label: c.after, chain: split(false) }, ...(expired ? [{ label: c.links!.expiredLabel, chain: split(true) }] : [])];
+}
+
 /** The tours and checks of one world. A tour runs in a scope minted for it, and a reload there comes back to it. */
 export function createTours(world: World, clients: Record<string, BackendClient>, stack: Stack) {
   let run: { tour: Tour; r: Run; results: Record<string, any>; running?: string; session: string } | undefined;
@@ -461,7 +480,18 @@ export function createTours(world: World, clients: Record<string, BackendClient>
   /** The chain a story ends on, for its card, drawn from its scene by core's model. */
   const cardChain = (tour: Tour): Chain => sceneChain(tour, tour.scene(world));
   /** A story about a change: its card shows the chain before it, and after, each with its label. */
-  const cardChains = (tour: Tour) => tour.change ? [{ label: tour.change.beforeLabel, chain: sceneChain(tour, tour.change.before(world)) }, { label: tour.change.after, chain: cardChain(tour) }] : [{ chain: cardChain(tour) }];
+  /**
+   * A story about a change: its card shows the chain before it, and after. When study links outlast the
+   * change, the after panel shows the links the app already had, which a search before the change gave it:
+   * what the model releases to the app in the before scene. A panel for once they expire follows, if the
+   * tour has a step that tries one then.
+   */
+  const cardChains = (tour: Tour) => {
+    if (!tour.change) return [{ chain: cardChain(tour) }];
+    const before = sceneChain(tour, tour.change.before(world)), after = cardChain(tour), links = tour.change.links;
+    const linked = before.rows.find(r => r.kind === "outcome")!.has;
+    return changePanels(tour, before, after, links ? linked : undefined, !!links && tour.steps.some(s => s.id === links.expiredStep));
+  };
   /** Who's who, for the home page: people by first name, the app, the service the stories follow, and the imaging network with its sites. */
   const cast = () => {
     const sites = sorted(new Set(world.catalog.allStudies().flatMap(s => s.site ? [s.site] : [])));
@@ -489,15 +519,22 @@ export function createTours(world: World, clients: Record<string, BackendClient>
     const r: Run = { world, c: undefined as unknown as Ctx, mode: "scripted", state: {}, model: change => modelOf(world, change ? doc => change(doc) : undefined), title };
     return stateOf(tour, r, {});
   }
+  /** Once a story's change has run: the chain before it and after it, from the steps' own results, and the links the app really held. */
+  function changed(tour: Tour, r: Run, results: Record<string, any>) {
+    const c = tour.change, at = c ? tour.steps.findIndex(s => s.id === c.step) : -1;
+    if (!c || at < 1 || !results[c.step]?.chain || !results[tour.steps[at - 1]!.id]?.chain) return undefined;
+    return changePanels(tour, results[tour.steps[at - 1]!.id].chain, results[c.step].chain, c.links ? r.state.linked ?? [] : undefined, !!c.links && !!results[c.links.expiredStep]);
+  }
   function stateOf(tour: Tour, r: Run, results: Record<string, any>, started?: NonNullable<typeof run>) {
     const next = tour.steps.find(s => !results[s.id]);
-    let expect: string | undefined, expectDetail: string | undefined;
-    if (next) { try { const e = next.expect(r, r.model(next.intends ? doc => next.intends!(r, doc) : undefined)); expect = e.text; expectDetail = e.detail; } catch (e) { expect = String((e as Error).message ?? e); } }
+    let expect: string | undefined, expectDetail: string | undefined, expectItems: string[] | undefined;
+    if (next) { try { const e = next.expect(r, r.model(next.intends ? doc => next.intends!(r, doc) : undefined)); expect = e.text; expectDetail = e.detail; expectItems = e.items; } catch (e) { expect = String((e as Error).message ?? e); } }
     return {
       scope: { id: world.scope, base: world.prefix }, session: started?.session ?? null, activityUrl: started ? activityUrl(started.session) : null, running: started?.running ?? null, pendingAuthUrl: started ? r.c.pendingAuthUrl ?? null : null,
       tour: { id: tour.id, title: tour.title, summary: textOf(tour.summary, world), detail: tour.detail, premise: tour.premise(world), ...(tour.change ? { change: { step: tour.change.step, before: tour.change.beforeLabel, after: tour.change.after } } : {}) },
       chain: chainNow(tour),
-      steps: tour.steps.map(s => ({ id: s.id, title: textOf(s.title, world), actor: s.actor, ...(s.signsIn ? { signsIn: true } : {}), ...(s === next ? { expect, expectDetail } : {}), ...(results[s.id] ? { result: results[s.id] } : {}) })),
+      ...(changed(tour, r, results) ? { panels: changed(tour, r, results) } : {}),
+      steps: tour.steps.map(s => ({ id: s.id, title: textOf(s.title, world), actor: s.actor, ...(s.signsIn ? { signsIn: true } : {}), ...(s === next ? { expect, expectDetail, ...(expectItems ? { expectItems } : {}) } : {}), ...(results[s.id] ? { result: results[s.id] } : {}) })),
     };
   }
   async function step(id: string, mode: "scripted" | "window") {
@@ -514,7 +551,7 @@ export function createTours(world: World, clients: Record<string, BackendClient>
       const expected = s.expect(r, r.model(intended ? () => intended : undefined));
       const actual = await inScope(world.scope, () => runInSession(run!.session, () => withSpan("user", "action", `${tour.title}: ${textOf(s.title, world)}`, { tour: tour.id, step: s.id, mode }, () => s.act(r), { session: run!.session, trace })));
       const mismatch = intended && writeMismatch(intended, documentOf(world));
-      result = { ok: same(actual.value, expected.value) && !mismatch, expected: expected.text, actual: actual.text, ...(actual.detail ? { detail: actual.detail } : {}), ...(mismatch ? { write: `The step didn't write what it intended. ${mismatch}` } : {}) };
+      result = { ok: same(actual.value, expected.value) && !mismatch, expected: expected.text, actual: actual.text, ...(expected.items ? { expectedItems: expected.items } : {}), ...(actual.items ? { actualItems: actual.items } : {}), ...(actual.detail ? { detail: actual.detail } : {}), ...(mismatch ? { write: `The step didn't write what it intended. ${mismatch}` } : {}) };
     } catch (e) { result = { ok: false, expected: "", actual: String((e as Error).message ?? e), stopped: e instanceof StepStopped }; }
     await traceSettled();
     result.trace = trace;

@@ -142,7 +142,7 @@ function detailHtml(e) {
   // A policy write's level, and a decision, which organization policy makes, wear the level's mark.
   const level = e.kind === "policy.written" ? (["fact", "policy", "choice"].includes(e.data.level) ? e.data.level : undefined) : e.kind === "decision.answered" ? "policy" : undefined;
   return `<div class="ev-detail"><p class="ev-summary">${level ? `${Layers.mark(level)} ` : ""}<b>${esc(w.summary)}</b> <span class="note">${esc(PARTY[e.service] ?? e.service)}, ${esc(new Date(e.at).toLocaleString())}</span></p>
-    ${w.fields.length ? `<dl>${w.fields.map(([a, b]) => `<dt>${esc(a)}</dt><dd>${esc(b)}</dd>`).join("")}</dl>` : ""}
+    ${w.fields.length ? `<dl>${w.fields.map(([a, b]) => `<dt>${esc(a)}</dt><dd>${Array.isArray(b) ? (b.length ? studyList(b) : "none") : esc(b)}</dd>`).join("")}</dl>` : ""}
     ${links.length ? `<p class="ev-links">${links.map(l => `<a href="${esc(`${BASE}/activity?${new URLSearchParams({ ...(keep ? { session: keep } : {}), link: l.link })}`)}" title="${esc(l.title)}">${esc(l.words)}</a>`).join("")}</p>` : ""}
     <details><summary>Raw payload</summary><pre>${esc(JSON.stringify({ kind: e.kind, ...e.data }, null, 2))}</pre></details>
     ${e.span ? `<details data-exchange="${esc(e.seq)}"><summary>The exchange</summary><div class="raw"><p class="note">Loading…</p></div></details>` : ""}</div>`;
