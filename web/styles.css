@@ -365,6 +365,7 @@ tr.detail > td { background:var(--box); max-width:none; padding:.6rem .8rem .8re
 .ly-legend.film .layers { --ly-fact:var(--fact-film); --ly-ghost:var(--film-line); --ly-dim:var(--on-film-dim); --ly-on-ink:var(--film); }
 .ly-legend.film .ly-mark.fact { fill:var(--fact-film); } .ly-legend.film .ly-mark.policy { fill:var(--policy-film); } .ly-legend.film .ly-mark.choice { fill:var(--choice-film); } .ly-legend.film .ly-mark.outcome { fill:var(--on-film); }
 .ly-legend.film .ly-mark.missing.policy { fill:none; stroke:var(--policy-film); }
+.ly-legend.film .ly-mark.missing.choice { fill:none; stroke:var(--choice-film); }
 
 @media (max-width:1100px) {
   .glance { grid-template-columns:minmax(0,1fr); }
