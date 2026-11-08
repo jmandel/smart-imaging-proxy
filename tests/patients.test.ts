@@ -403,14 +403,14 @@ describe("Explore", () => {
     expect(own.patient).toBe("sam-example");
     expect([own.headline, own.detail]).toEqual(["Sam's own studies", "The Health Records App can see both."]);
     expect(ids(own)).toEqual(SAM);
-    expect(own.chain.rows.map((r: any) => [r.level, r.name])).toEqual([["fact", "Sam is the patient"], ["policy", "Imaging network rule: anyone can let an app act for them on what they can see"], ["choice", "Sam lets the Health Records App act for Sam on Sam's studies at every site"], ["outcome", "What the app can see"]]);
+    expect(own.chain.rows.map((r: any) => [r.level, r.name])).toEqual([["fact", "Sam is the patient"], ["policy", "Imaging network rule: anyone can share what they can see with an app that acts for them"], ["choice", "Sam lets the Health Records App act for Sam on Sam's studies at every site"], ["outcome", "What the app can see"]]);
     const riley = await b.pick(SAM_ACCOUNT, { patient: "riley-example" });
     expect(riley.session).not.toBe(own.session);
     // The headline counts none of Riley's studies: Sam may know of only one.
     expect([riley.headline, riley.detail]).toEqual(["Riley's studies Sam can see", "The Health Records App can see this one."]);
     expect(ids(riley)).toEqual(RILEY);
     // The chain names the guardian's age band, and no label: the one study Sam may know of passes every row.
-    expect(riley.chain.rows.map((r: any) => [r.level, r.name, r.has])).toEqual([["fact", "Sam is on file as Riley's guardian", []], ["fact", expect.stringMatching(/^Riley is 1[5-7]$/), []], ["policy", "Imaging network rule: guardians of patients aged 13 to 17 can see everything except studies labeled confidential", RILEY], ["policy", "Imaging network rule: anyone can let an app act for them on what they can see", RILEY], ["choice", "Sam, as Riley's guardian, lets the Health Records App act for Sam on Riley's studies at every site", RILEY], ["outcome", "What the app can see", RILEY]]);
+    expect(riley.chain.rows.map((r: any) => [r.level, r.name, r.has])).toEqual([["fact", "Sam is on file as Riley's guardian", []], ["fact", expect.stringMatching(/^Riley is 1[5-7]$/), []], ["policy", "Imaging network rule: guardians of patients aged 13 to 17 can see everything except studies labeled confidential", RILEY], ["policy", "Imaging network rule: anyone can share what they can see with an app that acts for them", RILEY], ["choice", "Sam, as Riley's guardian, lets the Health Records App act for Sam on Riley's studies at every site", RILEY], ["outcome", "What the app can see", RILEY]]);
     // The rule's general text names a label, whether or not any study carries it. Nothing that identifies the hidden study is here:
     // not its id, UID, title or site, no lock, no label row, and no count that includes it.
     const hidden = stack.catalog.allStudies().find(x => x.id === "syn-riley-skin-slide-2023")!;

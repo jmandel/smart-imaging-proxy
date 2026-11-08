@@ -118,7 +118,7 @@ export function chainFor(input: { snap: Snapshot; studies: CatalogStudy[]; now: 
     const sharingPolicy = snap.policies.find(p => p.type === "sharing");
     const sharerSees = (s: CatalogStudy) => !!from && model.baseline(snap, ref("user", from), P, s).ok;
     rows.push(sharingPolicy
-      ? { level: "policy", kind: "sharing", name: `Imaging network rule: ${sharingWho(sharingPolicy.allowedFrom)} can share the studies they can see`, has: sharing.policy ? ids(sharerSees) : [] }
+      ? { level: "policy", kind: "sharing", name: `Imaging network rule: ${sharingWho(sharingPolicy.allowedFrom)} can share the studies they can see with another person`, has: sharing.policy ? ids(sharerSees) : [] }
       : { level: "policy", kind: "sharing", name: "No rule lets patients or guardians share their studies", has: [], missing: true });
     if (share) {
       const sharer = userFirst(from!), theirs = sharerIsPatient ? whose(viewer.patient, from) : `${name}'s`;
@@ -141,7 +141,7 @@ export function chainFor(input: { snap: Snapshot; studies: CatalogStudy[]; now: 
   // The Imaging Server's own rule, under every approval: anyone may let an app act for them on what
   // reaches them, and the approval can only narrow it. Its boxes are what the approver can see.
   const reach = new Set(model.visible(snap, U, P, all, fhirUser).map(s => s.id));
-  rows.push({ level: "policy", kind: "app-rule", name: "Imaging network rule: anyone can let an app act for them on what they can see", has: ids(s => reach.has(s.id)), builtIn: true });
+  rows.push({ level: "policy", kind: "app-rule", name: "Imaging network rule: anyone can share what they can see with an app that acts for them", has: ids(s => reach.has(s.id)), builtIn: true });
   rows.push(approval
     ? { level: "choice", kind: "approval", name: `${who} lets the ${app} act for ${actFor} on ${what(approval.sites)}`, has: atSites(approval.sites) }
     : { level: "choice", kind: "approval", name: `No approval from ${viewerName} lets the ${app} act for ${actFor} on ${isPatient ? whose(viewer.patient, viewer.user) : `${name}'s`} studies`, has: [], missing: true });
