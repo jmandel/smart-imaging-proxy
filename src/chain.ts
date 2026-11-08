@@ -139,9 +139,10 @@ export function chainFor(input: { snap: Snapshot; studies: CatalogStudy[]; now: 
   const who = guardian && !isPatient ? `${viewerName}, as ${name}'s guardian,` : viewerName;
   const approval = snap.approvals.find(a => a.by === U && a.app === ref("app", viewer.app) && a.patient === P);
   // The Imaging Server's own rule, under every approval: anyone may let an app act for them on what
-  // reaches them, and the approval can only narrow it. Its boxes are what the approver can see.
+  // reaches them, and the approval can only narrow it. Its boxes are what the approver can see, and it
+  // names the approver, so an empty row reads as their reach, not as a rule that grants nothing.
   const reach = new Set(model.visible(snap, U, P, all, fhirUser).map(s => s.id));
-  rows.push({ level: "policy", kind: "app-rule", name: "Imaging network rule: anyone can share what they can see with an app that acts for them", has: ids(s => reach.has(s.id)), builtIn: true });
+  rows.push({ level: "policy", kind: "app-rule", name: `Imaging network rule: anyone can share what they can see with an app that acts for them. What ${viewerName} can see:`, has: ids(s => reach.has(s.id)), builtIn: true });
   rows.push(approval
     ? { level: "choice", kind: "approval", name: `${who} lets the ${app} act for ${actFor} on ${what(approval.sites)}`, has: atSites(approval.sites) }
     : { level: "choice", kind: "approval", name: `No approval from ${viewerName} lets the ${app} act for ${actFor} on ${isPatient ? whose(viewer.patient, viewer.user) : `${name}'s`} studies`, has: [], missing: true });
