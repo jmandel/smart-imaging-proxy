@@ -202,6 +202,8 @@ button.sheet:hover { background:var(--film-raised); }
 /* Who's who and the diagram key, above the stories. */
 .cast, .key { background:var(--plate); border:1px solid var(--line); border-radius:10px; padding:.85rem 1rem; display:flex; flex-direction:column; gap:.5rem; }
 .cast h2, .key h2 { margin:0; font-size:1rem; font-weight:800; }
+/* The key on the home page sits on film, as the story cards do, so its boxes look like theirs. */
+.key.film { background:var(--film); color:var(--on-film); border-color:var(--film); }
 .cast dl { margin:0; display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 19rem), 1fr)); gap:.45rem 1.4rem; }
 .cast dl div { display:flex; flex-direction:column; }
 .cast dt { font-weight:700; }
@@ -345,6 +347,9 @@ tr.detail > td { background:var(--box); max-width:none; padding:.6rem .8rem .8re
 }
 .ly-pair { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 19rem), 1fr)); gap:.8rem 1.4rem; }
 .ly-pane-label { margin:0 0 .3rem; font-weight:800; font-size:.86rem; }
+.ly-pair .ly-pane + .ly-pane { border-top:1px dashed var(--line); padding-top:.6rem; }
+@media (min-width:44rem) { .ly-pair .ly-pane + .ly-pane { border-top:0; padding-top:0; } }
+.story .ly-pair .ly-pane + .ly-pane { border-top-color:var(--film-line); }
 .ly-legend { display:flex; flex-direction:column; gap:.3rem; font-size:.8rem; color:var(--muted); line-height:1.35; }
 .ly-legend ul { display:flex; flex-wrap:wrap; gap:.3rem 1rem; list-style:none; margin:0; padding:0; }
 .ly-legend li { display:inline-flex; align-items:center; gap:.35rem; }

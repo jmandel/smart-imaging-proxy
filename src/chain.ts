@@ -131,7 +131,7 @@ export function chainFor(input: { snap: Snapshot; studies: CatalogStudy[]; now: 
   const theirs = whose(viewer.patient, viewer.user);
   rows.push(approval
     ? { level: "choice", kind: "approval", name: `${viewerName} lets the ${app} see ${theirs} studies at ${approval.sites ? sitesText(approval.sites) : "every site"}`, has: atSites(approval.sites) }
-    : { level: "choice", kind: "approval", name: `${viewerName} hasn't let the ${app} see any of ${theirs} studies`, has: [], missing: true });
+    : { level: "choice", kind: "approval", name: `No approval from ${viewerName} lets the ${app} see ${theirs} studies`, has: [], missing: true });
   const t = { client_id: viewer.app, sub: viewer.user, fhirUser, patient: viewer.patient };
   rows.push({ level: "outcome", kind: "outcome", name: "What the app can see", has: ids(s => model.evaluate(snap, t, s).release !== "none") });
   return done();

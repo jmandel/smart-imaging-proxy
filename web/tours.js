@@ -23,7 +23,7 @@ function homeHtml() {
   return `<div class="home-head"><h1 id="tour-title" tabindex="-1">Tours</h1><a href="/explore">Explore on your own</a></div>
     ${pageError ? `<p class="error" role="alert">${esc(pageError)}</p>` : ""}
     <section class="cast" aria-labelledby="h-cast"><h2 id="h-cast">Who's who</h2><dl>${list.cast.map(c => `<div><dt>${esc(c.name)}</dt><dd>${esc(c.line)}</dd></div>`).join("")}</dl></section>
-    <section class="key" aria-labelledby="h-key"><h2 id="h-key">Reading the diagrams</h2>${Layers.legend({ locked })}</section>
+    <section class="key film" aria-labelledby="h-key"><h2 id="h-key">Reading the diagrams</h2>${Layers.legend({ locked, film: true })}</section>
     <ul class="stories">${list.tours.map(t => `<li class="story">
       <h2><button type="button" class="story-go" data-start="${esc(t.id)}">${esc(t.title)}</button></h2>
       <p>${esc(t.premise)}</p>
