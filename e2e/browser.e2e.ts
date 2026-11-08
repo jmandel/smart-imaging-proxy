@@ -97,7 +97,7 @@ describe("every page, on desktop and phone, in light and dark", () => {
     test(`${name} ${colorScheme}: Explore's text keeps its contrast, on the box, the chain and the film`, async () => {
       const page = await open("/explore", { viewport, colorScheme });
       await pick(page, "josh");
-      for (const sel of [".headline h1", ".why .ly-name", ".why .ly-detail", ".why .ly-count", ".sheet .title", ".sheet .site", ".sheet .date", ".sheet .status", ".actions .log-link"]) {
+      for (const sel of [".headline h1", ".why .ly-name", ".why .ly-row.choice .ly-box.on", ".why .ly-row.outcome .ly-box.on", ".why .ly-legend p", ".sheet .title", ".sheet .site", ".sheet .date", ".sheet .status", ".actions .log-link"]) {
         expect([sel, (await contrast(page, sel)) >= 4.5]).toEqual([sel, true]);
       }
       expect(await overflow(page)).toBe(0);
@@ -137,7 +137,7 @@ describe("Explore", () => {
     page.on("request", r => { const u = new URL(r.url()); if (u.pathname.endsWith("/api/explore/thumbnail")) asked.push(u.searchParams.get("study")!); });
     await pick(page, "sam-caregiver");
     await settle(page, () => page.locator("[data-whose=josh-example]").click());
-    await page.getByRole("button", { name: "Change what the app can see" }).click();
+    await page.getByRole("button", { name: "Change what Health Records App can see" }).click();
     await page.locator("#action-form input[value='Riverside Hospital']").uncheck();
     asked.length = 0;
     await settle(page, () => page.getByRole("button", { name: "Sign in and approve" }).click());
@@ -149,7 +149,8 @@ describe("Explore", () => {
     expect(await page.locator(".sheet.withheld .status").first().innerText()).toContain("Withheld: Sam's approval of the Health Records App doesn't include Riverside Hospital");
     expect(await page.locator(".sheet.withheld .thumb[data-study]").count()).toBe(0);
     expect(asked).toEqual([SHEETS.mri]);
-    expect(await page.locator(".headline h1").innerText()).toBe("Sam can see 1 of Josh's 5 studies");
+    expect(await page.locator(".headline h1").innerText()).toBe("Josh's studies Sam can see");
+    expect(await page.locator(".headline .note").innerText()).toBe("The Health Records App can see 1 of these 5.");
     expect(problems).toEqual([]);
   });
   test("with no metadata from the server, the slide shows its placeholder, and the other thumbnails still draw", async () => {
@@ -208,13 +209,13 @@ describe("Explore", () => {
     await page.reload();
     await page.locator("[data-user=sam-caregiver]").click();
     await page.locator("[data-whose=riley-example]").click();
-    expect(await page.locator(".headline h1").innerText()).toBe("Sam Example");
+    expect(await page.locator(".headline h1").innerText()).toBe("Sam");
     expect(opened).toBe(0);
     await page.locator("[data-user=josh]").click();
     const [popup] = await Promise.all([context!.waitForEvent("page"), page.getByRole("button", { name: "Sign in", exact: true }).click()]);
     await popup.waitForURL(/\/authorize/);
     await signIn(popup, "josh");
-    await page.locator(".headline h1", { hasText: "Josh can see all 6 of their own studies" }).waitFor({ timeout: 30000 });
+    await page.locator(".headline h1", { hasText: "Josh's own studies" }).waitFor({ timeout: 30000 });
     expect(problems).toEqual([]);
   });
   test("an empty view offers the one action its reason calls for, and taking it is a real share", async () => {
@@ -224,10 +225,12 @@ describe("Explore", () => {
     expect(await page.locator(".headline h1").innerText()).toBe("Sam can't see Josh's studies");
     // One obvious next step.
     expect(await page.locator(".empty .primary").count()).toBe(1);
-    await page.getByRole("button", { name: "Have Josh share with Sam" }).click();
+    // The denial draws the diagram too: what's missing, and nothing at the end.
+    expect(await page.locator(".why .ly-row.outcome .ly-name").innerText()).toBe("What the app can see: 0 studies");
+    await page.getByRole("button", { name: "As Josh: share his studies with Sam" }).click();
     await page.locator("#action-form input[value='Northside Pathology']").uncheck();
     await settle(page, () => page.getByRole("button", { name: "Share", exact: true }).click());
-    expect(await page.locator(".why .ly-row.choice .ly-name").first().innerText()).toBe("Josh's share");
+    expect(await page.locator(".why .ly-row.choice .ly-name").first().innerText()).toBe("Josh shares his studies at Lakeside and Riverside with Sam");
     expect(stack.store.shares().map(s => s.sites.sort())).toEqual([["Lakeside Imaging", "Riverside Hospital"]]);
     expect(problems).toEqual([]);
   });
@@ -235,8 +238,8 @@ describe("Explore", () => {
     const page = await open("/explore");
     await pick(page, "hand-referral-service", "client");
     await settle(page, () => page.locator("#referral-select").selectOption("referral-xr-wrist-left-2012"));
-    expect(await page.locator(".headline h1").innerText()).toBe("Hand referral service can't search Josh's records");
-    expect(await page.locator(".empty .primary").innerText()).toMatch(/^Apply the policy/);
+    expect(await page.locator(".headline h1").innerText()).toBe("Hand referral service can't search Josh's studies");
+    expect(await page.locator(".empty .primary").innerText()).toMatch(/^As the imaging network: /);
     await settle(page, () => page.locator(".empty .primary").click());
     expect(await page.locator(".headline h1").innerText()).toBe("Hand referral service can see the study this referral cites");
     await drawn(page, SHEETS.xr);
@@ -258,11 +261,13 @@ describe("Explore", () => {
 });
 
 describe("Tours", () => {
-  test("the home page is the stories, each a card with the chain it ends on, and the guardian's shows the label's cut", async () => {
+  test("the home page is the stories, each a card with the chain it ends on, the guardian's shows the locked study, and the revoke's shows before and after", async () => {
     const page = await open("/");
     expect(await page.locator(".story").count()).toBe(6);
-    expect(await page.locator(".story .layers").count()).toBe(6);
-    expect(await page.locator(".story", { hasText: "A guardian at 15" }).locator(".ly-cell.cut").count()).toBe(1);
+    expect(await page.locator(".story .layers").count()).toBe(7);
+    expect(await page.locator(".story", { hasText: "Sam, guardian of 15-year-old Riley" }).locator(".ly-box.locked").count()).toBeGreaterThan(0);
+    expect(await page.locator(".story", { hasText: "Josh stops sharing with Sam" }).locator(".ly-pane-label").allInnerTexts()).toEqual(["Before", "After Josh stops sharing"]);
+    expect(await page.locator(".cast dt").allInnerTexts()).toContain("The imaging network");
     expect(await overflow(page)).toBe(0);
     expect(problems).toEqual([]);
   });
@@ -271,11 +276,11 @@ describe("Tours", () => {
       const page = await open("/");
       await page.locator(`[data-start="${tour}"]`).first().click();
       await page.waitForURL(/\/s\/[^/]+\/tours\?tour=/);
-      await page.locator(".step.next .what span", { hasText: "The model expects" }).waitFor();
-      await page.locator(".tour-chain .layers").waitFor();
+      await page.locator(".step.next .what span", { hasText: "Expected:" }).waitFor();
+      await page.locator(".tour-chain figure.layers").first().waitFor();
       await page.getByRole("button", { name: "Run the rest" }).click();
       await page.locator(".tour-buttons .verdict").waitFor({ timeout: 90000 });
-      expect(await page.locator(".tour-buttons .verdict").innerText()).toBe("Every step matched the model");
+      expect(await page.locator(".tour-buttons .verdict").innerText()).toBe("Every step went as expected");
       expect(await page.locator(".step .verdict.ok").count()).toBe(await page.locator(".step").count());
       // Steps carry no event cards: a link to their own events in the log.
       expect(await page.locator(".step .card").count()).toBe(0);

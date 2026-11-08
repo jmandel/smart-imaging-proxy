@@ -10,7 +10,7 @@
   --good-film:#63e0c3; --warn-film:#f2c55c; --bad-film:#ff9d92;
   --stripe-a:#e3ebf0; --stripe-b:#e9f0f5;
   /* The three levels of policy, on the page and on film. */
-  --fact:#0a6a9c; --policy:#0b7560; --choice:#a06a00; --fact-film:#7cc4ea; --policy-film:#63e0c3; --choice-film:#f2c55c;
+  --fact:#0a6a9c; --policy:#0b7560; --choice:#a06a00; --choice-fill:#8a5b00; --fact-film:#7cc4ea; --policy-film:#63e0c3; --choice-film:#f2c55c;
   --sans:"Atkinson Next",system-ui,-apple-system,"Segoe UI",sans-serif; --mono:"Atkinson Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
 }
 @media (prefers-color-scheme:dark) { :root {
@@ -19,7 +19,7 @@
   --accent:#6cbfe8; --accent-soft:#17384c;
   --good:#63e0c3; --good-soft:#123a33; --warn:#f2c55c; --warn-soft:#3a2f10; --bad:#ff9d92; --bad-soft:#42201d;
   --stripe-a:#10232f; --stripe-b:#0d1e29;
-  --fact:#6cbfe8; --policy:#63e0c3; --choice:#f2c55c;
+  --fact:#6cbfe8; --policy:#63e0c3; --choice:#f2c55c; --choice-fill:#f2c55c;
 } }
 * { box-sizing:border-box; }
 html { -webkit-text-size-adjust:100%; }
@@ -303,7 +303,7 @@ tr.detail > td { background:var(--box); max-width:none; padding:.6rem .8rem .8re
 .ev-detail summary { cursor:pointer; color:var(--accent); min-height:2rem; display:flex; align-items:center; }
 
 /* The layer chain: one sentence per row, and under it one box per study, in its site's column. */
-.layers { --ly-ink:var(--ink); --ly-dim:var(--muted); --ly-ghost:var(--line); --ly-fact:var(--fact); --ly-policy:var(--policy); --ly-choice:var(--choice); --ly-on-ink:var(--plate); --ly-result:var(--ink); --ly-choice-fill:color-mix(in srgb, var(--choice) 86%, black);
+.layers { --ly-ink:var(--ink); --ly-dim:var(--muted); --ly-ghost:var(--line); --ly-fact:var(--fact); --ly-policy:var(--policy); --ly-choice:var(--choice); --ly-on-ink:var(--plate); --ly-result:var(--ink); --ly-choice-fill:var(--choice-fill);
   --box:2.75rem; --gap:4px; --ggap:10px; margin:0; min-width:0; color:var(--ly-ink); container-type:inline-size; }
 .layers.film { --ly-ink:var(--on-film); --ly-dim:var(--on-film-dim); --ly-ghost:var(--film-line); --ly-fact:var(--fact-film); --ly-policy:var(--policy-film); --ly-choice:var(--choice-film); --ly-on-ink:var(--film); --ly-result:var(--on-film); --ly-choice-fill:var(--choice-film); }
 .ly-sheet { display:grid; grid-template-columns:minmax(0,1fr); }

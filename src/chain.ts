@@ -62,7 +62,7 @@ export function chainFor(input: { snap: Snapshot; studies: CatalogStudy[]; now: 
   const ids = (ok: (s: CatalogStudy) => boolean) => all.filter(ok).map(s => s.id);
   const atSites = (sites: string[] | undefined) => ids(s => !sites || sites.includes(s.site ?? ""));
   /** Sites as a sentence names them, only those the viewer may know of. */
-  const sitesText = (sites: string[]) => list(sites.filter(x => !known || knownSites.has(x)).map(siteWord)) || "no site";
+  const sitesText = (sites: string[]) => list([...sites].sort().filter(x => !known || knownSites.has(x)).map(siteWord)) || "no site";
   const name = patientFirst(viewer.patient);
   const rows: ChainRow[] = [];
   const columns = (): ChainColumn[] => all.map(s => ({ id: s.id, site: s.site, title: titleOf(s), modality: modalityOf(s), ...(narrator && (s.labels ?? []).length ? { locked: true as const } : {}) }));
