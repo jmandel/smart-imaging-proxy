@@ -307,6 +307,7 @@ async function load() {
   $("#capped").hidden = !summary.capped;
   $("#sessions").innerHTML = sessionsHtml();
   $("#h-sessions").textContent = summary.viewer ? "This session" : `Sessions, ${num(summary.sessions.length)}`;
+  $(".log").classList.toggle("one-session", !!summary.viewer);
   renderTable();
   announce(`${plural(summary.total, "event")}`);
   if (openSeq) { const d = $(`#d-${CSS.escape(openSeq)}`); d?.scrollIntoView({ block: "nearest" }); }
@@ -316,7 +317,14 @@ async function load() {
 document.addEventListener("click", e => {
   const a = e.target.closest("a[href]");
   if (a && a.closest("main") && a.origin === location.origin && a.pathname === `${BASE}/activity` && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
-    e.preventDefault(); history.pushState(null, "", a.href); load(); return;
+    e.preventDefault();
+    // Where the change shows: a new session redraws the whole page from the top; a type, a study, or
+    // a shared value changes the list of events, so the page goes to it if it's out of sight.
+    const was = q(), next = new URL(a.href).searchParams;
+    const to = was.get("session") !== next.get("session") ? "#title" : "#h-events";
+    history.pushState(null, "", a.href);
+    load().then(() => { const t = $(to), box = t?.getBoundingClientRect(); if (box && (box.top < 0 || box.top > innerHeight * .6)) t.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }); });
+    return;
   }
   const row = e.target.closest("tr.ev");
   if (row && !e.target.closest("a, details")) {

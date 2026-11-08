@@ -258,7 +258,7 @@ button.sheet:hover { background:var(--film-raised); }
 .glance { display:grid; grid-template-columns:minmax(0,1.25fr) minmax(0,1fr); gap:1rem; align-items:start; }
 .glance.one { grid-template-columns:minmax(0,1fr); }
 .glance.one .tiles { grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); }
-.timeline[hidden] { display:none; }
+.timeline[hidden], .flow[hidden] { display:none; }
 .tiles { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:.5rem; }
 .tile { display:flex; flex-direction:column; gap:.1rem; height:100%; padding:.6rem .75rem .7rem; background:var(--plate); border:1px solid var(--line); border-radius:8px; color:var(--ink); text-decoration:none; min-width:0; }
 .tile:hover { border-color:var(--accent); }
@@ -478,7 +478,26 @@ tr.detail > td { background:var(--box); max-width:none; padding:.6rem .8rem .8re
   .tour-list { order:2; }
   .session-list { max-height:24rem; }
 }
+@media (max-width:900px) {
+  /* What you pick comes before what it changes: sessions under the filters, then the rollups, then the events. */
+  .log-body { display:contents; }
+  .log-head { order:0; } .sessions { order:1; } .glance { order:2; } #capped { order:3; } .events { order:4; }
+  /* One session's page names it in the filters already. */
+  .log.one-session .sessions { display:none; }
+}
 @media (max-width:560px) {
+  /* A line's steps run down the card, one under the next, as time runs down the rail. */
+  /* The tiles shrink to counts that pick a type: the flow above and the list below carry the detail. */
+  .tiles, .glance.one .tiles { grid-template-columns:repeat(auto-fill, minmax(9.5rem, 1fr)); gap:.4rem; }
+  .tile { padding:.45rem .6rem .5rem; }
+  .tile .tile-line, .tile .split { display:none; }
+  .tile-count { font-size:1.3rem; }
+  .fl-chain { flex-direction:column; align-items:stretch; gap:0; }
+  .fl-step { display:grid; grid-template-columns:4.6rem minmax(0,1fr); align-items:center; position:relative; padding:.2rem 0; }
+  .fl-step small { padding-left:0; font-size:.75rem; }
+  .fl-step span { white-space:normal; }
+  .fl-step:not(:last-child) span::after { display:none; }
+  .fl-step:not(:last-child)::after { content:""; position:absolute; left:calc(4.6rem + 7px); top:calc(50% + 9px); height:calc(100% - 14px); border-left:2px solid var(--accent); opacity:.55; }
   /* The rail narrows to a line with the time inside each card; a group's chain goes under its studies. */
   .fl-cards::before { left:5px; }
   .fl-card { grid-template-columns:12px minmax(0,1fr); gap:0 .7rem; }

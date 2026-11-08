@@ -358,6 +358,8 @@ describe("activity", () => {
       await page.waitForURL(/type=searches/);
       // The URL changes first; the list redraws once its events arrive.
       await page.locator("#h-events", { hasText: /^Searches$/ }).waitFor();
+      // A tile changes the list of events, so the page brings the list into sight.
+      await page.waitForFunction(() => { const t = document.querySelector("#h-events")!.getBoundingClientRect().top; return t >= 0 && t < innerHeight; });
       expect(await page.locator(".events th").allInnerTexts()).toEqual(["Time", "Who", "Status", "Returned", "Withheld", "Query"]);
       await page.locator("tr.ev td.t button").first().click();
       await page.locator("tr.detail .ev-links a", { hasText: /^token / }).first().click();
