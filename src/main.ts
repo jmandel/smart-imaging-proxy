@@ -50,7 +50,8 @@ if (whole) {
   stopping = () => { demoServers.forEach(s => s.stop(true)); stack.stop(); };
   const info = stack.store.info();
   console.log(`SMART Imaging Proxy: ${CONFIG.demoUrl}${TAILNET ? " (tailnet)" : ""}`);
-  console.log(`Tours: ${CONFIG.demoUrl}/tours`);
+  console.log(`Explore: ${CONFIG.demoUrl}/explore`);
+  console.log(`Activity: ${CONFIG.demoUrl}/activity`);
   console.log(`Live trace: ${CONFIG.traceUrl}`);
   console.log(`Traces: ${stack.collector.store.path ?? "in memory"}`);
   console.log(`Catalog: ${stack.catalogs.archive.stats().path}, and ${stack.catalogs.orthanc.stats().path} for Orthanc`);
