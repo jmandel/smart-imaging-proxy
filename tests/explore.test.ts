@@ -100,7 +100,7 @@ for (const backend of BACKENDS) {
       expect(s.status).toBe("results");
       expect(b.released(s)).toEqual(ALL);
       expect([s.headline, s.detail]).toEqual(["Josh's own studies", "The Health Records App can see all 6."]);
-      expect(s.chain.rows.map((r: any) => [r.level, r.name, r.has.length])).toEqual([["fact", "Josh is the patient", 0], ["choice", "Josh lets the Health Records App act for him on his studies at every site", 6], ["outcome", "What the app can see", 6]]);
+      expect(s.chain.rows.map((r: any) => [r.level, r.name, r.has.length])).toEqual([["fact", "Josh is the patient", 0], ["policy", "Imaging network rule: anyone can let an app act for them on what they can see", 6], ["choice", "Josh lets the Health Records App act for him on his studies at every site", 6], ["outcome", "What the app can see", 6]]);
       const mri = s.sheets.find((x: any) => x.id === "mri-brain-2020");
       expect(mri).toMatchObject({ site: "Lakeside Imaging", modalities: ["MR"], seriesCount: 18, instanceCount: 267, date: "2020-07-29", retrievable: true, thumb: true });
       const kinds = (await b.events()).map(e => e.kind);
@@ -141,6 +141,7 @@ for (const backend of BACKENDS) {
       expect(shared.chain.rows.map((r: any) => [r.level, r.name, r.has.length])).toEqual([
         ["policy", "Imaging network rule: patients and guardians can share the studies they can see", 5],
         ["choice", "Josh shares his studies at Lakeside and Riverside with Sam", 5],
+        ["policy", "Imaging network rule: anyone can let an app act for them on what they can see", 5],
         ["choice", "Sam lets the Health Records App act for Sam on what Josh shares at every site", 5],
         ["outcome", "What the app can see", 5],
       ]);
@@ -186,7 +187,7 @@ describe("people", () => {
       for (const hidden of ["Labeled", "keeps it from guardians", CONFIDENTIAL, "SKIN BIOPSY", "Skin biopsy", "Northside Pathology"]) expect([hidden, text.includes(hidden)]).toEqual([hidden, false]);
       // The chain behind the view holds only the study Sam may know of, locks none, and counts none of Riley's.
       expect(s.chain.columns.map((c: any) => [c.id, c.locked])).toEqual([["syn-riley-knee-mr-2022", undefined]]);
-      expect(s.chain.rows.map((r: any) => [r.kind, r.has.length])).toEqual([["relationship", 0], ["age", 0], ["guardian", 1], ["approval", sites?.length === 0 ? 0 : 1], ["outcome", sites?.length === 0 ? 0 : 1]]);
+      expect(s.chain.rows.map((r: any) => [r.kind, r.has.length])).toEqual([["relationship", 0], ["age", 0], ["guardian", 1], ["app-rule", 1], ["approval", sites?.length === 0 ? 0 : 1], ["outcome", sites?.length === 0 ? 0 : 1]]);
     }
   }, 60000);
   test("a guardian's share shows its recipient only what the share reaches", async () => {
@@ -297,7 +298,7 @@ describe("the activity of a viewer's session", () => {
     expect(b.released(s)).toEqual(["syn-riley-knee-mr-2022"]);
     // Alex's chain: Riley's records as Alex may know them, Sam's guardian access, Sam's share, and Alex's approval.
     expect(s.chain.columns.map((c: any) => c.id)).toEqual(["syn-riley-knee-mr-2022"]);
-    expect(s.chain.rows.map((r: any) => r.kind)).toEqual(["relationship", "age", "guardian", "sharing", "share", "approval", "outcome"]);
+    expect(s.chain.rows.map((r: any) => r.kind)).toEqual(["relationship", "age", "guardian", "sharing", "share", "app-rule", "approval", "outcome"]);
     expectNoTrace("Alex's view", JSON.stringify(s));
     await traceSettled();
     const text = await activityText(b, s.session);

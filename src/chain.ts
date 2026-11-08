@@ -14,13 +14,14 @@ import { nameOf } from "./world";
 
 export type Level = "fact" | "policy" | "choice" | "outcome";
 /** What a row checks, so a test can compare it with the reference model. */
-export type RowKind = "records" | "relationship" | "age" | "label" | "referral" | "guardian" | "sharing" | "share" | "approval" | "service" | "outcome";
+export type RowKind = "records" | "relationship" | "age" | "label" | "referral" | "guardian" | "sharing" | "share" | "app-rule" | "approval" | "service" | "outcome";
 /**
  * One row. `has` is what this row itself holds or grants. `boxes: false` is a fact about people, which
  * holds no study. `missing` is a rule or choice that isn't on file, drawn hollow. `by` and `route` name,
  * for a guardian's or a share's row, whose route it is.
  */
-export interface ChainRow { level: Level; kind: RowKind; name: string; has: string[]; boxes?: false; missing?: true; by?: string; route?: string; }
+/** `builtIn` marks a rule the Imaging Server applies itself, which no policy document holds. */
+export interface ChainRow { level: Level; kind: RowKind; name: string; has: string[]; boxes?: false; missing?: true; by?: string; route?: string; builtIn?: true; }
 /** `cited` marks the study a referral cites, so its box can be told apart from others of its kind. */
 export interface ChainColumn { id: string; site?: string; title: string; modality: string; locked?: true; cited?: true; }
 /** `viewer` says the chain is a viewer's own, which counts only what they may know of. */
@@ -137,6 +138,10 @@ export function chainFor(input: { snap: Snapshot; studies: CatalogStudy[]; now: 
     : guardian ? `${name}'s studies at ${where(sites)}` : share ? `what ${sharer} shares at ${where(sites)}` : `${name}'s studies`;
   const who = guardian && !isPatient ? `${viewerName}, as ${name}'s guardian,` : viewerName;
   const approval = snap.approvals.find(a => a.by === U && a.app === ref("app", viewer.app) && a.patient === P);
+  // The Imaging Server's own rule, under every approval: anyone may let an app act for them on what
+  // reaches them, and the approval can only narrow it. Its boxes are what the approver can see.
+  const reach = new Set(model.visible(snap, U, P, all, fhirUser).map(s => s.id));
+  rows.push({ level: "policy", kind: "app-rule", name: "Imaging network rule: anyone can let an app act for them on what they can see", has: ids(s => reach.has(s.id)), builtIn: true });
   rows.push(approval
     ? { level: "choice", kind: "approval", name: `${who} lets the ${app} act for ${actFor} on ${what(approval.sites)}`, has: atSites(approval.sites) }
     : { level: "choice", kind: "approval", name: `No approval from ${viewerName} lets the ${app} act for ${actFor} on ${isPatient ? whose(viewer.patient, viewer.user) : `${name}'s`} studies`, has: [], missing: true });

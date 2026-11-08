@@ -185,6 +185,7 @@ describe("the layer chain", () => {
             : row.missing ? []
             : row.kind === "guardian" || row.kind === "share" ? (row.route ? ids(m.userReach(row.by, v.patient, [row.route])) : [])
             : row.kind === "sharing" ? ids(m.userReach(scene.doc.shares.find(s => s.with === `user:${v.user}`)?.from.replace("user:", "") ?? "josh", v.patient))
+            : row.kind === "app-rule" ? (expect(row.builtIn).toBe(true), ids(m.userReach(v.user, v.patient)))
             : row.kind === "approval" ? ids(mine.filter(s => !approval?.sites || approval.sites.includes(s.site ?? "")))
             : row.kind === "service" ? ids(m.serviceReach(v.service, v.patient))
             : v.service ? ids(m.serviceReach(v.service, v.patient)).filter(x => !v.cited || x === v.cited)
