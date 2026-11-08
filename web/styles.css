@@ -198,12 +198,13 @@ button.sheet:hover { background:var(--film-raised); }
 .tour-main { display:flex; flex-direction:column; gap:1.1rem; min-width:0; }
 .tour-main h1 { margin:0; font-size:clamp(1.6rem, 3.2vw, 2.15rem); font-weight:800; line-height:1.15; }
 .tour-main h1:focus { outline:none; }
-.tour-main > p, .tour-head p { margin:.2rem 0 0; max-width:62ch; color:var(--muted); }
+.tour-main > p, .tour-head p { margin:.2rem 0 0; max-width:62ch; color:var(--muted); overflow-wrap:anywhere; }
 .pill { align-self:flex-start; font-size:.84rem; color:var(--muted); background:var(--code); border-radius:999px; padding:.2rem .7rem; }
 .steps { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:.6rem; }
 .step { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:.4rem 1rem; align-items:center; background:var(--plate); border:1px solid var(--line); border-radius:10px; padding:.85rem 1rem; }
 .step.next { border:2px solid var(--accent); }
 .step.pending { background:transparent; border-style:dashed; color:var(--muted); }
+.step .what { min-width:0; overflow-wrap:anywhere; }
 .step .what b { display:block; color:var(--ink); }
 .step .what span { font-size:.9rem; }
 .step .verdict { font-weight:700; }
