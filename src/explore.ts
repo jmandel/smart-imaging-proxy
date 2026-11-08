@@ -3,8 +3,9 @@
 // file's sessions: `view` builds everything the page receives. What the page shows of a study it
 // takes from search and the Imaging Server's explain, and never a study the viewer's routes don't reach.
 import { randomBytes } from "node:crypto";
-import { ath, boundaryOf, createModel, readMultipart, ref, type CatalogStudy } from "@smart-imaging-proxy/core";
-import { APP_NAMES, PATIENT_NAMES, RELATIONSHIPS, roleOf, USERS, type BackendClient } from "./auth-server";
+import { ageOn, ath, boundaryOf, createModel, readMultipart, ref, type CatalogStudy } from "@smart-imaging-proxy/core";
+import { APP_NAMES, PATIENT_NAMES, RELATIONSHIPS, USERS, type BackendClient } from "./auth-server";
+import { chainFor, type Chain } from "./chain";
 import { readJson, refuseWrite } from "./settings-api";
 import { RULE_SETS } from "./rule-presets";
 import { accountUrl, submitAppRevocation, submitDelegation, submitRevocation } from "./flows/oauth";
@@ -34,11 +35,16 @@ interface Retrieval { study: string; running: boolean; status?: number; authz?: 
 interface Session {
   id: string; name: string; c: Ctx; start: Start | ServiceStart; running: boolean; status: Status;
   token?: string; tokenHash?: string; patient?: string; signedIn?: string;
-  headline?: string; detail?: string; why: { level: string; text: string }[];
+  headline?: string; detail?: string;
   sheets: any[]; endpoints: Map<string, { address: string; uid: string; series: any[]; modality: string }>;
   knowable: Set<string>; empty?: { text: string; actions: any[] }; actions: any[];
   retrievals: Map<string, Retrieval>; abort: AbortController; metadata: Map<string, Promise<any[] | undefined>>; cited?: string;
+  /** The layer chain behind the view, as its viewer may see it. */
+  chain?: Chain;
 }
+/** Who the demo's people and services are, in a few words, before anything they hold. */
+const CAST: Record<string, string> = { "alex-neighbor": "Josh's neighbour" };
+const SERVICE_CAST: Record<string, string> = { "hand-referral-service": "Hand and wrist referrals", "outside-release-service": "Releases to an outside clinic", "research-donation": "Studies donated for research" };
 
 const hex = (n: number) => randomBytes(n).toString("hex");
 const first = (user: string) => USERS[user]?.name.split(" ")[0] ?? user;
@@ -46,13 +52,6 @@ const patientFirst = (patient: string) => (PATIENT_NAMES[patient] ?? patient).sp
 const possessive = (name: string) => `${name}'s`;
 const cap = (s: string) => s ? s[0]!.toUpperCase() + s.slice(1) : s;
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
-const LEVELS = ["fact", "policy", "choice"];
-/** One chip per level, from the reasons explain gives. */
-function chipsOf(rows: any[]) {
-  const by = new Map<string, string[]>();
-  for (const b of rows.flatMap(r => r.because ?? [])) { const l = by.get(b.level) ?? []; if (!l.includes(b.text)) l.push(b.text); by.set(b.level, l); }
-  return LEVELS.filter(l => by.has(l)).map(level => ({ level, text: cap(by.get(level)!.join("; ")) }));
-}
 
 /** Explore in one world: the root, or a scope, whose sign-ins, searches and shares all stay in it. */
 export function createExplore(world: World, clients: Record<string, BackendClient>, stack: Stack) {
@@ -95,6 +94,16 @@ export function createExplore(world: World, clients: Record<string, BackendClien
   const serviceName = (client: string) => cap(nameOf(ref("service", client)).replace(/^the /, ""));
   const referrals = () => referralsFrom(world.catalog, world.urls.clinicalFhir);
 
+  /** Who someone is: the patient, a guardian, someone a share names, and who they are to the demo. */
+  function castOf(id: string, records: ReturnType<typeof recordsOf>) {
+    const u = USERS[id]!;
+    const parts = [
+      ...(u.patient ? ["Patient"] : CAST[id] ? [CAST[id]] : []),
+      ...records.filter(r => r.via === "guardian").map(r => { const age = ageOn(patientAttributes(r.patient)?.birthDate, world.clock.now()); return `guardian of ${patientFirst(r.patient)}${age !== undefined ? `, ${age}` : ""}`; }),
+      ...records.filter(r => r.via === "share").map(r => `${possessive(patientFirst(r.patient))} ${r.relationship ?? "contact"}`),
+    ];
+    return cap(parts.join(", and "));
+  }
   function options() {
     const linked = new Set(world.catalog.linkedPatients());
     return {
@@ -104,11 +113,11 @@ export function createExplore(world: World, clients: Record<string, BackendClien
         const own = u.patient ? studiesOf(u.patient).length : undefined;
         // Others whose records could be shared with this person: anyone with an account and studies.
         const others = Object.values(USERS).flatMap(o => o.patient && !held.has(o.patient) && linked.has(o.patient) && studiesOf(o.patient).length ? [{ patient: o.patient, name: PATIENT_NAMES[o.patient] ?? o.patient }] : []);
-        return { id, name: u.name, first: first(id), role: roleOf(u, records.filter(r => r.via !== "self")), detail: own === undefined ? "" : own ? plural(own, "study", "studies") : "No studies", records, others };
+        return { id, name: u.name, first: first(id), role: castOf(id, records), detail: own === undefined ? "" : own ? plural(own, "study", "studies") : "No studies", records, others };
       }),
       services: Object.keys(clients).map(id => {
         const mine = world.store.policiesOf("service-access").filter(r => r.service === `service:${id}`);
-        return { id, name: serviceName(id), role: mine.length ? `Under ${plural(mine.length, "service-access policy", "service-access policies")}` : "No service-access policy yet" };
+        return { id, name: serviceName(id), role: SERVICE_CAST[id] ?? "A backend service", policies: mine.length };
       }),
       relationships: RELATIONSHIPS, scope, backend: world.backend, app: APP_NAMES[APP],
       names: { ...Object.fromEntries(Object.entries(USERS).map(([id, u]) => [`user:${id}`, u.name])), ...Object.fromEntries(Object.entries(PATIENT_NAMES).map(([id, n]) => [`patient:${id}`, n])), ...Object.fromEntries(Object.keys(clients).map(id => [`client:${id}`, serviceName(id)])), ...Object.fromEntries(Object.entries(APP_NAMES).map(([id, n]) => [`app:${id}`, `the ${n}`])) },
@@ -189,7 +198,7 @@ export function createExplore(world: World, clients: Record<string, BackendClien
       const noRoute = !anyRow ? x.studies[0]?.why : undefined;
       if (s.status === "declined") {
         s.headline = `${first(who)} didn't approve the app`;
-        s.empty = { text: `The sign-in ended with access_denied, so the app has no token for ${possessive(patientFirst(patient))} records.`, actions: [{ kind: "approve", label: "Sign in again and approve", sites: reachedSites(who, patient), ticked: reachedSites(who, patient) }] };
+        s.empty = { text: `The sign-in ended with access_denied, so the app has no token for ${possessive(patientFirst(patient))} records.`, actions: [{ kind: "approve", label: "Sign in again and approve" }] };
         return;
       }
       s.headline = `${first(who)} can't see ${possessive(patientFirst(patient))} studies`;
@@ -219,9 +228,8 @@ export function createExplore(world: World, clients: Record<string, BackendClien
     s.headline = total === 0 ? `${patientFirst(patient!)} has no studies on file`
       : found.length === total ? (total === 1 ? `${first(s.signedIn!)} can see ${via === "self" ? "their only" : `${whose} only`} study` : `${first(s.signedIn!)} can see all ${total} of ${whose} studies`)
       : `${first(s.signedIn!)} can see ${found.length} of ${whose} ${total} studies`;
-    s.why = chipsOf(x.studies.filter((r: any) => foundIds.has(r.id)).length ? x.studies.filter((r: any) => foundIds.has(r.id)) : x.studies.filter((r: any) => reached.has(r.id)));
-    if (total === 0) s.empty = { text: `The search ran and found nothing: no study in the catalog links to ${PATIENT_NAMES[patient!] ?? patient}.`, actions: [] };
-    else if (!found.length) s.empty = { text: `${first(s.signedIn!)} approved the app for none of these studies' sites.`, actions: [] };
+    if (total === 0) s.empty = { text: `The search ran and found nothing: no study in the catalog links to ${PATIENT_NAMES[patient!] ?? patient}.`, actions: otherPerson(s.signedIn!) };
+    else if (!found.length) s.empty = { text: `${first(s.signedIn!)} approved the app for none of these studies' sites.`, actions: [{ kind: "approve", label: "Change what the app can see", sites: reachedSites(s.signedIn!, patient!), ticked: reachedSites(s.signedIn!, patient!) }] };
     // What this person can do from here.
     const sites = reachedSites(s.signedIn!, patient!);
     const approval = world.store.personSnapshot(ref("user", s.signedIn!)).approvals.find(a => a.app === ref("app", APP) && a.patient === ref("patient", patient!));
@@ -243,7 +251,6 @@ export function createExplore(world: World, clients: Record<string, BackendClien
     const base = `${world.urls.clinicalFhir}/Patient/`;
     const onBase = !!cited.patientRef?.startsWith(base) && /^[A-Za-z0-9\-.]{1,64}$/.test(cited.patientRef.slice(base.length));
     recordEvent("app", { kind: "referral.checked", client: st.client, referral: referral.id, reference: cited.patientRef, authorizedBase: world.urls.clinicalFhir, ok: onBase, accession: cited.accession, system: cited.system });
-    s.why = [];
     if (!onBase || !cited.accession || !cited.system) { s.status = "failed"; s.headline = `${serviceName(st.client)} can't act on this referral`; s.empty = { text: !onBase ? `Its patient, ${cited.patientRef}, isn't on the FHIR server ${serviceName(st.client)} is authorized for, ${world.urls.clinicalFhir}.` : "Its report carries no accession number with a system.", actions: [] }; return; }
     const patient = cited.patientRef!.slice(base.length);
     s.patient = patient;
@@ -263,7 +270,7 @@ export function createExplore(world: World, clients: Record<string, BackendClien
     if (search.status === 403) {
       s.status = "forbidden";
       s.headline = `${name} can't search ${possessive(patientFirst(patient))} records`;
-      s.empty = { text: `${cap(search.body?.issue?.[0]?.diagnostics ?? "access is forbidden")}: no service-access policy covers ${name} for ${PATIENT_NAMES[patient] ?? patient}.`, actions: fix ? [fix] : [] };
+      s.empty = { text: `${cap(search.body?.issue?.[0]?.diagnostics ?? "access is forbidden")}: no service-access policy covers ${name} for ${PATIENT_NAMES[patient] ?? patient}.`, actions: fix ? [fix] : referralToTry(st.client, st.referral) };
       return;
     }
     if (search.status !== 200) { s.status = search.status === 401 ? "token-rejected" : "failed"; s.headline = `Search answered ${search.status}`; s.detail = search.body?.issue?.[0]?.diagnostics; return; }
@@ -272,8 +279,17 @@ export function createExplore(world: World, clients: Record<string, BackendClien
     s.sheets = found.length ? found : row ? [withheldSheet(row, cited.report)] : [];
     s.status = "results";
     s.headline = found.length ? `${name} can see the study this referral cites` : `${name} can't see the study this referral cites`;
-    s.why = chipsOf(found.length ? found.map(f => rows.get(f.id)).filter(Boolean) : row ? [row] : []);
-    if (!found.length) s.empty = { text: row ? `Search found nothing for this accession number. Withheld: ${row.why}.` : "No study in the catalog carries this accession number.", actions: fix ? [fix] : [] };
+    if (!found.length) s.empty = { text: row ? `Search found nothing for this accession number. Withheld: ${row.why}.` : "No study in the catalog carries this accession number.", actions: fix ? [fix] : referralToTry(st.client, st.referral) };
+  }
+  /** Someone else to look as, for a view with nothing in it: the first person whose own records hold studies. */
+  const otherPerson = (who: string) => Object.entries(USERS).filter(([id, u]) => id !== who && u.patient && studiesOf(u.patient).length).slice(0, 1).map(([id]) => ({ kind: "person", label: `See ${possessive(first(id))} records`, user: id }));
+  /** Another referral this service can act on: one whose study its policies, or one of its named rule sets, reach. */
+  function referralToTry(client: string, not: string) {
+    const r = referrals().find(x => {
+      const st = world.catalog.allStudies().find(c => c.id === x.study);
+      return x.id !== not && st && (model.evaluate(world.store.patientSnapshot(ref("patient", st.patient)), { client_id: client }, st).release !== "none" || !!applyFor(client, st.patient, st.id));
+    });
+    return r ? [{ kind: "referral", label: `Open the ${citedBy(r.bundle).report} referral`, referral: r.id }] : [];
   }
   /** A named rule set whose policy for this service would reach the study, checked with the reference model. */
   function applyFor(client: string, patient: string, study: string) {
@@ -294,7 +310,14 @@ export function createExplore(world: World, clients: Record<string, BackendClien
     try {
       await act(s, st.kind === "user" ? `Explore: ${first(st.user)} signs in to the ${APP_NAMES[APP]}` : `Explore: ${serviceName(st.client)} works from a referral`, st.kind === "user" ? { user: st.user, patient: st.patient, mode: st.mode } : { client: st.client, referral: st.referral }, () => st.kind === "user" ? runUser(s, st) : runService(s, st));
     } catch (e) { s.status = "failed"; s.headline = "This didn't finish"; s.detail = String((e as Error).message ?? e); }
-    finally { s.running = false; s.tokenHash = s.token ? ath(s.token).slice(0, 10) : undefined; }
+    finally {
+      s.running = false; s.tokenHash = s.token ? ath(s.token).slice(0, 10) : undefined;
+      // The chain holds only what this viewer may know of: with nothing known, there's no chain to show.
+      if (s.patient) {
+        const viewer = st.kind === "user" ? { user: s.signedIn ?? st.user, patient: s.patient, app: APP } : { service: st.client, patient: s.patient };
+        try { s.chain = chainFor({ snap: world.store.patientSnapshot(ref("patient", s.patient)), studies: world.catalog.allStudies(), now: world.clock.now(), viewer, known: new Set(knownOf(s)), title: st => reportTitle(st) }); } catch { s.chain = undefined; }
+      }
+    }
   }
 
   /** A new view. `keep` is the view it replaces, and `same` keeps its trace session, for a view an action on it restarts. */
@@ -317,7 +340,7 @@ export function createExplore(world: World, clients: Record<string, BackendClien
     const c = new Ctx(world, clients);
     const name = same && keep ? keep.name : sessionKey(world.scope, `explore-${start.kind === "user" ? start.user : start.client}-${hex(3)}`);
     c.session = name;
-    const s: Session = { id, name, c, start, running: true, status: "signing-in", why: [], sheets: [], endpoints: new Map(), knowable: new Set(), actions: [], retrievals: new Map(), abort: new AbortController(), metadata: new Map() };
+    const s: Session = { id, name, c, start, running: true, status: "signing-in", sheets: [], endpoints: new Map(), knowable: new Set(), actions: [], retrievals: new Map(), abort: new AbortController(), metadata: new Map() };
     sessions.delete(id);
     sessions.set(id, s);
     for (const k of sessions.keys()) { if (sessions.size <= MAX_SESSIONS) break; const old = sessions.get(k)!; if (old.running) continue; old.abort.abort(); sessions.delete(k); }
@@ -330,7 +353,7 @@ export function createExplore(world: World, clients: Record<string, BackendClien
     const who = st.kind === "user" ? { kind: "user", id: s.signedIn ?? st.user, name: USERS[s.signedIn ?? st.user]?.name, first: first(s.signedIn ?? st.user), asked: st.user } : { kind: "service", id: st.client, name: serviceName(st.client), first: serviceName(st.client), referral: st.referral };
     return {
       session: s.name, running: s.running, status: s.status, who, patient: s.patient, patientName: s.patient && PATIENT_NAMES[s.patient],
-      headline: s.running ? undefined : s.headline, detail: s.detail, why: s.why, sheets: s.sheets, empty: s.empty, actions: s.actions,
+      headline: s.running ? undefined : s.headline, detail: s.detail, chain: s.running ? undefined : s.chain, sheets: s.sheets, empty: s.empty, actions: s.actions,
       authUrl: s.c.pendingAuthUrl ?? null, mode: st.kind === "user" ? st.mode : "scripted", tokenHash: s.tokenHash,
       activityUrl: `${world.prefix}/activity?session=${encodeURIComponent(s.name)}`,
       retrievals: [...s.retrievals.values()],

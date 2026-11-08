@@ -100,7 +100,7 @@ for (const backend of BACKENDS) {
       expect(s.status).toBe("results");
       expect(b.released(s)).toEqual(ALL);
       expect(s.headline).toBe("Josh can see all 6 of their own studies");
-      expect(s.why).toEqual([{ level: "fact", text: "Josh is the patient" }, { level: "choice", text: "Josh approved the Health Records App for all sites" }]);
+      expect(s.chain.rows.map((r: any) => [r.level, r.name, r.detail, r.has.length])).toEqual([["fact", "Josh's own records", "Josh is the patient", 6], ["choice", "App approval", "Health Records App, every site", 6]]);
       const mri = s.sheets.find((x: any) => x.id === "mri-brain-2020");
       expect(mri).toMatchObject({ site: "Lakeside Imaging", modalities: ["MR"], seriesCount: 18, instanceCount: 267, date: "2020-07-29", retrievable: true, thumb: true });
       const kinds = (await b.events()).map(e => e.kind);
@@ -137,10 +137,12 @@ for (const backend of BACKENDS) {
       const shared = await b.post("/share", { from: "josh", with: "sam-caregiver", patient: "josh-example", sites: SHARE, relationship: "caregiver" });
       expect(shared.status).toBe("results");
       expect(b.released(shared)).toEqual(LAKESIDE_RIVERSIDE);
-      expect(shared.why).toEqual([
-        { level: "fact", text: "Josh is the patient" },
-        { level: "policy", text: "Patients and guardians may share what they can see" },
-        { level: "choice", text: "Josh shared Lakeside Imaging and Riverside Hospital with Sam, as caregiver; Sam approved the Health Records App for all sites" },
+      // Sam's chain: the studies Sam may know of, narrowed by the sharing policy, Josh's share and Sam's approval.
+      expect(shared.chain.rows.map((r: any) => [r.level, r.name, r.detail, r.has.length])).toEqual([
+        ["fact", "Josh's records", undefined, 5],
+        ["policy", "Sharing", "Patients and guardians may share what they can see", 5],
+        ["choice", "Josh's share", "Lakeside Imaging, Riverside Hospital", 5],
+        ["choice", "App approval", "Health Records App, every site", 5],
       ]);
       // A study at a site Josh didn't share isn't Sam's to see, or to hear about.
       expect(b.withheld(shared)).toEqual([]);
@@ -158,12 +160,14 @@ for (const backend of BACKENDS) {
 }
 
 describe("people", () => {
-  test("Robin signs in and finds no studies, with nothing to do about it", async () => {
+  test("Robin signs in and finds no studies, and the one way on is someone else's records", async () => {
     const s = await browser().pick("robin");
     expect(s.status).toBe("results");
     expect(s.sheets).toEqual([]);
     expect(s.headline).toBe("Robin has no studies on file");
     expect(s.empty.text).toContain("no study in the catalog links to Robin Example");
+    expect(s.empty.actions).toEqual([{ kind: "person", label: "See Josh's records", user: "josh" }]);
+    expect(s.chain.columns).toEqual([]);
   }, 60000);
   test("Alex's launch ends with no token and no search, and the page offers the shares that could change that", async () => {
     const b = browser();
@@ -180,7 +184,9 @@ describe("people", () => {
       expect(s.status).toBe("results");
       const text = JSON.stringify(s) + JSON.stringify(await b.events());
       for (const hidden of ["Labeled", "keeps it from guardians", CONFIDENTIAL, "SKIN BIOPSY", "Skin biopsy", "Northside Pathology"]) expect([hidden, text.includes(hidden)]).toEqual([hidden, false]);
-      expect(s.why[0].text).toBe("Sam is Riley's guardian");
+      // The chain behind the view holds only the study Sam may know of, and cuts nothing out.
+      expect(s.chain.columns.map((c: any) => c.id)).toEqual(["syn-riley-knee-mr-2022"]);
+      expect(s.chain.rows.map((r: any) => [r.kind, r.has.length, r.cut ?? []])).toEqual([["records", 1, []], ["guardian", 1, []], ["approval", sites?.length === 0 ? 0 : 1, []]]);
     }
   }, 60000);
   test("a guardian's share shows its recipient only what the share reaches", async () => {
@@ -269,6 +275,10 @@ describe("the activity of a viewer's session", () => {
     const b = browser();
     const s = await b.pick("alex-neighbor", { patient: "riley-example" });
     expect(b.released(s)).toEqual(["syn-riley-knee-mr-2022"]);
+    // Alex's chain: Riley's records as Alex may know them, Sam's guardian access, Sam's share, and Alex's approval.
+    expect(s.chain.columns.map((c: any) => c.id)).toEqual(["syn-riley-knee-mr-2022"]);
+    expect(s.chain.rows.map((r: any) => r.kind)).toEqual(["records", "guardian", "sharing", "share", "approval"]);
+    expectNoTrace("Alex's view", JSON.stringify(s));
     await traceSettled();
     const text = await activityText(b, s.session);
     expectNoTrace("Alex", text);
@@ -324,7 +334,7 @@ describe("services", () => {
     expect(after.status).toBe("results");
     expect(after.headline).toBe("Hand referral service can see the study this referral cites");
     expect(b.released(after)).toEqual([SMALL]);
-    expect(after.why).toEqual([{ level: "policy", text: "The hand referral service may see Josh's CR studies" }]);
+    expect(after.chain.rows.map((r: any) => [r.level, r.name, r.detail, r.has])).toEqual([["fact", "Josh's records", undefined, [SMALL]], ["policy", "Service access", "Referral service: hand and wrist X-rays", [SMALL]]]);
     expect(stack.store.policiesOf("service-access").map(p => p.id)).toEqual(["hand-referral"]);
     expect((await b.retrieve(SMALL)).status).toBe(200);
   }, 120000);
@@ -358,8 +368,10 @@ describe("services", () => {
     for (const body of [{ client: "research-donation", referral: "nobody" }, { client: "mallory" }, { user: "mallory" }, { user: "josh", patient: "nobody" }, {}]) expect((await b.call("POST", "/api/explore/start", body)).status).toBe(400);
     const o = (await b.call("GET", "/api/explore/options")).json();
     expect(o.people.map((p: any) => p.id)).toEqual(["josh", "robin", "sam-caregiver", "alex-neighbor"]);
-    expect(o.people.find((p: any) => p.id === "sam-caregiver").role).toBe("Patient, and guardian for Riley Example");
-    expect(o.people.find((p: any) => p.id === "alex-neighbor").role).toBe("Related person, nothing shared yet");
+    // Who's who, in a few words: Riley is 15 on the demo clock's real time.
+    expect(o.people.find((p: any) => p.id === "sam-caregiver").role).toMatch(/^Patient, and guardian of Riley, 1[5-9]$/);
+    expect(o.people.find((p: any) => p.id === "alex-neighbor").role).toBe("Josh's neighbour");
+    expect(o.services.map((x: any) => x.role)).toEqual(["Hand and wrist referrals", "Releases to an outside clinic", "Studies donated for research"]);
   });
 });
 

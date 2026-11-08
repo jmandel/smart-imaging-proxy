@@ -275,7 +275,7 @@ describe("the guardian", () => {
     expect(html).toContain("Riley Example</b>: you're their guardian, on file with the Imaging Server");
     expect(html).toContain("Sam Example</b>: your own records");
     const o: any = await (await demo.fetch(new Request(`${CONFIG.demoUrl}/api/explore/options`, { headers: { host: new URL(CONFIG.demoUrl).host } }))).json();
-    expect(o.people.find((p: any) => p.id === SAM_ACCOUNT).role).toBe("Patient, and guardian for Riley Example");
+    expect(o.people.find((p: any) => p.id === SAM_ACCOUNT).role).toMatch(/^Patient, and guardian of Riley, \d+$/);
   });
   test("its chain reads plainly, in the Imaging Server's view", async () => {
     const x = await stack.explain({ client: "portal-app", user: SAM_ACCOUNT, fhirUser: "Patient/sam-example", patient: "riley-example" });
@@ -403,13 +403,14 @@ describe("Explore", () => {
     expect(own.patient).toBe("sam-example");
     expect(own.headline).toBe("Sam can see all 2 of their own studies");
     expect(ids(own)).toEqual(SAM);
-    expect(own.why).toEqual([{ level: "fact", text: "Sam is the patient" }, { level: "choice", text: "Sam approved the Health Records App for all sites" }]);
+    expect(own.chain.rows.map((r: any) => [r.level, r.name, r.detail])).toEqual([["fact", "Sam's own records", "Sam is the patient"], ["choice", "App approval", "Health Records App, every site"]]);
     const riley = await b.pick(SAM_ACCOUNT, { patient: "riley-example" });
     expect(riley.session).not.toBe(own.session);
     expect(riley.headline).toBe("Sam can see Riley's only study");
     expect(ids(riley)).toEqual(RILEY);
-    expect(riley.why.map((c: any) => c.level)).toEqual(["fact", "policy", "choice"]);
-    expect(riley.why[1].text).toBe("Guardians of patients 13 to 17 see all studies, except those labeled confidential adolescent care");
+    // The chain names the guardian's age band, and no label: the one study Sam may know of passes every link.
+    expect(riley.chain.rows.map((r: any) => [r.level, r.name, r.has])).toEqual([["fact", "Riley's records", RILEY], ["policy", "Guardian access, 13 to 17", RILEY], ["choice", "App approval", RILEY]]);
+    expect(JSON.stringify(riley)).not.toContain("confidential");
     const denied = await b.pick(SAM_ACCOUNT, { patient: "josh-example" });
     expect(denied.status).toBe("no-access");
     expect(denied.headline).toBe("Sam can't see Josh's studies");
@@ -419,14 +420,14 @@ describe("Explore", () => {
     const shared = await b.settle();
     expect(shared.patient).toBe("josh-example");
     expect(ids(shared)).toEqual(["mri-brain-2020"]);
-    expect(shared.why.find((c: any) => c.level === "choice").text).toContain("Josh shared Lakeside Imaging with Sam, as caregiver");
+    expect(shared.chain.rows.find((r: any) => r.kind === "share")).toMatchObject({ level: "choice", name: "Josh's share", detail: "Lakeside Imaging", has: ["mri-brain-2020"] });
   }, 60000);
-  test("Sam's own results offer no share from Josh, and Robin's empty result offers nothing to do", async () => {
+  test("Sam's own results offer no share from Josh, and Robin's empty result offers one way on, someone else's records", async () => {
     const b = browser();
     expect((await b.pick(SAM_ACCOUNT)).empty).toBeUndefined();
     const robin = await b.pick("robin");
     expect(robin.headline).toBe("Robin has no studies on file");
-    expect(robin.empty.actions).toEqual([]);
+    expect(robin.empty.actions).toEqual([{ kind: "person", label: "See Josh's records", user: "josh" }]);
     expect(robin.actions.map((a: any) => a.kind)).toEqual(["revoke-app"]);
   }, 60000);
   test("a service reaches a patient only through its referrals, and rule sets still name only Josh", async () => {
@@ -437,7 +438,10 @@ describe("Explore", () => {
     await b.call("POST", "/api/explore/start", { client: "research-donation", referral: "referral-syn-riley-knee-mr-2022" });
     const s = await b.settle();
     expect(s.status).toBe("forbidden");
-    expect(s.empty.actions).toEqual([]);
+    // No rule set reaches Riley's study for this service: the one way on is a referral one of its rule sets does reach.
+    expect(s.empty.actions).toEqual([{ kind: "referral", label: expect.stringMatching(/^Open the .+ referral$/), referral: expect.any(String) }]);
+    const next = (await b.call("GET", "/api/explore/referrals?service=research-donation")).referrals.find((r: any) => r.id === s.empty.actions[0].referral);
+    expect(next.patient).toBe("Josh Example");
     const { RULE_SETS } = await import("../src/rule-presets");
     for (const set of RULE_SETS) for (const rule of set.rules(stack.catalog) ?? []) expect(rule.patients).toBe("patient:josh-example");
   }, 60000);

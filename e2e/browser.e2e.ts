@@ -50,8 +50,11 @@ async function settle(page: Page, act: () => Promise<unknown>) {
   await Promise.all([page.waitForResponse(r => /\/api\/explore\/(start|share|approve|apply-policy|unshare|revoke-app)$/.test(new URL(r.url()).pathname)), act()]);
   await page.waitForFunction(() => { const h = document.querySelector("#view .headline h1"); return !!h && !h.querySelector(".spinner"); });
 }
+/** Waits for the view Explore opens on, Josh's, to load. */
+const loaded = (page: Page) => page.waitForFunction(() => { const h = document.querySelector("#view .headline h1"); return !!h && !h.querySelector(".spinner") && !document.querySelector("#who button:disabled"); });
 /** Picks someone the way a person on this screen would: the list on a desktop, the select on a phone. */
 async function pick(page: Page, id: string, kind: "user" | "client" = "user") {
+  await loaded(page);
   if (await page.locator("#who-select").isVisible()) await settle(page, () => page.locator("#who-select").selectOption(`${kind}:${id}`));
   else await settle(page, () => page.locator(`[data-${kind}="${id}"]`).click());
 }
@@ -76,13 +79,13 @@ const contrast = (page: Page, selector: string) => page.locator(selector).first(
 
 describe("every page, on desktop and phone, in light and dark", () => {
   for (const [name, viewport] of [["desktop", DESKTOP], ["phone", PHONE]] as const) for (const colorScheme of ["light", "dark"] as const) {
-    test(`${name} ${colorScheme}: no script or console errors, no sideways scrolling, and the header holds two links and the settings`, async () => {
-      for (const path of ["/", "/tours", "/activity", CONFIG.traceUrl, `${CONFIG.authUrl}/account`]) {
+    test(`${name} ${colorScheme}: no script or console errors, no sideways scrolling, and the header holds three links and the settings`, async () => {
+      for (const path of ["/", "/explore", "/activity", CONFIG.traceUrl, `${CONFIG.authUrl}/account`]) {
         const page = await open(path, { viewport, colorScheme });
         await page.waitForLoadState("networkidle");
         expect([path, await overflow(page)]).toEqual([path, 0]);
         if (!path.startsWith("http")) {
-          expect(await page.locator(".pages a").allInnerTexts()).toEqual(["Explore", "Tours"]);
+          expect(await page.locator(".pages a").allInnerTexts()).toEqual(["Tours", "Explore", "Activity"]);
           const box = await page.locator("#settings-button").boundingBox();
           expect(box!.y).toBeLessThan(60);
           expect(box!.height).toBeGreaterThanOrEqual(44);
@@ -91,10 +94,10 @@ describe("every page, on desktop and phone, in light and dark", () => {
       }
       expect(problems).toEqual([]);
     });
-    test(`${name} ${colorScheme}: Explore's text keeps its contrast, on the box, the chips and the film`, async () => {
-      const page = await open("/", { viewport, colorScheme });
+    test(`${name} ${colorScheme}: Explore's text keeps its contrast, on the box, the chain and the film`, async () => {
+      const page = await open("/explore", { viewport, colorScheme });
       await pick(page, "josh");
-      for (const sel of [".headline h1", ".chips li.fact", ".chips li.choice", ".sheet .title", ".sheet .site", ".sheet .date", ".sheet .status", ".actions .note a"]) {
+      for (const sel of [".headline h1", ".why .ly-name", ".why .ly-detail", ".why .ly-count", ".sheet .title", ".sheet .site", ".sheet .date", ".sheet .status", ".actions .log-link"]) {
         expect([sel, (await contrast(page, sel)) >= 4.5]).toEqual([sel, true]);
       }
       expect(await overflow(page)).toBe(0);
@@ -106,7 +109,7 @@ describe("every page, on desktop and phone, in light and dark", () => {
 describe("Explore", () => {
   for (const [name, viewport] of [["desktop", DESKTOP], ["phone", PHONE]] as const) {
     test(`${name}: Josh's CT, X-ray and slide thumbnails are drawn from real pixels, decoded in the page`, async () => {
-      const page = await open("/", { viewport });
+      const page = await open("/explore", { viewport });
       await pick(page, "josh");
       expect(await page.locator(".sheet").count()).toBe(6);
       for (const study of [SHEETS.ct, SHEETS.xr, SHEETS.slide]) {
@@ -129,7 +132,7 @@ describe("Explore", () => {
   }
   test("a withheld study's sheet makes no request, and shows why it's withheld", async () => {
     stack.store.setDocument({ shares: [{ from: "user:josh", with: "user:sam-caregiver", patient: "patient:josh-example", sites: ["Lakeside Imaging", "Riverside Hospital"], label: "caregiver" }] });
-    const page = await open("/");
+    const page = await open("/explore");
     const asked: string[] = [];
     page.on("request", r => { const u = new URL(r.url()); if (u.pathname.endsWith("/api/explore/thumbnail")) asked.push(u.searchParams.get("study")!); });
     await pick(page, "sam-caregiver");
@@ -154,7 +157,7 @@ describe("Explore", () => {
     const real = backend.getMetadata.bind(backend);
     backend.getMetadata = async () => { throw new BackendError("NotFound"); };
     try {
-      const page = await open("/");
+      const page = await open("/explore");
       await pick(page, "josh");
       await page.locator(`.thumb[data-study="${SHEETS.slide}"][data-state=none]`).waitFor({ timeout: 30000 });
       expect(await page.locator(`.thumb[data-study="${SHEETS.slide}"] canvas`).count()).toBe(0);
@@ -163,66 +166,84 @@ describe("Explore", () => {
       expect(await variance(page, SHEETS.xr)).toBeGreaterThan(50);
     } finally { backend.getMetadata = real; }
   });
-  test("by keyboard: pick someone, open a study, retrieve it, read what happened, and go back to the same sheet", async () => {
-    const page = await open("/");
+  test("by keyboard: pick someone, open a study, retrieve it, read its chain in one line, go back, and follow it to the log", async () => {
+    const page = await open("/explore");
+    await loaded(page);
     await page.locator("[data-user=josh]").focus();
     await settle(page, () => page.keyboard.press("Enter"));
     await page.waitForFunction(() => document.activeElement?.id === "headline");
     const sheet = page.locator(`[data-open="${SHEETS.xr}"]`);
     await sheet.focus();
     await page.keyboard.press("Enter");
-    await page.locator(".happened .cards").waitFor();
+    await page.locator("#chain a").waitFor();
     expect(await page.evaluate(() => document.activeElement?.id)).toBe("headline");
     expect(await page.locator("#headline").innerText()).toBe("XR wrist left, 3 views");
+    // No event cards on the study: one line, and a link to the log.
+    expect(await page.locator(".card, .cards").count()).toBe(0);
     await page.locator("#retrieve").focus();
     await page.keyboard.press("Enter");
     await page.locator(".retrieval h3", { hasText: "Retrieved" }).waitFor({ timeout: 60000 });
-    const cards = await page.locator(".happened .card .summary").allInnerTexts();
-    expect(cards.some(c => c.startsWith("Token issued to Josh Example"))).toBe(true);
-    expect(cards.some(c => c === "The proxy checked the signed link, with no network call")).toBe(true);
-    expect(cards.some(c => /^3 parts streamed/.test(c))).toBe(true);
-    // A card's drill-in decodes the signed link in the request.
-    await page.locator(".happened .card", { hasText: "3 parts streamed" }).last().locator("summary").click();
-    await page.locator(".happened .raw h4", { hasText: "Signed link, decoded" }).waitFor();
-    expect(await page.locator(".happened .raw").last().innerText()).toContain('"ath"');
+    await page.locator("#chain", { hasText: "3 parts" }).waitFor();
+    expect(await page.locator("#chain").innerText()).toMatch(/^Searched, signed link made, checked by the proxy with no policy call; 3 parts, [\d.]+ [KMG]?B\. Activity log$/);
+    const href = await page.locator("#chain a").getAttribute("href");
+    expect(href).toMatch(new RegExp(`^/activity\\?session=explore-josh-[0-9a-f]{6}&study=${SHEETS.xr}$`));
     await page.locator("#back").focus();
     await page.keyboard.press("Enter");
     expect(await page.evaluate(() => (document.activeElement as HTMLElement)?.dataset.open)).toBe(SHEETS.xr);
+    // In the log, filtered to the session and study: the retrieval's row opens its exchange, with the signed link decoded.
+    await page.goto(`${DEMO}${href}`);
+    await page.locator(".tile[data-type=retrievals]").click();
+    await page.waitForURL(/type=retrievals/);
+    await page.locator("tr.ev", { hasText: "study" }).first().locator("td.t button").click();
+    await page.locator("tr.detail details[data-exchange] summary").click();
+    await page.locator("tr.detail .raw h4", { hasText: "Signed link, decoded" }).waitFor();
+    expect(await page.locator("tr.detail .raw").innerText()).toContain('"ath"');
     expect(problems).toEqual([]);
   });
-  test("in a real window: the person signs in themselves, and the results follow", async () => {
-    const page = await open("/");
-    await page.locator("input[name=mode][value=window]").check();
-    const [popup] = await Promise.all([context!.waitForEvent("page"), page.locator("[data-user=josh]").click()]);
+  test("in a real window: choosing someone opens nothing, and the Sign in button opens the window, where the person signs in", async () => {
+    const page = await open("/explore");
+    await page.evaluate(() => localStorage.setItem("smart-imaging-signin", "window"));
+    let opened = 0;
+    context!.on("page", () => { opened++; });
+    await page.reload();
+    await page.locator("[data-user=sam-caregiver]").click();
+    await page.locator("[data-whose=riley-example]").click();
+    expect(await page.locator(".headline h1").innerText()).toBe("Sam Example");
+    expect(opened).toBe(0);
+    await page.locator("[data-user=josh]").click();
+    const [popup] = await Promise.all([context!.waitForEvent("page"), page.getByRole("button", { name: "Sign in", exact: true }).click()]);
     await popup.waitForURL(/\/authorize/);
     await signIn(popup, "josh");
     await page.locator(".headline h1", { hasText: "Josh can see all 6 of their own studies" }).waitFor({ timeout: 30000 });
     expect(problems).toEqual([]);
   });
   test("an empty view offers the one action its reason calls for, and taking it is a real share", async () => {
-    const page = await open("/");
+    const page = await open("/explore");
     await pick(page, "sam-caregiver");
-    await settle(page, () => page.locator("[data-whose=josh-example]").click());
+    await settle(page, () => page.locator("#other-records").selectOption("josh-example"));
     expect(await page.locator(".headline h1").innerText()).toBe("Sam can't see Josh's studies");
+    // One obvious next step.
+    expect(await page.locator(".empty .primary").count()).toBe(1);
     await page.getByRole("button", { name: "Have Josh share with Sam" }).click();
     await page.locator("#action-form input[value='Northside Pathology']").uncheck();
     await settle(page, () => page.getByRole("button", { name: "Share", exact: true }).click());
-    expect(await page.locator(".chips li.choice").innerText()).toContain("Josh shared");
+    expect(await page.locator(".why .ly-row.choice .ly-name").first().innerText()).toBe("Josh's share");
     expect(stack.store.shares().map(s => s.sites.sort())).toEqual([["Lakeside Imaging", "Riverside Hospital"]]);
     expect(problems).toEqual([]);
   });
   test("a service starts from its referral, and the page applies the policy that lets it see the study", async () => {
-    const page = await open("/");
+    const page = await open("/explore");
     await pick(page, "hand-referral-service", "client");
-    await settle(page, () => page.locator("[data-referral='referral-xr-wrist-left-2012']").click());
+    await settle(page, () => page.locator("#referral-select").selectOption("referral-xr-wrist-left-2012"));
     expect(await page.locator(".headline h1").innerText()).toBe("Hand referral service can't search Josh's records");
-    await settle(page, () => page.getByRole("button", { name: /Apply the policy/ }).click());
+    expect(await page.locator(".empty .primary").innerText()).toMatch(/^Apply the policy/);
+    await settle(page, () => page.locator(".empty .primary").click());
     expect(await page.locator(".headline h1").innerText()).toBe("Hand referral service can see the study this referral cites");
     await drawn(page, SHEETS.xr);
     expect(problems).toEqual([]);
   });
   test("the settings menu opens and closes by keyboard, and moves the demo clock", async () => {
-    const page = await open("/");
+    const page = await open("/explore");
     await page.locator("#settings-button").focus();
     await page.keyboard.press("Enter");
     await page.locator("#settings h2").waitFor();
@@ -237,30 +258,40 @@ describe("Explore", () => {
 });
 
 describe("Tours", () => {
-  for (const tour of ["caregiver", "app-consent", "revoke", "backend"]) {
-    test(`${tour}: runs end to end in its own scope, and every step matches the model`, async () => {
-      const page = await open(`/tours?tour=${tour}`);
-      await page.getByRole("button", { name: "Start the tour" }).click();
+  test("the home page is the stories, each a card with the chain it ends on, and the guardian's shows the label's cut", async () => {
+    const page = await open("/");
+    expect(await page.locator(".story").count()).toBe(6);
+    expect(await page.locator(".story .layers").count()).toBe(6);
+    expect(await page.locator(".story", { hasText: "A guardian at 15" }).locator(".ly-cell.cut").count()).toBe(1);
+    expect(await overflow(page)).toBe(0);
+    expect(problems).toEqual([]);
+  });
+  for (const tour of ["own", "guardian", "caregiver", "revoke", "backend", "turns-18"]) {
+    test(`${tour}: its card starts it in its own scope, it runs end to end, and every step matches the model`, async () => {
+      const page = await open("/");
+      await page.locator(`[data-start="${tour}"]`).first().click();
       await page.waitForURL(/\/s\/[^/]+\/tours\?tour=/);
       await page.locator(".step.next .what span", { hasText: "The model expects" }).waitFor();
+      await page.locator(".tour-chain .layers").waitFor();
       await page.getByRole("button", { name: "Run the rest" }).click();
       await page.locator(".tour-buttons .verdict").waitFor({ timeout: 90000 });
       expect(await page.locator(".tour-buttons .verdict").innerText()).toBe("Every step matched the model");
       expect(await page.locator(".step .verdict.ok").count()).toBe(await page.locator(".step").count());
-      await page.locator(".step .result summary").first().click();
-      expect(await page.locator(".step .result .card").count()).toBeGreaterThan(0);
+      // Steps carry no event cards: a link to their own events in the log.
+      expect(await page.locator(".step .card").count()).toBe(0);
+      expect(await page.locator(".step .result a").first().getAttribute("href")).toMatch(/\/activity\?session=.*&trace=[0-9a-f]{32}$/);
       expect(await overflow(page)).toBe(0);
       expect(problems).toEqual([]);
     });
   }
-  test("a person can sign in themselves in a real window, as a step runs", async () => {
-    const page = await open("/tours?tour=app-consent");
-    await page.locator("#window-mode").check();
-    await page.getByRole("button", { name: "Start the tour" }).click();
+  test("in window mode, a sign-in step's button says Sign in, and opens the window the person signs in in", async () => {
+    const page = await open("/");
+    await page.evaluate(() => localStorage.setItem("smart-imaging-signin", "window"));
+    await page.locator('[data-start="own"]').first().click();
     await page.waitForURL(/\/s\/[^/]+\/tours/);
-    await page.locator("[data-step=launch]").waitFor();
-    expect(await page.locator("#window-mode").isChecked()).toBe(true);
-    const [popup] = await Promise.all([context!.waitForEvent("page"), page.locator("[data-step=launch]").click()]);
+    const launch = page.locator("[data-step=launch]");
+    expect(await launch.innerText()).toBe("Sign in");
+    const [popup] = await Promise.all([context!.waitForEvent("page"), launch.click()]);
     await popup.waitForURL(/\/authorize/, { timeout: 30000 });
     await popup.locator("input[name=username][value=josh]").check();
     await popup.getByRole("button", { name: "Continue" }).click();
@@ -269,42 +300,54 @@ describe("Tours", () => {
     expect(problems).toEqual([]);
   });
   test("automated runs open no window", async () => {
-    const page = await open("/tours?tour=caregiver");
+    const page = await open("/");
     let opened = 0;
     context!.on("page", () => { opened++; });
-    await page.getByRole("button", { name: "Start the tour" }).click();
+    await page.locator('[data-start="caregiver"]').first().click();
     await page.waitForURL(/\/s\/[^/]+\/tours/);
     await page.getByRole("button", { name: "Run the rest" }).click();
     await page.locator(".tour-buttons .verdict").waitFor({ timeout: 90000 });
     expect(opened).toBe(0);
   });
   test("Run checks runs the protocol flows as one pass or fail list, each opening its activity", async () => {
-    const page = await open("/tours");
+    const page = await open("/");
     await page.getByRole("button", { name: "Run checks" }).click();
     await page.locator(".checks-panel .row .verdict", { hasText: "passed" }).waitFor({ timeout: 110000 });
     expect(await page.locator(".checks-panel .row .verdict").innerText()).toBe("8 of 8 passed");
     const link = page.locator(".check-list a").first();
     await link.click();
     await page.waitForURL(/\/activity\?session=/);
-    await page.locator(".cards .card").first().waitFor();
+    await page.locator("tr.ev").first().waitFor();
     expect(problems).toEqual([]);
   });
 });
 
 describe("activity", () => {
-  test("filters by kind and outcome, and a card's value links to every event that shares it", async () => {
-    const explore = await open("/");
-    await pick(explore, "josh");
-    const page = await context!.newPage();
-    await page.goto(`${DEMO}/activity`);
-    await page.locator(".cards .card").first().waitFor();
-    await page.locator("select[name=kind]").selectOption("search.returned");
-    await page.waitForFunction(() => [...document.querySelectorAll(".card")].every(c => (c as HTMLElement).dataset.kind === "search.returned"));
-    await page.locator(".card .links a", { hasText: /^token / }).first().click();
-    await page.waitForURL(/link=token/);
-    await page.locator(".card[data-kind='token.issued']").waitFor();
-    expect(await page.locator(".card").count()).toBeGreaterThan(2);
-    expect(await overflow(page)).toBe(0);
-    expect(problems).toEqual([]);
-  });
+  for (const [name, viewport] of [["desktop", DESKTOP], ["phone", PHONE]] as const) {
+    test(`${name}: tiles roll up each type, a tile lists its type, a row opens its event, and a shared value links on`, async () => {
+      const explore = await open("/explore", { viewport });
+      await pick(explore, "josh");
+      const page = await context!.newPage();
+      await page.goto(`${DEMO}/activity`);
+      await page.locator(".tile").first().waitFor();
+      expect(await page.locator(".tile").count()).toBe(9);
+      expect(await page.locator(".timeline svg title").first().textContent()).toContain("Events over time, by party");
+      expect(await page.locator(".session-row").count()).toBeGreaterThan(0);
+      await page.locator(".tile[data-type=searches]").click();
+      await page.waitForURL(/type=searches/);
+      expect(await page.locator("#h-events").innerText()).toBe("Searches");
+      expect(await page.locator(".events th").allInnerTexts()).toEqual(["Time", "Who", "Status", "Returned", "Withheld", "Query"]);
+      await page.locator("tr.ev td.t button").first().click();
+      await page.locator("tr.detail .ev-links a", { hasText: /^token / }).first().click();
+      await page.waitForURL(/link=token/);
+      await page.locator("tr.ev").first().waitFor();
+      expect(await page.locator("tr.ev").count()).toBeGreaterThan(2);
+      // Choosing a session filters the whole page to it.
+      await page.locator(".session-row").first().click();
+      await page.waitForURL(/session=/);
+      await page.locator(".chosen li", { hasText: "Session:" }).waitFor();
+      expect(await overflow(page)).toBe(0);
+      expect(problems).toEqual([]);
+    });
+  }
 });
