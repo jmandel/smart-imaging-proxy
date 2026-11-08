@@ -17,7 +17,7 @@ async function loadReferrals(service) {
 }
 
 const personOf = id => options.people.find(p => p.id === id);
-const lineOf = p => `${p.role}${p.detail && !p.records.some(r => r.via !== "self") ? `, ${p.detail.toLowerCase()}` : ""}`;
+const lineOf = p => p.role;
 function whoHtml() {
   const busy = !!view?.running;
   const current = ready?.user ?? (view?.who?.kind === "user" ? view.who.asked : view?.who?.id);
@@ -25,7 +25,7 @@ function whoHtml() {
   const service = s => `<li><button type="button" class="person" data-client="${esc(s.id)}" aria-pressed="${current === s.id}" ${busy ? "disabled" : ""}><b>${esc(s.name)}</b><span>${esc(s.role)}</span></button></li>`;
   // On a phone, one select stands in for both lists.
   const opt = (v, label) => `<option value="${esc(v)}" ${current && v.endsWith(`:${current}`) ? "selected" : ""}>${esc(label)}</option>`;
-  const select = `<div class="who-select"><label>Who's looking<select id="who-select" ${busy ? "disabled" : ""}>${current ? "" : `<option value="">Choose someone</option>`}<optgroup label="People">${options.people.map(p => opt(`user:${p.id}`, `${p.name}, ${lineOf(p)[0].toLowerCase()}${lineOf(p).slice(1)}`)).join("")}</optgroup><optgroup label="Services">${options.services.map(s => opt(`client:${s.id}`, s.name)).join("")}</optgroup></select></label></div>`;
+  const select = `<div class="who-select"><label>Who's looking<select id="who-select" ${busy ? "disabled" : ""}>${current ? "" : `<option value="">Choose someone</option>`}<optgroup label="People">${options.people.map(p => opt(`user:${p.id}`, p.name)).join("")}</optgroup><optgroup label="Services">${options.services.map(s => opt(`client:${s.id}`, s.name)).join("")}</optgroup></select></label></div>`;
   return `${select}<section aria-labelledby="h-people"><h2 id="h-people">People</h2><ul>${options.people.map(person).join("")}</ul></section>
     <section aria-labelledby="h-services"><h2 id="h-services">Services</h2><ul>${options.services.map(service).join("")}</ul></section>`;
 }
@@ -51,11 +51,11 @@ const sheetHtml = s => {
 function whoseHtml(user, patient, disabled) {
   const p = personOf(user);
   if (!p) return "";
-  const held = p.records.map(r => ({ patient: r.patient, label: r.via === "self" ? "Own records" : `${r.name.split(" ")[0]}, ${r.via === "guardian" ? "as guardian" : `as ${r.relationship}`}` }));
+  const held = p.records.map(r => ({ patient: r.patient, label: r.via === "self" ? "Own studies" : `${r.name}'s, as ${r.via === "guardian" ? "guardian" : r.relationship}` }));
   const others = p.others;
   if (held.length + others.length < 2) return "";
   return `<div class="whose">${held.length > 1 || (held.length && others.length) ? `<div class="seg" role="group" aria-label="Whose records">${held.map(c => `<button type="button" data-whose="${esc(c.patient)}" aria-pressed="${patient === c.patient}" ${disabled ? "disabled" : ""}>${esc(c.label)}</button>`).join("")}</div>` : ""}
-    ${others.length ? `<label class="others">Others<select id="other-records" ${disabled ? "disabled" : ""}><option value="">${others.some(o => o.patient === patient) ? "" : "Someone else"}</option>${others.map(o => `<option value="${esc(o.patient)}" ${o.patient === patient ? "selected" : ""}>${esc(o.name)}</option>`).join("")}</select></label>` : ""}</div>`;
+    ${others.length ? `<label class="others">Someone else's studies<select id="other-records" ${disabled ? "disabled" : ""}>${others.some(o => o.patient === patient) ? "" : `<option value="">Choose a person</option>`}${others.map(o => `<option value="${esc(o.patient)}" ${o.patient === patient ? "selected" : ""}>${esc(o.name)}</option>`).join("")}</select></label>` : ""}</div>`;
 }
 /** A service's referrals, grouped by patient. */
 function referralHtml(service, chosen, disabled) {
@@ -100,7 +100,8 @@ function viewHtml() {
   return `${choiceHtml()}
     <div class="headline"><h1 id="headline" tabindex="-1">${esc(view.headline ?? "")}</h1>
       ${view.detail ? `<p class="note">${esc(view.detail)}</p>` : ""}</div>
-    ${view.chain?.columns?.length ? `<div class="why">${Layers.chain(view.chain, { label: "Why: how access narrows" })}</div>` : ""}
+    ${view.tech ? `<details class="tech-detail"><summary>Technical detail</summary><p>${esc(view.tech)}</p></details>` : ""}
+    ${view.chain?.rows?.length ? `<div class="why"><h2 class="why-head">Why ${view.who.kind === "service" ? "the service finds" : "the app sees"} what it does</h2>${Layers.chain(view.chain, { label: `Why ${view.who.kind === "service" ? "the service finds" : "the app sees"} what it does` })}${Layers.legend()}</div>` : ""}
     ${pageError ? `<p class="error" role="alert">${esc(pageError)}</p>` : ""}
     ${view.sheets?.length ? `<ul class="sheets" aria-label="Studies">${view.sheets.map(sheetHtml).join("")}</ul>` : ""}
     ${empty}${formHtml()}
