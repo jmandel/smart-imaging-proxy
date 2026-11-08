@@ -127,15 +127,19 @@ export function chainFor(input: { snap: Snapshot; studies: CatalogStudy[]; now: 
       rows.push({ level: "choice", kind: "share", name: `${sharer} shares ${what} with ${viewerName}`, has: ids(s => model.userRoute(snap, U, P, s, fhirUser, [share.id ?? ""]).ok), by: viewer.user, route: share.id });
     } else rows.push({ level: "choice", kind: "share", name: sharerIsPatient ? `${userFirst(from!)} doesn't share ${whose(viewer.patient, from)} studies with ${viewerName}` : `No one shares ${name}'s studies with ${viewerName}`, has: [], missing: true });
   }
-  // A person may let an app see only what they can see themselves: the approval says what that is.
+  // An approval lets an app act for the person who makes it, on what reaches them by their own route: as
+  // the patient, as a guardian, or through a share. The sentence names that route.
   const sharer = share && userFirst(share.from.replace(/^user:/, ""));
-  const within = isPatient ? "" : guardian ? `, out of what ${viewerName} can see as ${name}'s guardian` : share ? `, out of what ${sharer} shares with ${viewerName}` : "";
-  const approval = snap.approvals.find(a => a.by === U && a.app === ref("app", viewer.app) && a.patient === P);
   const app = APP_NAMES[viewer.app] ?? viewer.app;
-  const theirs = whose(viewer.patient, viewer.user);
+  const actFor = isPatient && viewer.user === "josh" ? "him" : viewerName;
+  const where = (sites: string[] | undefined) => sites ? sitesText(sites) : "every site";
+  const what = (sites: string[] | undefined) => isPatient ? `${whose(viewer.patient, viewer.user)} studies at ${where(sites)}`
+    : guardian ? `${name}'s studies at ${where(sites)}` : share ? `what ${sharer} shares at ${where(sites)}` : `${name}'s studies`;
+  const who = guardian && !isPatient ? `${viewerName}, as ${name}'s guardian,` : viewerName;
+  const approval = snap.approvals.find(a => a.by === U && a.app === ref("app", viewer.app) && a.patient === P);
   rows.push(approval
-    ? { level: "choice", kind: "approval", name: `${viewerName} lets the ${app} see ${theirs} studies at ${approval.sites ? sitesText(approval.sites) : "every site"}${within}`, has: atSites(approval.sites) }
-    : { level: "choice", kind: "approval", name: `No approval from ${viewerName} lets the ${app} see ${theirs} studies`, has: [], missing: true });
+    ? { level: "choice", kind: "approval", name: `${who} lets the ${app} act for ${actFor} on ${what(approval.sites)}`, has: atSites(approval.sites) }
+    : { level: "choice", kind: "approval", name: `No approval from ${viewerName} lets the ${app} act for ${actFor} on ${isPatient ? whose(viewer.patient, viewer.user) : `${name}'s`} studies`, has: [], missing: true });
   const t = { client_id: viewer.app, sub: viewer.user, fhirUser, patient: viewer.patient };
   rows.push({ level: "outcome", kind: "outcome", name: "What the app can see", has: ids(s => model.evaluate(snap, t, s).release !== "none") });
   return done();

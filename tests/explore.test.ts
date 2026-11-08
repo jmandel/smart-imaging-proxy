@@ -100,7 +100,7 @@ for (const backend of BACKENDS) {
       expect(s.status).toBe("results");
       expect(b.released(s)).toEqual(ALL);
       expect([s.headline, s.detail]).toEqual(["Josh's own studies", "The Health Records App can see all 6."]);
-      expect(s.chain.rows.map((r: any) => [r.level, r.name, r.has.length])).toEqual([["fact", "Josh is the patient", 0], ["choice", "Josh lets the Health Records App see his studies at every site", 6], ["outcome", "What the app can see", 6]]);
+      expect(s.chain.rows.map((r: any) => [r.level, r.name, r.has.length])).toEqual([["fact", "Josh is the patient", 0], ["choice", "Josh lets the Health Records App act for him on his studies at every site", 6], ["outcome", "What the app can see", 6]]);
       const mri = s.sheets.find((x: any) => x.id === "mri-brain-2020");
       expect(mri).toMatchObject({ site: "Lakeside Imaging", modalities: ["MR"], seriesCount: 18, instanceCount: 267, date: "2020-07-29", retrievable: true, thumb: true });
       const kinds = (await b.events()).map(e => e.kind);
@@ -141,7 +141,7 @@ for (const backend of BACKENDS) {
       expect(shared.chain.rows.map((r: any) => [r.level, r.name, r.has.length])).toEqual([
         ["policy", "Imaging network rule: patients and guardians can share the studies they can see", 5],
         ["choice", "Josh shares his studies at Lakeside and Riverside with Sam", 5],
-        ["choice", "Sam lets the Health Records App see Josh's studies at every site, out of what Josh shares with Sam", 5],
+        ["choice", "Sam lets the Health Records App act for Sam on what Josh shares at every site", 5],
         ["outcome", "What the app can see", 5],
       ]);
       // A study at a site Josh didn't share isn't Sam's to see, or to hear about.

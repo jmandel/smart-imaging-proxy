@@ -322,8 +322,8 @@ const TOURS: Tour[] = [
   },
   {
     id: "caregiver", title: "Josh shares with Sam, and Sam shares with an app",
-    premise: w => `Josh shares his studies at ${sitesWords(someSitesOf(w))} with Sam. Sam lets the Health Records App see only those at ${sitesWords(someSitesOf(w).slice(0, 1))}, so that's all the app sees.`,
-    summary: w => `Josh shares his studies at ${sitesWords(someSitesOf(w))} with Sam. Sam then lets the Health Records App see only those at ${sitesWords(someSitesOf(w).slice(0, 1))}. Each person can pass on only what they were given.`,
+    premise: w => `Josh shares his studies at ${sitesWords(someSitesOf(w))} with Sam. Sam lets the Health Records App act for Sam on only what Josh shares at ${sitesWords(someSitesOf(w).slice(0, 1))}, so that's all the app sees.`,
+    summary: w => `Josh shares his studies at ${sitesWords(someSitesOf(w))} with Sam. Sam then lets the Health Records App act for Sam on only the ${sitesWords(someSitesOf(w).slice(0, 1))} ones. An app acting for Sam gets only what Sam was given.`,
     knows: joshStudies,
     viewer: { user: SAM, patient: JOSH_PATIENT, app: APP },
     scene: w => ({ doc: approve(sharedScene(someSitesOf(w)), SAM, JOSH_PATIENT, ["scene-share"], someSitesOf(w).slice(0, 1)) }),
