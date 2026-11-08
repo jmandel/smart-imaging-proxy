@@ -70,10 +70,7 @@ async function renderSettings(message = "") {
   }).catch(() => {});
 }
 
-/** The header's links go to saved policy's pages. A page in a scope says so. */
 function initHeader() {
-  const where = $("#where");
-  if (where && BASE) where.textContent = "In a tour's own scope";
   initSettings();
 }
 initHeader();

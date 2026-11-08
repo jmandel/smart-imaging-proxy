@@ -51,7 +51,9 @@ describe("each tour", () => {
         expect([s.id, s.result.ok, s.result.actual]).toEqual([s.id, true, s.result.actual]);
         expect(s.result.expected).toBeTruthy();
         // Every step records events, but the clock's and a sign-in that ends with no token, which reach no service that records any.
-        if (s.id !== "birthday" && !s.result.actual.startsWith("No token")) expect([s.id, s.result.eventCount > 0]).toEqual([s.id, true]);
+        if (s.id !== "birthday" && !s.result.actual.includes("can't sign in")) expect([s.id, s.result.eventCount > 0]).toEqual([s.id, true]);
+        // A step with no events says what it did instead of linking to none.
+        expect([s.id, !!s.result.quiet]).toEqual([s.id, s.result.eventCount === 0]);
         // A step's events are in the log, filtered to the tour's session and that step.
         expect(s.result.activityUrl).toBe(`${base}/activity?session=${encodeURIComponent(state.session)}&trace=${s.result.trace}`);
         const logged = await call("GET", s.result.activityUrl.replace("/activity?", "/api/activity?"));
@@ -67,7 +69,7 @@ describe("each tour", () => {
   test("the shown expectation comes from the scope's policy at that moment", async () => {
     const base = await start("caregiver");
     const before = (await call("GET", `${base}/api/tours/state?tour=caregiver`)).body;
-    expect(before.steps[0].expect).toBe("Sam holds Josh Example's records at Lakeside Imaging and Northside Pathology");
+    expect(before.steps[0].expect).toBe("Sam can see Josh's studies at Lakeside and Northside");
     await call("POST", `${base}/api/tours/caregiver/steps/share`, {});
     await call("POST", `${base}/api/tours/caregiver/steps/launch`, {});
     const now = (await call("GET", `${base}/api/tours/state`)).body;
@@ -86,8 +88,9 @@ describe("each tour", () => {
     const r = await call("POST", `${base}/api/tours/revoke/steps/signed`, {});
     const step = r.body.steps.find((s: any) => s.id === "signed");
     expect(step.result.ok).toBe(false);
-    expect(step.result.expected).toStartWith("200");
-    expect(step.result.actual).toStartWith("404");
+    expect(step.result.expected).toStartWith("The app gets");
+    expect(step.result.actual).toStartWith("Refused");
+    expect(step.result.detail).toStartWith("HTTP 404");
   }, 60000);
   /** Runs a tour with one of Ctx's actions replaced, and gives each step's result. */
   async function runWith(tour: string, method: "revokeDelegation" | "delegate", replacement: (real: any) => any) {
@@ -99,7 +102,7 @@ describe("each tour", () => {
     const steps = await runWith("revoke", "revokeDelegation", () => async () => {});
     const revoke = steps.find(s => s.id === "revoke");
     expect(revoke.result.ok).toBe(false);
-    expect(revoke.result.expected).toBe("Sam holds none of Josh Example's records");
+    expect(revoke.result.expected).toBe("Sam can see none of Josh's studies");
     expect(revoke.result.write).toContain("shares: it intended none, and the store holds");
   }, 120000);
   test("a share that writes nothing, or writes more than it should, fails its step", async () => {
@@ -154,32 +157,53 @@ describe("checks", () => {
 });
 
 describe("the layer chain", () => {
-  test("each card's chain, drawn with core's model, matches the reference model, and no link lets through more than the one before", async () => {
+  test("each card's chain, drawn with core's model, matches the reference model, and every study the outcome holds is in every row that grants", async () => {
     const list = (await call("GET", "/api/tours")).body;
     expect(list.tours.map((t: any) => t.id)).toEqual(TOURS);
     const world = stack.root;
     for (const card of list.tours) {
-      const tour = tourById(card.id)!, scene = tour.scene(world), v: any = (tour as any).viewer;
-      const m = referenceModel({ doc: scene.doc, studies: refStudies(world), now: scene.now ?? world.clock.now(), birthDate: p => patientAttributes(p)?.birthDate, patientOf: u => USERS[u]?.patient });
-      const ids = (xs: { id: string }[]) => xs.map(x => x.id).sort();
-      const all = ids(refStudies(world).filter(s => s.patient === v.patient));
-      expect([card.id, card.chain.columns.map((c: any) => c.id).sort()]).toEqual([card.id, all]);
-      let before = all;
-      for (const row of card.chain.rows) {
-        const has = [...row.has].sort();
-        expect([card.id, row.name, has.every((x: string) => before.includes(x))]).toEqual([card.id, row.name, true]);
-        const want = row.kind === "records" ? all
-          : row.kind === "guardian" || row.kind === "share" ? (row.route ? ids(m.userReach(row.by, v.patient, [row.route])) : [])
-          : row.kind === "approval" ? ids(m.appReach(v.user, v.app, v.patient))
-          : row.kind === "service" ? ids(m.serviceReach(v.service, v.patient))
-          : before;
-        expect([card.id, row.name, has]).toEqual([card.id, row.name, want]);
-        before = has;
-      }
+      const tour = tourById(card.id)!, v: any = typeof tour.viewer === "function" ? tour.viewer(world) : tour.viewer;
+      const scenes = tour.change ? [tour.change.before(world), tour.scene(world)] : [tour.scene(world)];
+      expect([card.id, card.chains.length]).toEqual([card.id, scenes.length]);
+      scenes.forEach((scene, i) => {
+        const chain = card.chains[i].chain;
+        expect(chain.viewer).toBe(false);
+        const m = referenceModel({ doc: scene.doc, studies: refStudies(world), now: scene.now ?? world.clock.now(), birthDate: p => patientAttributes(p)?.birthDate, patientOf: u => USERS[u]?.patient });
+        const ids = (xs: { id: string }[]) => xs.map(x => x.id).sort();
+        const mine = refStudies(world).filter(s => s.patient === v.patient);
+        const all = ids(mine);
+        expect([card.id, chain.columns.map((c: any) => c.id).sort()]).toEqual([card.id, all]);
+        const approval = v.user && scene.doc.approvals.find(a => a.by === `user:${v.user}` && a.app === `app:${v.app}` && a.patient === `patient:${v.patient}`);
+        const outcome = chain.rows.at(-1);
+        expect([card.id, outcome.kind]).toEqual([card.id, "outcome"]);
+        for (const row of chain.rows) {
+          const has = [...row.has].sort();
+          const want = row.kind === "records" ? all
+            : row.kind === "label" ? has.filter((x: string) => mine.find(s => s.id === x)!.labels?.length)
+            : row.kind === "referral" ? [v.cited]
+            : ["relationship", "age"].includes(row.kind) ? []
+            : row.missing ? []
+            : row.kind === "guardian" || row.kind === "share" ? (row.route ? ids(m.userReach(row.by, v.patient, [row.route])) : [])
+            : row.kind === "sharing" ? ids(m.userReach(scene.doc.shares.find(s => s.with === `user:${v.user}`)?.from.replace("user:", "") ?? "josh", v.patient))
+            : row.kind === "approval" ? ids(mine.filter(s => !approval?.sites || approval.sites.includes(s.site ?? "")))
+            : row.kind === "service" ? ids(m.serviceReach(v.service, v.patient))
+            : v.service ? ids(m.serviceReach(v.service, v.patient)).filter(x => !v.cited || x === v.cited)
+            : ids(m.appReach(v.user, v.app, v.patient));
+          expect([card.id, row.name, has]).toEqual([card.id, row.name, want]);
+          // What the outcome holds survives every row that holds or grants studies.
+          if (!["relationship", "age", "label", "outcome"].includes(row.kind)) expect([card.id, row.name, outcome.has.every((x: string) => has.includes(x))]).toEqual([card.id, row.name, true]);
+        }
+      });
     }
-    // The guardian card, a narrator's, shows the study the label cuts out.
-    const guardian = list.tours.find((t: any) => t.id === "guardian").chain;
-    expect(guardian.rows.find((r: any) => r.kind === "guardian").cut).toEqual(["syn-riley-skin-slide-2023"]);
+    // The guardian card, a narrator's, shows the labeled study, locked, with its own fact row.
+    const guardian = list.tours.find((t: any) => t.id === "guardian").chains[0].chain;
+    expect(guardian.columns.filter((c: any) => c.locked).map((c: any) => c.id)).toEqual(["syn-riley-skin-slide-2023"]);
+    expect(guardian.rows.find((r: any) => r.kind === "label").has).toEqual(["syn-riley-skin-slide-2023"]);
+    // The revoke card shows before and after the change.
+    expect(list.tours.find((t: any) => t.id === "revoke").chains.map((c: any) => [c.label, c.chain.rows.at(-1).has.length])).toEqual([["Before", 6], ["After Josh stops sharing", 0]]);
+    // The service's rule grants its X-rays, and the outcome is the one the referral cites.
+    const service = list.tours.find((t: any) => t.id === "backend").chains[0].chain;
+    expect(service.rows.map((r: any) => [r.kind, r.has.length])).toEqual([["records", 6], ["referral", 1], ["service", 3], ["outcome", 1]]);
   });
 });
 

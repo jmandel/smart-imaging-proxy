@@ -13,18 +13,21 @@ function checksHtml() {
   return `<section class="checks-panel" aria-labelledby="h-checks"><h2 id="h-checks">Protocol checks</h2>
       <div class="row"><button type="button" class="secondary" id="run-checks" ${busy ? "disabled" : ""}>Run checks</button>
         ${busy ? `<span class="note" role="status">${done.length} of ${list.checks.length} run</span>` : done.length ? `<span class="${done.every(c => c.ok) ? "verdict ok" : "verdict bad"}" role="status">${done.filter(c => c.ok).length} of ${done.length} passed</span>` : ""}</div>
-      <ul class="check-list">${list.checks.map(c => { const r = checks[c.id]; return `<li><span class="verdict ${r?.ok ? "ok" : r?.ok === false ? "bad" : ""}">${r?.running ? '<span class="spinner" aria-hidden="true"></span>' : r ? (r.ok ? "Pass" : "Fail") : ""}</span><span>${esc(c.title)}</span>${r?.activityUrl ? `<a href="${esc(r.activityUrl)}">Activity log</a>` : ""}${r?.failures?.length ? `<span class="fail-detail">${r.failures.map(f => esc(`${f.step}: ${f.label}${f.detail ? ` (${f.detail})` : ""}`)).join("<br>")}</span>` : ""}</li>`; }).join("")}</ul>
+      <ul class="check-list">${list.checks.map(c => { const r = checks[c.id]; return `<li><span class="verdict ${r?.ok ? "ok" : r?.ok === false ? "bad" : ""}">${r?.running ? '<span class="spinner" aria-hidden="true"></span>' : r ? (r.ok ? "Pass" : "Fail") : ""}</span><span class="check-what"><b>${esc(c.title)}</b><span>${esc(c.summary)}</span></span>${r?.activityUrl ? `<a href="${esc(r.activityUrl)}">Activity log</a>` : ""}${r?.failures?.length ? `<span class="fail-detail">${r.failures.map(f => esc(`${f.step}: ${f.label}${f.detail ? ` (${f.detail})` : ""}`)).join("<br>")}</span>` : ""}</li>`; }).join("")}</ul>
     </section>`;
 }
 
-// The home page: a card per story, on film, with the chain it ends on.
+// The home page: who's who, then a card per story, on film, with the chain it ends on.
 function homeHtml() {
-  return `<div class="home-head"><h1 id="tour-title" tabindex="-1">Tours</h1>${Layers.legend()}<a href="/explore">Explore on your own</a></div>
+  const locked = list.tours.some(t => t.chains.some(c => c.chain.columns.some(x => x.locked)));
+  return `<div class="home-head"><h1 id="tour-title" tabindex="-1">Tours</h1><a href="/explore">Explore on your own</a></div>
     ${pageError ? `<p class="error" role="alert">${esc(pageError)}</p>` : ""}
+    <section class="cast" aria-labelledby="h-cast"><h2 id="h-cast">Who's who</h2><dl>${list.cast.map(c => `<div><dt>${esc(c.name)}</dt><dd>${esc(c.line)}</dd></div>`).join("")}</dl></section>
+    <section class="key" aria-labelledby="h-key"><h2 id="h-key">Reading the diagrams</h2>${Layers.legend({ locked })}</section>
     <ul class="stories">${list.tours.map(t => `<li class="story">
       <h2><button type="button" class="story-go" data-start="${esc(t.id)}">${esc(t.title)}</button></h2>
       <p>${esc(t.premise)}</p>
-      ${Layers.chain(t.chain, { film: true, compact: true, label: `${t.title}: how access narrows` })}
+      ${Layers.chains(t.chains, { film: true, label: `${t.title}: why the app sees what it sees` })}
       <span class="story-steps">${esc(plural(t.steps, "step"))}</span></li>`).join("")}</ul>
     ${checksHtml()}`;
 }
@@ -34,28 +37,43 @@ function stepHtml(s, i, steps) {
   const cls = s.result ? "step" : next ? "step next" : "step pending";
   const r = s.result;
   // A step's chain shows where the step changed it.
-  const before = steps.slice(0, i).reverse().find(x => x.result?.chain)?.result.chain ?? state.start;
+  const before = chainBefore(i);
   const changed = r?.chain && JSON.stringify(r.chain.rows) !== JSON.stringify(before?.rows);
   const label = s.signsIn && windowMode() ? "Sign in" : "Run";
   return `<li class="${cls}">
-    <span class="what"><b>${esc(s.title)}</b><span>${esc(s.actor)}${next && s.expect ? `. The model expects: ${esc(s.expect)}` : ""}</span></span>
-    ${r ? `<span class="verdict ${r.ok ? "ok" : "bad"}">${r.ok ? "Matches the model" : r.stopped ? "Stopped" : "Differs from the model"}</span>` : next ? `<button type="button" class="primary" data-step="${esc(s.id)}" ${running ? "disabled" : ""}>${running ? "Running…" : label}</button>` : "<span></span>"}
-    ${r ? `<dl class="compare">${r.expected ? `<dt>Expected</dt><dd>${esc(r.expected)}</dd>` : ""}<dt>Got</dt><dd>${esc(r.actual)}</dd>${r.write ? `<dt>Policy written</dt><dd>${esc(r.write)}</dd>` : ""}</dl>
-      ${changed ? `<div class="step-chain">${Layers.chain(r.chain, { compact: true, label: "After this step: how access narrows" })}</div>` : ""}
-      ${r.activityUrl ? `<p class="result"><a href="${esc(r.activityUrl)}">Activity log</a>, ${esc(plural(r.eventCount ?? 0, "event"))}</p>` : ""}` : ""}
+    <span class="what"><b>${esc(s.title)}</b><span>${esc(s.actor)}${next && s.expect ? `. Expected: ${esc(s.expect)}` : ""}</span></span>
+    ${r ? `<span class="verdict ${r.ok ? "ok" : "bad"}">${r.ok ? "As expected" : r.stopped ? "Stopped" : "Not as expected"}</span>` : next ? `<button type="button" class="primary" data-step="${esc(s.id)}" ${running ? "disabled" : ""}>${running ? "Running…" : label}</button>` : "<span></span>"}
+    ${r ? `<dl class="compare">${r.expected ? `<dt>Expected</dt><dd>${esc(r.expected)}</dd>` : ""}<dt>Got</dt><dd>${esc(r.actual)}</dd>${r.detail ? `<dt>Technical detail</dt><dd class="tech">${esc(r.detail)}</dd>` : ""}${r.write ? `<dt>Policy written</dt><dd>${esc(r.write)}</dd>` : ""}</dl>
+      ${changed ? `<div class="step-chain"><p class="ly-pane-label">After this step</p>${Layers.chain(r.chain, { label: "After this step: why the app sees what it sees" })}</div>` : ""}
+      ${r.eventCount ? `<p class="result"><a href="${esc(r.activityUrl)}">Activity log</a>, ${esc(plural(r.eventCount, "event"))}</p>` : r.quiet ? `<p class="result note">${esc(r.quiet)}</p>` : ""}` : ""}
   </li>`;
+}
+
+/** The chain as it stood before step `i` ran. */
+const chainBefore = i => state.steps.slice(0, i).reverse().find(x => x.result?.chain)?.result.chain ?? state.start;
+/** Where the story stands: before any step, after the latest, and for a story about a change, before and after it. */
+function standingHtml() {
+  const steps = state.steps;
+  const doneAt = steps.findLastIndex(s => s.result?.chain);
+  const latest = doneAt >= 0 ? steps[doneAt].result.chain : state.chain;
+  const change = state.tour.change && steps.findIndex(s => s.id === state.tour.change.step);
+  const locked = latest.columns.some(x => x.locked);
+  const caption = doneAt < 0 ? "Before the first step" : doneAt === steps.length - 1 ? "Where the story ends" : `After step ${doneAt + 1}: ${steps[doneAt].title}`;
+  const body = change >= 0 && steps[change].result
+    ? Layers.chains([{ label: "Before", chain: chainBefore(change) }, { label: state.tour.change.after, chain: latest }])
+    : `<p class="ly-pane-label">${esc(caption)}</p>${Layers.chain(latest)}`;
+  return `<div class="tour-chain"><h2 class="sr-only">Why the app sees what it sees</h2>${body}${Layers.legend({ locked })}</div>`;
 }
 
 function runnerHtml() {
   if (pageError) return `<h1 id="tour-title" tabindex="-1">Something went wrong</h1><p class="error" role="alert">${esc(pageError)}</p>`;
   const steps = state.steps, left = steps.filter(s => !s.result).length;
-  const latest = [...steps].reverse().find(s => s.result?.chain)?.result.chain ?? state.chain;
-  return `<div class="tour-head"><h1 id="tour-title" tabindex="-1">${esc(state.tour.title)}</h1><p>${esc(state.tour.summary)}</p>${state.tour.note ? `<p>${esc(state.tour.note)}</p>` : ""}</div>
-    <div class="tour-chain">${Layers.chain(latest, { label: "Now: how access narrows" })}${Layers.legend()}</div>
+  return `<div class="tour-head"><h1 id="tour-title" tabindex="-1">${esc(state.tour.title)}</h1><p>${esc(state.tour.summary)}</p>${state.tour.detail ? `<details class="tech-detail"><summary>Technical detail</summary><p>${esc(state.tour.detail)}</p></details>` : ""}</div>
+    ${standingHtml()}
     ${state.pendingAuthUrl ? `<p class="note"><a href="${esc(state.pendingAuthUrl)}" target="smart-imaging-authorize" rel="opener">Open the sign-in window again</a></p>` : ""}
     <ol class="steps">${steps.map(stepHtml).join("")}</ol>
     <div class="tour-buttons">
-      ${left ? `<button type="button" class="secondary" id="run-rest" ${running ? "disabled" : ""}>Run the rest</button>` : `<span class="verdict ${steps.every(s => s.result.ok) ? "ok" : "bad"}" role="status">${steps.every(s => s.result.ok) ? "Every step matched the model" : "Some steps differ from the model"}</span>`}
+      ${left ? `<button type="button" class="secondary" id="run-rest" ${running ? "disabled" : ""}>Run the rest</button>` : `<span class="verdict ${steps.every(s => s.result.ok) ? "ok" : "bad"}" role="status">${steps.every(s => s.result.ok) ? "Every step went as expected" : "Some steps didn't go as expected"}</span>`}
       <button type="button" class="secondary" id="start">Start over</button>
       ${state.activityUrl ? `<a href="${esc(state.activityUrl)}">Activity log</a>` : ""}</div>`;
 }
@@ -95,7 +113,7 @@ async function runStep(id) {
   catch (e) { pageError = e.message; }
   finally { clearInterval(watch); running = false; if (popup && !popup.closed && !window) popup.close(); popup = null; }
   const s = state.steps?.find(x => x.id === id);
-  if (s?.result) announce(`${s.title}: ${s.result.ok ? "matches the model" : "differs from the model"}`);
+  if (s?.result) announce(`${s.title}: ${s.result.ok ? "as expected" : "not as expected"}`);
   render();
   $(`[data-step]`)?.focus();
 }
