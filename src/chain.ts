@@ -1,89 +1,164 @@
-// The layer chain: how a person's or service's access narrows from a patient's records, link by link,
-// through the three levels of policy. Each row is one link, at one level, with the studies it lets
-// through, and no row lets through more than the one before it. Rows are computed with core's own
-// model, the same evaluation search runs. With `known`, the chain is a viewer's: it holds only the
-// studies they may know of, and names no site of any other.
-import { bandText, createModel, ref, type CatalogStudy, type Snapshot } from "@smart-imaging-proxy/core";
+// The layer chain: why a person's app, or a service, sees what it sees of one patient's studies. Each
+// row is one sentence at one level: a fact on file, a rule the imaging network set, or a choice a person
+// made. A row's boxes are what that row itself holds or grants, and the last row, the outcome, is what
+// they come to, computed with core's own model, the same evaluation search runs. A study stays in its
+// column on every row, so a reader sees which studies survive to the outcome.
+//
+// With `known`, the chain is a viewer's: it holds only the studies they may know of, names no site of
+// any other, has no fact row counting the patient's studies, and names no label. Without it, the chain
+// is the narrator's, and shows a labeled study with its own fact row.
+import { ageOn, bandText, createModel, ref, type CatalogStudy, type GuardianAccessPolicy, type ServiceAccessPolicy, type Snapshot } from "@smart-imaging-proxy/core";
 import { APP_NAMES, PATIENT_NAMES, USERS } from "./auth-server";
 import { patientAttributes } from "./stores";
 import { nameOf } from "./world";
 
-export type Level = "fact" | "policy" | "choice";
+export type Level = "fact" | "policy" | "choice" | "outcome";
 /** What a row checks, so a test can compare it with the reference model. */
-export type RowKind = "records" | "guardian" | "sharing" | "share" | "approval" | "service";
-/** `by` and `route` name, for a guardian's or a share's row, whose route it is, by its row's id. */
-export interface ChainRow { level: Level; kind: RowKind; name: string; detail?: string; has: string[]; cut?: string[]; by?: string; route?: string; }
-export interface Chain { columns: { id: string; site?: string; title: string }[]; rows: ChainRow[]; }
-export type Viewer = { user: string; patient: string; app: string } | { service: string; patient: string };
+export type RowKind = "records" | "relationship" | "age" | "label" | "referral" | "guardian" | "sharing" | "share" | "approval" | "service" | "outcome";
+/**
+ * One row. `has` is what this row itself holds or grants. `boxes: false` is a fact about people, which
+ * holds no study. `missing` is a rule or choice that isn't on file, drawn hollow. `by` and `route` name,
+ * for a guardian's or a share's row, whose route it is.
+ */
+export interface ChainRow { level: Level; kind: RowKind; name: string; has: string[]; boxes?: false; missing?: true; by?: string; route?: string; }
+export interface ChainColumn { id: string; site?: string; title: string; modality: string; locked?: true; }
+/** `viewer` says the chain is a viewer's own, which counts only what they may know of. */
+export interface Chain { columns: ChainColumn[]; rows: ChainRow[]; viewer: boolean; }
+export type Viewer = { user: string; patient: string; app: string } | { service: string; patient: string; cited?: string };
+
+/** How a label reads in a sentence. */
+const LABEL_WORDS: Record<string, string> = { "confidential-adolescent": "confidential" };
+/** What a modality's studies are called, as a service-access rule names them. */
+const MODALITY_WORDS: Record<string, string> = { CR: "X-rays", DX: "X-rays", CT: "CT scans", MR: "MRI scans", SM: "pathology slides", US: "ultrasounds", MG: "mammograms" };
+/** Series that hold no picture, and so don't name a study's modality. */
+const NOT_IMAGES = new Set(["SR", "PR", "KO", "DOC", "SEG", "RTSTRUCT", "RTPLAN", "OT"]);
 
 const first = (full: string | undefined, id: string) => full?.split(" ")[0] ?? id;
 const userFirst = (u: string) => first(USERS[u]?.name, u);
 const patientFirst = (p: string) => first(PATIENT_NAMES[p], p);
-const sitesText = (sites: string[]) => sites.length ? sites.join(", ") : "no sites";
+const list = (items: string[]) => items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+/** A site as a sentence names it: its first word. */
+export const siteWord = (site: string) => site.split(" ")[0]!;
+/** A study's title, quoted, as a sentence names it. */
+const quoted = (s: string) => `“${s}”`;
+/** The study's modality, from its first image series. */
+export const modalityOf = (s: Pick<CatalogStudy, "series">) => s.series.map(x => x.modality).find(m => !NOT_IMAGES.has(m)) ?? s.series[0]?.modality ?? "OT";
+/** The patient's studies, as a person names them: Josh is "he", and everyone else by name. */
+const whose = (patient: string, speaker?: string) => speaker && USERS[speaker]?.patient === patient && speaker === "josh" ? "his" : `${patientFirst(patient)}'s`;
 
 /**
- * The chain behind one viewer's access to one patient's records, from a snapshot of policy at `now`.
- * `known`, for a viewer's own view, keeps only the studies they may know of; with none, the chain is
- * the narrator's, and shows a study a label cuts out of a guardian's view.
+ * The chain behind one viewer's access to one patient's studies, from a snapshot of policy at `now`.
+ * `known`, for a viewer's own view, keeps only the studies they may know of.
  */
 export function chainFor(input: { snap: Snapshot; studies: CatalogStudy[]; now: number; viewer: Viewer; known?: ReadonlySet<string>; title?: (s: CatalogStudy) => string }): Chain {
   const { snap, viewer, known } = input;
+  const narrator = !known;
   const model = createModel({ patientOf: u => USERS[u]?.patient, attributesOf: patientAttributes, now: () => input.now, name: nameOf });
   const P = ref("patient", viewer.patient);
   const all = input.studies.filter(s => s.patient === viewer.patient && (!known || known.has(s.id)))
     .sort((a, b) => (a.site ?? "").localeCompare(b.site ?? "") || (a.date ?? "").localeCompare(b.date ?? ""));
+  const titleOf = (s: CatalogStudy) => input.title?.(s) ?? s.title ?? s.id;
   const knownSites = new Set(all.flatMap(s => s.site ? [s.site] : []));
-  const sites = (xs: string[] | undefined) => xs ? sitesText(xs.filter(x => !known || knownSites.has(x))) : "every site";
   const ids = (ok: (s: CatalogStudy) => boolean) => all.filter(ok).map(s => s.id);
+  const atSites = (sites: string[] | undefined) => ids(s => !sites || sites.includes(s.site ?? ""));
+  /** Sites as a sentence names them, only those the viewer may know of. */
+  const sitesText = (sites: string[]) => list(sites.filter(x => !known || knownSites.has(x)).map(siteWord)) || "no site";
+  const name = patientFirst(viewer.patient);
   const rows: ChainRow[] = [];
-  const whose = `${patientFirst(viewer.patient)}'s records`;
+  const columns = (): ChainColumn[] => all.map(s => ({ id: s.id, site: s.site, title: titleOf(s), modality: modalityOf(s), ...(narrator && (s.labels ?? []).length ? { locked: true as const } : {}) }));
+  const done = (): Chain => ({ columns: columns(), rows, viewer: !narrator });
+  // The narrator's chain starts from every study the patient has. A viewer's never counts them.
+  if (narrator) rows.push({ level: "fact", kind: "records", name: `${name}'s studies: ${all.length}`, has: ids(() => true) });
 
   if ("service" in viewer) {
-    rows.push({ level: "fact", kind: "records", name: whose, has: ids(() => true) });
-    const ps = model.preAuthorized(snap, viewer.service, viewer.patient);
+    const service = nameOf(ref("service", viewer.service));
+    const cited = viewer.cited ? all.find(s => s.id === viewer.cited) : undefined;
+    if (cited) rows.push({ level: "fact", kind: "referral", name: `The referral cites ${name}'s study ${quoted(titleOf(cited))}`, has: [cited.id] });
+    const ps = model.preAuthorized(snap, viewer.service, viewer.patient) as ServiceAccessPolicy[];
     const t = { client_id: viewer.service };
     rows.push(ps.length
-      ? { level: "policy", kind: "service", name: "Service access", detail: ps.map(p => p.description ?? p.id).join("; "), has: ids(s => model.evaluate(snap, t, s).release !== "none") }
-      : { level: "policy", kind: "service", name: "No service access", has: [] });
-    return { columns: all.map(s => ({ id: s.id, site: s.site, title: input.title?.(s) ?? s.title ?? s.id })), rows };
+      ? { level: "policy", kind: "service", name: `Imaging network rule: ${service} can see ${ps.map(p => serviceWhat(p, name, all, titleOf)).join(", and ")}`, has: ids(s => model.evaluate(snap, t, s).release !== "none") }
+      : { level: "policy", kind: "service", name: `No rule lets ${service} see ${name}'s studies`, has: [], missing: true });
+    rows.push({ level: "outcome", kind: "outcome", name: "What the service found", has: ids(s => (!viewer.cited || s.id === viewer.cited) && model.evaluate(snap, t, s).release !== "none") });
+    return done();
   }
 
   const U = ref("user", viewer.user);
   const fhirUser = USERS[viewer.user]?.fhirUser;
+  const viewerName = userFirst(viewer.user);
   const isPatient = USERS[viewer.user]?.patient === viewer.patient;
-  /** A person's own route as a guardian, as a policy row: what the band covering the patient's age lets through, and what a label cuts out. */
-  const guardianRow = (who: string): ChainRow => {
-    const { age, policies } = model.guardianPolicies(snap, P);
+  /** A guardian's route: the relationship on file, the patient's age, labels, and the rule for that age. */
+  const guardianRows = (who: string) => {
     const rel = model.guardianOf(snap, ref("user", who), P);
-    if (!policies.length) return { level: "policy", kind: "guardian", name: age === undefined ? "No guardian access" : `No guardian access at ${age}`, has: [], by: who, route: rel?.id };
+    rows.push({ level: "fact", kind: "relationship", name: `${userFirst(who)} is ${name}'s guardian, on file`, has: [], boxes: false });
+    const age = ageOn(patientAttributes(viewer.patient)?.birthDate, input.now);
+    if (age !== undefined) rows.push({ level: "fact", kind: "age", name: `${name} is ${age}`, has: [], boxes: false });
+    if (narrator) for (const s of all) for (const label of s.labels ?? []) rows.push({ level: "fact", kind: "label", name: `${name}'s study ${quoted(titleOf(s))} is labeled ${LABEL_WORDS[label] ?? label.replaceAll("-", " ")}`, has: [s.id] });
+    const { policies } = model.guardianPolicies(snap, P);
+    if (!policies.length) {
+      rows.push({ level: "policy", kind: "guardian", name: age !== undefined && age >= 18 ? `No rule lets guardians see a patient's studies once the patient is 18` : age === undefined ? `No rule lets guardians see ${name}'s studies` : `No rule lets guardians see the studies of a patient aged ${age}`, has: [], missing: true, by: who, route: rel?.id });
+      return;
+    }
     const ok = (s: CatalogStudy) => model.baseline(snap, ref("user", who), P, s).ok;
-    // A label's cut shows only in the narrator's chain: a viewer's holds no study they may not know of.
-    const cut = known ? [] : ids(s => !ok(s) && (s.labels ?? []).length > 0);
-    return { level: "policy", kind: "guardian", name: `Guardian access, ${bandText(policies[0]!.when.age)}`, detail: `${userFirst(who)} is ${patientFirst(viewer.patient)}'s guardian`, has: ids(ok), ...(cut.length ? { cut } : {}), by: who, route: rel?.id };
+    rows.push({ level: "policy", kind: "guardian", name: `Imaging network rule: ${guardianWhat(policies[0] as GuardianAccessPolicy, narrator)}`, has: ids(ok), by: who, route: rel?.id });
   };
 
   const share = snap.shares.find(s => s.with === U && s.patient === P);
   const guardian = model.guardianOf(snap, U, P);
-  if (isPatient) rows.push({ level: "fact", kind: "records", name: `${userFirst(viewer.user)}'s own records`, detail: `${userFirst(viewer.user)} is the patient`, has: ids(() => true), route: "self" });
+  if (isPatient) { if (!narrator) rows.push({ level: "fact", kind: "relationship", name: `${viewerName} is the patient`, has: [], boxes: false }); }
+  else if (guardian) guardianRows(viewer.user);
   else {
-    rows.push({ level: "fact", kind: "records", name: whose, has: ids(() => true) });
-    if (guardian) rows.push(guardianRow(viewer.user));
-    else if (share) {
-      const from = share.from.replace(/^user:/, "");
-      const sharerIsPatient = USERS[from]?.patient === viewer.patient;
-      if (!sharerIsPatient) rows.push(guardianRow(from));
-      const sharing = model.sharingFor(snap, share.from, P);
-      const before = rows.at(-1)!.has;
-      rows.push(sharing.policy
-        ? { level: "policy", kind: "sharing", name: "Sharing", detail: `${sharing.policies.map(p => p.description ?? p.id).join("; ")}`, has: before }
-        : { level: "policy", kind: "sharing", name: "No sharing policy", has: [] });
-      rows.push({ level: "choice", kind: "share", name: `${userFirst(from)}'s share`, detail: sites(share.sites), has: ids(s => model.userRoute(snap, U, P, s, fhirUser, [share.id ?? ""]).ok), by: viewer.user, route: share.id });
-    } else rows.push({ level: "choice", kind: "share", name: "No share", has: [] });
+    // Someone else's studies reach this viewer only by a share, under the imaging network's sharing rule.
+    const from = share?.from.replace(/^user:/, "") ?? Object.keys(USERS).find(u => USERS[u]!.patient === viewer.patient);
+    const sharerIsPatient = !!from && USERS[from]?.patient === viewer.patient;
+    if (share && !sharerIsPatient) guardianRows(from!);
+    const sharing = model.sharingFor(snap, share?.from ?? ref("user", from ?? ""), P);
+    const sharingPolicy = snap.policies.find(p => p.type === "sharing");
+    const sharerSees = (s: CatalogStudy) => !!from && model.baseline(snap, ref("user", from), P, s).ok;
+    rows.push(sharingPolicy
+      ? { level: "policy", kind: "sharing", name: `Imaging network rule: ${sharingWho(sharingPolicy.allowedFrom)} can share the studies they can see`, has: sharing.policy ? ids(sharerSees) : [] }
+      : { level: "policy", kind: "sharing", name: "No rule lets patients or guardians share their studies", has: [], missing: true });
+    if (share) {
+      const sharer = userFirst(from!), theirs = sharerIsPatient ? whose(viewer.patient, from) : `${name}'s`;
+      // The narrator, who knows every site, says "all" for a share of every one of them.
+      const every = narrator && [...knownSites].every(x => share.sites.includes(x));
+      const what = every ? `all ${theirs} studies` : `${theirs} studies at ${sitesText(share.sites)}`;
+      rows.push({ level: "choice", kind: "share", name: `${sharer} shares ${what} with ${viewerName}`, has: ids(s => model.userRoute(snap, U, P, s, fhirUser, [share.id ?? ""]).ok), by: viewer.user, route: share.id });
+    } else rows.push({ level: "choice", kind: "share", name: sharerIsPatient ? `${userFirst(from!)} doesn't share ${whose(viewer.patient, from)} studies with ${viewerName}` : `No one shares ${name}'s studies with ${viewerName}`, has: [], missing: true });
   }
   const approval = snap.approvals.find(a => a.by === U && a.app === ref("app", viewer.app) && a.patient === P);
-  const t = { client_id: viewer.app, sub: viewer.user, fhirUser, patient: viewer.patient };
+  const app = APP_NAMES[viewer.app] ?? viewer.app;
+  const theirs = whose(viewer.patient, viewer.user);
   rows.push(approval
-    ? { level: "choice", kind: "approval", name: "App approval", detail: `${APP_NAMES[viewer.app] ?? viewer.app}, ${sites(approval.sites)}`, has: ids(s => model.evaluate(snap, t, s).release !== "none") }
-    : { level: "choice", kind: "approval", name: "No app approval", has: [] });
-  return { columns: all.map(s => ({ id: s.id, site: s.site, title: input.title?.(s) ?? s.title ?? s.id })), rows };
+    ? { level: "choice", kind: "approval", name: `${viewerName} lets the ${app} see ${theirs} studies at ${approval.sites ? sitesText(approval.sites) : "every site"}`, has: atSites(approval.sites) }
+    : { level: "choice", kind: "approval", name: `${viewerName} hasn't let the ${app} see any of ${theirs} studies`, has: [], missing: true });
+  const t = { client_id: viewer.app, sub: viewer.user, fhirUser, patient: viewer.patient };
+  rows.push({ level: "outcome", kind: "outcome", name: "What the app can see", has: ids(s => model.evaluate(snap, t, s).release !== "none") });
+  return done();
+}
+
+/** Who a sharing rule lets share. */
+const sharingWho = (from: ("patient" | "guardian")[]) => from.length === 2 ? "patients and guardians" : from[0] === "guardian" ? "guardians" : "patients";
+/**
+ * A guardian-access rule as a sentence: the ages it covers, and what it lets guardians see. Only the
+ * narrator's names the labels it excepts: a viewer's never names a label.
+ */
+function guardianWhat(p: GuardianAccessPolicy, narrator: boolean) {
+  const band = bandText(p.when.age);
+  const ages = band.startsWith("under") ? band : band.startsWith("aged") ? band : `aged ${band}`;
+  const except = (p.except ?? []).map(l => `studies labeled ${LABEL_WORDS[l] ?? l.replaceAll("-", " ")}`);
+  if (except.length && !narrator) return `guardians of patients ${ages} can see their studies, except any marked private to the patient`;
+  return `guardians of patients ${ages} can see ${except.length ? `everything except ${list(except)}` : "all the patient's studies"}`;
+}
+/** What a service-access rule lets a service see, as a sentence names it. */
+function serviceWhat(p: ServiceAccessPolicy, name: string, all: CatalogStudy[], titleOf: (s: CatalogStudy) => string) {
+  const a = p.allow;
+  const parts: string[] = [];
+  if (a.studies) { const named = all.filter(s => a.studies!.includes(s.id)).map(s => quoted(titleOf(s))); parts.push(named.length ? `${name}'s ${named.length === 1 ? "study" : "studies"} ${list(named)}` : `chosen studies of ${name}'s`); }
+  else if (a.modalities) parts.push(`${name}'s ${list([...new Set(a.modalities.map(m => MODALITY_WORDS[m] ?? `${m} studies`))])}`);
+  else parts.push(`all of ${name}'s studies`);
+  if (a.sites) parts.push(`at ${list(a.sites.map(siteWord))}`);
+  if (a.since) parts.push(`from ${a.since.slice(0, 4)} on`);
+  if (p.withholdSeries?.length) parts.push("with some series held back");
+  return parts.join(" ");
 }

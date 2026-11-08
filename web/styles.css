@@ -99,7 +99,8 @@ button.person span { display:block; color:var(--muted); font-size:.88rem; line-h
 label.others { display:inline-flex; align-items:center; gap:.5rem; font-size:.9rem; color:var(--muted); max-width:100%; min-width:0; }
 label.others select { color:var(--ink); min-height:2.5rem; padding:.3rem .5rem; max-width:min(100%, 22rem); min-width:0; flex:1 1 auto; }
 .sign-in { display:flex; flex-wrap:wrap; gap:.8rem; align-items:center; }
-.why { background:var(--plate); border:1px solid var(--line); border-radius:10px; padding:.75rem .9rem; max-width:44rem; }
+.why { background:var(--plate); border:1px solid var(--line); border-radius:10px; padding:.75rem .9rem; max-width:44rem; display:flex; flex-direction:column; gap:.6rem; }
+.why-head { margin:0; font-size:.95rem; font-weight:800; }
 .actions .log-link { margin-left:auto; display:inline-flex; align-items:center; min-height:2.75rem; }
 .empty .buttons { display:flex; flex-wrap:wrap; gap:.5rem; }
 
@@ -173,7 +174,7 @@ button.sheet:hover { background:var(--film-raised); }
 .home-head h1 { margin:0; font-size:1.9rem; font-weight:800; }
 .home-head h1:focus { outline:none; }
 .home-head > a { margin-left:auto; display:inline-flex; align-items:center; min-height:2.75rem; }
-.stories { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 19rem), 1fr)); gap:.9rem; }
+.stories { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 21rem), 1fr)); gap:.9rem; }
 .story { position:relative; display:flex; flex-direction:column; gap:.55rem; padding:1rem 1rem .85rem; border-radius:10px; background:var(--film); color:var(--on-film); }
 .story:hover, .story:focus-within { background:var(--film-raised); }
 .story h2 { margin:0; font-size:1.1rem; font-weight:800; line-height:1.2; }
@@ -181,8 +182,9 @@ button.sheet:hover { background:var(--film-raised); }
 .story-go::after { content:""; position:absolute; inset:0; border-radius:10px; }
 .story-go:focus-visible::after { outline:2px solid var(--on-film); outline-offset:-4px; }
 .story p { margin:0; font-size:.92rem; color:var(--on-film-dim); line-height:1.4; }
-.story .layers { margin-top:auto; padding-top:.3rem; }
-.story-steps { font-size:.78rem; color:var(--on-film-dim); }
+.story > .layers, .story > .ly-pair { padding-top:.3rem; }
+.story .ly-pane-label { color:var(--on-film); }
+.story-steps { margin-top:auto; font-size:.78rem; color:var(--on-film-dim); }
 .tour-chain { display:flex; flex-direction:column; gap:.6rem; background:var(--plate); border:1px solid var(--line); border-radius:10px; padding:.85rem 1rem; max-width:44rem; }
 .step-chain { grid-column:1 / -1; max-width:40rem; padding:.5rem 0 .2rem; }
 .checks-panel { margin-top:.8rem; padding:1rem; border-radius:10px; background:var(--plate); border:1px solid var(--line); display:flex; flex-direction:column; gap:.6rem; }
@@ -195,6 +197,18 @@ button.sheet:hover { background:var(--film-raised); }
 .check-list .verdict.ok { color:var(--good); } .check-list .verdict.bad { color:var(--bad); }
 .check-list a { margin-left:auto; display:inline-flex; align-items:center; min-height:2.75rem; }
 .check-list .fail-detail { flex-basis:100%; color:var(--bad); font-size:.86rem; }
+.check-what { display:flex; flex-direction:column; gap:.1rem; min-width:0; flex:1 1 16rem; }
+.check-what span { color:var(--muted); font-size:.86rem; }
+/* Who's who and the diagram key, above the stories. */
+.cast, .key { background:var(--plate); border:1px solid var(--line); border-radius:10px; padding:.85rem 1rem; display:flex; flex-direction:column; gap:.5rem; }
+.cast h2, .key h2 { margin:0; font-size:1rem; font-weight:800; }
+.cast dl { margin:0; display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 19rem), 1fr)); gap:.45rem 1.4rem; }
+.cast dl div { display:flex; flex-direction:column; }
+.cast dt { font-weight:700; }
+.cast dd { margin:0; color:var(--muted); font-size:.88rem; line-height:1.35; }
+.compare .tech, .tech-detail p { font-size:.84rem; color:var(--muted); overflow-wrap:anywhere; }
+.tech-detail summary { cursor:pointer; color:var(--accent); min-height:2rem; display:flex; align-items:center; }
+.tech-detail p { margin:.2rem 0 0; }
 .tour-main { display:flex; flex-direction:column; gap:1.1rem; min-width:0; }
 .tour-main h1 { margin:0; font-size:clamp(1.6rem, 3.2vw, 2.15rem); font-weight:800; line-height:1.15; }
 .tour-main h1:focus { outline:none; }
@@ -288,31 +302,57 @@ tr.detail > td { background:var(--box); max-width:none; padding:.6rem .8rem .8re
 .ev-links a:hover { background:var(--accent-soft); }
 .ev-detail summary { cursor:pointer; color:var(--accent); min-height:2rem; display:flex; align-items:center; }
 
-/* The layer chain: frames by site, one row per link, each letting through the same or fewer. */
-.layers { --ly-ink:var(--ink); --ly-dim:var(--muted); --ly-ghost:var(--line); --ly-fact:var(--fact); --ly-policy:var(--policy); --ly-choice:var(--choice); margin:0; min-width:0; color:var(--ly-ink); }
-.layers.film { --ly-ink:var(--on-film); --ly-dim:var(--on-film-dim); --ly-ghost:var(--film-line); --ly-fact:var(--fact-film); --ly-policy:var(--policy-film); --ly-choice:var(--choice-film); }
-.ly-sites, .ly-cells { display:flex; gap:10px; }
-.ly-sites span { flex:1 1 0; min-width:0; font-size:.74rem; color:var(--ly-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; border-bottom:1px solid var(--ly-ghost); padding-bottom:.1rem; }
-.ly-rows { list-style:none; margin:.35rem 0 0; padding:0; display:flex; flex-direction:column; gap:.45rem; }
-.ly-row { display:flex; flex-direction:column; gap:.15rem; }
-.ly-head { display:flex; align-items:center; gap:.4rem; font-size:.86rem; line-height:1.25; }
-.ly-name { font-weight:700; min-width:0; overflow-wrap:anywhere; }
-.ly-count { margin-left:auto; color:var(--ly-dim); font-variant-numeric:tabular-nums; white-space:nowrap; font-size:.8rem; }
-.ly-detail { font-size:.78rem; color:var(--ly-dim); padding-left:calc(14px + .4rem); overflow-wrap:anywhere; }
+/* The layer chain: one sentence per row, and under it one box per study, in its site's column. */
+.layers { --ly-ink:var(--ink); --ly-dim:var(--muted); --ly-ghost:var(--line); --ly-fact:var(--fact); --ly-policy:var(--policy); --ly-choice:var(--choice); --ly-on-ink:var(--plate); --ly-result:var(--ink); --ly-choice-fill:color-mix(in srgb, var(--choice) 86%, black);
+  --box:2.75rem; --gap:4px; --ggap:10px; margin:0; min-width:0; color:var(--ly-ink); container-type:inline-size; }
+.layers.film { --ly-ink:var(--on-film); --ly-dim:var(--on-film-dim); --ly-ghost:var(--film-line); --ly-fact:var(--fact-film); --ly-policy:var(--policy-film); --ly-choice:var(--choice-film); --ly-on-ink:var(--film); --ly-result:var(--on-film); --ly-choice-fill:var(--choice-film); }
+.ly-sheet { display:grid; grid-template-columns:minmax(0,1fr); }
+.ly-sites, .ly-boxes { display:flex; gap:var(--ggap); }
+/* A site's column is as wide as its boxes, and wide enough for a one-box site's name to wrap in. */
+.ly-group, .ly-site { flex:none; width:max(calc(var(--n) * var(--box) + (var(--n) - 1) * var(--gap)), 3.6rem); }
+.ly-site { font-size:.7rem; line-height:1.15; color:var(--ly-dim); border-bottom:1px solid var(--ly-ghost); padding-bottom:.2rem; overflow-wrap:break-word; hyphens:auto; align-self:end; }
+.ly-rows { list-style:none; margin:.45rem 0 0; padding:0; display:flex; flex-direction:column; gap:.55rem; }
+.ly-row { display:flex; flex-direction:column; gap:.25rem; }
+.ly-say { display:flex; align-items:baseline; gap:.45rem; font-size:.86rem; line-height:1.3; }
+.ly-say .ly-mark { align-self:flex-start; margin-top:.15rem; }
+.ly-name { min-width:0; overflow-wrap:anywhere; }
+.ly-count { margin-left:auto; padding-left:.5rem; color:var(--ly-dim); font-variant-numeric:tabular-nums; white-space:nowrap; font-size:.78rem; }
 .ly-mark { width:14px; height:14px; flex:none; }
-.ly-mark.fact { fill:var(--ly-fact, var(--fact)); } .ly-mark.policy { fill:var(--ly-policy, var(--policy)); } .ly-mark.choice { fill:var(--ly-choice, var(--choice)); }
-.ly-group { flex:1 1 0; display:flex; gap:3px; min-width:0; }
-.ly-cell { flex:1 1 0; max-width:3.2rem; height:14px; border-radius:2px; border:1px dashed var(--ly-ghost); }
-.ly-row.fact .ly-cell.on { background:var(--ly-fact); border-color:var(--ly-fact); }
-.ly-row.policy .ly-cell.on { background:var(--ly-policy); border-color:var(--ly-policy); }
-.ly-row.choice .ly-cell.on { background:var(--ly-choice); border-color:var(--ly-choice); }
-/* A cut: the frame a label takes out, notched, with the stripes of a withheld sheet. */
-.ly-cell.cut { border:1px solid var(--ly-dim); background:repeating-linear-gradient(135deg, var(--ly-dim) 0 2px, transparent 2px 5px); clip-path:polygon(0 0, 35% 0, 50% 40%, 65% 0, 100% 0, 100% 100%, 0 100%); }
-.ly-row.none .ly-name { color:var(--ly-dim); }
-.ly-legend { display:flex; flex-wrap:wrap; gap:.3rem 1.1rem; list-style:none; margin:0; padding:0; font-size:.84rem; color:var(--muted); }
+.ly-mark.fact { fill:var(--ly-fact, var(--fact)); } .ly-mark.policy { fill:var(--ly-policy, var(--policy)); } .ly-mark.choice { fill:var(--ly-choice, var(--choice)); } .ly-mark.outcome { fill:var(--ly-result, var(--ink)); }
+.ly-mark.missing { fill:none; stroke-width:1.5; }
+.ly-mark.missing.fact { stroke:var(--ly-fact, var(--fact)); } .ly-mark.missing.policy { stroke:var(--ly-policy, var(--policy)); } .ly-mark.missing.choice { stroke:var(--ly-choice, var(--choice)); }
+.ly-row.missing .ly-name { color:var(--ly-dim); }
+.ly-group { display:flex; gap:var(--gap); }
+/* A study: its kind of image, filled in the row's color when the row includes it. */
+.ly-box { flex:none; width:var(--box); height:1.45rem; box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center; gap:2px; border-radius:3px; border:1px solid var(--ly-ghost); color:var(--ly-dim); font:700 .66rem/1 var(--sans); letter-spacing:.02em; }
+.ly-box.on { color:var(--ly-on-ink); }
+.ly-row.fact .ly-box.on { background:var(--ly-fact); border-color:var(--ly-fact); }
+.ly-row.policy .ly-box.on { background:var(--ly-policy); border-color:var(--ly-policy); }
+.ly-row.choice .ly-box.on { background:var(--ly-choice-fill, var(--ly-choice)); border-color:var(--ly-choice-fill, var(--ly-choice)); }
+.ly-row.outcome .ly-box.on { background:var(--ly-result); border-color:var(--ly-result); }
+.ly-lock { width:8px; height:10px; fill:currentColor; }
+/* The outcome: set off by a rule, in the ink of the page. */
+.ly-row.outcome { margin-top:.2rem; padding-top:.55rem; border-top:2px solid var(--ly-result); }
+.ly-row.outcome .ly-name { font-weight:700; }
+.ly-total { font-variant-numeric:tabular-nums; }
+@container (min-width:44rem) {
+  .ly-sheet { grid-template-columns:minmax(0,1fr) auto; column-gap:1.2rem; }
+  .ly-sites { grid-column:2; }
+  .ly-rows { grid-column:1 / -1; display:grid; grid-template-columns:subgrid; row-gap:.5rem; }
+  .ly-row { grid-column:1 / -1; display:grid; grid-template-columns:subgrid; align-items:center; }
+  .ly-row .ly-boxes { grid-column:2; }
+}
+.ly-pair { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 19rem), 1fr)); gap:.8rem 1.4rem; }
+.ly-pane-label { margin:0 0 .3rem; font-weight:800; font-size:.86rem; }
+.ly-legend { display:flex; flex-direction:column; gap:.3rem; font-size:.8rem; color:var(--muted); line-height:1.35; }
+.ly-legend ul { display:flex; flex-wrap:wrap; gap:.3rem 1rem; list-style:none; margin:0; padding:0; }
 .ly-legend li { display:inline-flex; align-items:center; gap:.35rem; }
+.ly-legend p { margin:0; max-width:60ch; }
+.ly-legend .layers { display:inline-flex; container-type:normal; }
 .ly-legend.film { color:var(--on-film-dim); }
-.ly-legend.film .ly-mark.fact { fill:var(--fact-film); } .ly-legend.film .ly-mark.policy { fill:var(--policy-film); } .ly-legend.film .ly-mark.choice { fill:var(--choice-film); }
+.ly-legend.film .layers { --ly-fact:var(--fact-film); --ly-ghost:var(--film-line); --ly-dim:var(--on-film-dim); --ly-on-ink:var(--film); }
+.ly-legend.film .ly-mark.fact { fill:var(--fact-film); } .ly-legend.film .ly-mark.policy { fill:var(--policy-film); } .ly-legend.film .ly-mark.choice { fill:var(--choice-film); } .ly-legend.film .ly-mark.outcome { fill:var(--on-film); }
+.ly-legend.film .ly-mark.missing.policy { fill:none; stroke:var(--policy-film); }
 
 @media (max-width:1100px) {
   .glance { grid-template-columns:minmax(0,1fr); }
