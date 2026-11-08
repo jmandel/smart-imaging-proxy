@@ -1,5 +1,5 @@
 // The activity log: one tile of rolled-up numbers per type of event, a timeline laned by party, one
-// row per session, and a table per type whose rows open the event in full. Filters live in the query
+// row per session, a session's studies each with its path through search, link, check and retrieval, and a table per type whose rows open the event in full. Filters live in the query
 // string, so Explore and the tours link here already filtered. With a session, everything on the page
 // is what that session's viewer may see. With none, it's the operator's view of every session.
 const W = EventWords;
@@ -85,9 +85,81 @@ function timelineHtml() {
     <svg width="${width}" height="${h}" viewBox="0 0 ${width} ${h}" role="img" aria-labelledby="tl-title tl-desc"><title id="tl-title">Events over time, by party, from ${esc(fmt(tl.from))} to ${esc(fmt(tl.to))}</title><desc id="tl-desc">${esc(desc)}</desc>${lanes}${axis}</svg>`;
 }
 
-// Sessions: one row each, who and with what, when, and its totals.
-function sessionTotals(r) {
-  return [plural(r.tokens, "token"), `${plural(r.searches, "search", "searches")}${r.searches ? ` (${plural(r.studies, "study", "studies")})` : ""}`, plural(r.links, "link"), plural(r.retrievals, "retrieval"), bytes(r.bytes), plural(r.problems, "denial or failure", "denials or failures")].join(", ");
+// A session, study by study: one row per study, its path across the four stages a study goes through,
+// and where that path ended. The same marks sum up each session in the list.
+const STAGES = [
+  { id: "search", name: "Search", party: "Imaging Server", type: "searches" },
+  { id: "link", name: "Link", party: "Imaging Server", type: "links" },
+  { id: "check", name: "Check", party: "Proxy", type: "checks" },
+  { id: "get", name: "Retrieve", party: "Proxy", type: "retrievals" },
+];
+// Where a study's path ended, in words that read after a count.
+const ENDS = { sent: () => "sent", refused: () => "refused", linked: () => "linked, not retrieved", found: n => `found, ${n === 1 ? "no link" : "no links"}`, withheld: () => "withheld", gone: () => "not found by the last search" };
+const END_ORDER = ["sent", "refused", "linked", "found", "withheld", "gone"];
+// A mark: happened, sent, refused, withheld, or no longer found.
+const dot = (kind, words) => `<svg class="fl-mark ${kind}" viewBox="0 0 16 16" aria-hidden="true">${
+  kind === "refused" ? `<circle cx="8" cy="8" r="6.5"/><path d="M5.3 5.3l5.4 5.4M10.7 5.3l-5.4 5.4"/>` : kind === "sent" ? `<circle cx="8" cy="8" r="6.5"/><path d="M4.8 8.3l2.2 2.1 4.2-4.6"/>` : `<circle cx="8" cy="8" r="${kind === "done" ? 5 : 5.5}"/>`}</svg>${words ? `<span class="fl-word">${esc(words)}</span>` : ""}`;
+function endsLine(ends) {
+  const n = {}; for (const e of ends) n[e] = (n[e] ?? 0) + 1;
+  return END_ORDER.filter(e => n[e]).map(e => `${num(n[e])} ${ENDS[e](n[e])}`).join(", ");
+}
+// What each outcome at a stage looks like, and says.
+const SAY = {
+  found: ["done", "found"], withheld: ["withheld", "withheld"], gone: ["gone", "not found"], unreached: ["gone", "not found"],
+  instant: ["done", "link checked"], cached: ["done", "cached yes"], asked: ["done", "policy said yes"], refused: ["refused", "policy said no"], "no answer": ["refused", "no answer"],
+};
+const times = n => n === 1 ? "" : n === 2 ? " twice" : ` ${n} times`;
+// One study's four stages, each its outcomes in order: marks side by side, words joined by "then".
+function stagesOf(r) {
+  const steps = (list, say) => list.length ? list.map(x => [...say(x)]) : null;
+  return [
+    steps(r.search, x => [SAY[x.is][0], `${SAY[x.is][1]}${times(x.n)}`]),
+    r.links ? [["done", plural(r.links, "link")]] : null,
+    steps(r.check, x => [SAY[x.is][0], `${SAY[x.is][1]}${times(x.n)}`]),
+    steps(r.get, x => x.is === "sent" ? ["sent", `sent${x.bytes ? ` ${bytes(x.bytes)}` : ""}${times(x.n)}`] : ["refused", `refused${times(x.n)}`]),
+  ];
+}
+function flowHtml() {
+  const f = summary.flow;
+  if (!f) return "";
+  const b = f.other, wrote = Object.entries(b.writes);
+  const other = [
+    b.tokens && `<a href="${esc(href({ type: "tokens" }))}">${esc(plural(b.tokens, "token"))} issued</a>`,
+    b.referrals && `<a href="${esc(href({ type: "referrals" }))}">${esc(plural(b.referrals, "referral"))} checked${b.refusedReferrals ? `, ${num(b.refusedReferrals)} not on the server` : ""}</a>`,
+    wrote.length && `<a href="${esc(href({ type: "writes" }))}">${esc(plural(wrote.reduce((t, [, n]) => t + n, 0), "policy change"))}</a>`,
+    b.refusedWrites && `<a href="${esc(href({ type: "writes" }))}">${esc(plural(b.refusedWrites, "write"))} refused</a>`,
+  ].filter(Boolean);
+  const studyRow = r => {
+    const st = stagesOf(r), reached = st.map((x, i) => x ? i : -1).filter(i => i >= 0);
+    const first = reached[0], last = reached.at(-1);
+    const cells = st.map((x, i) => {
+      const line = `${i > first && i <= last ? " in" : ""}${i >= first && i < last ? " out" : ""}`;
+      const words = x ? x.map(([, w]) => w).join(", then ") : "didn't happen", say = `${STAGES[i].name}: ${words}`;
+      return `<a class="fl-cell${line}${x ? "" : " none"}${x?.at(-1)[0] === "refused" ? " stopped" : ""}" href="${esc(href({ study: r.study, type: STAGES[i].type }))}" aria-label="${esc(say)}" title="${esc(say)}">${x ? `<span class="fl-marks">${x.map(([k]) => dot(k)).join("")}</span><span class="fl-word">${esc(words)}</span>` : `<span class="fl-none" aria-hidden="true"></span>`}</a>`;
+    }).join("");
+    return `<li class="fl-row end-${esc(r.end)}"><a class="fl-study" href="${esc(href({ study: r.study, type: null }))}"><b>${esc(r.title)}</b>${r.site ? `<span>${esc(r.site)}</span>` : ""}</a>${cells}</li>`;
+  };
+  // Each change of policy after the session began heads what happened after it.
+  const phased = f.phases.length > 1;
+  const rows = f.phases.map((p, i) => {
+    const head = p.writes.length
+      ? `<li class="fl-phase"><span>Then</span> ${p.writes.map(d => { const w = W.written(d); return `<b>${esc(w.what)}${Array.isArray(d.body?.sites) ? `, at ${esc(w.sites)}` : ""}</b>`; }).join("; ")}</li>`
+      : phased && i === 0 ? `<li class="fl-phase"><span>At first</span></li>` : "";
+    return head + (p.studies.length ? p.studies.map(studyRow).join("") : `<li class="fl-quiet">Nothing reached a study after this.</li>`);
+  }).join("");
+  const any = f.phases.some(p => p.studies.length);
+  return `<figcaption><span class="fl-title">How each study went</span><span class="fl-sum">${esc(f.ends.length ? `When the session ended, of ${plural(f.ends.length, "study", "studies")}: ${endsLine(f.ends)}` : "No study yet")}</span></figcaption>
+    ${other.length ? `<p class="fl-other"><span>Also in this session:</span> ${other.join("")}</p>` : ""}
+    ${any ? `<ol class="fl-grid" aria-label="Each study's path: search, link, check, retrieve">
+      <li class="fl-head" aria-hidden="true"><span></span>${STAGES.map(s => `<span><b>${esc(s.name)}</b>${esc(s.party)}</span>`).join("")}</li>${rows}</ol>
+    <p class="fl-key">${[["done", "happened"], ["sent", "sent to the app"], ["refused", "refused"], ["withheld", "withheld from the app"], ["gone", "not found by a later search"]].map(([k, w]) => `<span class="fl-key-item">${dot(k, w)}</span>`).join("")} <span class="fl-key-none"><span class="fl-none"></span>didn't happen</span> <span class="fl-key-line"><i></i>the study went on to the next stage</span> <span class="fl-key-line dotted"><i></i>it skipped a stage</span></p>` : ""}`;
+}
+
+// Sessions: one row each, who and with what, when, and a mark per study for where its path ended.
+function endsStrip(ends) {
+  if (!ends.length) return `<span class="s-ends none">No study</span>`;
+  const sorted = [...ends].sort((a, b) => END_ORDER.indexOf(a) - END_ORDER.indexOf(b));
+  return `<span class="s-ends" role="img" aria-label="${esc(endsLine(ends))}"><span class="s-marks">${sorted.map(e => dot(e === "linked" || e === "found" ? "done" : e)).join("")}</span><span>${esc(endsLine(ends))}</span></span>`;
 }
 function sessionsHtml() {
   const current = q().get("session");
@@ -97,7 +169,7 @@ function sessionsHtml() {
     return `<li><a class="session-row" href="${esc(href({ session: r.session === current ? null : r.session, study: null, trace: null }))}" ${r.session === current ? 'aria-current="true"' : ""}>
       <span class="s-who"><b>${esc(who || "No one named")}</b>${client ? `<span> with ${esc(client)}</span>` : ""}</span><span class="s-when">${esc(when(r.to))}</span>
       <span class="s-label">${esc(r.label)}${r.scope ? `, in scope ${esc(r.scope.slice(0, 6))}` : ""}</span>
-      <span class="s-totals">${esc(sessionTotals(r))}</span></a></li>`;
+      ${endsStrip(r.ends)}${r.problems ? `<span class="s-problems">${esc(plural(r.problems, "denial or failure", "denials or failures"))}</span>` : ""}</a></li>`;
   }).join("")}</ol>`;
 }
 
@@ -188,6 +260,7 @@ async function load() {
   $("#view-line").innerHTML = viewLine();
   $("#filters").innerHTML = filtersHtml();
   $("#tiles").innerHTML = tilesHtml();
+  $("#flow").innerHTML = flowHtml(); $("#flow").hidden = !summary.flow;
   $("#timeline").innerHTML = timelineHtml();
   $("#capped").hidden = !summary.capped;
   $("#sessions").innerHTML = sessionsHtml();

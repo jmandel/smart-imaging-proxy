@@ -246,6 +246,7 @@ async function activityText(b: ReturnType<typeof browser>, session: string) {
   // The rollups, whole and for each type, and with a study filter for the hidden one: none may count it.
   const summary = await b.call("GET", `/api/activity/summary?session=${encodeURIComponent(session)}`);
   expect(summary.status).toBe(200);
+  expect(summary.json().flow.phases.some((p: any) => p.studies.length)).toBe(true);
   texts.push(summary.text);
   for (const type of summary.json().types) texts.push((await b.call("GET", `/api/activity?session=${encodeURIComponent(session)}&type=${type}`)).text, (await b.call("GET", `/api/activity/summary?session=${encodeURIComponent(session)}&type=${type}`)).text);
   const hidden = await b.call("GET", `/api/activity/summary?session=${encodeURIComponent(session)}&study=${CONFIDENTIAL}`);

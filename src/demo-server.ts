@@ -12,7 +12,8 @@ import { createExplore } from "./explore";
 import { createTours, tourById } from "./tours";
 import { eventQueryOf } from "./trace-collector";
 import { EVENT_SUMMARY_MAX, type EventQuery } from "./trace-store";
-import { activityType, sessionRows, studiesNamed, tiles, timeline, ACTIVITY_TYPES } from "./activity";
+import { activityType, sessionRows, sessionStudies, studiesNamed, tiles, timeline, ACTIVITY_TYPES } from "./activity";
+import { reportTitle } from "./referrals";
 import { scopeOfSession, type EventRecord } from "./trace";
 import { forViewer, viewerKnows } from "./viewer-events";
 import { loadViewerKit, VIEWER_KIT_FILES } from "./vendor";
@@ -74,6 +75,12 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       }
       return q;
     }
+    /** A session study by study, with each study's title: the events name only studies its viewer may know. */
+    const flowOf = (events: EventRecord[]) => {
+      const f = sessionStudies(events, idOfUid);
+      const titled = (r: { study: string }) => { const st = world.catalog.allStudies().find(c => c.id === r.study); return { ...r, title: st ? reportTitle(st) : r.study, site: st?.site }; };
+      return { ...f, phases: f.phases.map(p => ({ ...p, studies: p.studies.map(titled) })) };
+    };
     /** What a session is, in words: Explore, a tour, a flow, or one of the protocol checks. */
     const sessionLabel = (session: string) => {
       const name = session.replace(/@[^@]*$/, "");
@@ -149,8 +156,8 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         return json({
           viewer: !!base.session, total: events.length, capped: read.length >= EVENT_SUMMARY_MAX,
           types: ACTIVITY_TYPES.map(t => t.id), tiles: tiles(events), timeline: timeline(events),
-          sessions: sessionRows(events, sessionLabel).slice(0, 200), studies: studiesNamed(events, idOfUid),
-          ...(base.session ? {} : { scopes: world.scope ? [] : stack.collector.store.eventFacets().scopes, traceUrl: world.urls.trace }),
+          sessions: sessionRows(events, sessionLabel, idOfUid).slice(0, 200), studies: studiesNamed(events, idOfUid),
+          ...(base.session ? { flow: flowOf(events) } : { scopes: world.scope ? [] : stack.collector.store.eventFacets().scopes, traceUrl: world.urls.trace }),
         });
       }
       if (p === "/api/activity/span" && req.method === "GET") {

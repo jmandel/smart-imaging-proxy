@@ -280,6 +280,62 @@ button.sheet:hover { background:var(--film-raised); }
 .tl-total, .tl-axis { fill:var(--on-film-dim); font-size:11px; font-variant-numeric:tabular-nums; }
 .tl-base { stroke:var(--film-line); stroke-width:1; }
 .tl-bar { fill:var(--on-film-dim); } .tl-bad { fill:var(--bad-film); }
+/* A session study by study: a row per study, its path drawn across the four stages, joined where it went on. */
+.flow { grid-column:1 / -1; margin:0; background:var(--plate); border:1px solid var(--line); border-radius:10px; padding:.8rem .9rem .7rem; display:flex; flex-direction:column; gap:.6rem; min-width:0; }
+.flow figcaption { display:flex; flex-wrap:wrap; align-items:baseline; gap:.2rem 1rem; }
+.fl-title { font-weight:800; font-size:1.05rem; }
+.fl-sum { color:var(--muted); font-size:.9rem; }
+.fl-other { margin:0; display:flex; flex-wrap:wrap; align-items:center; gap:.35rem; font-size:.86rem; color:var(--muted); }
+.fl-other a { display:inline-flex; align-items:center; gap:.3rem; padding:.2rem .6rem; min-height:2rem; border:1px solid var(--line); border-radius:999px; color:var(--ink); text-decoration:none; }
+.fl-other a:hover { border-color:var(--accent); }
+.fl-other .ly-mark { width:12px; height:12px; }
+.fl-grid { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; }
+.fl-head, .fl-row { display:grid; grid-template-columns:minmax(9rem,1.7fr) repeat(4, minmax(0,1fr)); align-items:start; }
+.fl-head { font-size:.78rem; color:var(--muted); padding-bottom:.3rem; border-bottom:1px solid var(--line); }
+.fl-head span { display:flex; flex-direction:column; align-items:center; text-align:center; }
+.fl-head b { color:var(--ink); font-size:.86rem; }
+.fl-row { border-bottom:1px solid var(--line); }
+.fl-phase { display:flex; flex-wrap:wrap; align-items:center; gap:.2rem .4rem; margin-top:.5rem; padding:.45rem .6rem; background:var(--accent-soft); border-radius:6px; font-size:.88rem; }
+.fl-phase:first-of-type { margin-top:.3rem; }
+.fl-phase > span { color:var(--muted); font-weight:700; }
+.fl-phase .ly-mark { width:12px; height:12px; }
+.fl-quiet { padding:.5rem 0; color:var(--muted); font-size:.86rem; }
+.fl-row:last-child { border-bottom:0; }
+.fl-study { display:flex; flex-direction:column; padding:.5rem .4rem .5rem 0; color:var(--ink); text-decoration:none; font-size:.88rem; line-height:1.3; min-width:0; overflow-wrap:anywhere; }
+.fl-study span { color:var(--muted); font-size:.8rem; }
+.fl-study:hover b { text-decoration:underline; }
+.fl-cell { position:relative; display:flex; flex-direction:column; align-items:center; gap:.15rem; padding:.55rem .15rem .5rem; color:var(--ink); text-decoration:none; text-align:center; font-size:.78rem; line-height:1.2; min-width:0; }
+.fl-cell:hover { background:var(--accent-soft); border-radius:6px; }
+/* The path: a line into the mark from the stage before, and out of it to the next. */
+.fl-cell.in::before, .fl-cell.out::after { content:""; position:absolute; top:calc(.55rem + 8px - 1px); height:2px; background:var(--accent); z-index:0; }
+.fl-cell.in::before { left:0; right:50%; } .fl-cell.out::after { left:50%; right:0; }
+.fl-cell.none.in::before, .fl-cell.none.out::after { background:none; border-top:2px dotted var(--muted); height:0; }
+.fl-cell > * { position:relative; z-index:1; }
+.fl-word { overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
+.fl-mark { width:16px; height:16px; flex:0 0 auto; overflow:visible; }
+.fl-mark circle { fill:var(--plate); stroke:var(--accent); stroke-width:2; }
+.fl-mark.done circle { fill:var(--accent); }
+.fl-mark.sent circle { fill:var(--good); stroke:var(--good); } .fl-mark.sent path { fill:none; stroke:var(--plate); stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+.fl-mark.refused circle { fill:var(--bad-soft); stroke:var(--bad); } .fl-mark.refused path { stroke:var(--bad); stroke-width:2; stroke-linecap:round; }
+.fl-mark.withheld circle { stroke:var(--warn); stroke-dasharray:3 2.2; }
+.fl-mark.gone circle { stroke:var(--muted); }
+.fl-cell.stopped .fl-word { color:var(--bad); font-weight:700; }
+.fl-marks { display:inline-flex; gap:3px; background:var(--plate); border-radius:999px; }
+.fl-cell:hover .fl-marks { background:var(--accent-soft); }
+.fl-none { display:block; width:16px; height:16px; background:radial-gradient(circle, var(--muted) 1.5px, transparent 2px); }
+.fl-key { margin:0; display:flex; flex-wrap:wrap; gap:.3rem .9rem; font-size:.8rem; color:var(--muted); }
+.fl-key-none { margin-left:.25rem; }
+.fl-key svg, .fl-key .fl-none { display:inline-block; vertical-align:-3px; }
+.fl-key-item { display:inline-flex; align-items:center; gap:.25rem; white-space:nowrap; }
+.fl-key-none { display:inline-flex; align-items:center; gap:.25rem; }
+.fl-key-line { display:inline-flex; align-items:center; gap:.35rem; }
+.fl-key-line i { display:inline-block; width:22px; height:0; border-top:2px solid var(--accent); }
+.fl-key-line.dotted i { border-top:2px dotted var(--muted); }
+.s-ends { grid-column:1 / -1; display:flex; flex-wrap:wrap; align-items:center; gap:.2rem .5rem; color:var(--ink); }
+.s-ends.none { color:var(--muted); }
+.s-marks { display:inline-flex; flex-wrap:wrap; gap:2px; }
+.s-marks .fl-mark { width:13px; height:13px; }
+.s-problems { grid-column:1 / -1; color:var(--bad); font-size:.84rem; }
 .log-body { display:grid; grid-template-columns:minmax(0,22rem) minmax(0,1fr); gap:1.25rem; align-items:start; }
 .session-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:.3rem; max-height:70rem; overflow:auto; }
 .session-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:0 .6rem; padding:.55rem .7rem; border-radius:8px; border:1px solid transparent; color:var(--ink); text-decoration:none; font-size:.88rem; line-height:1.35; }
@@ -287,7 +343,7 @@ button.sheet:hover { background:var(--film-raised); }
 .session-row[aria-current=true] { background:var(--plate); border:2px solid var(--accent); padding:calc(.55rem - 1px) calc(.7rem - 1px); }
 .s-who { font-size:.95rem; min-width:0; overflow-wrap:anywhere; } .s-who span { color:var(--muted); }
 .s-when { color:var(--muted); font-variant-numeric:tabular-nums; white-space:nowrap; }
-.s-label, .s-totals { grid-column:1 / -1; color:var(--muted); } .s-totals { color:var(--ink); font-variant-numeric:tabular-nums; }
+.s-label { grid-column:1 / -1; color:var(--muted); }
 .events { min-width:0; display:flex; flex-direction:column; gap:.5rem; }
 .events #more { align-self:flex-start; }
 .events #more[hidden] { display:none; }
@@ -389,6 +445,14 @@ tr.detail > td { background:var(--box); max-width:none; padding:.6rem .8rem .8re
   /* On a narrow screen the story in progress comes first, and the others after it. */
   .tour-list { order:2; }
   .session-list { max-height:24rem; }
+}
+@media (max-width:560px) {
+  /* A study's title takes its own line, and its four stages the full width under it. */
+  .fl-head, .fl-row { grid-template-columns:repeat(4, minmax(0,1fr)); }
+  .fl-head > span:first-child { display:none; }
+  .fl-study { grid-column:1 / -1; padding:.55rem 0 0; }
+  .fl-cell { padding-top:.35rem; }
+  .fl-cell.in::before, .fl-cell.out::after { top:calc(.35rem + 8px - 1px); }
 }
 @media (max-width:720px) {
   .topbar { padding:.4rem 1rem; gap:.25rem; flex-wrap:nowrap; }

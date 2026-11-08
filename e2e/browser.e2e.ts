@@ -368,6 +368,14 @@ describe("activity", () => {
       await page.locator(".session-row").first().click();
       await page.waitForURL(/session=/);
       await page.locator(".chosen li", { hasText: "Session:" }).waitFor();
+      // The session, study by study: a row per study with its four stages, and a stage lists that study's events of its type.
+      await page.locator(".fl-row").first().waitFor();
+      expect(await page.locator(".fl-row").first().locator(".fl-cell").count()).toBe(4);
+      expect(await page.locator(".fl-row").first().locator(".fl-cell").first().getAttribute("aria-label")).toMatch(/^Search: found/);
+      expect(await overflow(page)).toBe(0);
+      await page.locator(".fl-row").first().locator(".fl-cell").first().click();
+      await page.waitForURL(/study=.*type=searches|type=searches.*study=/);
+      await page.locator("#h-events", { hasText: /^Searches$/ }).waitFor();
       expect(await overflow(page)).toBe(0);
       expect(problems).toEqual([]);
     });
