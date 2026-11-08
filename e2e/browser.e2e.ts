@@ -280,9 +280,9 @@ describe("Tours", () => {
   test("the home page is the stories, each a card with the chain it ends on, the guardian's shows the locked study, and the revoke's shows before and after", async () => {
     const page = await open("/");
     expect(await page.locator(".story").count()).toBe(6);
-    expect(await page.locator(".story .layers").count()).toBe(7);
+    expect(await page.locator(".story .layers").count()).toBe(8);
     expect(await page.locator(".story", { hasText: "Sam, guardian of 15-year-old Riley" }).locator(".ly-box.locked").count()).toBeGreaterThan(0);
-    expect(await page.locator(".story", { hasText: "Josh stops sharing with Sam" }).locator(".ly-pane-label").allInnerTexts()).toEqual(["Before Josh stops sharing", "After Josh stops sharing"]);
+    expect(await page.locator(".story", { hasText: "Josh stops sharing with Sam" }).locator(".ly-pane-label").allInnerTexts()).toEqual(["Before Josh stops sharing", "After Josh stops sharing", "Once those study links expire"]);
     expect(await page.locator(".cast dt").allInnerTexts()).toContain("The imaging network");
     expect(await overflow(page)).toBe(0);
     expect(problems).toEqual([]);

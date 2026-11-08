@@ -340,8 +340,8 @@ const TOURS: Tour[] = [
   },
   {
     id: "revoke", title: "Josh stops sharing with Sam",
-    premise: () => "Josh has shared all his studies with Sam, and the app Sam uses sees them. Then Josh stops sharing, Sam's approval of the app goes with the share, and the app sees none. A study link the app already had keeps working for a few minutes, until it expires.",
-    summary: "Josh has shared all his studies with Sam, and the app Sam uses sees them. Then Josh stops sharing, and Sam's approval of the app goes with the share. The app's next search finds nothing. A study link the app already had keeps working for a few minutes, until it expires, and is then refused too.",
+    premise: () => "Josh has shared all his studies with Sam, and the app Sam uses sees them. Then Josh stops sharing, Sam's approval of the app goes with the share, and the app sees none. Study links the app already had keep working for a few minutes, until they expire.",
+    summary: "Josh has shared all his studies with Sam, and the app Sam uses sees them. Then Josh stops sharing, and Sam's approval of the app goes with the share. The app's next search finds nothing. Study links the app already had keep working for a few minutes, until they expire, and are then refused too.",
     detail: "A study link is a signed URL. Until it expires, the proxy answers from the URL alone. After that, it asks the Imaging Server, and current policy decides.",
     knows: joshStudies,
     viewer: { user: SAM, patient: JOSH_PATIENT, app: APP },
