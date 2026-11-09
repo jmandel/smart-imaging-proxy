@@ -19,6 +19,7 @@ cd "$(dirname "$0")/.."
 PROFILE=imaging-local NS=smart-imaging
 ORIGIN=${PUBLIC_ORIGIN:-https://imaging-local.argo.run}
 HOST=$(echo "$ORIGIN" | sed -E 's#^https://([^:/]+).*#\1#')
+PORT=$(echo "$ORIGIN" | sed -nE 's#^https://[^:/]+:([0-9]+).*#\1#p'); PORT=${PORT:-443}
 mkdir -p .run
 export KUBECONFIG="$PWD/.run/minikube.kubeconfig"
 K="kubectl --context $PROFILE -n $NS"
@@ -65,12 +66,17 @@ fi
 
 echo "== Browser test"
 RULES="MAP $HOST $IP"
+VIA=(--connect-to "$HOST:$PORT:$IP:443")
 if [ "${INGRESS_FORWARD:-}" ]; then
   kubectl --context "$PROFILE" -n ingress-nginx port-forward svc/ingress-nginx-controller 18443:443 >/dev/null &
   FORWARD=$!; trap 'kill $FORWARD 2>/dev/null || true' EXIT
-  for _ in $(seq 1 30); do curl -sk -o /dev/null --connect-to "$HOST:443:127.0.0.1:18443" "https://$HOST/" && break; read -rt 1 <> <(:) || true; done
   RULES="MAP $HOST:* 127.0.0.1:18443"
+  VIA=(--connect-to "$HOST:$PORT:127.0.0.1:18443")
 fi
+# The ingress can answer 503 for a moment after a rollout, so wait for the page itself.
+READY=
+for _ in $(seq 1 60); do curl -skf -m 3 -o /dev/null "${VIA[@]}" "$ORIGIN/" && { READY=1; break; }; read -rt 1 <> <(:) || true; done
+[ "$READY" ] || { echo "$ORIGIN never answered 200 through the ingress" >&2; exit 1; }
 [ "${SKIP_TEST:-}" ] || BASE_URL="$ORIGIN" HOST_RULES="$RULES" timeout -k 5 90 bun test --timeout 40000 ./e2e/client.e2e.ts
 
 [ "${INGRESS_FORWARD:-}" ] || grep -q "$IP.*$HOST" /etc/hosts 2>/dev/null || echo "Add to /etc/hosts: $IP $HOST"
