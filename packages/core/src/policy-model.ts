@@ -63,7 +63,7 @@ export interface Share { id?: string; from: Ref; with: Ref; patient: Ref; sites:
  * is every route `by` held when approving: `self`, guardian relationship ids and share ids. The approval
  * releases only through those routes, and goes when all of them have.
  */
-export interface AppApproval { id?: string; by: Ref; app: Ref; patient: Ref; sites?: string[]; basis?: string[]; }
+export interface AppApproval { id?: string; by: Ref; app: Ref; patient: Ref; sites?: string[]; studies?: string[]; basis?: string[]; }
 
 /** The levels the policy store holds, as a scope seed or a whole-document write gives them. Labels are the catalog's. */
 export interface PolicyDocument { relationships: Relationship[]; policies: OrgPolicy[]; shares: Share[]; approvals: AppApproval[]; }
@@ -157,11 +157,12 @@ export function validateShare(s: unknown, at: string, errors: string[]) {
 }
 export function validateApproval(a: unknown, at: string, errors: string[]) {
   if (!isObject(a)) { errors.push(`${at} must be an object`); return; }
-  unknownKeys(a, ["id", "by", "app", "patient", "sites", "basis"], at, errors);
+  unknownKeys(a, ["id", "by", "app", "patient", "sites", "studies", "basis"], at, errors);
   idOk(a, at, errors);
   if (a.basis !== undefined && !(Array.isArray(a.basis) && a.basis.length > 0 && a.basis.every(b => b === SELF || isRowId(b)) && new Set(a.basis).size === a.basis.length)) errors.push(`${at}.basis must list self, relationship ids or share ids, at least one, each once`);
   needRef(a, "by", "user", at, errors); needRef(a, "app", "app", at, errors); needRef(a, "patient", "patient", at, errors);
   if (a.sites !== undefined) sitesOk(a.sites, `${at}.sites`, errors);
+  if (a.studies !== undefined) sitesOk(a.studies, `${at}.studies`, errors);
 }
 function duplicates(items: unknown[], keyOf: (o: Record<string, unknown>) => string, describe: string, errors: string[]) {
   const seen = new Set<string>();
@@ -234,7 +235,7 @@ export const TEXT = {
     return `${name(p.service)} may see ${whose} ${what}${p.withholdSeries?.length ? `, with ${p.withholdSeries.length} series withheld` : ""}`;
   },
   share: (s: Share, name: Namer) => `${name(s.from)} shared ${sitesText(s.sites)} with ${name(s.with)}, as ${s.label}`,
-  approval: (a: AppApproval, name: Namer) => `${name(a.by)} approved ${name(a.app)} for ${sitesText(a.sites)}`,
+  approval: (a: AppApproval, name: Namer) => `${name(a.by)} approved ${name(a.app)} for ${sitesText(a.sites)}${a.studies?.length ? ` and ${a.studies.length} more ${a.studies.length === 1 ? "study" : "studies"}` : ""}`,
 };
 
 // Evaluation
@@ -422,7 +423,8 @@ export function createModel(ctx: ModelContext) {
       const r = userRoute(s, user, patient, study, t.fhirUser, approval.basis ?? []);
       if (!r.ok) return { release: "none", because: r.because, why: r.why, policies: [] };
       const because = [...r.because, { level: "choice" as const, ref: `approval:${approval.id ?? `${approval.by}:${approval.app}:${approval.patient}`}`, text: TEXT.approval(approval, name), ...(approval.basis ? { restsOn: approval.basis.map(b => basisText(s, b, user)).join(" and ") } : {}) }];
-      if (approval.sites && !approval.sites.includes(study.site ?? "")) return { release: "none", because, why: `${possessive(name(user))} approval of ${name(approval.app)} doesn't include ${study.site ?? "a study with no site"}`, policies: [] };
+      // A union, like every grant: a study is covered by its site or by being named.
+      if (approval.sites && !approval.sites.includes(study.site ?? "") && !approval.studies?.includes(study.id)) return { release: "none", because, why: `${possessive(name(user))} approval of ${name(approval.app)} doesn't include ${study.site ?? "a study with no site"}`, policies: [] };
       return { release: "study", because, why: r.why, policies: [] };
     }
     // A backend service: organization policy alone, with no choices, as the union of its policies.

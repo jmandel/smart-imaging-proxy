@@ -97,11 +97,11 @@ export function createWorld(o: { scope?: string; store: PolicyStore; clock: Demo
         return {
           records: a.records.map(r => ({ ...r, via: r.via === "share" ? "delegation" as const : r.via })),
           delegations: a.shares.map(s => ({ patient: idOf(s.patient, "patient")!, delegate: idOf(s.with, "user")!, relationship: s.label, sites: s.sites })),
-          apps: a.approvals.map(x => ({ client: idOf(x.app, "app")!, patient: idOf(x.patient, "patient")!, ...(x.sites ? { sites: x.sites } : {}) })),
+          apps: a.approvals.map(x => ({ client: idOf(x.app, "app")!, patient: idOf(x.patient, "patient")!, ...(x.sites ? { sites: x.sites } : {}), ...(x.studies ? { studies: x.studies } : {}) })),
         };
       },
       recordConsent: async c => {
-        const r = await directoryPolicy.approveApp({ by: ref("user", c.user), app: ref("app", c.client), patient: ref("patient", c.patient), fhirUser: c.fhirUser, ...(c.sites ? { sites: c.sites } : {}) });
+        const r = await directoryPolicy.approveApp({ by: ref("user", c.user), app: ref("app", c.client), patient: ref("patient", c.patient), fhirUser: c.fhirUser, ...(c.sites ? { sites: c.sites } : {}), ...(c.studies ? { studies: c.studies } : {}) });
         return r.ok ? {} : { refused: `${r.refusal.error} (${r.refusal.policy})` };
       },
       delegate: async d => {

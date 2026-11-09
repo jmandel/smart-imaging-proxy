@@ -195,6 +195,24 @@ describe("the demo client", () => {
     await page.getByText("None yet.").waitFor();
     await context.close();
   });
+  test("unticking one study approves the rest of that site", async () => {
+    const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    await page.goto(`${ORIGIN}/`);
+    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await page.locator("input[name=username][value=josh]").check();
+    await page.getByRole("button", { name: "Continue" }).click();
+    const row = page.locator(".site-row", { hasText: "Riverside Hospital" });
+    await row.locator("summary").click();
+    await row.getByRole("checkbox", { name: /CT ABDOMEN/ }).uncheck();
+    await shot(page, "consent-studies");
+    await page.getByRole("button", { name: "Approve" }).click();
+    await page.locator("#app").waitFor({ state: "visible" });
+    await page.locator(".study-button").first().waitFor();
+    expect(await page.locator(".study-button").count()).toBe(5);
+    expect(await page.locator(".study-button", { hasText: "CT ABDOMEN" }).count()).toBe(0);
+    await context.close();
+  });
   test("a patient with no studies gets a real empty result", async () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();

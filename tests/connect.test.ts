@@ -43,3 +43,29 @@ test("a tour leaves registrations alone, and removal ends them", async () => {
   expect((await authorize(w, c.id)).status).toBe(400);
 });
 test("the shared root has no registrations", async () => expect((await call("GET", "/api/clients")).status).toBe(409));
+
+test("named studies add to an approval's sites, and only what the person can see counts", async () => {
+  const w = stack.scopes.mint();
+  const by = "user:josh", app = "app:demo-client", patient = "patient:josh-example";
+  const all = w.catalog.allStudies().filter(st => st.patient === "josh-example");
+  const site = all.find(st => all.filter(x => x.site === st.site).length > 1)!.site!;
+  const [kept] = all.filter(st => st.site === site);
+  const r = await w.policy.approveApp({ by, app, patient, fhirUser: "Patient/josh-example", sites: [], studies: [kept!.id, "not-a-study"] });
+  expect(r.ok).toBe(true);
+  const stored = w.store.approvals().find(a => a.app === app)!;
+  expect(stored.studies).toEqual([kept!.id]);
+  expect(stored.sites).toEqual([]);
+  const released = await w.explain({ client: "demo-client", user: "josh", fhirUser: "Patient/josh-example", patient: "josh-example" }) as any;
+  const open = (released.studies ?? released.decisions ?? []).filter((d: any) => d.release !== "none" && d.released !== false).map((d: any) => d.id ?? d.study);
+  expect(open).toEqual([kept!.id]);
+});
+test("a store saved before named studies keeps working", () => {
+  const { Database } = require("bun:sqlite");
+  const { PolicyStore } = require("@smart-imaging-proxy/core");
+  const path = join(require("node:os").tmpdir(), `old-${Date.now()}.sqlite`);
+  const fresh = new PolicyStore({ mode: "file", path }); fresh.close();
+  const db = new Database(path); db.exec("ALTER TABLE approvals DROP COLUMN studies; PRAGMA user_version = 8"); db.close();
+  const up = new PolicyStore({ mode: "file", path });
+  expect(up.approvals()).toEqual([]);
+  up.close(); require("node:fs").rmSync(path, { force: true });
+});

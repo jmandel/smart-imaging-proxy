@@ -14,14 +14,14 @@ import type { PolicyWritten } from "./events";
 export const POLICY_API_PATH = "/policy/v2";
 
 /** One record a user holds, and how. */
-export interface HeldRecord { patient: string; via: "self" | "guardian" | "share"; relationship?: string; sites: string[]; }
+export interface HeldRecord { patient: string; via: "self" | "guardian" | "share"; relationship?: string; sites: string[]; studies?: { id: string; site?: string; description?: string; date?: string }[]; }
 /** What one signed-in user can see, and the choices they've made. */
 export interface Access { records: HeldRecord[]; shares: Share[]; approvals: AppApproval[]; }
 export interface ExplainQuery { client: string; user?: string; fhirUser?: string; patient: string; }
 /** A share as a person asks for it. Sites narrow to what the sharer may name. */
 export interface ShareRequest { from: string; with: string; patient: string; sites: string[]; label: string; }
 /** An app approval as a person gives it. `fhirUser` says who they are. With no `sites`, an earlier choice of sites stays. */
-export interface ApprovalRequest { by: string; app: string; patient: string; sites?: string[]; fhirUser?: string; }
+export interface ApprovalRequest { by: string; app: string; patient: string; sites?: string[]; studies?: string[]; fhirUser?: string; }
 /** Why a choice was refused: the organization policy, by id, or its type when no policy of it applies. */
 export interface Refusal { error: string; policy: string; }
 
@@ -165,7 +165,7 @@ function policyApiOf(deps: { policySecret: string; store: () => PolicyStore; che
       if (p === "/app-approvals" && m === "GET") return json({ revision: store.revision(), approvals: store.approvals() });
       if (p === "/app-approvals" && m === "POST") {
         const a = await body(req) as ApprovalRequest;
-        if (!isObject(a) || !["by", "app", "patient"].every(k => typeof a[k as keyof ApprovalRequest] === "string") || (a.sites !== undefined && !isSites(a.sites))) return bad("by, app and patient are required, and sites is a list of strings");
+        if (!isObject(a) || !["by", "app", "patient"].every(k => typeof a[k as keyof ApprovalRequest] === "string") || (a.sites !== undefined && !isSites(a.sites)) || (a.studies !== undefined && !isSites(a.studies))) return bad("by, app and patient are required, and sites is a list of strings");
         const user = idOf(a.by, "user"), patient = idOf(a.patient, "patient");
         if (!user || !patient || !idOf(a.app, "app")) return bad("by is user:id, app is app:id, and patient is patient:id");
         const held = model.access(store, user, a.fhirUser ?? "").records.find(r => r.patient === patient);
@@ -176,15 +176,18 @@ function policyApiOf(deps: { policySecret: string; store: () => PolicyStore; che
           : { error: `${name(a.by)} holds no record of ${name(a.patient)}: no one shared it, and they aren't the patient or a guardian`, policy: "sharing" });
         if (!check("policy", "user holds this patient's record", !why, { user: a.by, patient: a.patient, policy: why?.policy })) return refused(why!);
         const existing = store.approvals().find(x => x.app === a.app && x.by === a.by && x.patient === a.patient);
-        let sites = existing?.sites;
+        let sites = existing?.sites, studies = existing?.studies;
         if (a.sites) {
           // An approval can only narrow what the user holds, whatever the form submitted.
           const narrowed = a.sites.filter(x => held!.sites.includes(x));
           // Everything the patient has is the same as no limit, which then covers later sites too.
           sites = narrowed.length > 0 && narrowed.length === model.sitesFor(patient).length ? undefined : narrowed;
+          // Named studies add to the sites, and only ones this person can see count.
+          const named = (a.studies ?? []).filter(id => held!.studies?.some(st => st.id === id));
+          studies = sites && named.length ? named : undefined;
           check("policy", "app's sites stay within what the user holds", narrowed.length === a.sites.length, { requested: a.sites.join(", "), held: held!.sites.join(", "), approved: narrowed.join(", ") });
         }
-        const approval: AppApproval = { by: a.by, app: a.app, patient: a.patient, ...(sites ? { sites } : {}), basis: model.routesHeld(store, user, patient, a.fhirUser) };
+        const approval: AppApproval = { by: a.by, app: a.app, patient: a.patient, ...(sites ? { sites } : {}), ...(studies ? { studies } : {}), basis: model.routesHeld(store, user, patient, a.fhirUser) };
         const revision = store.putApproval(approval);
         return json({ revision, approval: store.approvalOf(approval) });
       }

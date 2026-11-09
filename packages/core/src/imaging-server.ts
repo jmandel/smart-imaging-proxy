@@ -179,8 +179,9 @@ export function createImagingServer(opts: ImagingServerOptions) {
       const patient = idOf(sh.patient, "patient")!;
       if (sh.with === me && !records.some(r => r.patient === patient) && model.sharingFor(of(patient), sh.from, sh.patient).policy) records.push({ patient, via: "share", relationship: sh.label, sites: visibleSites(of(patient), user, patient) });
     }
+    const listed = (patient: string) => model.visible(of(patient), me, ref("patient", patient), studiesOf(patient), fhirUser).map(st => ({ id: st.id, ...(st.site ? { site: st.site } : {}), ...(st.description ? { description: st.description } : {}), ...(st.date ? { date: st.date } : {}) }));
     return {
-      records,
+      records: records.map(r => ({ ...r, studies: listed(r.patient) })),
       shares: mine.shares.filter(sh => sh.from === me).map(sh => ({ ...sh, sites: sh.sites.filter(x => ownSites(of(idOf(sh.patient, "patient")!), user, idOf(sh.patient, "patient")!).includes(x)) })),
       approvals: mine.approvals.map(a => a.sites ? { ...a, sites: a.sites.filter(x => visibleSites(of(idOf(a.patient, "patient")!), user, idOf(a.patient, "patient")!).includes(x)) } : a),
     };

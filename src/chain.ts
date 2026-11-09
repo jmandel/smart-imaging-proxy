@@ -144,7 +144,7 @@ export function chainFor(input: { snap: Snapshot; studies: CatalogStudy[]; now: 
   const reach = new Set(model.visible(snap, U, P, all, fhirUser).map(s => s.id));
   rows.push({ level: "policy", kind: "app-rule", name: `Imaging network rule: anyone can share what they can see with an app that acts for them. What ${viewerName} can see:`, has: ids(s => reach.has(s.id)), builtIn: true });
   rows.push(approval
-    ? { level: "choice", kind: "approval", name: `${who} lets the ${app} act for ${actFor} on ${what(approval.sites)}`, has: atSites(approval.sites) }
+    ? { level: "choice", kind: "approval", name: `${who} lets the ${app} act for ${actFor} on ${what(approval.sites)}${approval.studies?.length ? `, and ${approval.studies.length === 1 ? "1 more study" : `${approval.studies.length} more studies`}` : ""}`, has: ids(s => !approval.sites || approval.sites.includes(s.site ?? "") || !!approval.studies?.includes(s.id)) }
     : { level: "choice", kind: "approval", name: `No approval from ${viewerName} lets the ${app} act for ${actFor} on ${isPatient ? whose(viewer.patient, viewer.user) : `${name}'s`} studies`, has: [], missing: true });
   const t = { client_id: viewer.app, sub: viewer.user, fhirUser, patient: viewer.patient };
   rows.push({ level: "outcome", kind: "outcome", name: "What the app can see", has: ids(s => model.evaluate(snap, t, s).release !== "none") });

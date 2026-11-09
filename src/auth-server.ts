@@ -71,16 +71,16 @@ export function roleOf(u: DemoUser, held: { patient: string; relationship?: stri
 }
 
 export interface AccessSummary {
-  records: { patient: string; via: "self" | "guardian" | "delegation"; relationship?: string; sites: string[] }[];
+  records: { patient: string; via: "self" | "guardian" | "delegation"; relationship?: string; sites: string[]; studies?: { id: string; site?: string; description?: string; date?: string }[] }[];
   delegations: { patient: string; delegate: string; relationship: string; sites: string[] }[];
-  apps: { client: string; patient: string; sites?: string[] }[];
+  apps: { client: string; patient: string; sites?: string[]; studies?: string[] }[];
 }
 /** The Imaging Server holds delegations and app authorizations, so policy stays in one place. */
 export interface Directory {
   relationships(): Promise<{ patient: string; delegate: string; relationship: string }[]>;
   access(user: string, fhirUser: string): Promise<AccessSummary>;
   /** Records an app approval, or says why organization policy refused it. */
-  recordConsent(c: { client: string; user: string; fhirUser: string; patient: string; sites?: string[] }): Promise<{ refused?: string }>;
+  recordConsent(c: { client: string; user: string; fhirUser: string; patient: string; sites?: string[]; studies?: string[] }): Promise<{ refused?: string }>;
   /** Records a share, or says why organization policy refused it, naming the policy. */
   delegate(d: { patient: string; grantedBy: string; fhirUser: string; delegate: string; relationship: string; sites: string[] }): Promise<{ refused?: string }>;
   revokeDelegation(grantedBy: string, delegate: string, patient?: string): Promise<void>;
@@ -107,6 +107,11 @@ code{background:var(--code);padding:.05em .3em;border-radius:4px;font:.86em ui-m
 fieldset{border:1px solid var(--line);border-radius:8px;margin:.9rem 0;padding:.55rem .85rem .7rem;min-width:0}
 legend{font-weight:600;padding:0 .3rem}
 fieldset label{display:block;padding:.2rem 0}
+.site-row{padding:.1rem 0}
+.site-row details{margin:0 0 .25rem 1.65rem;font-size:.92rem}
+.site-row summary{cursor:pointer;color:var(--accent);min-height:1.8rem}
+.site-row details label{padding:.3rem 0;overflow-wrap:anywhere}
+.site-row:has(> label input:not(:checked)) details{display:none}
 .legend{font-weight:600;margin:.6rem 0 .1rem}
 label.field{display:block;padding:.25rem 0;font-weight:600;font-size:.9rem}
 select{display:block;width:100%;font:inherit;font-weight:400;color:inherit;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:.4rem .5rem;margin-top:.15rem}
@@ -231,7 +236,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
   };
   const NOT_AN_ACCOUNT = "That isn't one of the demo accounts. Choose one below.";
   /** `field` keeps one person's site choices apart from another's on a form offering several. */
-  const siteBoxes = (sites: string[], checked: string[] = sites, field = "sites") => `<input type="hidden" name="${esc(field === "sites" ? "sites_shown" : `sites_shown@${field.slice("sites@".length)}`)}" value="1">${sites.map(s => `<label><input type="checkbox" name="${esc(field)}" value="${esc(s)}" ${checked.includes(s) ? "checked" : ""}> ${esc(s)}</label>`).join("")}`;
+  const siteBoxes = (sites: string[], checked: string[] = sites, field = "sites", below?: (site: string) => string) => `<input type="hidden" name="${esc(field === "sites" ? "sites_shown" : `sites_shown@${field.slice("sites@".length)}`)}" value="1">${sites.map(s => { const box = `<label><input type="checkbox" name="${esc(field)}" value="${esc(s)}" ${checked.includes(s) ? "checked" : ""}> ${esc(s)}</label>`; return below ? `<div class="site-row">${box}${below(s)}</div>` : box; }).join("")}`;
   const nameOf = (patient: string) => PATIENT_NAMES[patient] ?? patient;
   type Held = AccessSummary["records"][number];
   const whoseTag = (r: Held) => r.via === "self" ? `<span class="tag self">You</span>` : r.via === "guardian" ? `<span class="tag">${esc(((r.relationship ?? "guardian")[0] ?? "").toUpperCase() + (r.relationship ?? "guardian").slice(1))}</span>` : `<span class="tag">Shared with you</span>`;
@@ -247,9 +252,9 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
    * Each person's sites, with only the chosen person's on show. A browser without :has shows them all,
    * and each still says whose it is. Their fields are named for the person, so only the chosen person's count.
    */
-  const whoseSites = (records: Held[], legend: (r: Held) => string, checked: (r: Held) => string[], note: (r: Held) => string) => records.map(r => {
+  const whoseSites = (records: Held[], legend: (r: Held) => string, checked: (r: Held) => string[], note: (r: Held) => string, below?: (r: Held, field: string) => (site: string) => string) => records.map(r => {
     const several = records.length > 1, field = several ? `sites@${r.patient}` : "sites";
-    const body = r.sites.length ? `<fieldset data-sites-for="${esc(r.patient)}"><legend>${legend(r)}</legend>${siteBoxes(r.sites, checked(r), field)}<p class="note">${note(r)}</p></fieldset>` : `<p class="note" data-sites-for="${esc(r.patient)}">No imaging studies are on file for ${esc(nameOf(r.patient))}, so there's nothing to choose.</p>`;
+    const body = r.sites.length ? `<fieldset data-sites-for="${esc(r.patient)}"><legend>${legend(r)}</legend>${siteBoxes(r.sites, checked(r), field, below?.(r, several ? `study@${r.patient}` : "study"))}<p class="note">${note(r)}</p></fieldset>` : `<p class="note" data-sites-for="${esc(r.patient)}">No imaging studies are on file for ${esc(nameOf(r.patient))}, so there's nothing to choose.</p>`;
     return `${several ? `<style>form:has(input[name=patient][value="${esc(r.patient)}"]:not(:checked)) [data-sites-for="${esc(r.patient)}"]{display:none}</style>` : ""}${body}`;
   }).join("");
   const chosenSites = (f: URLSearchParams, patient: string) => ({ shown: !!(f.get("sites_shown") || f.get(`sites_shown@${patient}`)), sites: [...f.getAll("sites"), ...f.getAll(`sites@${patient}`)] });
@@ -301,7 +306,12 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     if (!access.records.length) return page("No records", `<h1>No records are shared with you</h1><p>${esc(user.name)} is signed in, but no patient has delegated access to this account, so there's nothing to share with ${esc(client.name)}.</p><form method="post" action="${esc(action)}"><div class="buttons"><button name="decision" value="deny">Return to the app</button></div></form>`, 200);
     const selected = access.records.find(r => r.patient === t.txn.patient_hint)?.patient ?? access.records[0]!.patient;
     const grantFor = (r: Held) => access.apps.find(a => a.client === t.txn.client_id && a.patient === r.patient);
-    const sites = whoseSites(access.records, r => `Sites this app can see in ${esc(nameOf(r.patient))}'s records`, r => grantFor(r)?.sites ?? r.sites, r => `${r.via === "delegation" ? "You can share only what was shared with you. " : ""}SMART scopes can't express this choice. It's kept as Imaging Server policy, and the token's scope doesn't change.`);
+    const sites = whoseSites(access.records, r => `Sites this app can see in ${esc(nameOf(r.patient))}'s records`, r => { const g = grantFor(r); return g?.sites ? [...new Set([...g.sites, ...(r.studies ?? []).filter(st => g.studies?.includes(st.id)).map(st => st.site ?? "")])] : r.sites; }, r => `${r.via === "delegation" ? "You can share only what was shared with you. " : ""}SMART scopes can't express this choice. It's kept as Imaging Server policy, and the token's scope doesn't change.`, (r, field) => site => {
+      const here = (r.studies ?? []).filter(st => st.site === site), g = grantFor(r);
+      if (!here.length) return "";
+      const when = (d?: string) => d && /^\d{8}$/.test(d) ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}` : d;
+      return `<input type="hidden" name="${esc(field)}_listed" value="${esc(site)}"><details><summary>${here.length === 1 ? "1 study" : `${here.length} studies`}</summary>${here.map(st => `<label><input type="checkbox" name="${esc(field)}" value="${esc(st.id)}" ${!g?.sites || g.sites.includes(site) || g.studies?.includes(st.id) ? "checked" : ""}> ${esc([when(st.date), st.description ?? st.id].filter(Boolean).join(" · "))}</label>`).join("")}</details>`;
+    });
     return page("Authorize app", `<h1>Let ${esc(client.name)} access imaging records?</h1>
       <p class="who">Signed in as ${esc(user.name)} (<code>${esc(user.fhirUser)}</code>).</p>
       ${opts.registeredClient?.(t.txn.client_id) ? `<p class="who">Approving sends you to <strong>${esc(new URL(t.txn.redirect_uri).host)}</strong>. This app was registered by someone using this sandbox.</p>` : ""}
@@ -330,7 +340,14 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     const record = access.records.find(r => r.patient === (f.get("patient") ?? access.records[0]?.patient));
     if (!check("authorization-server", "user has access to the chosen patient", !!record, { user: txn.user, patient: f.get("patient"), via: record?.via })) return deny();
     const chosen = chosenSites(f, record!.patient);
-    const approved = await opts.directory.recordConsent({ client: txn.client_id, user: txn.user!, fhirUser: user.fhirUser, patient: record!.patient, ...(chosen.shown ? { sites: chosen.sites } : {}) });
+    // A site with every study ticked is approved as the site, so it covers later studies there. Otherwise only the ticked studies are.
+    const ticked = new Set([...f.getAll("study"), ...f.getAll(`study@${record!.patient}`)]), listed = new Set([...f.getAll("study_listed"), ...f.getAll(`study@${record!.patient}_listed`)]), approvedSites: string[] = [], approvedStudies: string[] = [];
+    for (const site of chosen.sites) {
+      const here = (record!.studies ?? []).filter(st => st.site === site), kept = here.filter(st => ticked.has(st.id));
+      // A client that never showed the studies chose the whole site.
+      if (!listed.has(site) || kept.length === here.length) approvedSites.push(site); else approvedStudies.push(...kept.map(st => st.id));
+    }
+    const approved = await opts.directory.recordConsent({ client: txn.client_id, user: txn.user!, fhirUser: user.fhirUser, patient: record!.patient, ...(chosen.shown ? { sites: approvedSites, ...(approvedStudies.length ? { studies: approvedStudies } : {}) } : {}) });
     if (!check("authorization-server", "the Imaging Server recorded the approval", !approved.refused, { refused: approved.refused })) return deny();
     const grant: Grant = { client_id: txn.client_id, scope: txn.scope, sub: txn.user!, fhirUser: user.fhirUser };
     if (/(^| )launch\/patient( |$)/.test(txn.scope)) grant.patient = record!.patient;

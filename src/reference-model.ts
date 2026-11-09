@@ -90,7 +90,7 @@ export function referenceModel(w: RefWorld) {
   function appReach(user: string, app: string, patient: string): RefStudy[] {
     const a = approvalOf(user, app, patient);
     if (!a) return [];
-    return userReach(user, patient, a.basis ?? []).filter(s => !a.sites || a.sites.includes(s.site ?? ""));
+    return userReach(user, patient, a.basis ?? []).filter(s => !a.sites || a.sites.includes(s.site ?? "") || !!a.studies?.includes(s.id));
   }
   /** Whether a user holds any record of a patient: as the patient, a covered guardian, or a share whose sharer a sharing policy lets share through its route. */
   const holds = (user: string, patient: string) => isPatient(user, patient) || (!!guardianRow(user, patient) && !!band(patient))

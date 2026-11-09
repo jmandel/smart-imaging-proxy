@@ -22,7 +22,7 @@ export type TokenKind = "access" | "refresh";
 /** `family` is shared by every token descended from one refresh token. It isn't derived from any token. */
 export interface TokenRecord { client_id: string; scope: string; patient?: string; sub?: string; fhirUser?: string; family?: string; exp?: number; revoked: boolean; }
 
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 export type Durability = "off" | "normal" | "full";
 const SYNCHRONOUS: Record<Durability, number> = { off: 0, normal: 1, full: 2 };
 export const DURABILITIES = Object.keys(SYNCHRONOUS) as Durability[];
@@ -53,7 +53,7 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS shares (id TEXT PRIMARY KEY, patient TEXT NOT NULL, with_user TEXT NOT NULL, from_user TEXT NOT NULL, sites TEXT NOT NULL, label TEXT NOT NULL, basis TEXT NOT NULL, UNIQUE (patient, from_user, with_user));
   CREATE INDEX IF NOT EXISTS shares_by_with ON shares (with_user);
   CREATE INDEX IF NOT EXISTS shares_by_from ON shares (from_user);
-  CREATE TABLE IF NOT EXISTS approvals (id TEXT PRIMARY KEY, app TEXT NOT NULL, by_user TEXT NOT NULL, patient TEXT NOT NULL, sites TEXT, basis TEXT NOT NULL, UNIQUE (app, by_user, patient));
+  CREATE TABLE IF NOT EXISTS approvals (id TEXT PRIMARY KEY, app TEXT NOT NULL, by_user TEXT NOT NULL, patient TEXT NOT NULL, sites TEXT, studies TEXT, basis TEXT NOT NULL, UNIQUE (app, by_user, patient));
   CREATE INDEX IF NOT EXISTS approvals_by_patient ON approvals (patient);
   CREATE INDEX IF NOT EXISTS approvals_by_user ON approvals (by_user);
   CREATE TABLE IF NOT EXISTS used_ids (id TEXT PRIMARY KEY);
@@ -100,6 +100,8 @@ export class PolicyStore {
     this.db.exec("PRAGMA busy_timeout = 2000");
     if (config.mode === "file") this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec(`PRAGMA synchronous = ${SYNCHRONOUS[this.durability]}`);
+    // Version 9 only adds a column, so a world saved at 8 keeps working.
+    if (this.schemaVersion() === 8) this.db.exec("ALTER TABLE approvals ADD COLUMN studies TEXT; PRAGMA user_version = 9");
     const found = this.schemaVersion();
     if (found !== 0 && found !== SCHEMA_VERSION) {
       this.db.close();
@@ -324,8 +326,8 @@ export class PolicyStore {
     });
   }
   private approvalRows(where = "1", ...args: string[]): AppApproval[] {
-    return (this.db.query(`SELECT id, app, by_user, patient, sites, basis FROM approvals WHERE ${where} ORDER BY rowid`).all(...args) as any[])
-      .map(a => ({ id: a.id, by: a.by_user, app: a.app, patient: a.patient, ...(a.sites === null ? {} : { sites: JSON.parse(a.sites) }), basis: JSON.parse(a.basis) }));
+    return (this.db.query(`SELECT id, app, by_user, patient, sites, studies, basis FROM approvals WHERE ${where} ORDER BY rowid`).all(...args) as any[])
+      .map(a => ({ id: a.id, by: a.by_user, app: a.app, patient: a.patient, ...(a.sites === null ? {} : { sites: JSON.parse(a.sites) }), ...(a.studies === null ? {} : { studies: JSON.parse(a.studies) }), basis: JSON.parse(a.basis) }));
   }
   approvals(): AppApproval[] { return this.approvalRows(); }
   /** Every route a user holds to a patient now, from the rows alone: being the patient, guardian relationships, and shares with them. */
@@ -359,9 +361,9 @@ export class PolicyStore {
     const held = byId ?? byKey;
     const basis = a.basis ?? this.approvalBasis(a);
     if (a.basis !== undefined && !(keeping && held && JSON.stringify(held.basis) === JSON.stringify(a.basis))) this.checkApprovalBasis(a, basis);
-    if (held) { this.db.run("UPDATE approvals SET sites = ?, basis = ? WHERE id = ?", [a.sites ? JSON.stringify(a.sites) : null, JSON.stringify(basis), held.id!]); return; }
+    if (held) { this.db.run("UPDATE approvals SET sites = ?, studies = ?, basis = ? WHERE id = ?", [a.sites ? JSON.stringify(a.sites) : null, a.studies ? JSON.stringify(a.studies) : null, JSON.stringify(basis), held.id!]); return; }
     const id = a.id ? (this.claimId(a.id), a.id) : this.newId("approval");
-    this.db.run("INSERT INTO approvals (id, app, by_user, patient, sites, basis) VALUES (?, ?, ?, ?, ?, ?)", [id, a.app, a.by, a.patient, a.sites ? JSON.stringify(a.sites) : null, JSON.stringify(basis)]);
+    this.db.run("INSERT INTO approvals (id, app, by_user, patient, sites, studies, basis) VALUES (?, ?, ?, ?, ?, ?, ?)", [id, a.app, a.by, a.patient, a.sites ? JSON.stringify(a.sites) : null, a.studies ? JSON.stringify(a.studies) : null, JSON.stringify(basis)]);
   }
   /** Puts an app approval, resting on every route its user holds now unless a basis is given. */
   putApproval(a: AppApproval): Revision { checked([a], "approval", validateApproval); return this.patientWrite(a.patient, () => { this.upsertApproval(a); })!; }
