@@ -55,7 +55,11 @@ function initConfigure() {
   $("#servers-reset").addEventListener("click", () => { store(SERVERS_KEY, null); store(CHOICE_KEY, null); box.value = "[]"; renderServers(); status.textContent = "Only the built-in servers remain."; });
 }
 const STORE = `smart-imaging-client:${BASE}`;
-const WADO_ACCEPT = 'multipart/related; type="application/dicom"; transfer-syntax=*';
+// As stored, since the decoder reads every standard syntax, with uncompressed as the fallback the spec makes universal.
+const WADO_ACCEPT = 'multipart/related; type="application/dicom"; transfer-syntax=*, multipart/related; type="application/dicom"; transfer-syntax=1.2.840.10008.1.2.1; q=0.5';
+const IMAGING = "smart-imaging-access", APP_LAUNCH = "http://fhir.org/argonaut/smart-imaging/capabilities/app-launch";
+/** How long the app will wait, in all, on servers that say to retry. */
+const MOST_RETRIES = 5, LONGEST_WAIT_SECONDS = 30;
 const KIT = "/vendor/viewer-kit/";
 /** Non-image series a viewer has no picture for. */
 const NOT_IMAGES = new Set(["SR", "PR", "KO", "SEG", "RTSTRUCT", "DOC"]);
@@ -162,15 +166,35 @@ const preview = text => {
 const pretty = text => { try { return JSON.stringify(JSON.parse(text), null, 1); } catch { return text; } };
 const requestLine = (method, url, headers) => [`${method} ${preview(url)}`, ...Object.entries(headers ?? {}).map(([k, v]) => `${k}: ${/^authorization$/i.test(k) ? "Bearer …" : v}`)].join("\n");
 
+const sleep = (ms, signal) => new Promise((done, fail) => { const t = setTimeout(done, ms); signal?.addEventListener("abort", () => { clearTimeout(t); fail(new DOMException("aborted", "AbortError")); }, { once: true }); });
+/** A request, repeated while the server answers 503 with Retry-After: the spec's way of saying results are being assembled. */
+async function patientFetch(url, init, waiting = () => {}) {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, init), after = Number(res.headers.get("retry-after"));
+    if (res.status !== 503 || !res.headers.has("retry-after") || !Number.isFinite(after) || attempt >= MOST_RETRIES) return res;
+    await res.body?.cancel();
+    const seconds = Math.min(after, LONGEST_WAIT_SECONDS);
+    waiting(seconds);
+    await sleep(seconds * 1000, init?.signal);
+  }
+}
+
 /** The same GET from a terminal. The token stays a variable, so the panel never holds it. */
 const curlOf = (url, headers) => `curl "${url}" \\\n${Object.entries(headers ?? {}).map(([k, v]) => `  -H "${k}: ${/^authorization$/i.test(k) ? "Bearer $TOKEN" : v.replace(/"/g, '\\"')}"`).join(" \\\n")}`;
 
+/** Where discovery says imaging is, by capability: on this FHIR server, or an associated one, if it offers App Launch. */
+function imagingOf(config, iss) {
+  const offers = caps => caps?.includes(IMAGING) && caps.includes(APP_LAUNCH);
+  if (offers(config.capabilities)) return { url: iss, unified: true };
+  const associated = (config.associated_endpoints ?? []).find(e => offers(e.capabilities));
+  return associated && { url: associated.url.replace(/\/$/, ""), unified: false };
+}
 /** One request, recorded as a step, with what the app took from the answer. A failed status is thrown. */
 async function traced(step, url, init = {}, learned = () => ({})) {
   const started = performance.now(), method = init.method ?? "GET";
   const request = requestLine(method, url, init.headers) + (init.body ? `\n\n${preview(init.body)}` : "");
   let res, text;
-  try { res = await fetch(url, init); text = await res.text(); }
+  try { res = await patientFetch(url, init, seconds => addStep({ ...step, request, status: "503", response: `HTTP 503\nretry-after: ${seconds}\n\nThe server is assembling this. Waiting ${seconds} s, then asking again.` })); text = await res.text(); }
   catch (e) { addStep({ ...step, request, failed: true, response: String(e) }); throw e; }
   let found = {};
   if (res.ok) { try { found = learned(JSON.parse(text)); } catch {} }
@@ -184,8 +208,8 @@ const b64url = bytes => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").
 const random = () => b64url(crypto.getRandomValues(new Uint8Array(32)));
 async function discover(iss) {
   return traced({ id: "discover", kind: "discover", title: "Discover the servers" }, `${iss}/.well-known/smart-configuration`, {}, c => {
-    const imaging = (c.associated_endpoints ?? []).find(e => e.capabilities?.includes("smart-imaging-access"));
-    return { "Sign-in": new URL(c.authorization_endpoint).host, "Imaging server": imaging ? new URL(imaging.url).host : "None advertised" };
+    const found = imagingOf(c, iss);
+    return { "Sign-in": new URL(c.authorization_endpoint).host, "Imaging server": found ? `${new URL(found.url).host}${found.unified ? " (this server)" : ""}` : "None advertised" };
   });
 }
 async function connect() {
@@ -211,6 +235,8 @@ async function connect() {
     const iss = server.own ? `${location.origin}${BASE}/fhir` : server.iss, clientId = server.own ? CLIENT_ID : server.clientId, scope = server.scope ?? SCOPE;
     const config = await discover(iss);
     if (config.code_challenge_methods_supported && !config.code_challenge_methods_supported.includes("S256")) throw new Error("This server doesn't offer PKCE with S256.");
+    // Nobody signs in to a server this app can't use.
+    if (!imagingOf(config, iss) && !server.imaging) throw new Error("This server doesn't advertise SMART Imaging with App Launch. Add \"imaging\" to its configuration if you know where it is.");
     const verifier = random(), state = random();
     const challenge = b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
     save({ pending: { verifier, state, config, iss, clientId, imaging: server.imaging, own: !!server.own, label: server.label } });
@@ -231,8 +257,8 @@ async function finishSignIn(params) {
   if (params.get("error")) { addStep({ id: "authorize", kind: "authorize", title: "Sign in and approve the app", failed: true, response: params.get("error") }); throw new Error(`The sign-in ended with: ${params.get("error")}`); }
   const body = new URLSearchParams({ grant_type: "authorization_code", code: params.get("code"), redirect_uri: REDIRECT, client_id: pending.clientId, code_verifier: pending.verifier }).toString();
   const token = await traced({ id: "token", kind: "token", title: "Exchange the code for a token" }, pending.config.token_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body }, t => ({ Granted: t.scope, "Token lasts": `${Math.round(t.expires_in / 60)} min` }));
-  const imaging = (pending.config.associated_endpoints ?? []).find(e => e.capabilities?.includes("smart-imaging-access"))?.url ?? pending.imaging;
-  if (!imaging) throw new Error("This server doesn't name an imaging server. Add \"imaging\" to its configuration.");
+  const imaging = imagingOf(pending.config, pending.iss)?.url ?? pending.imaging;
+  if (!imaging) throw new Error("This server doesn't advertise SMART Imaging with App Launch. Add \"imaging\" to its configuration if you know where it is.");
   if (!token.patient) throw new Error("The token response didn't name a patient.");
   const session = { token: token.access_token, patient: token.patient, imaging, iss: pending.iss, own: pending.own, label: pending.label };
   save({ session });
@@ -272,29 +298,59 @@ async function loadClinical(s) {
     } catch (e) { group.innerHTML = `<h3>${label}</h3><p class="none">${e.status === 404 ? "This server doesn't offer this search." : esc(e.message)}</p>`; }
   }));
 }
-/** An ImagingStudy's Endpoint, contained or included, by full URL or relative reference. */
-function endpointOf(study, entries) {
-  const ref = study.endpoint?.[0]?.reference;
+const connectionOf = e => e?.connectionType?.code ?? e?.connectionType?.coding?.[0]?.code;
+/** An Endpoint by reference: contained, a response-local urn:uuid, or a full or relative URL in the Bundle. */
+function resolveEndpoint(owner, ref, entries) {
   if (!ref) return undefined;
-  if (ref.startsWith("#")) return study.contained?.find(c => c.id === ref.slice(1));
-  const included = entries.filter(e => e.resource.resourceType === "Endpoint");
-  return (included.find(e => e.fullUrl === ref) ?? included.find(e => e.resource.id === ref.split("/").pop()))?.resource;
+  if (ref.startsWith("#")) return owner.contained?.find(c => c.id === ref.slice(1));
+  const endpoints = entries.filter(e => e.resource.resourceType === "Endpoint");
+  const relative = /^Endpoint\/[^/]+$/.test(ref);
+  return (endpoints.find(e => e.fullUrl === ref) ?? (relative ? endpoints.find(e => e.fullUrl?.endsWith(`/${ref}`) || e.resource.id === ref.split("/")[1]) : undefined))?.resource;
+}
+/** The WADO-RS address among some references. The token only ever goes to one of these, never to a QIDO-RS or viewer link. */
+function wadoAddress(owner, refs, entries) {
+  for (const r of refs ?? []) {
+    const e = resolveEndpoint(owner, r.reference, entries);
+    if (e?.address && connectionOf(e) === "dicom-wado-rs") return e.address.replace(/\/$/, "");
+  }
+  return undefined;
+}
+/** Every page of a search, each from the same server, and whether the server says something is missing. */
+async function searchAll(s) {
+  const first = `${s.imaging}/ImagingStudy?patient=${encodeURIComponent(s.patient)}&_include=ImagingStudy:endpoint`, origin = new URL(first).origin;
+  const entries = [];
+  let url = first, page = 0, incomplete = false;
+  const seen = new Set();
+  while (url && !seen.has(url) && page < 200) {
+    seen.add(url); page++;
+    const bundle = await traced({ id: page === 1 ? "imaging" : `imaging-${page}`, kind: "imaging", title: page === 1 ? "Search imaging studies" : `Search imaging studies, page ${page}` }, url, { headers: fhirHeaders(s.token) }, b => { const of = t => (b.entry ?? []).filter(e => e.resource?.resourceType === t).length; return page === 1 ? { Studies: of("ImagingStudy"), Endpoints: of("Endpoint") } : { [`Page ${page}`]: of("ImagingStudy") }; });
+    for (const e of bundle.entry ?? []) {
+      if (e.resource?.resourceType === "OperationOutcome" && e.resource.issue?.some(i => i.code === "incomplete")) incomplete = true;
+      else entries.push(e);
+    }
+    const next = bundle.link?.find(l => l.relation === "next")?.url;
+    // A next link is followed with the token, so it has to stay on the imaging server.
+    url = next && new URL(next, first).origin === origin ? new URL(next, first).toString() : undefined;
+  }
+  return { entries, incomplete };
 }
 async function loadStudies(s) {
   const el = $("#studies");
-  let bundle;
-  try { bundle = await traced({ id: "imaging", kind: "imaging", title: "Search imaging studies" }, `${s.imaging}/ImagingStudy?patient=Patient/${s.patient}&_include=ImagingStudy:endpoint&_count=100`, { headers: fhirHeaders(s.token) }, b => { const of = t => (b.entry ?? []).filter(e => e.resource.resourceType === t).length; return { Studies: of("ImagingStudy"), Endpoints: of("Endpoint") }; }); }
+  let entries, incomplete;
+  try { ({ entries, incomplete } = await searchAll(s)); }
   catch (e) { el.innerHTML = `<p class="error">${esc(e.message)}</p>`; throw e; }
-  const entries = bundle.entry ?? [];
-  const studies = entries.filter(e => e.resource.resourceType === "ImagingStudy").map(e => e.resource).map(r => ({
+  const studies = entries.filter(e => e.resource?.resourceType === "ImagingStudy").map(e => e.resource).map(r => ({
     ...r,
-    uid: r.identifier.find(i => i.system === "urn:dicom:uid")?.value.replace(/^urn:oid:/, "") ?? r.identifier[0].value.replace(/^urn:oid:/, ""),
-    address: endpointOf(r, entries)?.address,
+    uid: (r.identifier ?? []).find(i => i.system === "urn:dicom:uid")?.value?.replace(/^urn:oid:/, ""),
+    address: r.status === "available" || r.status === undefined ? wadoAddress(r, r.endpoint, entries) : undefined,
+    series: (r.series ?? []).map(x => ({ ...x, address: wadoAddress(r, x.endpoint, entries) })),
   })).sort((a, b) => String(b.started ?? "").localeCompare(String(a.started ?? "")));
-  if (!studies.length) { el.innerHTML = `<p class="note">This patient has no studies this app can see.</p>`; $("#stage-note").textContent = "No studies to show."; return; }
-  el.innerHTML = `<ul class="study-list-client">${studies.map((st, i) => `<li><button type="button" class="study-button" data-i="${i}" aria-pressed="false" ${st.address ? "" : "disabled"}><strong>${esc(st.description ?? st.modality?.[0]?.code ?? "Study")}</strong><span>${esc([studyDate(st.started), (st.modality ?? []).map(m => m.code).join(", "), st.address ? plural(st.numberOfInstances ?? 0, "image") : "Images not available to this app"].filter(Boolean).join(" · "))}</span></button></li>`).join("")}</ul>`;
+  const warning = incomplete ? `<p class="note">The server says these results are incomplete. Some sources haven't answered yet.</p>` : "";
+  if (!studies.length) { el.innerHTML = `${warning}<p class="note">This patient has no studies this app can see.</p>`; $("#stage-note").textContent = "No studies to show."; return; }
+  const usable = st => st.address && st.uid;
+  el.innerHTML = `${warning}<ul class="study-list-client">${studies.map((st, i) => `<li><button type="button" class="study-button" data-i="${i}" aria-pressed="false" ${usable(st) ? "" : "disabled"}><strong>${esc(st.description ?? st.modality?.[0]?.code ?? "Study")}</strong><span>${esc([studyDate(st.started), (st.modality ?? []).map(m => m.code).join(", "), usable(st) ? plural(st.numberOfInstances ?? 0, "image") : st.status && st.status !== "available" ? `Not available (${st.status})` : "Images not available to this app"].filter(Boolean).join(" · "))}</span></button></li>`).join("")}</ul>`;
   $$(".study-button", el).forEach(b => b.addEventListener("click", () => openStudy(s, studies[Number(b.dataset.i)], b)));
-  const first = studies.find(st => st.address);
+  const first = studies.find(usable);
   if (first) openStudy(s, first, $(`.study-button[data-i="${studies.indexOf(first)}"]`, el));
 }
 
@@ -330,10 +386,11 @@ function onlyPart(buffer, contentType) {
   for (let i = bytes.length - close.length; i >= start; i--) if (close.every((c, k) => bytes[i + k] === c)) return buffer.slice(start, i);
   throw new Error("The response had no closing boundary.");
 }
-async function retrieve(v, instance, signal, url = `${v.study.address}/studies/${v.study.uid}/series/${v.series.uid}/instances/${instance}`) {
+const seriesBase = v => v.series.address ?? v.study.address;
+async function retrieve(v, instance, signal, url = `${seriesBase(v)}/studies/${v.study.uid}/series/${v.series.uid}/instances/${instance}`) {
   const t0 = performance.now();
-  const res = await fetch(url, { headers: { authorization: `Bearer ${v.session.token}`, accept: WADO_ACCEPT }, signal });
-  if (!res.ok) { await res.body?.cancel(); addStep({ id: "wado", kind: "wado", title: "Retrieve images", failed: true, request: requestLine("GET", url, { authorization: "x", accept: WADO_ACCEPT }), response: `HTTP ${res.status}` }); throw new Error(`The image server answered ${res.status}.`); }
+  const res = await patientFetch(url, { headers: { authorization: `Bearer ${v.session.token}`, accept: WADO_ACCEPT }, signal }, seconds => { if (v === view) note(`The server is preparing these images. Trying again in ${seconds} s…`); });
+  if (!res.ok) { await res.body?.cancel(); addStep({ id: "wado", kind: "wado", title: "Retrieve images", failed: true, request: requestLine("GET", url, { authorization: "x", accept: WADO_ACCEPT }), response: `HTTP ${res.status}` }); throw new Error(res.status === 406 ? "The image server can't send this image in a form this viewer accepts." : `The image server answered ${res.status}.`); }
   const buffer = await res.arrayBuffer();
   stats.images++; stats.bytes += buffer.byteLength;
   addStep({ id: "wado", kind: "wado", title: "Latest image retrieved", ms: Math.round(performance.now() - t0), request: requestLine("GET", url, { authorization: "x", accept: WADO_ACCEPT }), response: `HTTP ${res.status}\ncontent-type: ${res.headers.get("content-type")}`, curl: curlOf(url, { authorization: "x", accept: WADO_ACCEPT }), facts: { Images: stats.images, Data: bytes(stats.bytes), ...(stats.firstMs === undefined ? {} : { "First image": `${stats.firstMs} ms` }) } });
@@ -399,7 +456,7 @@ async function prefetch(v, kit) {
 }
 /** A slide's small picture: the pyramid's THUMBNAIL, or its smallest single-frame level. Never OVERVIEW, which can show the label. */
 async function slideInstance(v) {
-  const res = await fetch(`${v.study.address}/studies/${v.study.uid}/series/${v.series.uid}/metadata`, { headers: { authorization: `Bearer ${v.session.token}`, accept: "application/dicom+json" }, signal: v.abort.signal });
+  const res = await patientFetch(`${seriesBase(v)}/studies/${v.study.uid}/series/${v.series.uid}/metadata`, { headers: { authorization: `Bearer ${v.session.token}`, accept: "application/dicom+json" }, signal: v.abort.signal });
   if (!res.ok) throw new Error(`The image server answered ${res.status} for this slide's details.`);
   const items = await res.json(), get = (o, t) => o?.[t]?.Value;
   const typeOf = o => get(o, "00080008") ?? [], uid = o => get(o, "00080018")?.[0];
@@ -426,7 +483,7 @@ async function openSeries(session, study, series) {
     }
   } catch (e) { if (v === view && e.name !== "AbortError") note(e.message); return; }
   if (v !== view) return;
-  if (!v.slices.length) { note("This series has no images."); return; }
+  if (!v.slices.length) { note("This server didn't list this series' images, which SMART Imaging requires."); return; }
   slider.max = String(v.slices.length - 1);
   slider.disabled = v.slices.length < 2;
   const { kit } = await decoder();

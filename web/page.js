@@ -51,6 +51,8 @@ async function renderSettings(message = "") {
     <section><h3><label for="set-backend">Images come from</label></h3>
       <div class="row"><select id="set-backend">${st.backend.names.map(n => `<option value="${esc(n)}" ${n === st.backend.current ? "selected" : ""}>${esc(BACKEND_LABELS[n] ?? n)}</option>`).join("")}</select></div>
       <p id="backend-health"></p></section>
+    ${st.scope ? `<section><h3><label for="set-topology">Imaging FHIR server</label></h3>
+      <div class="row"><select id="set-topology"><option value="separate" ${st.topology.current === "separate" ? "selected" : ""}>Separate, named in discovery</option><option value="unified" ${st.topology.current === "unified" ? "selected" : ""}>Unified with the clinical server</option></select></div></section>` : ""}
     <section><h3>Demo clock</h3><p>Now ${esc(offsetText(st.clock.offsetSeconds))}. Moving it ahead shows links and tokens expiring.</p>
       <div class="row">${st.clockChoices.map(c => `<button class="secondary" data-advance="${c.value}">Ahead ${esc(c.label)}</button>`).join("")}<button class="secondary" data-clock-reset ${st.clock.offsetSeconds ? "" : "disabled"}>Back to real time</button></div></section>
     <section><h3>Start over</h3><p>Puts relationships and organization policy back as they are on file, and clears every share and app approval.</p>
@@ -61,6 +63,7 @@ async function renderSettings(message = "") {
   const act = async (route, body, said) => { try { await api("POST", `/api/settings${route}`, body); await renderSettings(said); document.dispatchEvent(new CustomEvent("settings-changed")); } catch (e) { $("#settings .msg").textContent = e.message; } };
   for (const r of $$("input[name=signin]", panel)) r.addEventListener("change", () => setSignInMode(r.value));
   $("#set-backend").addEventListener("change", e => act("/backend", { backend: e.target.value }, `Images now come from ${BACKEND_LABELS[e.target.value] ?? e.target.value}.`));
+  $("#set-topology")?.addEventListener("change", e => act("/topology", { topology: e.target.value }, e.target.value === "unified" ? "Imaging is now on the clinical FHIR server." : "Imaging is now on a separate FHIR server."));
   for (const b of $$("[data-advance]", panel)) b.addEventListener("click", () => act("/clock", { advanceSeconds: Number(b.dataset.advance) }, "The clock moved ahead."));
   $("[data-clock-reset]", panel).addEventListener("click", () => act("/clock", { reset: true }, "The clock is back to real time."));
   $("[data-reset]", panel).addEventListener("click", () => act("/reset", { confirm: true }, "Policy is as it is on file."));

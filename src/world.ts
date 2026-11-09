@@ -68,6 +68,7 @@ export function nameOf(r: string): string {
 export const policyClient = (base: string, policySecret: string, service: Service = "demo") =>
   createPolicyClient({ base, policySecret, fetch: (op, url, init) => tfetch(service, POLICY_CALLS[op], url, init) });
 
+export type Topology = "separate" | "unified";
 export function createWorld(o: { scope?: string; store: PolicyStore; clock: DemoClock; shared: Shared; serviceSecret?: string; policySecret?: string; jwksTtlSeconds?: number }) {
   const { store, clock, shared } = o;
   // A scope remembers its own choice, with the rest of its state.
@@ -85,7 +86,7 @@ export function createWorld(o: { scope?: string; store: PolicyStore; clock: Demo
   const directoryPolicy = policyClient(local(PORTS.imaging), policySecret, "authorization-server");
 
   const auth = createAuthServer({
-    issuer: urls.auth, imagingFhirBase: `${urls.imaging}/fhir`, serviceSecret, redirectUri: urls.callback, demoClientRedirectUri: `${urls.demo}/`, ...(o.scope ? { registeredClient: (id: string) => listClients(store).find(c => c.id === id) } : {}), store: () => store, clock,
+    issuer: urls.auth, imagingFhirBase: `${urls.imaging}/fhir`, serviceSecret, redirectUri: urls.callback, demoClientRedirectUri: `${urls.demo}/`, unified: () => store.note("topology") === "unified", imagingFetch: (req: Request) => imaging.fetch(req), ...(o.scope ? { registeredClient: (id: string) => listClients(store).find(c => c.id === id) } : {}), store: () => store, clock,
     // The Authorization Server's pages, in their own terms, over the policy API's three levels.
     directory: {
       relationships: async () => [
@@ -139,6 +140,9 @@ export function createWorld(o: { scope?: string; store: PolicyStore; clock: Demo
     get catalogSource() { return current === "orthanc" ? "orthanc" as const : "archive" as const; },
     get backend() { return current; },
     setBackend(n: BackendName) { current = n; if (o.scope) store.setNote("backend", n); },
+    /** Where discovery says imaging is: on a separate FHIR server, or on the clinical one. */
+    get topology(): Topology { return store.note("topology") === "unified" ? "unified" : "separate"; },
+    setTopology(t: Topology) { store.setNote("topology", t); },
     backends: shared.backends,
     setTruncateAfter(n: number | undefined) { truncateAfter = n; },
     /** Replaces the signing key, then tells the proxy over HTTP, so it stops trusting the old one now. A proxy that isn't told learns within its TTL. */

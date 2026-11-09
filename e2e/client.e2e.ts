@@ -242,6 +242,24 @@ describe("the demo client", () => {
     await page.locator("#sandbox-name", { hasText: "Team demo" }).waitFor();
     await guest.close(); await owner.close();
   });
+  test("a sandbox set to unified imaging still works end to end", async () => {
+    const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    await signIn(page, "josh");
+    const base = new URL(page.url()).pathname.replace(/\/$/, "");
+    await page.locator(".study-button").first().waitFor();
+    await page.evaluate(async b => { await fetch(`${b}/api/settings/topology`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ topology: "unified" }) }); }, base);
+    await page.evaluate(() => sessionStorage.clear());
+    await page.goto(`${ORIGIN}${base}/`);
+    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await page.locator("input[name=username][value=josh]").check();
+    await page.getByRole("button", { name: "Continue" }).click();
+    await page.getByRole("button", { name: "Approve" }).click();
+    await page.locator(".study-button").nth(5).waitFor();
+    await page.locator("[data-stage=discover] .fact", { hasText: "this server" }).waitFor();
+    await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
+    await context.close();
+  });
   test("a patient with no studies gets a real empty result", async () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();

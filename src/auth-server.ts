@@ -9,6 +9,7 @@ import { PORTS } from "./config";
 import { check, recordEvent, traced } from "./trace";
 import { clinicalSearch, demographics, isClinicalType } from "./clinical";
 
+const IMAGING_CAPABILITIES = ["smart-imaging-access", "http://fhir.org/argonaut/smart-imaging/capabilities/app-launch", "http://fhir.org/argonaut/smart-imaging/capabilities/backend-services"];
 export interface Grant { client_id: string; scope: string; patient?: string; sub?: string; fhirUser?: string; family?: string; }
 
 export interface BackendClient { client_id: string; kid: string; privateKey: KeyObject; }
@@ -151,7 +152,7 @@ form.inline{display:inline}
  * Every URL it issues starts at `issuer`, including the paths in its own pages and redirects, so it can
  * be served under a prefix. It answers requests with the prefix already taken off.
  */
-export function createAuthServer(opts: { issuer: string; imagingFhirBase: string; serviceSecret: string; redirectUri: string; demoClientRedirectUri: string; registeredClient?: (id: string) => { name: string; redirectUris: string[] } | undefined; directory: Directory; store: () => PolicyStore; clock?: Clock }) {
+export function createAuthServer(opts: { issuer: string; imagingFhirBase: string; serviceSecret: string; redirectUri: string; demoClientRedirectUri: string; unified?: () => boolean; imagingFetch?: (req: Request) => Response | Promise<Response>; registeredClient?: (id: string) => { name: string; redirectUris: string[] } | undefined; directory: Directory; store: () => PolicyStore; clock?: Clock }) {
   const clock = opts.clock ?? demoClock;
   const now = () => clock.now();
   /** The path the issuer adds, which every path this server writes into a page or a redirect starts with. */
@@ -447,8 +448,8 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
         response_types_supported: ["code"], code_challenge_methods_supported: ["S256"],
         token_endpoint_auth_methods_supported: ["private_key_jwt"], token_endpoint_auth_signing_alg_values_supported: ["ES256"],
         scopes_supported: ["patient/ImagingStudy.rs", "patient/Patient.rs", "patient/AllergyIntolerance.rs", "patient/Condition.rs", "patient/MedicationRequest.rs", "patient/*.rs", "system/ImagingStudy.rs", "launch/patient", "online_access"],
-        capabilities: ["launch-standalone", "client-public", "client-confidential-asymmetric", "permission-v2", "context-standalone-patient"],
-        associated_endpoints: [{ url: opts.imagingFhirBase, capabilities: ["smart-imaging-access", "http://fhir.org/argonaut/smart-imaging/capabilities/app-launch", "http://fhir.org/argonaut/smart-imaging/capabilities/backend-services"] }],
+        capabilities: ["launch-standalone", "client-public", "client-confidential-asymmetric", "permission-v2", "context-standalone-patient", ...(opts.unified?.() ? IMAGING_CAPABILITIES : [])],
+        ...(opts.unified?.() ? {} : { associated_endpoints: [{ url: opts.imagingFhirBase, capabilities: IMAGING_CAPABILITIES }] }),
       });
     }
     if (url.pathname === "/token" && req.method === "POST") {
@@ -514,6 +515,8 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
       opts.store().revokeToken(f.get("token") ?? "");
       return new Response(null, { status: 200 });
     }
+    // Unified: this FHIR server is also the Imaging FHIR Server.
+    if (opts.unified?.() && opts.imagingFetch && url.pathname === "/fhir/ImagingStudy") return opts.imagingFetch(req);
     if (url.pathname.startsWith("/fhir/Patient/")) {
       const id = url.pathname.slice("/fhir/Patient/".length);
       const bearer = req.headers.get("authorization")?.match(/^Bearer (.+)$/i)?.[1];

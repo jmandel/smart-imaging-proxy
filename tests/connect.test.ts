@@ -80,3 +80,21 @@ test("a sandbox has a friendly name it keeps, and can be renamed", async () => {
   expect((await call("POST", `${w.prefix}/api/world`, { name: "x".repeat(41) })).status).toBe(400);
   expect((await call("GET", "/api/world")).status).toBe(409);
 });
+
+test("a sandbox can advertise imaging on its clinical server instead of a separate one", async () => {
+  const w = stack.scopes.mint();
+  const config = async () => (await fetch(`${w.urls.auth}/fhir/.well-known/smart-configuration`)).json() as any;
+  const before = await config();
+  expect(before.associated_endpoints[0].url).toBe(`${w.urls.imaging}/fhir`);
+  expect(before.capabilities).not.toContain("smart-imaging-access");
+  expect((await fetch(`${w.urls.auth}/fhir/ImagingStudy?patient=josh-example`)).status).toBe(404);
+  const set = await call("POST", `${w.prefix}/api/settings/topology`, { topology: "unified" });
+  expect(set.status).toBe(200);
+  expect((await set.json() as any).topology.current).toBe("unified");
+  const after = await config();
+  expect(after.associated_endpoints).toBeUndefined();
+  expect(after.capabilities).toEqual(expect.arrayContaining(["smart-imaging-access", "http://fhir.org/argonaut/smart-imaging/capabilities/app-launch"]));
+  expect((await fetch(`${w.urls.auth}/fhir/ImagingStudy?patient=josh-example`)).status).toBe(401);
+  expect((await call("POST", `${w.prefix}/api/settings/topology`, { topology: "nope" })).status).toBe(400);
+  expect((await call("POST", "/api/settings/topology", { topology: "unified" })).status).toBe(400);
+});

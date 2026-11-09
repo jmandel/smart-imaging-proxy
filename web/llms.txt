@@ -15,7 +15,7 @@ A real deployment has separate systems, and here they share one origin.
 | Imaging FHIR server | `$SANDBOX/imaging/fhir` | `ImagingStudy` search, with each study's `Endpoint`. Applies policy |
 | DICOMweb proxy | `$SANDBOX/wado/{signed-context}/studies/...` | WADO-RS retrieval. Enforces the decision signed into the address |
 
-An app starts at the clinical FHIR base. `GET $SANDBOX/fhir/.well-known/smart-configuration` gives the endpoints, and `associated_endpoints` names the imaging server by its `smart-imaging-access` capability.
+An app starts at the clinical FHIR base. `GET $SANDBOX/fhir/.well-known/smart-configuration` gives the endpoints. By default `associated_endpoints` names the separate imaging server by its `smart-imaging-access` capability. A sandbox can instead act as one server, with that capability at the top level and `ImagingStudy` at `$SANDBOX/fhir`.
 
 ## The sandbox model
 
@@ -93,6 +93,7 @@ All paths are under `$SANDBOX`. Bodies are JSON.
 | `GET /api/settings/status` | Image storage, demo clock, and the allowed clock moves |
 | `GET /api/settings/backends` | Health of each image store |
 | `POST /api/settings/backend` `{"backend":"static-files"}` | Image storage: `static-files`, `s3` or `orthanc` |
+| `POST /api/settings/topology` `{"topology":"unified"}` | Where imaging is advertised: `separate` or `unified` |
 | `POST /api/settings/clock` `{"advanceSeconds":N}` or `{"reset":true}` | Moves the demo clock. `N` must be one of the choices in the status |
 | `POST /api/settings/reset` `{"confirm":true}` | Puts policy back to what's on file |
 | `POST /api/settings/tokens/revoke-all` | Revokes every token |

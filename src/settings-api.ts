@@ -48,6 +48,7 @@ export function settingsStatus(stack: Stack, world: World) {
     clock: { offsetSeconds: world.clock.offset(), now: world.clock.now() },
     clockChoices: CLOCK_CHOICES,
     backend: { current: world.backend, names: BACKEND_NAMES },
+    topology: { current: world.topology, names: ["separate", "unified"] },
     catalog: { source: world.catalogSource, ...world.catalog.stats() },
     signing: { kid: world.imaging.signingKid },
     proxy: { cachedDecisions: world.proxy.cachedDecisions },
@@ -57,7 +58,7 @@ export function settingsStatus(stack: Stack, world: World) {
 }
 
 const NO_INPUT = ["/tokens/revoke-all", "/proxy/flush", "/signing-key/rotate"];
-const WITH_INPUT = ["/reset", "/clock", "/backend"];
+const WITH_INPUT = ["/reset", "/clock", "/backend", "/topology"];
 
 export async function settingsApi(stack: Stack, world: World, req: Request, url: URL): Promise<Response> {
   const p = url.pathname.slice("/api/settings".length);
@@ -94,6 +95,13 @@ export async function settingsApi(stack: Stack, world: World, req: Request, url:
     if (b.reset === true) { const extra = only("reset"); if (extra) return extra; world.clock.reset(); return status(); }
     if (extraField(b, ["advanceSeconds"]) || !CLOCK_CHOICES.some(c => c.value === b.advanceSeconds)) return bad(`send reset: true, or advanceSeconds, one of ${values(CLOCK_CHOICES)}`);
     world.clock.advance(b.advanceSeconds);
+    return status();
+  }
+  if (p === "/topology") {
+    const extra = only("topology"); if (extra) return extra;
+    if (!world.scope) return bad("only a sandbox can change this");
+    if (b.topology !== "separate" && b.topology !== "unified") return bad("topology must be separate or unified");
+    world.setTopology(b.topology);
     return status();
   }
   const extra = only("backend"); if (extra) return extra;
