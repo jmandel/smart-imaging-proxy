@@ -1,12 +1,23 @@
-// Apps a person registers in their own world, so anyone can try the demo with their own app. Public
-// clients only, kept with the world, so they last until its owner starts over and a tour leaves them alone.
+// Apps a person registers in their own world, so anyone can try the demo with their own app: public apps,
+// confidential apps that sign a key-based assertion, and backend services. Kept with the world, so they last until its
+// owner starts over and a tour leaves them alone. A service has no one to approve it, so registering one grants its access.
 import { randomBytes } from "node:crypto";
-import type { PolicyStore } from "@smart-imaging-proxy/core";
+import type { PolicyStore, ServiceAccessPolicy } from "@smart-imaging-proxy/core";
 
-export interface RegisteredClient { id: string; name: string; redirectUris: string[]; }
-const KEY = "clients";
+export type ClientType = "public" | "confidential" | "backend";
+export interface RegisteredClient {
+  id: string; name: string; type: ClientType; redirectUris: string[];
+  /** The public key a confidential app or a service signs with. */
+  jwk?: JsonWebKey & { kid: string };
+  /** Which patients a service may reach: any, or one. */
+  patients?: string;
+}
+const KEY = "clients", TYPES: ClientType[] = ["public", "confidential", "backend"];
+/** What a service is granted. Only what its policy then releases is reachable. */
+export const BACKEND_SCOPES = ["system/ImagingStudy.rs"];
+const KNOWN_PATIENTS = ["josh-example", "sam-example", "riley-example", "robin-example"];
 
-export const listClients = (store: PolicyStore): RegisteredClient[] => JSON.parse(store.note(KEY) ?? "[]");
+export const listClients = (store: PolicyStore): RegisteredClient[] => (JSON.parse(store.note(KEY) ?? "[]") as RegisteredClient[]).map(c => ({ ...c, type: c.type ?? "public" }));
 const save = (store: PolicyStore, clients: RegisteredClient[]) => store.setNote(KEY, JSON.stringify(clients));
 
 /** Why a redirect URI can't be registered, if it can't: https, or http only on this machine, and no fragment. */
@@ -18,21 +29,55 @@ function redirectProblem(uri: unknown): string | undefined {
   if (u.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname)) return undefined;
   return "a redirect URI must use https, or http on localhost";
 }
+/** An ES256 public key, as one JWK or a JWKS of one, or why not. A private key is refused rather than stored. */
+function publicKeyOf(input: any): (JsonWebKey & { kid: string }) | { error: string } {
+  const k = Array.isArray(input?.keys) ? input.keys[0] : input;
+  if (typeof k !== "object" || k === null) return { error: "give a public key as a JWK" };
+  if ("d" in k) return { error: "that's a private key: give only the public part" };
+  if (k.kty !== "EC" || k.crv !== "P-256" || typeof k.x !== "string" || typeof k.y !== "string") return { error: "the key must be an EC P-256 public JWK, for ES256" };
+  if (typeof k.kid !== "string" || !k.kid) return { error: "the key needs a kid" };
+  return { kty: k.kty, crv: k.crv, x: k.x, y: k.y, kid: k.kid };
+}
 
-export function addClient(store: PolicyStore, input: { name?: unknown; redirectUris?: unknown }): RegisteredClient | { error: string } {
+const grantId = (id: string) => `service-grant-${id}`;
+function grant(store: PolicyStore, c: RegisteredClient) {
+  const policy: ServiceAccessPolicy = { id: grantId(c.id), type: "service-access", description: `What ${c.name} was registered to reach`, service: `service:${c.id}`, patients: c.patients === "any" || !c.patients ? "any" : `patient:${c.patients}`, allow: { all: true } };
+  store.putPolicy(policy);
+}
+/** Puts back what registered services were granted, after something resets policy. */
+export function restoreGrants(store: PolicyStore) { for (const c of listClients(store)) if (c.type === "backend") grant(store, c); }
+
+export function addClient(store: PolicyStore, input: { name?: unknown; type?: unknown; redirectUris?: unknown; jwk?: unknown; patients?: unknown }): RegisteredClient | { error: string } {
   const name = typeof input.name === "string" ? input.name.trim() : "";
   if (!name || name.length > 80) return { error: "give the app a name of at most 80 characters" };
-  const uris = input.redirectUris;
-  if (!Array.isArray(uris) || !uris.length || uris.length > 10) return { error: "give between 1 and 10 redirect URIs" };
-  for (const uri of uris) { const problem = redirectProblem(uri); if (problem) return { error: problem }; }
-  const client = { id: `app-${randomBytes(6).toString("hex")}`, name, redirectUris: uris.map(String) };
+  const type = (input.type ?? "public") as ClientType;
+  if (!TYPES.includes(type)) return { error: "type must be public, confidential or backend" };
+  const client: RegisteredClient = { id: `app-${randomBytes(6).toString("hex")}`, name, type, redirectUris: [] };
+  if (type !== "backend") {
+    const uris = input.redirectUris;
+    if (!Array.isArray(uris) || !uris.length || uris.length > 10) return { error: "give between 1 and 10 redirect URIs" };
+    for (const uri of uris) { const problem = redirectProblem(uri); if (problem) return { error: problem }; }
+    client.redirectUris = uris.map(String);
+  }
+  if (type !== "public") {
+    const key = publicKeyOf(input.jwk);
+    if ("error" in key) return key;
+    client.jwk = key;
+  }
+  if (type === "backend") {
+    const patients = input.patients ?? "any";
+    if (patients !== "any" && !KNOWN_PATIENTS.includes(String(patients))) return { error: `patients must be any, or one of ${KNOWN_PATIENTS.join(", ")}` };
+    client.patients = String(patients);
+    grant(store, client);
+  }
   save(store, [...listClients(store), client]);
   return client;
 }
 
 export function removeClient(store: PolicyStore, id: string): boolean {
-  const clients = listClients(store), rest = clients.filter(c => c.id !== id);
-  if (rest.length === clients.length) return false;
-  save(store, rest);
+  const clients = listClients(store), target = clients.find(c => c.id === id);
+  if (!target) return false;
+  if (target.type === "backend") store.removePolicy(grantId(id));
+  save(store, clients.filter(c => c.id !== id));
   return true;
 }

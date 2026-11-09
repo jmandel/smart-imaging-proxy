@@ -4,7 +4,7 @@
 // the backends and the trace collector, and reach one another only over HTTP, so nothing one issues
 // works in another.
 import { randomBytes, type KeyObject } from "node:crypto";
-import { listClients } from "./clients";
+import { listClients, restoreGrants } from "./clients";
 import { createImagingServer, createPolicyClient, createProxy, idOf, ref, withTruncation, type Backend, type CatalogStore, type PolicyOperation, type PolicyStore } from "@smart-imaging-proxy/core";
 import { APP_NAMES, createAuthServer, DEMO_BACKEND_SCOPES, PATIENT_NAMES, USERS, type BackendClient } from "./auth-server";
 import { patientAttributes } from "./stores";
@@ -143,6 +143,8 @@ export function createWorld(o: { scope?: string; store: PolicyStore; clock: Demo
     /** Where discovery says imaging is: on a separate FHIR server, or on the clinical one. */
     get topology(): Topology { return store.note("topology") === "unified" ? "unified" : "separate"; },
     setTopology(t: Topology) { store.setNote("topology", t); },
+    /** Back to what's on file, keeping what registered services were granted. */
+    async resetPolicy() { await policy.reset(); restoreGrants(store); },
     backends: shared.backends,
     setTruncateAfter(n: number | undefined) { truncateAfter = n; },
     /** Replaces the signing key, then tells the proxy over HTTP, so it stops trusting the old one now. A proxy that isn't told learns within its TTL. */

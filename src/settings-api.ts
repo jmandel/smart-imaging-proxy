@@ -88,7 +88,7 @@ export async function settingsApi(stack: Stack, world: World, req: Request, url:
   if (p === "/reset") {
     const extra = only("confirm"); if (extra) return extra;
     if (b.confirm !== true) return bad("resetting policy needs confirm: true");
-    await world.policy.reset();
+    await world.resetPolicy();
     return status();
   }
   if (p === "/clock") {

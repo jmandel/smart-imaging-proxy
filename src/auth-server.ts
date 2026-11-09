@@ -8,6 +8,7 @@ import { refuseWrite } from "./settings-api";
 import { PORTS } from "./config";
 import { check, recordEvent, traced } from "./trace";
 import { clinicalSearch, demographics, isClinicalType } from "./clinical";
+import { BACKEND_SCOPES } from "./clients";
 
 const IMAGING_CAPABILITIES = ["smart-imaging-access", "http://fhir.org/argonaut/smart-imaging/capabilities/app-launch", "http://fhir.org/argonaut/smart-imaging/capabilities/backend-services"];
 export interface Grant { client_id: string; scope: string; patient?: string; sub?: string; fhirUser?: string; family?: string; }
@@ -152,7 +153,7 @@ form.inline{display:inline}
  * Every URL it issues starts at `issuer`, including the paths in its own pages and redirects, so it can
  * be served under a prefix. It answers requests with the prefix already taken off.
  */
-export function createAuthServer(opts: { issuer: string; imagingFhirBase: string; serviceSecret: string; redirectUri: string; demoClientRedirectUri: string; unified?: () => boolean; imagingFetch?: (req: Request) => Response | Promise<Response>; registeredClient?: (id: string) => { name: string; redirectUris: string[] } | undefined; directory: Directory; store: () => PolicyStore; clock?: Clock }) {
+export function createAuthServer(opts: { issuer: string; imagingFhirBase: string; serviceSecret: string; redirectUri: string; demoClientRedirectUri: string; unified?: () => boolean; imagingFetch?: (req: Request) => Response | Promise<Response>; registeredClient?: (id: string) => { name: string; type?: string; redirectUris: string[]; jwk?: JsonWebKey & { kid: string } } | undefined; directory: Directory; store: () => PolicyStore; clock?: Clock }) {
   const clock = opts.clock ?? demoClock;
   const now = () => clock.now();
   /** The path the issuer adds, which every path this server writes into a page or a redirect starts with. */
@@ -199,7 +200,8 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     const [h, b, s] = jwt.split(".");
     const head = jwtPart(h), claims = jwtPart(b);
     if (!check("authorization-server", "client assertion is a three-part JWT", !!(head && claims && s))) return undefined;
-    const reg = backendKeys.get(claims.iss);
+    const registered = opts.registeredClient?.(claims.iss);
+    const reg = registered?.jwk ? { kid: registered.jwk.kid, publicKey: createPublicKey({ key: registered.jwk as any, format: "jwk" }), scopes: registered.type === "backend" ? BACKEND_SCOPES : [] } : backendKeys.get(claims.iss);
     if (!check("authorization-server", "client is registered, with its public key on file", !!reg && head.kid === reg.kid, { client: claims.iss, kid: head.kid, registered_scopes: reg?.scopes.join(" ") })) return undefined;
     if (!check("authorization-server", "assertion is ES256, and iss equals sub", head.alg === "ES256" && claims.sub === claims.iss, { alg: head.alg, iss: claims.iss, sub: claims.sub })) return undefined;
     if (!check("authorization-server", "assertion's aud is this token endpoint", claims.aud === tokenUrl, { aud: claims.aud })) return undefined;
@@ -470,6 +472,11 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
         codes.delete(code); // Single use, even if a later check fails.
         if (!check("authorization-server", "authorization code hasn't expired", c!.exp > now())) return oauthError("invalid_grant");
         if (!check("authorization-server", "client_id and redirect_uri match the authorization request", c!.client_id === f.get("client_id") && c!.redirect_uri === f.get("redirect_uri"))) return oauthError("invalid_grant");
+        // A confidential app proves who it is as well as holding the code.
+        if (opts.registeredClient?.(c!.client_id)?.type === "confidential") {
+          const proved = f.get("client_assertion_type") === "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" ? verifyAssertion(f.get("client_assertion") ?? "", tokenUrl) : undefined;
+          if (!check("authorization-server", "confidential client authenticated with private_key_jwt", proved?.client_id === c!.client_id, { client: c!.client_id })) return oauthError("invalid_client", 401);
+        }
         const verifier = f.get("code_verifier") ?? "";
         const computed = createHash("sha256").update(verifier).digest("base64url");
         if (!check("authorization-server", "PKCE: S256 of code_verifier equals code_challenge", computed === c!.code_challenge, { computed: computed.slice(0, 10), challenge: c!.code_challenge.slice(0, 10) })) return oauthError("invalid_grant");

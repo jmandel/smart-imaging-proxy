@@ -19,9 +19,25 @@
     <h2>Register an app</h2>
     <label for="app-name">App name</label>
     <input type="text" id="app-name" required maxlength="80" autocomplete="off">
-    <label for="app-redirect">Redirect URI</label>
-    <input type="url" id="app-redirect" required placeholder="https://example.org/callback" autocomplete="off" autocapitalize="off" spellcheck="false">
-    <p class="note">Must match exactly at sign-in. Use https, or http on localhost.</p>
+    <fieldset class="client-type"><legend>Type</legend>
+      <label><input type="radio" name="type" value="public" checked> Public app <span>Authorization code with PKCE, and no key.</span></label>
+      <label><input type="radio" name="type" value="confidential"> Confidential app <span>Sign-in, plus a signed key assertion.</span></label>
+      <label><input type="radio" name="type" value="backend"> Backend service <span>No sign-in. Access is granted when you register.</span></label>
+    </fieldset>
+    <div id="redirect-field">
+      <label for="app-redirect">Redirect URI</label>
+      <input type="url" id="app-redirect" placeholder="https://example.org/callback" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <p class="note">Must match exactly at sign-in. Use https, or http on localhost.</p>
+    </div>
+    <div id="key-field" hidden>
+      <label for="app-key">Public key (ES256 JWK)</label>
+      <textarea id="app-key" rows="4" spellcheck="false" autocapitalize="off" placeholder="Leave empty to generate a key pair in this browser"></textarea>
+      <p class="note">A generated private key stays in this browser, so use it only for testing.</p>
+    </div>
+    <div id="patients-field" hidden>
+      <label for="app-patients">Patients it may reach</label>
+      <select id="app-patients"><option value="any">Any patient</option><option value="josh-example">josh-example</option><option value="sam-example">sam-example</option><option value="riley-example">riley-example</option><option value="robin-example">robin-example</option></select>
+    </div>
     <button type="submit" class="primary">Register</button>
     <p class="error" id="register-error" role="alert" hidden></p>
   </form>
@@ -29,7 +45,8 @@
   <section class="panel">
     <h2>How to connect</h2>
     <ul class="how">
-      <li>Public client with PKCE (S256). No client secret.</li>
+      <li>Apps use PKCE (S256). Confidential apps also send a <code>private_key_jwt</code> assertion signed with ES256.</li>
+      <li>Backend services use <code>client_credentials</code>, a signed assertion, and <code>system/ImagingStudy.rs</code>. They name the patient in each search.</li>
       <li>Ask for <code>launch/patient patient/*.rs</code>.</li>
       <li>Sign in as <code>josh</code>, <code>sam-caregiver</code> or <code>robin</code>. No password.</li>
       <li>Discovery at your FHIR address names the imaging server.</li>

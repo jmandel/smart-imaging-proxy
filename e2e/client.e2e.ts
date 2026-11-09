@@ -260,6 +260,44 @@ describe("the demo client", () => {
     await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
     await context.close();
   });
+  test.skipIf(!!process.env.BASE_URL)("a backend service registered on /connect works in the viewer with no sign-in", async () => {
+    const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    await signIn(page, "josh");
+    const base = new URL(page.url()).pathname.replace(/\/$/, "");
+    await page.goto(`${ORIGIN}${base}/connect`);
+    await page.getByLabel("App name").fill("Referral service");
+    await page.getByRole("radio", { name: /Backend service/ }).check();
+    await page.getByRole("button", { name: "Register" }).click();
+    await page.getByRole("heading", { name: "Referral service" }).waitFor();
+    await shot(page, "connect-backend");
+    await page.getByRole("button", { name: "Try it in the viewer" }).click();
+    await page.getByText("Backend service: no one signed in").waitFor();
+    await page.locator(".study-button").nth(5).waitFor();
+    await page.locator("[data-stage=authorize]", { hasText: "signed assertion" }).waitFor();
+    expect(await page.locator("[data-stage=clinical]").count()).toBe(0);
+    await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
+    await shot(page, "backend-viewer");
+    await context.close();
+  });
+  test.skipIf(!!process.env.BASE_URL)("a confidential app registered on /connect signs in and proves its key", async () => {
+    const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    await signIn(page, "josh");
+    const base = new URL(page.url()).pathname.replace(/\/$/, "");
+    await page.goto(`${ORIGIN}${base}/connect`);
+    await page.getByLabel("App name").fill("Confidential one");
+    await page.getByRole("radio", { name: /Confidential app/ }).check();
+    await page.getByLabel("Redirect URI").fill(`${ORIGIN}/`);
+    await page.getByRole("button", { name: "Register" }).click();
+    await page.getByRole("button", { name: "Try it in the viewer" }).click();
+    await page.locator("input[name=username][value=josh]").check();
+    await page.getByRole("button", { name: "Continue" }).click();
+    await page.getByRole("button", { name: "Approve" }).click();
+    await page.locator(".study-button").nth(5).waitFor();
+    await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
+    await context.close();
+  });
   test("a patient with no studies gets a real empty result", async () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();

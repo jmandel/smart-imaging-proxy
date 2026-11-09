@@ -4,6 +4,7 @@
 // that moment, and the check compares the system's real answer with the model's. "Run checks" runs the
 // protocol flows in src/flows as one pass/fail list.
 import { randomBytes } from "node:crypto";
+import { restoreGrants } from "./clients";
 import { ref, type PolicyDocument } from "@smart-imaging-proxy/core";
 import { PATIENT_NAMES, USERS, type BackendClient } from "./auth-server";
 import { defaultsFor, FLOWS, runStep, startFlowIn } from "./flows";
@@ -470,6 +471,7 @@ function changePanels(tour: Tour, before: Chain, after: Chain, linked?: string[]
 function startOver(world: World) {
   const others = world.store.approvals().filter(a => !TOUR_CLIENTS.some(c => a.app === ref("app", c)));
   world.store.resetPolicy();
+  restoreGrants(world.store);
   for (const { by, app, patient, sites } of others) { try { world.store.putApproval({ by, app, patient, ...(sites ? { sites } : {}) }); } catch {} }
   world.store.deleteTokensOf(TOUR_CLIENTS);
   world.clock.reset();

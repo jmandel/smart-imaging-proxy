@@ -48,6 +48,21 @@ curl -X POST "$SANDBOX/api/clients" -H 'content-type: application/json' \
 
 The response has the `id` to use as `client_id`. Redirect URIs must match exactly, and use https, or http on localhost. Authorize with `aud=$SANDBOX/fhir` and `scope=launch/patient patient/*.rs`.
 
+Add `"type"` for the other kinds of client. Both sign a `private_key_jwt` assertion with ES256, and register the public half as `"jwk"`, an EC P-256 JWK with a `kid`.
+
+| `type` | Needs | Flow |
+|---|---|---|
+| `public` (default) | `redirectUris` | Authorization code with PKCE |
+| `confidential` | `redirectUris`, `jwk` | The same, plus `client_assertion_type` and `client_assertion` at `/token` |
+| `backend` | `jwk`, and `patients`: `any` or one patient id | `client_credentials` with scope `system/ImagingStudy.rs`. No one signs in |
+
+```sh
+curl -X POST "$SANDBOX/api/clients" -H 'content-type: application/json' \
+  -d '{"name":"Referral service","type":"backend","patients":"josh-example","jwk":{"kty":"EC","crv":"P-256","x":"...","y":"...","kid":"key-1"}}'
+```
+
+The assertion is a JWT with `iss` and `sub` set to the client id, `aud` set to `$SANDBOX/token`, a unique `jti`, and `exp` at most five minutes ahead. A backend service names the patient in each search, and asking about a patient outside its grant returns 403.
+
 ## Sign in without a browser
 
 An agent can walk the forms a person would:
@@ -120,7 +135,7 @@ The demo client can connect to any SMART server with a public PKCE client. Under
 [{ "label": "My server", "iss": "https://example.org/fhir", "clientId": "my-client", "scope": "launch/patient patient/*.rs", "imaging": "https://example.org/imaging/fhir" }]
 ```
 
-`scope` and `imaging` are optional. `imaging` is needed only if the server's discovery doesn't name its imaging endpoint.
+`scope` and `imaging` are optional. `imaging` is needed only if the server's discovery doesn't name its imaging endpoint. A confidential app adds `"auth":"private_key_jwt"` and `"jwk"`, a private ES256 JWK with a `kid`. A backend service adds `"mode":"backend"`, `"jwk"` and `"patient"`.
 
 ## Specifications
 

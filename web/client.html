@@ -35,7 +35,7 @@
     <p><code id="redirect-uri"></code></p>
     <label for="servers-json">Your servers, as JSON (added to the built-in list)</label>
     <textarea id="servers-json" rows="10" spellcheck="false" autocapitalize="off"></textarea>
-    <p class="note">Each needs <code>label</code>, <code>iss</code> and <code>clientId</code>. <code>scope</code> is optional, and <code>imaging</code> names the imaging FHIR server when the server's discovery doesn't.</p>
+    <p class="note">Each needs <code>label</code>, <code>iss</code> and <code>clientId</code>. <code>scope</code> is optional, and <code>imaging</code> names the imaging FHIR server when discovery doesn't. For a confidential app add <code>"auth":"private_key_jwt"</code> and <code>jwk</code>, a private ES256 key. For a backend service add <code>"mode":"backend"</code>, <code>jwk</code> and <code>patient</code>. Keys saved here stay in this browser, so use them only for testing.</p>
     <div class="configure-actions"><button type="button" class="secondary" id="servers-save">Save</button><button type="button" class="secondary" id="servers-reset">Reset</button></div>
     <p class="configure-status" id="servers-status" role="status"></p>
   </details>

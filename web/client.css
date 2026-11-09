@@ -121,7 +121,13 @@
 
 .connect-page .panel + section, .connect-page section + .panel, .connect-page section { margin-top:1rem; }
 #register label { display:block; font-weight:600; margin:.6rem 0 .2rem; }
-#register input { width:100%; background:var(--plate); border:1px solid var(--line); border-radius:6px; padding:.5rem .6rem; font:inherit; color:inherit; }
+.client-type { border:1px solid var(--line); border-radius:6px; margin:.7rem 0 0; padding:.4rem .7rem .6rem; min-width:0; }
+.client-type legend { font-weight:600; padding:0 .3rem; }
+#register .client-type label { font-weight:600; margin:.35rem 0 0; }
+.client-type span { display:block; font-weight:400; color:var(--muted); font-size:.85rem; margin-left:1.5rem; }
+#register textarea { width:100%; font:.8rem/1.4 var(--mono); color:inherit; background:var(--plate); border:1px solid var(--line); border-radius:6px; padding:.45rem .55rem; }
+#register select { width:100%; }
+#register input[type=text], #register input[type=url] { width:100%; background:var(--plate); border:1px solid var(--line); border-radius:6px; padding:.5rem .6rem; font:inherit; color:inherit; }
 #register .note { color:var(--muted); font-size:.85rem; margin:.3rem 0 .7rem; }
 #register .error { color:var(--bad); }
 .how { margin:.2rem 0 0; padding-left:1.1rem; }

@@ -23,7 +23,12 @@ function parseServers(text) {
       if (u.protocol !== "https:" && !["localhost", "127.0.0.1"].includes(u.hostname)) throw new Error(`${where}: "${k}" must use https.`);
     }
     if (s.scope !== undefined && typeof s.scope !== "string") throw new Error(`${where}: "scope" must be text.`);
-    return { label: s.label, iss: s.iss.replace(/\/$/, ""), clientId: s.clientId, ...(s.scope ? { scope: s.scope } : {}), ...(s.imaging ? { imaging: s.imaging.replace(/\/$/, "") } : {}) };
+    if (s.mode !== undefined && !["launch", "backend"].includes(s.mode)) throw new Error(`${where}: "mode" must be launch or backend.`);
+    if (s.auth !== undefined && !["public", "private_key_jwt"].includes(s.auth)) throw new Error(`${where}: "auth" must be public or private_key_jwt.`);
+    const signs = s.auth === "private_key_jwt" || s.mode === "backend";
+    if (signs && (typeof s.jwk !== "object" || !s.jwk?.d || !s.jwk?.kid)) throw new Error(`${where} needs a "jwk": a private ES256 JWK with a kid.`);
+    if (s.mode === "backend" && (typeof s.patient !== "string" || !s.patient)) throw new Error(`${where} needs a "patient": the patient's FHIR id.`);
+    return { label: s.label, iss: s.iss.replace(/\/$/, ""), clientId: s.clientId, ...(s.scope ? { scope: s.scope } : {}), ...(s.imaging ? { imaging: s.imaging.replace(/\/$/, "") } : {}), ...(s.mode ? { mode: s.mode } : {}), ...(s.auth ? { auth: s.auth } : {}), ...(signs ? { jwk: s.jwk } : {}), ...(s.patient ? { patient: s.patient } : {}) };
   });
 }
 /** The servers this browser has added. */
@@ -74,7 +79,7 @@ const IG = "https://build.fhir.org/ig/argonautproject/smart-imaging/", SMART = "
 /** The protocol as the client meets it. Requests are the detail; these are the story. */
 const STAGES = [
   { key: "discover", from: "This app", to: "Clinical FHIR server", name: "Discover", line: "From one FHIR address, find the sign-in page and the imaging server.", kinds: ["discover"], spec: [`${SMART}conformance.html`, "SMART discovery"] },
-  { key: "authorize", from: "Browser and app", to: "Authorization server", name: "Authorize", line: "Sign in, approve this app, and receive an access token for one patient.", kinds: ["authorize", "token"], spec: [`${SMART}app-launch.html`, "SMART App Launch"] },
+  { key: "authorize", from: "Browser and app", to: "Authorization server", name: "Authorize", line: "Sign in, approve this app, and receive an access token for one patient.", kinds: ["authorize", "token", "backend-token"], spec: [`${SMART}app-launch.html`, "SMART App Launch"] },
   { key: "clinical", from: "This app", to: "Clinical FHIR server", name: "Read the chart", line: "Query the clinical server with that token.", kinds: ["patient", "clinical"], spec: [`${SMART}scopes-and-launch-context.html`, "Scopes and context"] },
   { key: "imaging", from: "This app", to: "Imaging FHIR server", name: "Find studies", line: "Ask the imaging server for studies, and where to retrieve each one.", kinds: ["imaging"], spec: [IG, "SMART Imaging Access"] },
   { key: "retrieve", from: "This app", to: "DICOMweb endpoint", name: "Retrieve images", line: "Download DICOM from each study's Endpoint, and decode it in the browser.", kinds: ["wado"], spec: ["https://www.dicomstandard.org/using/dicomweb/retrieve-wado-rs-and-wado-uri", "DICOMweb WADO-RS"] },
@@ -82,6 +87,7 @@ const STAGES = [
 const WHY = {
   discover: "The app reads the SMART configuration at its FHIR address. That says where to sign in, and associated_endpoints names the imaging server, chosen by its smart-imaging-access capability.",
   authorize: "The app sends the browser to the sign-in page with the scopes it wants and a PKCE challenge. It never sees the password, and it gets back a one-time code.",
+  "backend-token": "A backend service has no user to sign in. It proves its identity with an assertion signed by its private key, and the server checks that against the public key it registered. What it can reach was granted in advance.",
   token: "The app sends that code with its PKCE verifier. The response has an access token and the patient it applies to.",
   patient: "The app reads the patient named in the token response.",
   clinical: "An ordinary FHIR search on the clinical server, using the access token.",
@@ -89,7 +95,7 @@ const WHY = {
   wado: "A DICOMweb WADO-RS retrieval from the address in the study's Endpoint, still sending the access token. Each request is one DICOM instance.",
 };
 /** Which system answered each kind of request. */
-const ANSWERED_BY = { discover: "Clinical FHIR server", authorize: "Authorization server", token: "Authorization server", patient: "Clinical FHIR server", clinical: "Clinical FHIR server", imaging: "Imaging FHIR server", wado: "DICOMweb endpoint" };
+const ANSWERED_BY = { "backend-token": "Authorization server", discover: "Clinical FHIR server", authorize: "Authorization server", token: "Authorization server", patient: "Clinical FHIR server", clinical: "Clinical FHIR server", imaging: "Imaging FHIR server", wado: "DICOMweb endpoint" };
 const openCalls = new Set();
 const stageOf = kind => STAGES.find(st => st.kinds.includes(kind));
 function stageState(steps, stage) {
@@ -100,6 +106,9 @@ const GLYPH = { done: "✓", failed: "✕" };
 const STATE_WORD = { done: "Done", failed: "Failed", waiting: "Not yet" };
 function stageHtml(stage, index, open = false) {
   const steps = trail.filter(s => stage.kinds.includes(s.kind)), state = stageState(steps, stage);
+  // A service never signs anyone in, so that stage says what it does instead.
+  const asService = steps.some(s => s.kind === "backend-token");
+  if (asService) stage = { ...stage, from: "This service", line: "Prove this service's identity with a signed assertion, and receive an access token." };
   const facts = Object.assign({}, ...steps.map(s => s.facts ?? {}));
   const tiles = Object.entries(facts).map(([k, v]) => `<div class="fact${String(v).length > 12 ? " long" : ""}"><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
   const calls = steps.map(callHtml).join("");
@@ -122,8 +131,10 @@ function paintStage(stage) {
 function renderTrail() {
   const list = $("#trail");
   if (!list) return;
-  list.innerHTML = STAGES.map(st => `<li class="stage-row" data-stage="${st.key}"></li>`).join("");
-  STAGES.forEach(paintStage);
+  const service = trail.some(s => s.kind === "backend-token");
+  const shown = STAGES.filter(st => !(service && st.key === "clinical"));
+  list.innerHTML = shown.map(st => `<li class="stage-row" data-stage="${st.key}"></li>`).join("");
+  shown.forEach(paintStage);
 }
 function callHtml(s) {
   const status = s.failed ? "Failed" : s.status ?? "OK";
@@ -160,7 +171,7 @@ function addStep(step) {
 }
 /** What the panel shows of a body: no secret in full, and only the start of a long one. */
 const preview = text => {
-  const masked = String(text).replace(/("(?:access_token|refresh_token|id_token)"\s*:\s*")[^"]+/g, "$1…").replace(/((?:code|code_verifier)=)[^&\s]+/g, "$1…").replace(/[A-Za-z0-9_.~-]{72,}/g, m => `${m.slice(0, 16)}…${m.slice(-8)}`);
+  const masked = String(text).replace(/("(?:access_token|refresh_token|id_token)"\s*:\s*")[^"]+/g, "$1…").replace(/((?:code|code_verifier|client_assertion)=)[^&\s]+/g, "$1…").replace(/[A-Za-z0-9_.~-]{72,}/g, m => `${m.slice(0, 16)}…${m.slice(-8)}`);
   return masked.length > 1600 ? `${masked.slice(0, 1600)}\n… ${masked.length - 1600} more characters` : masked;
 };
 const pretty = text => { try { return JSON.stringify(JSON.parse(text), null, 1); } catch { return text; } };
@@ -217,6 +228,7 @@ async function connect() {
   button.disabled = true;
   try {
     const server = chosenServer();
+    if (server.mode === "backend") { await connectBackend(server); return; }
     // Another server has a redirect registered for one fixed address, so its sign-in runs from there.
     if (!server.own && BASE) { location.assign("/?connect=1"); return; }
     // Everyone gets a world of their own, so one visitor's changes never reach another's.
@@ -239,7 +251,7 @@ async function connect() {
     if (!imagingOf(config, iss) && !server.imaging) throw new Error("This server doesn't advertise SMART Imaging with App Launch. Add \"imaging\" to its configuration if you know where it is.");
     const verifier = random(), state = random();
     const challenge = b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
-    save({ pending: { verifier, state, config, iss, clientId, imaging: server.imaging, own: !!server.own, label: server.label } });
+    save({ pending: { verifier, state, config, iss, clientId, imaging: server.imaging, own: !!server.own, label: server.label, jwk: server.jwk } });
     const url = new URL(config.authorization_endpoint);
     Object.entries({ response_type: "code", client_id: clientId, redirect_uri: REDIRECT, scope, aud: iss, state, code_challenge: challenge, code_challenge_method: "S256" }).forEach(([k, v]) => url.searchParams.set(k, v));
     addStep({ id: "authorize", kind: "authorize", title: "Sign in and approve the app", request: requestLine("GET", url.toString().replace(/([?&](state|code_challenge)=)[^&]+/g, "$1…")), response: "The browser returned with a one-time code." });
@@ -249,13 +261,39 @@ async function connect() {
     const el = $("#connect-error"); el.hidden = false; el.textContent = e.message;
   }
 }
+const ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
+const BACKEND_CAPABILITY = "http://fhir.org/argonaut/smart-imaging/capabilities/backend-services";
+const textBytes = t => new TextEncoder().encode(t);
+const jsonPart = o => b64url(textBytes(JSON.stringify(o)));
+/** A client assertion, signed here with the client's private key: SMART's asymmetric client authentication. */
+async function signAssertion(jwk, clientId, tokenEndpoint) {
+  const key = await crypto.subtle.importKey("jwk", jwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
+  const now = Math.floor(Date.now() / 1000);
+  const head = `${jsonPart({ alg: "ES256", kid: jwk.kid, typ: "JWT" })}.${jsonPart({ iss: clientId, sub: clientId, aud: tokenEndpoint, exp: now + 240, jti: random() })}`;
+  const signature = new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, textBytes(head)));
+  return `${head}.${b64url(signature)}`;
+}
+/** A backend service: no one signs in. It proves its identity, gets a token, and names the patient itself. */
+async function connectBackend(server) {
+  if (BASE) { location.assign("/?connect=1"); return; }
+  trail.length = 0;
+  const config = await discover(server.iss);
+  const imaging = (config.capabilities?.includes(IMAGING) && config.capabilities.includes(BACKEND_CAPABILITY) ? server.iss : (config.associated_endpoints ?? []).find(e => e.capabilities?.includes(IMAGING) && e.capabilities.includes(BACKEND_CAPABILITY))?.url) ?? server.imaging;
+  if (!imaging) throw new Error("This server doesn't advertise SMART Imaging for Backend Services.");
+  const scope = server.scope ?? "system/ImagingStudy.rs";
+  const body = new URLSearchParams({ grant_type: "client_credentials", scope, client_assertion_type: ASSERTION_TYPE, client_assertion: await signAssertion(server.jwk, server.clientId, config.token_endpoint) }).toString();
+  const token = await traced({ id: "backend-token", kind: "backend-token", title: "Authenticate and get a token" }, config.token_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body }, t => ({ Granted: t.scope, "Token lasts": `${Math.round(t.expires_in / 60)} min` }));
+  const session = { token: token.access_token, patient: server.patient, imaging: imaging.replace(/\/$/, ""), iss: server.iss, own: false, label: server.label, backend: true };
+  save({ session });
+  await run(session);
+}
 async function finishSignIn(params) {
   const { pending } = saved();
   history.replaceState(null, "", REDIRECT);
   if (!pending || pending.state !== params.get("state")) throw new Error("This sign-in didn't start here. Connect again.");
   save({ pending: undefined });
   if (params.get("error")) { addStep({ id: "authorize", kind: "authorize", title: "Sign in and approve the app", failed: true, response: params.get("error") }); throw new Error(`The sign-in ended with: ${params.get("error")}`); }
-  const body = new URLSearchParams({ grant_type: "authorization_code", code: params.get("code"), redirect_uri: REDIRECT, client_id: pending.clientId, code_verifier: pending.verifier }).toString();
+  const body = new URLSearchParams({ grant_type: "authorization_code", code: params.get("code"), redirect_uri: REDIRECT, client_id: pending.clientId, code_verifier: pending.verifier, ...(pending.jwk ? { client_assertion_type: ASSERTION_TYPE, client_assertion: await signAssertion(pending.jwk, pending.clientId, pending.config.token_endpoint) } : {}) }).toString();
   const token = await traced({ id: "token", kind: "token", title: "Exchange the code for a token" }, pending.config.token_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body }, t => ({ Granted: t.scope, "Token lasts": `${Math.round(t.expires_in / 60)} min` }));
   const imaging = imagingOf(pending.config, pending.iss)?.url ?? pending.imaging;
   if (!imaging) throw new Error("This server doesn't advertise SMART Imaging with App Launch. Add \"imaging\" to its configuration if you know where it is.");
@@ -666,7 +704,12 @@ async function run(session) {
   showApp();
   $("#connected").textContent = session.own ? "" : `Connected to ${session.label}`;
   if (session.own && BASE) worldName(BASE).then(name => { if (name) $("#connected").textContent = `Sandbox: ${name}`; });
-  const results = await Promise.allSettled([loadPatient(session), loadClinical(session), loadStudies(session)]);
+  if (session.backend) {
+    $("#patient").innerHTML = `<p class="who">Patient ${esc(session.patient)}</p><p class="facts">Backend service: no one signed in</p>`;
+    $("#clinical").hidden = true;
+    renderTrail();
+  }
+  const results = await Promise.allSettled(session.backend ? [loadStudies(session)] : [loadPatient(session), loadClinical(session), loadStudies(session)]);
   if (results.some(r => r.reason?.status === 401)) { save({ session: undefined }); announce("Your session ended. Connect again."); note("Your session ended. Disconnect, then connect again."); }
 }
 renderServers();
