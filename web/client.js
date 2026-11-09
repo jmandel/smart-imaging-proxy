@@ -4,11 +4,9 @@
 // first, then outward, so the first picture doesn't wait for the rest of the study.
 const CLIENT_ID = "demo-client", SCOPE = "launch/patient patient/*.rs";
 const REDIRECT = `${location.origin}${BASE}/`;
-/** Where another server sends the browser back: one fixed address, since a server registers its clients' redirects exactly. */
-const ROOT_REDIRECT = `${location.origin}/`;
 const SANDBOX = { id: "sandbox", label: "SMART Imaging sandbox", detail: "Your own sandbox of sample patients", own: true };
 const DEFAULT_SERVERS = [];
-const SERVERS_KEY = "smart-imaging-client:servers", CHOICE_KEY = "smart-imaging-client:choice", SANDBOX_KEY = "smart-imaging-client:sandbox";
+const SERVERS_KEY = "smart-imaging-client:servers", CHOICE_KEY = "smart-imaging-client:choice";
 const stored = key => { try { return localStorage.getItem(key); } catch { return null; } };
 const store = (key, value) => { try { value === null ? localStorage.removeItem(key) : localStorage.setItem(key, value); } catch {} };
 /** What a pasted configuration must be. Gives the servers, or throws saying what's wrong. */
@@ -50,7 +48,7 @@ function renderServers() {
   $$("input[name=server]").forEach(r => r.addEventListener("change", () => store(CHOICE_KEY, r.value)));
 }
 function initConfigure() {
-  $("#redirect-uri").textContent = ROOT_REDIRECT;
+  $("#redirect-uri").textContent = REDIRECT;
   const box = $("#servers-json"), status = $("#servers-status");
   box.value = JSON.stringify(savedServers(), null, 2);
   $("#servers-save").addEventListener("click", () => {
@@ -231,20 +229,6 @@ async function connect() {
   try {
     const server = chosenServer();
     if (server.mode === "backend") { await connectBackend(server); return; }
-    // Another server has a redirect registered for one fixed address, so its sign-in runs from there.
-    if (!server.own && BASE) { location.assign("/?connect=1"); return; }
-    // Everyone gets a sandbox of their own, so one visitor's changes never reach another's.
-    if (server.own && !BASE) {
-      // This browser's sandbox lasts until its owner starts over, so go back to it if it's there.
-      const known = stored(SANDBOX_KEY);
-      if (known && (await fetch(`${known}/api/sandbox`)).ok) { location.assign(`${known}/?connect=1`); return; }
-      const r = await fetch("/api/sandboxes", { method: "POST" });
-      if (!r.ok) throw new Error(r.status === 429 ? "Too many sandboxes from this address. Try again in a while." : `The sandbox couldn't be created (HTTP ${r.status})`);
-      const { base } = await r.json();
-      store(SANDBOX_KEY, base);
-      location.assign(`${base}/?connect=1`);
-      return;
-    }
     trail.length = 0;
     const iss = server.own ? `${location.origin}${BASE}/fhir` : server.iss, clientId = server.own ? CLIENT_ID : server.clientId, scope = server.scope ?? SCOPE;
     const config = await discover(iss);
@@ -278,7 +262,6 @@ async function signAssertion(jwk, clientId, tokenEndpoint) {
 }
 /** A backend service: no one signs in. It proves its identity, gets a token, and names the patient itself. */
 async function connectBackend(server) {
-  if (BASE) { location.assign("/?connect=1"); return; }
   trail.length = 0;
   const config = await discover(server.iss);
   const imaging = (config.capabilities?.includes(IMAGING) && config.capabilities.includes(BACKEND_CAPABILITY) ? server.iss : (config.associated_endpoints ?? []).find(e => e.capabilities?.includes(IMAGING) && e.capabilities.includes(BACKEND_CAPABILITY))?.url) ?? server.imaging;
@@ -659,48 +642,72 @@ $("#reset-view").addEventListener("click", async () => {
   refreshView();
 });
 
-// The sandboxes this browser knows: the current one is SANDBOX_KEY, and a joined one is someone else's to end.
+// The sandboxes this browser knows. The list is the only thing kept: the URL says which one a page is in.
 const SANDBOXES_KEY = "smart-imaging-client:sandboxes";
-function sandboxes() {
+function knownSandboxes() {
   let list = [];
   try { list = JSON.parse(stored(SANDBOXES_KEY) ?? "[]"); } catch {}
-  const current = stored(SANDBOX_KEY);
-  if (current && !list.some(w => w.base === current)) list.push({ base: current, joined: false });
+  // What earlier versions kept: one current sandbox, under either of its old names, and a list under its old name.
+  for (const old of ["smart-imaging-client:sandbox", "smart-imaging-client:world"]) {
+    const base = stored(old);
+    if (base && !list.some(w => w.base === base)) list.push({ base, joined: false });
+    if (base) store(old, null);
+  }
+  try { for (const w of JSON.parse(stored("smart-imaging-client:worlds") ?? "[]")) if (!list.some(x => x.base === w.base)) list.push(w); } catch {}
+  store("smart-imaging-client:worlds", null);
   return list;
 }
 const saveSandboxes = list => store(SANDBOXES_KEY, JSON.stringify(list));
-const shareLink = base => `${location.origin}${base}/?join=1`;
+const shareLink = base => `${location.origin}${base}/`;
 async function sandboxName(base) {
-  const r = await fetch(`${base}/api/sandbox`);
-  return r.ok ? (await r.json()).name : null;
+  const r = await fetch(`${base}/api/sandbox`).catch(() => undefined);
+  return r?.ok ? (await r.json()).name : null;
 }
-async function renderSandbox() {
-  const box = $("#sandbox"), current = stored(SANDBOX_KEY);
-  if (!current) { document.documentElement.classList.remove("has-sandbox"); return; }
-  let list = sandboxes();
-  const name = await sandboxName(current);
-  if (!name) { // Ended by someone else.
-    saveSandboxes(list.filter(w => w.base !== current));
-    store(SANDBOX_KEY, list.find(w => w.base !== current)?.base ?? null);
-    return renderSandbox();
-  }
-  list = list.map(w => w.base === current ? { ...w, name } : w);
+/** The home page: the sandboxes this browser has made or joined, and a way to make another. */
+async function renderHome() {
+  const el = $("#sandbox-list");
+  let list = knownSandboxes();
+  const names = await Promise.all(list.map(w => sandboxName(w.base)));
+  // One deleted by whoever made it is gone for everyone.
+  list = list.map((w, i) => names[i] ? { ...w, name: names[i] } : null).filter(Boolean);
   saveSandboxes(list);
-  const mine = list.find(w => w.base === current), others = list.filter(w => w.base !== current);
-  box.innerHTML = `<h2>Your sandbox</h2>
-    <div class="sandbox-head"><p class="sandbox-name" id="sandbox-name">${esc(name)}</p><button type="button" class="tool" id="rename">Rename</button></div>
-    <div class="sandbox-actions"><button type="button" class="tool" id="share">Share</button><button type="button" class="tool" id="end">${mine.joined ? "Leave this sandbox" : "Start over with a new sandbox"}</button></div>
-    <div id="share-panel" hidden><input type="text" id="share-link" readonly aria-label="Link to this sandbox" value="${esc(shareLink(current))}"><p class="note" id="share-note">Anyone with this link can see and change this sandbox.</p></div>
-    ${others.length ? `<ul class="other-sandboxes">${others.map(w => `<li><span>${esc(w.name ?? "Sandbox")}</span><button type="button" class="tool" data-switch="${esc(w.base)}">Switch</button></li>`).join("")}</ul>` : ""}`;
-  document.documentElement.classList.add("has-sandbox");
+  el.innerHTML = list.length ? list.map(w => `<li><a href="${esc(w.base)}/" data-root><strong>${esc(w.name)}</strong><span>${w.joined ? "Shared with you" : "Made in this browser"}</span></a></li>`).join("") : `<li class="none">None yet.</li>`;
+}
+$("#create").addEventListener("click", async () => {
+  const button = $("#create"), err = $("#create-error");
+  button.disabled = true;
+  try {
+    const r = await fetch("/api/sandboxes", { method: "POST" });
+    if (!r.ok) throw new Error(r.status === 429 ? "Too many sandboxes from this address. Try again in a while." : `The sandbox couldn't be created (HTTP ${r.status})`);
+    const { base } = await r.json();
+    saveSandboxes([...knownSandboxes(), { base, joined: false }]);
+    location.assign(`${base}/`);
+  } catch (e) { err.hidden = false; err.textContent = e.message; button.disabled = false; }
+});
+/** Inside a sandbox: its name, and what can be done with it. A browser that hasn't joined it is asked first. */
+async function renderSandbox() {
+  const box = $("#sandbox");
+  const list = knownSandboxes();
+  const name = await sandboxName(BASE);
+  if (!name) { box.innerHTML = `<p class="error">This sandbox doesn't exist any more.</p><p><a href="/" data-root>Your sandboxes</a></p>`; return; }
+  const mine = list.find(w => w.base === BASE);
+  if (!mine) {
+    box.innerHTML = `<h2>Join “${esc(name)}”?</h2><p class="note">Someone shared this sandbox with you. Anyone with its link can see and change it. It holds sample data only.</p><div class="sandbox-actions"><button type="button" class="primary" id="join">Join this sandbox</button></div>`;
+    $("#join").addEventListener("click", () => { saveSandboxes([...knownSandboxes(), { base: BASE, joined: true, name }]); renderSandbox(); });
+    return;
+  }
+  saveSandboxes(list.map(w => w.base === BASE ? { ...w, name } : w));
+  box.innerHTML = `<div class="sandbox-head"><p class="sandbox-name" id="sandbox-name">${esc(name)}</p><button type="button" class="tool" id="rename">Rename</button></div>
+    <div class="sandbox-actions"><button type="button" class="tool" id="share">Share</button><button type="button" class="tool" id="end">${mine.joined ? "Leave this sandbox" : "Delete this sandbox"}</button><a class="tool" href="/" data-root>All sandboxes</a></div>
+    <div id="share-panel" hidden><input type="text" id="share-link" readonly aria-label="Link to this sandbox" value="${esc(shareLink(BASE))}"><p class="note" id="share-note">Anyone with this link can see and change this sandbox.</p></div>`;
   $("#rename").addEventListener("click", async () => {
     const next = prompt("Name this sandbox", name);
     if (next === null || !next.trim()) return;
-    await fetch(`${current}/api/sandbox`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: next }) });
+    await fetch(`${BASE}/api/sandbox`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: next }) });
     renderSandbox();
   });
   $("#share").addEventListener("click", async () => {
-    const url = shareLink(current), panel = $("#share-panel"), note = $("#share-note");
+    const url = shareLink(BASE), panel = $("#share-panel"), note = $("#share-note");
     panel.hidden = false;
     $("#share-link").select();
     if (navigator.share) { try { await navigator.share({ title: `SMART Imaging sandbox: ${name}`, url }); return; } catch (e) { if (e.name === "AbortError") return; } }
@@ -708,26 +715,10 @@ async function renderSandbox() {
   });
   $("#end").addEventListener("click", async () => {
     if (!mine.joined && !confirm(`Delete “${name}” and everything in it? Anyone you shared it with loses it too.`)) return;
-    if (!mine.joined) try { await fetch(`${current}/api/sandbox`, { method: "DELETE" }); } catch {}
-    const rest = list.filter(w => w.base !== current);
-    saveSandboxes(rest);
-    store(SANDBOX_KEY, rest[0]?.base ?? null);
-    try { sessionStorage.clear(); } catch {}
+    if (!mine.joined) try { await fetch(`${BASE}/api/sandbox`, { method: "DELETE" }); } catch {}
+    saveSandboxes(knownSandboxes().filter(w => w.base !== BASE));
+    try { sessionStorage.removeItem(STORE); } catch {}
     location.assign("/");
-  });
-  $$("[data-switch]", box).forEach(b => b.addEventListener("click", () => { store(SANDBOX_KEY, b.dataset.switch); try { sessionStorage.clear(); } catch {} location.assign("/"); }));
-}
-async function showInvite() {
-  const name = await sandboxName(BASE);
-  if (!name) return;
-  $("#invite-title").textContent = `You've been invited to “${name}”`;
-  $("#invite").hidden = false;
-  $("#join").addEventListener("click", () => {
-    const list = sandboxes();
-    if (!list.some(w => w.base === BASE)) list.push({ base: BASE, joined: true, name });
-    saveSandboxes(list);
-    store(SANDBOX_KEY, BASE);
-    location.assign(`${BASE}/`);
   });
 }
 function showApp() {
@@ -752,16 +743,15 @@ renderServers();
 initConfigure();
 $("#connect").addEventListener("click", connect);
 $("#disconnect").addEventListener("click", disconnect);
-// The header's links stay in this visitor's sandbox.
-if (BASE) for (const a of $$("a[href^='/']:not([data-sandbox-guide])")) a.setAttribute("href", `${BASE}${a.getAttribute("href")}`);
 
 (async function start() {
   const params = new URLSearchParams(location.search);
-  if (params.get("join") === "1" && BASE) showInvite(); else renderSandbox();
+  if (!BASE) { renderHome(); return; }
+  renderSandbox();
   try {
     if (params.has("code") || params.has("error")) { const s = await finishSignIn(params); await run(s); return; }
     if (saved().session) { await run(saved().session); return; }
-    if (params.get("connect") === "1" && (BASE || !chosenServer().own)) { history.replaceState(null, "", REDIRECT); await connect(); return; }
+    if (params.get("connect") === "1") { history.replaceState(null, "", REDIRECT); await connect(); return; }
     connecting(false);
   } catch (e) {
     connecting(false);

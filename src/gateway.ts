@@ -27,17 +27,11 @@ function target(path: string, prefix: string): string {
 /** Service-to-service APIs, which callers reach on the services' own loopback ports, never through here. */
 const INTERNAL = /^\/imaging\/policy(\/|$)|^\/internal\/|^\/trace\/v1\//;
 
-/** The pages at the root of a public deployment that go to the browser's own sandbox. The home page does it on Connect. */
+/** Pages that only make sense inside a sandbox. At the root of a public deployment they go to the list of sandboxes. */
 const SCOPED_PAGES = new Set(["/tours", "/explore", "/activity", "/account", "/connect"]);
-/**
- * A page that goes to this browser's sandbox, making one if it has none. Only a browser running it makes one, so a crawler
- * following links can't use up the sandboxes people are in.
- */
-const OPEN_A_SANDBOX = (path: string) => new Response(`<!doctype html><meta charset="utf-8"><title>SMART Imaging</title><meta name="robots" content="noindex"><p>Opening your sandbox…</p><script>try{for(const[o,n]of[["world","sandbox"],["worlds","sandboxes"]]){const a="smart-imaging-client:"+o,b="smart-imaging-client:"+n,v=localStorage.getItem(a);if(v!==null){if(localStorage.getItem(b)===null)localStorage.setItem(b,v);localStorage.removeItem(a)}}}catch{}(async()=>{const k="smart-imaging-client:sandbox";let b=localStorage.getItem(k);if(!b||!(await fetch(b+"/api/sandbox")).ok){b=(await(await fetch("/api/sandboxes",{method:"POST"})).json()).base;localStorage.setItem(k,b)}location.replace(b+${JSON.stringify(path)}+location.search)})()</script>`, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
-
 /** What a public deployment's root sandbox refuses or redirects: everyone shares it, so nobody changes it. */
 export function publicRootGate(method: string, path: string): Response | undefined {
-  if (method === "GET" || method === "HEAD") return SCOPED_PAGES.has(path) ? OPEN_A_SANDBOX(path) : undefined;
+  if (method === "GET" || method === "HEAD") return SCOPED_PAGES.has(path) ? new Response(null, { status: 302, headers: { location: "/" } }) : undefined;
   if (method === "OPTIONS" || (method === "POST" && path === "/api/sandboxes")) return undefined;
   return Response.json({ error: "the shared sandbox is read-only here: POST /api/sandboxes for a sandbox of your own, and work at its URLs" }, { status: 403 });
 }

@@ -16,7 +16,8 @@ const report = async (name: string, page: Page) => { await page.waitForTimeout(1
 for (const [label, viewport] of [["desktop", { width: 1440, height: 900 }], ["phone", { width: 390, height: 844 }]] as const) test(label, async () => {
   const ctx = await browser.newContext({ viewport }); ctx.setDefaultTimeout(10000); await ctx.addInitScript(OBS);
   const p = await ctx.newPage();
-  await p.goto(`${O}/`); await report(`${label} landing first`, p);
+  await p.goto(`${O}/`); await report(`${label} home`, p);
+  await p.getByRole("button", { name: "Create a sandbox" }).click(); await p.waitForURL(u => u.pathname.startsWith("/s/")); await p.locator("#sandbox-name").waitFor(); await report(`${label} landing in a sandbox`, p);
   await p.getByRole("button", { name: "Connect", exact: true }).click();
   await p.locator("input[name=username][value=josh]").check(); await p.getByRole("button", { name: "Continue" }).click();
   await p.locator(".site-row summary").first().waitFor();
@@ -32,7 +33,7 @@ for (const [label, viewport] of [["desktop", { width: 1440, height: 900 }], ["ph
   await p.evaluate(() => { (window as any).__s = []; });
   await p.locator(".study-button", { hasText: "Histopath" }).click(); await p.waitForTimeout(600); await report(`${label} back to one-series study`, p);
   const base = new URL(p.url()).pathname.replace(/\/$/, "");
-  await p.evaluate(() => sessionStorage.clear()); await p.goto(`${O}/`); await report(`${label} landing with sandbox`, p);
+  await p.evaluate(() => sessionStorage.clear()); await p.goto(`${O}${base}/`); await report(`${label} landing again`, p);
   await p.goto(`${O}${base}/connect`); await report(`${label} connect page`, p);
   await p.evaluate(() => { (window as any).__s = []; }); await p.getByRole("radio", { name: /Backend service/ }).check(); await report(`${label} connect switch type`, p);
   await ctx.close();

@@ -6,11 +6,9 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Crect width='20' height='20' rx='3' fill='%230f2a3d'/%3E%3Ccircle cx='10' cy='10' r='4' fill='%23e8f1f6'/%3E%3C/svg%3E">
 <script>
 // Decided before anything paints, so a page that's only passing through never shows the landing page.
-// Browsers that saved their sandbox under its old name keep it.
-try { for(const[o,n]of[["world","sandbox"],["worlds","sandboxes"]]){const a="smart-imaging-client:"+o,b="smart-imaging-client:"+n,v=localStorage.getItem(a);if(v!==null){if(localStorage.getItem(b)===null)localStorage.setItem(b,v);localStorage.removeItem(a)}} } catch {}
-(() => { const base = (location.pathname.match(/^\/s\/[^/]+/) || [""])[0]; let session; try { session = JSON.parse(sessionStorage.getItem(`smart-imaging-client:${base}`) || "{}").session; } catch {} if (/[?&](connect=1|code=|error=)/.test(location.search) || session) document.documentElement.classList.add("connecting"); try { if (localStorage.getItem("smart-imaging-client:sandbox")) document.documentElement.classList.add("has-sandbox"); } catch {} })();
+(() => { const base = (location.pathname.match(/^\/s\/[^/]+/) || [""])[0]; let session; try { session = JSON.parse(sessionStorage.getItem(`smart-imaging-client:${base}`) || "{}").session; } catch {} if (!base) document.documentElement.classList.add("at-home"); else if (/[?&](connect=1|code=|error=)/.test(location.search) || session) document.documentElement.classList.add("connecting"); })();
 </script>
-<style>html.connecting #landing, html.connecting #app { display:none; }</style>
+<style>html.connecting #landing, html.connecting #app, html.at-home #landing, html.at-home #app { display:none; } #home { display:none; } html.at-home #home { display:block; }</style>
 <link rel="preload" href="/fonts/atkinson-next.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/atkinson-mono.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/styles.css">
@@ -18,20 +16,27 @@ try { for(const[o,n]of[["world","sandbox"],["worlds","sandboxes"]]){const a="sma
 </head>
 <body>
 <header class="topbar">
-  <a class="mark" href="/"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2" y="2" width="16" height="16" rx="3"/><circle cx="10" cy="10" r="3.2"/></svg><span class="name">SMART Imaging</span></a>
-  <nav class="pages" aria-label="Pages"><a href="/" aria-current="page">Demo</a><a href="/tours">Tours</a><a href="/explore">Explore</a><a href="/activity">Activity</a><a href="/llms.txt" data-sandbox-guide>For agents</a></nav>
+  <a class="mark" href="/" data-root title="Your sandboxes"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2" y="2" width="16" height="16" rx="3"/><circle cx="10" cy="10" r="3.2"/></svg><span class="name">SMART Imaging</span></a>
+  <nav class="pages" aria-label="Pages"><a href="/" aria-current="page">Demo</a><a href="/tours">Tours</a><a href="/explore">Explore</a><a href="/activity">Activity</a><a href="/llms.txt">For agents</a></nav>
 </header>
 <div id="announce" class="sr-only" role="status" aria-live="polite"></div>
 
 <p class="connecting-note" id="connecting" role="status">Connecting…</p>
+<main id="home" class="landing">
+  <h1>Your sandboxes</h1>
+  <p class="lead">A sandbox is a private copy of a SMART Imaging health system, with sample patients, studies and reports. Everything you do in one stays there until you delete it, and you can share one by its link.</p>
+  <ul class="sandbox-list" id="sandbox-list"></ul>
+  <button type="button" class="primary" id="create">Create a sandbox</button>
+  <p class="error" id="create-error" role="alert" hidden></p>
+  <p class="note">Someone sent you a link to theirs? Just open it.</p>
+</main>
 <main id="landing" class="landing">
+  <section class="sandbox panel" id="sandbox"></section>
   <h1>One sign-in, for a patient's chart and their images</h1>
   <p class="lead">This app connects to a health system the way any SMART app would, using <a href="https://build.fhir.org/ig/argonautproject/smart-imaging/">SMART Imaging Access</a>. Choose a server, sign in, then watch every step of the protocol.</p>
-  <section class="invite panel" id="invite" hidden><h2 id="invite-title"></h2><p class="note">Anyone with this link can see and change this sandbox. It holds sample data only.</p><button type="button" class="primary" id="join">Join this sandbox</button></section>
   <fieldset class="server-choice"><legend>Connect to</legend><div id="servers"><label class="server"><input type="radio" name="server" value="sandbox" checked><strong>SMART Imaging sandbox</strong><span>Your own sandbox of sample patients</span></label></div></fieldset>
   <div class="connect-actions"><button type="button" class="primary" id="connect">Connect</button></div>
   <p class="error" id="connect-error" role="alert" hidden></p>
-  <section class="sandbox panel" id="sandbox"></section>
   <p class="note">Building a SMART app? <a href="/connect">Connect it to a sandbox</a>.</p>
   <ol class="preview">
     <li><strong>Discover</strong><span>From one FHIR address, find the sign-in page and the imaging server.</span></li>
@@ -41,7 +46,7 @@ try { for(const[o,n]of[["world","sandbox"],["worlds","sandboxes"]]){const a="sma
   </ol>
   <details class="configure" id="configure">
     <summary>Add or change servers</summary>
-    <p>A server needs a public client that uses PKCE (S256), registered with this redirect URI:</p>
+    <p>A server needs a client registered with this sandbox's redirect URI:</p>
     <p><code id="redirect-uri"></code></p>
     <label for="servers-json">Your servers, as JSON (added to the built-in list)</label>
     <textarea id="servers-json" rows="10" spellcheck="false" autocapitalize="off"></textarea>

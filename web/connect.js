@@ -1,7 +1,5 @@
 // Registering an app in this browser's own sandbox. Everything here happens in that sandbox.
-const SANDBOX_KEY_ = "smart-imaging-client:sandbox";
 const copyButton = (label, value) => `<button type="button" class="tool" data-copy="${esc(value)}" data-label="${esc(label)}">${esc(label)}</button>`;
-try { for(const[o,n]of[["world","sandbox"],["worlds","sandboxes"]]){const a="smart-imaging-client:"+o,b="smart-imaging-client:"+n,v=localStorage.getItem(a);if(v!==null){if(localStorage.getItem(b)===null)localStorage.setItem(b,v);localStorage.removeItem(a)}} } catch {}
 const KEYS_KEY = "smart-imaging-client:keys";
 const savedKeys = () => { try { return JSON.parse(localStorage.getItem(KEYS_KEY) ?? "{}"); } catch { return {}; } };
 const keepKey = (id, jwk) => { try { localStorage.setItem(KEYS_KEY, JSON.stringify({ ...savedKeys(), [id]: jwk })); } catch {} };
@@ -16,14 +14,14 @@ async function generateKey() {
   return { priv: { ...priv, kid }, pub: { kty: pub.kty, crv: pub.crv, x: pub.x, y: pub.y, kid } };
 }
 /** Whether the viewer on this site can act as this client: it holds the key, and for sign-in, its address is registered. */
-const canTry = c => (c.type === "public" || savedKeys()[c.id]) && (c.type === "backend" || c.redirectUris.includes(`${location.origin}/`));
+const canTry = c => (c.type === "public" || savedKeys()[c.id]) && (c.type === "backend" || c.redirectUris.includes(`${location.origin}${BASE}/`));
 function tryInViewer(c) {
   const jwk = savedKeys()[c.id], entry = { label: c.name, iss: fhirBase(), clientId: c.id, ...(c.type === "backend" ? { mode: "backend", jwk, patient: c.patients === "any" ? "josh-example" : c.patients, scope: "system/ImagingStudy.rs" } : c.type === "confidential" ? { auth: "private_key_jwt", jwk } : {}) };
   let list = [];
   try { list = JSON.parse(localStorage.getItem("smart-imaging-client:servers") ?? "[]").filter(s => s.clientId !== c.id); } catch {}
   list.push(entry);
   try { localStorage.setItem("smart-imaging-client:servers", JSON.stringify(list)); localStorage.setItem("smart-imaging-client:choice", `${entry.iss}|${entry.clientId}`); sessionStorage.clear(); } catch {}
-  location.assign("/?connect=1");
+  location.assign(`${BASE}/?connect=1`);
 }
 const fhirBase = () => `${location.origin}${BASE}/fhir`;
 function clientHtml(c) {
@@ -81,16 +79,6 @@ $("#clients").addEventListener("click", async e => {
   if (remove) { await api("DELETE", `/api/sandbox/clients/${encodeURIComponent(remove.dataset.remove)}`); await refresh(); }
 });
 (async () => {
-  if (!BASE) {
-    let sandbox = null;
-    try { sandbox = localStorage.getItem(SANDBOX_KEY_); } catch {}
-    if (!sandbox || !(await fetch(`${sandbox}/api/sandbox`)).ok) {
-      ({ base: sandbox } = await (await fetch("/api/sandboxes", { method: "POST" })).json());
-      try { localStorage.setItem(SANDBOX_KEY_, sandbox); } catch {}
-    }
-    location.replace(`${sandbox}/connect`);
-    return;
-  }
-  for (const a of $$("a[href^='/']:not([data-sandbox-guide])")) a.setAttribute("href", `${BASE}${a.getAttribute("href")}`);
+  if (!BASE) { location.replace("/"); return; }
   await refresh();
 })();

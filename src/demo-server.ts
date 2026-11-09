@@ -36,7 +36,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     const name = sandbox.id ? sandbox.store.note("name") : undefined;
     const section = sandbox.id
       ? `## This sandbox\n\n${name ? `This is "${name}". ` : ""}Everything below works here now. This link is its access, so share it only with those who should use it.\n\n\`\`\`sh\nSANDBOX=${site}\n\`\`\``
-      : `## Start here\n\nCreate a sandbox, and use it for everything below:\n\n\`\`\`sh\nSANDBOX=${origin}$(curl -sX POST ${origin}/api/sandboxes | jq -r .base)\n\`\`\`\n\nOr open the site in a browser and press Connect. Each sandbox has its own copy of this file at \`$SANDBOX/llms.txt\`, which names it.`;
+      : `## Start here\n\nCreate a sandbox, and use it for everything below:\n\n\`\`\`sh\nSANDBOX=${origin}$(curl -sX POST ${origin}/api/sandboxes | jq -r .base)\n\`\`\`\n\nOr open the site in a browser and choose Create a sandbox. Each sandbox has its own copy of this file at \`$SANDBOX/llms.txt\`, which names it.`;
     const text = (await Bun.file(join(root, "web", "llms.txt")).text()).replaceAll("{{SANDBOX_SECTION}}", section).replaceAll("{{ORIGIN}}", origin).replaceAll("{{SITE}}", site);
     return new Response(text, { headers: { "content-type": "text/plain; charset=utf-8", ...(sandbox.id ? { "x-robots-tag": "noindex", "cache-control": "no-store" } : {}) } });
   }

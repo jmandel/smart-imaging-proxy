@@ -40,7 +40,7 @@ beforeAll(async () => {
   stack = await startStack(root);
   demo = Bun.serve({ port: PORTS.demo, hostname: "127.0.0.1", fetch: createDemoServer(stack, registerClients(stack), root).fetch });
   sandbox = stack.sandboxes.mint();
-  clientId = (addClient(sandbox.store, { name: "Spec test", redirectUris: [`${CONFIG.demoUrl}/`] }) as any).id;
+  clientId = (addClient(sandbox.store, { name: "Spec test", redirectUris: [`${sandbox.urls.demo}/`] }) as any).id;
   fixture = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) {
     const url = new URL(req.url), [, kind, ...rest] = url.pathname.split("/"), path = `/${rest.join("/")}`;
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
@@ -72,7 +72,7 @@ async function connect(kind: string): Promise<Page> {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   context.setDefaultTimeout(10000);
   const page = await context.newPage();
-  await page.goto(`${CONFIG.demoUrl}/`);
+  await page.goto(`${sandbox.urls.demo}/`);
   await page.locator("#configure summary").click();
   await page.locator("#servers-json").fill(JSON.stringify([{ label: kind, iss: `${FIX}/${kind}/fhir`, clientId }]));
   await page.getByRole("button", { name: "Save" }).click();

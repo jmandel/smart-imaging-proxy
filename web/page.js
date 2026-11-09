@@ -80,9 +80,15 @@ function initHeader() {
 }
 initHeader();
 
-// The guide for agents names a sandbox: this page's, or else the one this browser keeps.
-(() => {
-  let home = BASE;
-  if (!home) try { home = localStorage.getItem("smart-imaging-client:sandbox") ?? ""; } catch {}
-  for (const a of $$("a[data-sandbox-guide]")) a.setAttribute("href", `${home}/llms.txt`);
-})();
+
+// Inside a sandbox every link stays in it, including links a page draws later, except those marked data-root.
+function keepInSandbox(root) {
+  if (!BASE || !root?.querySelectorAll) return;
+  const links = [...(root.matches?.("a[href^='/']") ? [root] : []), ...root.querySelectorAll("a[href^='/']")];
+  for (const a of links) {
+    const href = a.getAttribute("href");
+    if (!a.hasAttribute("data-root") && !href.startsWith("//") && !href.startsWith("/s/")) a.setAttribute("href", `${BASE}${href}`);
+  }
+}
+keepInSandbox(document);
+if (BASE) new MutationObserver(changes => { for (const c of changes) for (const n of c.addedNodes) keepInSandbox(n); }).observe(document.documentElement, { childList: true, subtree: true });

@@ -47,6 +47,6 @@ describe("a public deployment's root", () => {
     expect(publicRootGate("GET", "/")).toBeUndefined();
     expect(publicRootGate("GET", "/fhir/metadata")).toBeUndefined();
     const page = publicRootGate("GET", "/explore")!;
-    expect(await page.text()).toContain('fetch("/api/sandboxes",{method:"POST"})');
+    expect([page.status, page.headers.get("location")]).toEqual([302, "/"]);
   });
 });

@@ -42,8 +42,16 @@ async function litPixels(page: Page) {
 const newContext = async (o: Parameters<Browser["newContext"]>[0]) => { const c = await browser.newContext(o); c.setDefaultTimeout(10000); return c; };
 const shot = async (page: Page, name: string) => { if (SHOTS) await page.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: true }); };
 
-async function signIn(page: Page, user: string) {
+/** From the home page, a new sandbox, entered. Its path is returned. */
+async function enterSandbox(page: Page) {
   await page.goto(`${ORIGIN}/`);
+  await page.getByRole("button", { name: "Create a sandbox" }).click();
+  await page.waitForURL(u => /^\/s\/[^/]+\/$/.test(u.pathname));
+  await page.locator("#sandbox-name").waitFor();
+  return new URL(page.url()).pathname.replace(/\/$/, "");
+}
+async function signIn(page: Page, user: string) {
+  await enterSandbox(page);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await page.locator(`input[name=username][value=${user}]`).check();
   await page.getByRole("button", { name: "Continue" }).click();
@@ -140,12 +148,12 @@ describe("the demo client", () => {
   test.skipIf(!!process.env.BASE_URL && !process.env.EXTERNAL_ISS)("a server from the JSON configuration, by its own discovery, with PKCE", async () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
-    await page.goto(`${ORIGIN}/`);
+    const base = await enterSandbox(page);
     await page.locator("#configure summary").click();
     await page.locator("#servers-json").fill("[{}]");
     await page.getByRole("button", { name: "Save" }).click();
     await page.getByText('Not saved. Server 1 needs a "label".').waitFor();
-    const ext = process.env.EXTERNAL_ISS ? { iss: process.env.EXTERNAL_ISS, clientId: process.env.EXTERNAL_CLIENT } : { iss: `${ORIGIN}/fhir`, clientId: "demo-client" };
+    const ext = process.env.EXTERNAL_ISS ? { iss: process.env.EXTERNAL_ISS, clientId: process.env.EXTERNAL_CLIENT } : { iss: `${ORIGIN}${base}/fhir`, clientId: "demo-client" };
     await page.locator("#servers-json").fill(JSON.stringify([{ label: "Another server", ...ext }]));
     await page.getByRole("button", { name: "Save" }).click();
     await page.getByText("Saved 1 server of your own.").waitFor();
@@ -155,7 +163,7 @@ describe("the demo client", () => {
     await page.getByRole("button", { name: "Continue" }).click();
     await page.getByRole("button", { name: "Approve" }).click();
     await page.locator("#app").waitFor({ state: "visible" });
-    expect(new URL(page.url()).pathname).toBe("/");
+    expect(new URL(page.url()).pathname).toBe(`${base}/`);
     await page.getByText("Connected to Another server").waitFor();
     await page.locator(".who").waitFor();
     await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
@@ -165,23 +173,40 @@ describe("the demo client", () => {
     await shot(page, process.env.EXTERNAL_ISS ? "external-server" : "configured-server");
     await context.close();
   });
-  test("a browser keeps its sandbox until it starts over", async () => {
-    const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
+  test("home lists this browser's sandboxes, and deleting one removes it", async () => {
+    const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     page.on("dialog", d => d.accept());
-    await signIn(page, "josh");
-    const first = new URL(page.url()).pathname;
     await page.goto(`${ORIGIN}/`);
-    await page.evaluate(() => sessionStorage.clear());
+    await page.getByText("None yet.").waitFor();
+    expect(await page.locator("nav.pages a:visible").count()).toBe(1);
+    const first = await enterSandbox(page), second = await enterSandbox(page);
     await page.goto(`${ORIGIN}/`);
-    await page.getByRole("button", { name: "Connect", exact: true }).click();
-    await page.waitForURL(u => u.pathname === first);
+    await page.locator(`.sandbox-list a[href="${first}/"]`).waitFor();
+    await page.locator(`.sandbox-list a[href="${second}/"]`).waitFor();
+    await shot(page, "home");
+    await page.locator(`.sandbox-list a[href="${first}/"]`).click();
+    await page.waitForURL(u => u.pathname === `${first}/`);
+    await page.getByRole("button", { name: "Delete this sandbox" }).click();
+    await page.waitForURL(u => u.pathname === "/");
+    await page.locator(`.sandbox-list a[href="${second}/"]`).waitFor();
+    expect(await page.locator(`.sandbox-list a[href="${first}/"]`).count()).toBe(0);
+    expect((await page.request.get(`${ORIGIN}${first}/api/sandbox`)).status()).toBe(404);
+    await context.close();
+  });
+  test("inside a sandbox every menu link stays in it, and the old pages at the root go home", async () => {
+    const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    const base = await enterSandbox(page);
+    for (const path of [`${base}/`, `${base}/tours`, `${base}/explore`, `${base}/activity`, `${base}/connect`]) {
+      await page.goto(`${ORIGIN}${path}`);
+      const hrefs = await page.locator("nav.pages a").evaluateAll(as => as.map(a => a.getAttribute("href")));
+      expect(hrefs.every(h => h!.startsWith(`${base}/`))).toBe(true);
+      expect(hrefs).toContain(`${base}/llms.txt`);
+      expect(await page.locator("a.mark").getAttribute("href")).toBe("/");
+    }
     await page.goto(`${ORIGIN}/`);
-    await page.getByRole("button", { name: "Start over with a new sandbox" }).click();
-    await page.waitForFunction(() => !localStorage.getItem("smart-imaging-client:sandbox"));
-    await page.getByRole("button", { name: "Connect", exact: true }).click();
-    await page.waitForURL(u => /^\/s\//.test(u.pathname) || u.pathname.includes("authorize"));
-    expect(new URL(page.url()).pathname.startsWith(first)).toBe(false);
+    expect(await page.locator("a", { hasText: "For agents" }).getAttribute("href")).toBe("/llms.txt");
     await context.close();
   });
   test("an app registered on /connect shows what its developer needs", async () => {
@@ -206,7 +231,7 @@ describe("the demo client", () => {
   test("unticking one study approves the rest of that site", async () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
-    await page.goto(`${ORIGIN}/`);
+    await enterSandbox(page);
     await page.getByRole("button", { name: "Connect", exact: true }).click();
     await page.locator("input[name=username][value=josh]").check();
     await page.getByRole("button", { name: "Continue" }).click();
@@ -225,25 +250,23 @@ describe("the demo client", () => {
     const owner = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await owner.newPage();
     page.on("dialog", d => d.accept("Team demo"));
-    await signIn(page, "josh");
-    const base = new URL(page.url()).pathname.replace(/\/$/, "");
-    await page.evaluate(() => sessionStorage.clear());
-    await page.goto(`${ORIGIN}/`);
+    const base = await enterSandbox(page);
     await page.getByRole("button", { name: "Rename" }).click();
     await page.locator("#sandbox-name", { hasText: "Team demo" }).waitFor();
     await page.getByRole("button", { name: "Share" }).click();
     const link = await page.locator("#share-link").inputValue();
-    expect(link).toBe(`${ORIGIN}${base}/?join=1`);
+    expect(link).toBe(`${ORIGIN}${base}/`);
     await page.locator("#share-note", { hasText: "Anyone with" }).waitFor();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
     await shot(page, "sandbox-share");
     const guest = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const other = await guest.newPage();
     await other.goto(link);
-    await other.getByText("invited to “Team demo”").waitFor();
+    await other.getByText("Join “Team demo”?").waitFor();
     await other.getByRole("button", { name: "Join this sandbox" }).click();
     await other.getByRole("button", { name: "Leave this sandbox" }).click();
-    await other.waitForFunction(() => !localStorage.getItem("smart-imaging-client:sandbox"));
+    await other.waitForURL(u => u.pathname === "/");
+    await other.getByText("None yet.").waitFor();
     await page.reload();
     await page.locator("#sandbox-name", { hasText: "Team demo" }).waitFor();
     await guest.close(); await owner.close();
@@ -294,7 +317,7 @@ describe("the demo client", () => {
     await page.goto(`${ORIGIN}${base}/connect`);
     await page.getByLabel("App name").fill("Confidential one");
     await page.getByRole("radio", { name: /Confidential app/ }).check();
-    await page.getByLabel("Redirect URI").fill(`${ORIGIN}/`);
+    await page.getByLabel("Redirect URI").fill(`${ORIGIN}${base}/`);
     await page.getByRole("button", { name: "Register" }).click();
     await page.getByRole("button", { name: "Try it in the viewer" }).click();
     await page.locator("input[name=username][value=josh]").check();
@@ -307,8 +330,7 @@ describe("the demo client", () => {
   test("passing through on the way to sign-in shows one steady state", async () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
-    await page.goto(`${ORIGIN}/`);
-    const base = await page.evaluate(async () => (await (await fetch("/api/sandboxes", { method: "POST" })).json()).base);
+    const base = await enterSandbox(page);
     await page.route("**/.well-known/smart-configuration", async route => { await new Promise(r => setTimeout(r, 700)); await route.continue(); });
     await page.goto(`${ORIGIN}${base}/?connect=1`, { waitUntil: "commit" });
     await page.locator("#connecting").waitFor({ state: "visible" });
@@ -319,34 +341,21 @@ describe("the demo client", () => {
   test("a server that can't be reached brings the landing page back with the error", async () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
+    await enterSandbox(page);
     await page.route("**/.well-known/smart-configuration", route => route.abort());
-    await page.goto(`${ORIGIN}/`);
     await page.getByRole("button", { name: "Connect", exact: true }).click();
     await page.locator("#connect-error").waitFor({ state: "visible" });
     expect(await page.locator("#landing").isVisible()).toBe(true);
     await context.close();
   });
-  test("a browser that saved its sandbox under the old key keeps it", async () => {
+  test("a browser that saved its sandbox under an old key still lists it", async () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
-    await signIn(page, "josh");
-    const base = new URL(page.url()).pathname.replace(/\/$/, "");
-    await page.evaluate(b => { sessionStorage.clear(); localStorage.removeItem("smart-imaging-client:sandbox"); localStorage.removeItem("smart-imaging-client:sandboxes"); localStorage.setItem("smart-imaging-client:world", b); }, base);
+    const base = await enterSandbox(page);
+    await page.evaluate(b => { localStorage.clear(); localStorage.setItem("smart-imaging-client:world", b); }, base);
     await page.goto(`${ORIGIN}/`);
-    await page.locator("#sandbox-name").waitFor();
-    expect(await page.evaluate(() => [localStorage.getItem("smart-imaging-client:sandbox"), localStorage.getItem("smart-imaging-client:world")])).toEqual([base, null]);
-    await context.close();
-  });
-  test("the agents' guide link names this sandbox on every page", async () => {
-    const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
-    const page = await context.newPage();
-    await signIn(page, "josh");
-    const base = new URL(page.url()).pathname.replace(/\/$/, "");
-    for (const path of [`${base}/`, `${base}/tours`, `${base}/explore`, `${base}/activity`, `${base}/connect`, "/"]) {
-      await page.goto(`${ORIGIN}${path}`);
-      await page.waitForFunction(() => document.querySelector("a[data-sandbox-guide]")?.getAttribute("href") !== "/llms.txt");
-      expect(await page.locator("a[data-sandbox-guide]").getAttribute("href")).toBe(`${base}/llms.txt`);
-    }
+    await page.locator(`.sandbox-list a[href="${base}/"]`).waitFor();
+    expect(await page.evaluate(() => localStorage.getItem("smart-imaging-client:world"))).toBeNull();
     await context.close();
   });
   test("a patient with no studies gets a real empty result", async () => {
