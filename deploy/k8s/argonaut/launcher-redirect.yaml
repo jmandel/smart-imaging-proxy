@@ -1,0 +1,23 @@
+# The old launcher's address now leads to the demo.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: launcher-redirect
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/permanent-redirect: https://imaging.argo.run/
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [launcher.imaging.argo.run]
+      secretName: launcher-redirect-tls
+  rules:
+    - host: launcher.imaging.argo.run
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: smart-imaging
+                port: { name: http }

@@ -1,9 +1,10 @@
-# The public sandbox on the Argonaut cluster, beside what's already there. deploy/argonaut.sh sets the image tag.
+# The public demo on the Argonaut cluster, at the address the old launcher stack had. deploy/argonaut.sh sets the image tag.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: smart-imaging-sandbox
 resources:
   - namespace.yaml
+  - launcher-redirect.yaml
   - ../base
 images:
   - name: smart-imaging-proxy
@@ -12,12 +13,12 @@ images:
 configMapGenerator:
   - name: smart-imaging-config
     literals:
-      - DEMO_PUBLIC_URL=https://sandbox.imaging.argo.run
+      - DEMO_PUBLIC_URL=https://imaging.argo.run
 patches:
   - target: { kind: Ingress, name: smart-imaging }
     patch: |
-      - { op: replace, path: /spec/tls/0/hosts/0, value: sandbox.imaging.argo.run }
-      - { op: replace, path: /spec/rules/0/host, value: sandbox.imaging.argo.run }
+      - { op: replace, path: /spec/tls/0/hosts/0, value: imaging.argo.run }
+      - { op: replace, path: /spec/rules/0/host, value: imaging.argo.run }
       - { op: add, path: /metadata/annotations/cert-manager.io~1cluster-issuer, value: letsencrypt-prod }
   # The small nodes are full, so this runs on the larger pool.
   - target: { kind: Deployment, name: smart-imaging }

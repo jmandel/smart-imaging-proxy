@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Builds this commit, publishes its image, and rolls it out to the Argonaut cluster. It names its kubeconfig and
-# context on every call, and touches only the smart-imaging-sandbox namespace. A new volume waits for the sample data.
+# context on every call. It takes over imaging.argo.run from the old stack the first time, which it saves. Undo with:
+#   kubectl -n smart-imaging-sandbox delete ingress --all; kubectl apply -f <the saved file>; and scale the old stack back to 1.
+# A new volume waits for the sample data.
 #
 # Needs a GitHub login with write:packages (docker login ghcr.io), and ~/.kube/configs/argonaut-cluster.yaml.
 set -euo pipefail
 trap 'echo "argonaut.sh: failed at line $LINENO" >&2' ERR
 cd "$(dirname "$0")/.."
 [ -z "$(git status --porcelain --untracked-files=no)" ] || { echo "commit first: this deploys HEAD" >&2; exit 1; }
-TAG="sandbox-$(git rev-parse --short HEAD)" IMAGE=ghcr.io/jmandel/smart-imaging-proxy NS=smart-imaging-sandbox ORIGIN=https://sandbox.imaging.argo.run
+TAG="sandbox-$(git rev-parse --short HEAD)" IMAGE=ghcr.io/jmandel/smart-imaging-proxy NS=smart-imaging-sandbox ORIGIN=https://imaging.argo.run OLD=smart-imaging-access
 KUBE=(kubectl --kubeconfig "${ARGONAUT_KUBECONFIG:-$HOME/.kube/configs/argonaut-cluster.yaml}" --context argonaut-cluster)
 
 echo "== Image $IMAGE:$TAG"
@@ -25,6 +27,14 @@ images:
   - name: $IMAGE
     newTag: $TAG
 EOF
+# The old stack holds these addresses. Its ingresses go, and its pods stop, after a copy is saved. Nothing else of it changes.
+if "${KUBE[@]}" -n "$OLD" get ingress reference >/dev/null 2>&1; then
+  BACKUP=".run/argonaut/old-stack-$(date +%Y%m%d-%H%M%S).yaml"
+  "${KUBE[@]}" -n "$OLD" get ingress,deploy,svc,cm -o yaml > "$BACKUP"
+  echo "Saved the old stack to $BACKUP"
+  "${KUBE[@]}" -n "$OLD" delete ingress reference launcher --timeout=60s
+  "${KUBE[@]}" -n "$OLD" scale deploy/reference deploy/launcher deploy/orthanc --replicas=0
+fi
 "${KUBE[@]}" apply -k .run/argonaut
 if ! timeout -k 5 1000 "${KUBE[@]}" -n "$NS" rollout status deploy/smart-imaging --timeout="${ROLLOUT_TIMEOUT:-900s}"; then
   "${KUBE[@]}" -n "$NS" get pods; "${KUBE[@]}" -n "$NS" logs deploy/smart-imaging -c prepare --tail=30 || true; "${KUBE[@]}" -n "$NS" logs deploy/smart-imaging -c app --tail=30 || true
