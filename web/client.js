@@ -515,40 +515,12 @@ $("#reset-view").addEventListener("click", async () => {
   refreshView();
 });
 
-/** Our own sandbox's storage choice. A server that isn't ours has no such API, and the control stays hidden. */
-async function initSource(session) {
-  if (!BASE || !session.own) return;
-  let status;
-  try { status = await api("GET", "/api/settings/status"); } catch { return; }
-  const select = $("#source-select"), health = $("#source-health");
-  select.innerHTML = status.backend.names.map(n => `<option value="${esc(n)}" ${n === status.backend.current ? "selected" : ""}>${esc(BACKEND_LABELS[n] ?? n)}</option>`).join("");
-  const showHealth = async () => {
-    try {
-      const r = await api("GET", "/api/settings/backends"), mine = r.backends.find(b => b.name === r.current);
-      health.textContent = mine ? `${mine.ok ? "Working" : "Not working"}: ${mine.detail}` : "";
-    } catch { health.textContent = ""; }
-  };
-  select.addEventListener("change", async () => {
-    select.disabled = true;
-    try {
-      await api("POST", "/api/settings/backend", { backend: select.value });
-      showHealth();
-      view?.abort.abort(); view = undefined;
-      note("Retrieving…");
-      await loadStudies(session);
-    } catch (e) { health.textContent = e.message; }
-    finally { select.disabled = false; }
-  });
-  $("#source").hidden = false;
-  showHealth();
-}
 function showApp() {
   $("#landing").hidden = true; $("#app").hidden = false; $("#disconnect").hidden = false;
   renderTrail();
 }
 async function run(session) {
   showApp();
-  initSource(session);
   $("#connected").textContent = session.own ? "" : `Connected to ${session.label}`;
   const results = await Promise.allSettled([loadPatient(session), loadClinical(session), loadStudies(session)]);
   if (results.some(r => r.reason?.status === 401)) { save({ session: undefined }); announce("Your session ended. Connect again."); note("Your session ended. Disconnect, then connect again."); }

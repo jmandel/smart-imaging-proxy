@@ -110,16 +110,6 @@ describe("the demo client", () => {
     await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
     expect(await litPixels(page)).toBeGreaterThan(0.01);
     await shot(page, "desktop-slide");
-    // Each storage backend serves the same study list and pictures.
-    for (const backend of ["orthanc", "s3"]) {
-      await page.locator("#source-select").selectOption(backend);
-      await page.locator("#source-health", { hasText: "Working" }).waitFor();
-      await page.locator("#source-select:enabled").waitFor();
-      await page.locator("#overlay", { hasText: "×" }).waitFor({ timeout: 15000 });
-      await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
-      expect(await page.locator(".study-button").count()).toBe(6);
-      expect(await litPixels(page)).toBeGreaterThan(0.01);
-    }
     await page.locator("[data-stage=clinical] summary").click();
     await page.getByRole("button", { name: /Search Condition/ }).click();
     await page.locator("#call-detail pre", { hasText: "Bearer …" }).first().waitFor();
@@ -157,7 +147,6 @@ describe("the demo client", () => {
     await page.locator("#app").waitFor({ state: "visible" });
     expect(new URL(page.url()).pathname).toBe("/");
     await page.getByText("Connected to Another server").waitFor();
-    expect(await page.locator("#source").isVisible()).toBe(false);
     await page.locator(".who").waitFor();
     await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
     expect(await page.locator(".study-button").count()).toBe(6);
