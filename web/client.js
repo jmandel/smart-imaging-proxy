@@ -7,9 +7,7 @@ const REDIRECT = `${location.origin}${BASE}/`;
 /** Where another server sends the browser back: one fixed address, since a server registers its clients' redirects exactly. */
 const ROOT_REDIRECT = `${location.origin}/`;
 const SANDBOX = { id: "sandbox", label: "SMART Imaging sandbox", detail: "Your own sandbox of sample patients", own: true };
-const DEFAULT_SERVERS = [
-  { label: "SMART Imaging Proxy demo", iss: "https://smart-imaging-proxy.exe.xyz/fhir", clientId: "imaging-viewer", scope: SCOPE },
-];
+const DEFAULT_SERVERS = [];
 const SERVERS_KEY = "smart-imaging-client:servers", CHOICE_KEY = "smart-imaging-client:choice", WORLD_KEY = "smart-imaging-client:world";
 const stored = key => { try { return localStorage.getItem(key); } catch { return null; } };
 const store = (key, value) => { try { value === null ? localStorage.removeItem(key) : localStorage.setItem(key, value); } catch {} };

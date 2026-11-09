@@ -142,7 +142,6 @@ describe("the demo client", () => {
     await page.locator("#servers-json").fill(JSON.stringify([{ label: "Another server", ...ext }]));
     await page.getByRole("button", { name: "Save" }).click();
     await page.getByText("Saved 1 server of your own.").waitFor();
-    expect(await page.getByRole("radio", { name: /SMART Imaging Proxy demo/ }).count()).toBe(1);
     await page.getByRole("radio", { name: /Another server/ }).check();
     await page.getByRole("button", { name: "Connect", exact: true }).click();
     await page.locator("input[name=username][value=josh]").check();
