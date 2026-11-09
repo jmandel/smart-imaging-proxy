@@ -5,6 +5,7 @@
 // works in another.
 import { randomBytes, type KeyObject } from "node:crypto";
 import { listClients, restoreGrants } from "./clients";
+import { friendlyName } from "./world-names";
 import { createImagingServer, createPolicyClient, createProxy, idOf, ref, withTruncation, type Backend, type CatalogStore, type PolicyOperation, type PolicyStore } from "@smart-imaging-proxy/core";
 import { APP_NAMES, createAuthServer, DEMO_BACKEND_SCOPES, PATIENT_NAMES, USERS, type BackendClient } from "./auth-server";
 import { patientAttributes } from "./stores";
@@ -140,6 +141,9 @@ export function createWorld(o: { scope?: string; store: PolicyStore; clock: Demo
     get catalogSource() { return current === "orthanc" ? "orthanc" as const : "archive" as const; },
     get backend() { return current; },
     setBackend(n: BackendName) { current = n; if (o.scope) store.setNote("backend", n); },
+    /** A sandbox's friendly label, chosen when first asked for. */
+    get name(): string | undefined { if (!o.scope) return undefined; let n = store.note("name"); if (!n) { n = friendlyName(); store.setNote("name", n); } return n; },
+    setName(n: string) { store.setNote("name", n); },
     /** Where discovery says imaging is: on a separate FHIR server, or on the clinical one. */
     get topology(): Topology { return store.note("topology") === "unified" ? "unified" : "separate"; },
     setTopology(t: Topology) { store.setNote("topology", t); },

@@ -26,13 +26,13 @@ test("redirect URIs and names are checked", () => {
 });
 test("a registered app can start sign-in in its own world, and only with its own redirect", async () => {
   const w = stack.scopes.mint(), other = stack.scopes.mint();
-  const r = await call("POST", `${w.prefix}/api/clients`, { name: "My app", redirectUris: [REDIRECT] });
+  const r = await call("POST", `${w.prefix}/api/sandbox/clients`, { name: "My app", redirectUris: [REDIRECT] });
   expect(r.status).toBe(201);
   const { id } = await r.json() as any;
   expect((await authorize(w, id)).status).toBe(200);
   expect((await authorize(w, id, "https://evil.example/cb")).status).toBe(400);
   expect((await authorize(other, id)).status).toBe(400);
-  expect((await (await call("GET", `${w.prefix}/api/clients`)).json() as any).clients.map((c: any) => c.id)).toEqual([id]);
+  expect((await (await call("GET", `${w.prefix}/api/sandbox/clients`)).json() as any).clients.map((c: any) => c.id)).toEqual([id]);
 });
 test("a tour leaves registrations alone, and removal ends them", async () => {
   const w = stack.scopes.mint();
@@ -42,7 +42,7 @@ test("a tour leaves registrations alone, and removal ends them", async () => {
   expect(removeClient(w.store, c.id)).toBe(true);
   expect((await authorize(w, c.id)).status).toBe(400);
 });
-test("the shared root has no registrations", async () => expect((await call("GET", "/api/clients")).status).toBe(409));
+test("the shared root has no registrations", async () => expect((await call("GET", "/api/sandbox/clients")).status).toBe(409));
 
 test("named studies add to an approval's sites, and only what the person can see counts", async () => {
   const w = stack.scopes.mint();
@@ -72,13 +72,13 @@ test("a store saved before named studies keeps working", () => {
 
 test("a sandbox has a friendly name it keeps, and can be renamed", async () => {
   const w = stack.scopes.mint();
-  const first = (await (await call("GET", `${w.prefix}/api/world`)).json() as any).name;
+  const first = (await (await call("GET", `${w.prefix}/api/sandbox`)).json() as any).name;
   expect(first).toMatch(/^[A-Z][a-z]+ [A-Z][a-z]+$/);
-  expect((await (await call("GET", `${w.prefix}/api/world`)).json() as any).name).toBe(first);
-  expect((await call("POST", `${w.prefix}/api/world`, { name: "Josh's demo" })).status).toBe(200);
-  expect((await (await call("GET", `${w.prefix}/api/world`)).json() as any).name).toBe("Josh's demo");
-  expect((await call("POST", `${w.prefix}/api/world`, { name: "x".repeat(41) })).status).toBe(400);
-  expect((await call("GET", "/api/world")).status).toBe(409);
+  expect((await (await call("GET", `${w.prefix}/api/sandbox`)).json() as any).name).toBe(first);
+  expect((await call("PATCH", `${w.prefix}/api/sandbox`, { name: "Josh's demo" })).status).toBe(200);
+  expect((await (await call("GET", `${w.prefix}/api/sandbox`)).json() as any).name).toBe("Josh's demo");
+  expect((await call("PATCH", `${w.prefix}/api/sandbox`, { name: "x".repeat(41) })).status).toBe(400);
+  expect((await (await call("GET", "/api/sandbox")).json() as any).name).toBeNull();
 });
 
 test("a sandbox can advertise imaging on its clinical server instead of a separate one", async () => {
@@ -88,15 +88,15 @@ test("a sandbox can advertise imaging on its clinical server instead of a separa
   expect(before.associated_endpoints[0].url).toBe(`${w.urls.imaging}/fhir`);
   expect(before.capabilities).not.toContain("smart-imaging-access");
   expect((await fetch(`${w.urls.auth}/fhir/ImagingStudy?patient=josh-example`)).status).toBe(404);
-  const set = await call("POST", `${w.prefix}/api/settings/topology`, { topology: "unified" });
+  const set = await call("PATCH", `${w.prefix}/api/sandbox`, { topology: "unified" });
   expect(set.status).toBe(200);
   expect((await set.json() as any).topology.current).toBe("unified");
   const after = await config();
   expect(after.associated_endpoints).toBeUndefined();
   expect(after.capabilities).toEqual(expect.arrayContaining(["smart-imaging-access", "http://fhir.org/argonaut/smart-imaging/capabilities/app-launch"]));
   expect((await fetch(`${w.urls.auth}/fhir/ImagingStudy?patient=josh-example`)).status).toBe(401);
-  expect((await call("POST", `${w.prefix}/api/settings/topology`, { topology: "nope" })).status).toBe(400);
-  expect((await call("POST", "/api/settings/topology", { topology: "unified" })).status).toBe(400);
+  expect((await call("PATCH", `${w.prefix}/api/sandbox`, { topology: "nope" })).status).toBe(400);
+  expect((await call("PATCH", "/api/sandbox", { topology: "unified" })).status).toBe(400);
 });
 
 // Non-public clients.
@@ -130,7 +130,7 @@ test("a backend service reaches only what it was granted, and its grant outlasts
   await call("POST", `${w.prefix}/api/tours/own/start`, {});
   const again: any = await (await tokenCall(w, c.id, jwt())).json();
   expect((await search(again.access_token, "josh-example")).status).toBe(200);
-  await call("DELETE", `${w.prefix}/api/clients/${c.id}`);
+  await call("DELETE", `${w.prefix}/api/sandbox/clients/${c.id}`);
   expect((await tokenCall(w, c.id, jwt())).status).toBe(401);
 });
 test("a bad assertion gets nothing: wrong key, wrong audience, or used twice", async () => {
@@ -186,7 +186,7 @@ test("a JWKS URL works for ES384 and RS384, follows rotation, and a key it stops
   let hits = 0;
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => { hits++; return Response.json({ keys: published }); } });
   try {
-    const made = await call("POST", `${w.prefix}/api/clients`, { name: "Rotating", type: "backend", jwksUrl: `http://127.0.0.1:${server.port}/jwks` });
+    const made = await call("POST", `${w.prefix}/api/sandbox/clients`, { name: "Rotating", type: "backend", jwksUrl: `http://127.0.0.1:${server.port}/jwks` });
     expect(made.status).toBe(201);
     const c = await made.json() as any, aud = `${w.urls.auth}/token`;
     const jwt = (alg: string, hash: string, key: any, kid: string, ieee: boolean) => {
@@ -207,7 +207,7 @@ test("a JWKS URL works for ES384 and RS384, follows rotation, and a key it stops
 });
 test("what can't be fetched gives the same answer as what isn't there", async () => {
   const w = stack.scopes.mint();
-  const r = await call("POST", `${w.prefix}/api/clients`, { name: "Nope", type: "backend", jwksUrl: "http://127.0.0.1:1/jwks" });
+  const r = await call("POST", `${w.prefix}/api/sandbox/clients`, { name: "Nope", type: "backend", jwksUrl: "http://127.0.0.1:1/jwks" });
   expect(r.status).toBe(400);
   expect(await fetchJwks("http://127.0.0.1:1/jwks", true)).toBeUndefined();
 });

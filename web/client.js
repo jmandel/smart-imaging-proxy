@@ -223,9 +223,11 @@ async function discover(iss) {
     return { "Sign-in": new URL(c.authorization_endpoint).host, "Imaging server": found ? `${new URL(found.url).host}${found.unified ? " (this server)" : ""}` : "None advertised" };
   });
 }
+const connecting = on => document.documentElement.classList.toggle("connecting", on);
 async function connect() {
   const button = $("#connect");
   button.disabled = true;
+  connecting(true);
   try {
     const server = chosenServer();
     if (server.mode === "backend") { await connectBackend(server); return; }
@@ -235,8 +237,8 @@ async function connect() {
     if (server.own && !BASE) {
       // This browser's sandbox lasts until its owner starts over, so go back to it if it's there.
       const known = stored(WORLD_KEY);
-      if (known && (await fetch(`${known}/api/settings/status`)).ok) { location.assign(`${known}/?connect=1`); return; }
-      const r = await fetch("/api/scopes", { method: "POST" });
+      if (known && (await fetch(`${known}/api/sandbox`)).ok) { location.assign(`${known}/?connect=1`); return; }
+      const r = await fetch("/api/sandboxes", { method: "POST" });
       if (!r.ok) throw new Error(r.status === 429 ? "Too many sandboxes from this address. Try again in a while." : `The sandbox couldn't be created (HTTP ${r.status})`);
       const { base } = await r.json();
       store(WORLD_KEY, base);
@@ -257,6 +259,7 @@ async function connect() {
     addStep({ id: "authorize", kind: "authorize", title: "Sign in and approve the app", request: requestLine("GET", url.toString().replace(/([?&](state|code_challenge)=)[^&]+/g, "$1…")), response: "The browser returned with a one-time code." });
     location.assign(url);
   } catch (e) {
+    connecting(false);
     button.disabled = false;
     const el = $("#connect-error"); el.hidden = false; el.textContent = e.message;
   }
@@ -637,7 +640,7 @@ function worlds() {
 const saveWorlds = list => store(WORLDS_KEY, JSON.stringify(list));
 const shareLink = base => `${location.origin}${base}/?join=1`;
 async function worldName(base) {
-  const r = await fetch(`${base}/api/world`);
+  const r = await fetch(`${base}/api/sandbox`);
   return r.ok ? (await r.json()).name : null;
 }
 async function renderSandbox() {
@@ -662,7 +665,7 @@ async function renderSandbox() {
   $("#rename").addEventListener("click", async () => {
     const next = prompt("Name this sandbox", name);
     if (next === null || !next.trim()) return;
-    await fetch(`${current}/api/world`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: next }) });
+    await fetch(`${current}/api/sandbox`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: next }) });
     renderSandbox();
   });
   $("#share").addEventListener("click", async () => {
@@ -674,7 +677,7 @@ async function renderSandbox() {
   });
   $("#end").addEventListener("click", async () => {
     if (!mine.joined && !confirm(`Delete “${name}” and everything in it? Anyone you shared it with loses it too.`)) return;
-    if (!mine.joined) try { await fetch(`${current}/api/scopes/current`, { method: "DELETE" }); } catch {}
+    if (!mine.joined) try { await fetch(`${current}/api/sandbox`, { method: "DELETE" }); } catch {}
     const rest = list.filter(w => w.base !== current);
     saveWorlds(rest);
     store(WORLD_KEY, rest[0]?.base ?? null);
@@ -697,6 +700,7 @@ async function showInvite() {
   });
 }
 function showApp() {
+  connecting(false);
   $("#landing").hidden = true; $("#app").hidden = false; $("#disconnect").hidden = false;
   renderTrail();
 }
@@ -725,8 +729,10 @@ if (BASE) for (const a of $$("a[href^='/']:not([data-scoped])")) a.setAttribute(
   try {
     if (params.has("code") || params.has("error")) { const s = await finishSignIn(params); await run(s); return; }
     if (saved().session) { await run(saved().session); return; }
-    if (params.get("connect") === "1" && (BASE || !chosenServer().own)) { history.replaceState(null, "", REDIRECT); await connect(); }
+    if (params.get("connect") === "1" && (BASE || !chosenServer().own)) { history.replaceState(null, "", REDIRECT); await connect(); return; }
+    connecting(false);
   } catch (e) {
+    connecting(false);
     $("#landing").hidden = false; $("#app").hidden = true;
     const el = $("#connect-error"); el.hidden = false; el.textContent = e.message;
   }

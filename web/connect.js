@@ -43,7 +43,7 @@ function clientHtml(c) {
 }
 let knownClients = [];
 async function refresh() {
-  const { clients } = await api("GET", "/api/clients");
+  const { clients } = await api("GET", "/api/sandbox/clients");
   knownClients = clients;
   $("#clients").innerHTML = clients.length ? clients.map(clientHtml).join("") : `<p class="note">None yet.</p>`;
 }
@@ -62,7 +62,7 @@ $("#register").addEventListener("submit", async e => {
       else { const made = await generateKey(); body.jwk = made.pub; priv = made.priv; }
     }
     if (type === "backend") body.patients = $("#app-patients").value;
-    const made = await api("POST", "/api/clients", body);
+    const made = await api("POST", "/api/sandbox/clients", body);
     if (priv) keepKey(made.id, priv);
     e.target.reset();
     showFields();
@@ -77,14 +77,14 @@ $("#clients").addEventListener("click", async e => {
     try { await navigator.clipboard.writeText(copy.dataset.copy); copy.textContent = "Copied"; } catch { copy.textContent = "Couldn't copy"; }
     setTimeout(() => { if (copy.isConnected) copy.textContent = copy.dataset.label; }, 2000);
   }
-  if (remove) { await api("DELETE", `/api/clients/${encodeURIComponent(remove.dataset.remove)}`); await refresh(); }
+  if (remove) { await api("DELETE", `/api/sandbox/clients/${encodeURIComponent(remove.dataset.remove)}`); await refresh(); }
 });
 (async () => {
   if (!BASE) {
     let world = null;
     try { world = localStorage.getItem(WORLD_KEY_); } catch {}
-    if (!world || !(await fetch(`${world}/api/settings/status`)).ok) {
-      ({ base: world } = await (await fetch("/api/scopes", { method: "POST" })).json());
+    if (!world || !(await fetch(`${world}/api/sandbox`)).ok) {
+      ({ base: world } = await (await fetch("/api/sandboxes", { method: "POST" })).json());
       try { localStorage.setItem(WORLD_KEY_, world); } catch {}
     }
     location.replace(`${world}/connect`);

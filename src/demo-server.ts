@@ -4,7 +4,6 @@
 import { join } from "node:path";
 import { fetchJwks } from "./jwks";
 import { PUBLIC_DEMO } from "./config";
-import { friendlyName, NAME_LIMIT } from "./world-names";
 import { addClient, listClients, removeClient } from "./clients";
 import { traced } from "./trace";
 import type { BackendName, Stack } from "./stack";
@@ -37,7 +36,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     const name = world.scope ? world.store.note("name") : undefined;
     const section = world.scope
       ? `## This sandbox\n\n${name ? `This is "${name}". ` : ""}Everything below works here now. This link is its access, so share it only with those who should use it.\n\n\`\`\`sh\nSANDBOX=${site}\n\`\`\``
-      : `## Start here\n\nCreate a sandbox, and use it for everything below:\n\n\`\`\`sh\nSANDBOX=${origin}$(curl -sX POST ${origin}/api/scopes | jq -r .base)\n\`\`\`\n\nOr open the site in a browser and press Connect. Each sandbox has its own copy of this file at \`$SANDBOX/llms.txt\`, which names it.`;
+      : `## Start here\n\nCreate a sandbox, and use it for everything below:\n\n\`\`\`sh\nSANDBOX=${origin}$(curl -sX POST ${origin}/api/sandboxes | jq -r .base)\n\`\`\`\n\nOr open the site in a browser and press Connect. Each sandbox has its own copy of this file at \`$SANDBOX/llms.txt\`, which names it.`;
     const text = (await Bun.file(join(root, "web", "llms.txt")).text()).replaceAll("{{SANDBOX_SECTION}}", section).replaceAll("{{ORIGIN}}", origin).replaceAll("{{SITE}}", site);
     return new Response(text, { headers: { "content-type": "text/plain; charset=utf-8", ...(world.scope ? { "x-robots-tag": "noindex", "cache-control": "no-store" } : {}) } });
   }
@@ -150,7 +149,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         if (req.method === "POST") { const refused = refuseWrite(req, url); if (refused) return refused; }
         return tours.fetch(req, url);
       }
-      if (p.startsWith("/api/settings/")) return settingsApi(stack, world, req, url);
+      if ((p === "/api/sandbox" && req.method !== "DELETE") || (p.startsWith("/api/sandbox/") && !p.startsWith("/api/sandbox/clients") && p !== "/api/sandbox/policy")) return settingsApi(stack, world, req, url);
       if (p === "/api/activity" && req.method === "GET") {
         // One page of events, oldest first, ending at `before`. One session's is what its viewer may
         // see; every session's at once is the operator's, which alone links to the live trace.
@@ -200,62 +199,41 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         return json({ scope: scopeOf(world), flow: session.flowId, running: session.running ?? null, steps: stepInfo(flow, session.ctx), completed: session.completed, policy: panelOf(world.store) });
       }
       if (p === "/api/flows") return json({ services, backend: world.backend, scope: scopeOf(world), flows: FLOWS.map(f => ({ id: f.id, number: f.number, group: f.group, title: f.title, summary: f.summary, shows: f.shows, steps: f.steps.length })) });
-      if (p === "/api/backends") return json({ current: world.backend, backends: await Promise.all(BACKEND_NAMES.map(n => stack.selfTest(n))) });
-      if ((p === "/api/backend" || p === "/api/scopes" || p.startsWith("/api/flows/")) && req.method === "POST") {
+      if ((p === "/api/sandboxes" || p.startsWith("/api/flows/")) && req.method === "POST") {
         const refused = refuseWrite(req, url);
         if (refused) return refused;
       }
-      if (p === "/api/backend" && req.method === "POST") {
-        const b = await readJson(req);
-        if (b === undefined || !BACKEND_NAMES.includes(b?.backend)) return json({ error: "unknown backend" }, 400);
-        const extra = extraField(b, ["backend"]);
-        if (extra) return json({ error: extra }, 400);
-        world.setBackend(b.backend as BackendName);
-        return json({ backend: world.backend });
-      }
       // A new scope, seeded from the guardians on file, for anyone to use by its URLs.
-      if (p === "/api/scopes" && req.method === "POST") {
+      if (p === "/api/sandboxes" && req.method === "POST") {
         const unwanted = (await req.text()).trim();
         if (unwanted && unwanted !== "{}") return json({ error: "this action takes no input" }, 400);
         const w = stack.scopes.mint({ saved: true });
-        return json({ scope: w.scope, base: w.prefix, urls: w.urls }, 201);
+        return json({ sandbox: w.scope, base: w.prefix, urls: w.urls }, 201);
       }
-      if (p === "/api/world") {
-        if (!world.scope) return json({ error: "only a sandbox has a name" }, 409);
-        if (req.method === "GET") { let name = world.store.note("name"); if (!name) { name = friendlyName(); world.store.setNote("name", name); } return json({ name }); }
-        if (req.method !== "POST") return new Response("not found", { status: 404 });
-        const refused = refuseWrite(req, url);
-        if (refused) return refused;
-        const body: any = await req.json().catch(() => ({}));
-        const name = typeof body.name === "string" ? body.name.trim() : "";
-        if (!name || name.length > NAME_LIMIT) return json({ error: `a name is 1 to ${NAME_LIMIT} characters` }, 400);
-        world.store.setNote("name", name);
-        return json({ name });
-      }
-      if (p === "/api/clients" || p.startsWith("/api/clients/")) {
+      if (p === "/api/sandbox/clients" || p.startsWith("/api/sandbox/clients/")) {
         if (!world.scope) return json({ error: "apps are registered in a sandbox: open /connect" }, 409);
-        if (req.method === "GET" && p === "/api/clients") return json({ clients: listClients(world.store) });
+        if (req.method === "GET" && p === "/api/sandbox/clients") return json({ clients: listClients(world.store) });
         const refused = refuseWrite(req, url);
         if (refused) return refused;
-        if (req.method === "POST" && p === "/api/clients") {
+        if (req.method === "POST" && p === "/api/sandbox/clients") {
           const body = await req.json().catch(() => ({}));
           // A URL has to work when it's registered, which also shows its owner any mistake straight away.
           const jwksUrl = (body as any).jwksUrl, jwksOk = typeof jwksUrl === "string" && jwksUrl ? !!(await fetchJwks(jwksUrl, PUBLIC_DEMO))?.length : true;
           const made = addClient(world.store, body as any, { jwksReachable: () => jwksOk });
           return "error" in made ? json(made, 400) : json(made, 201);
         }
-        const id = p.slice("/api/clients/".length);
+        const id = p.slice("/api/sandbox/clients/".length);
         if (req.method === "DELETE" && id) return removeClient(world.store, decodeURIComponent(id)) ? json({ removed: true }) : json({ error: "no such app" }, 404);
         return new Response("not found", { status: 404 });
       }
-      if (p === "/api/scopes/current" && req.method === "DELETE") {
-        if (!world.scope) return json({ error: "only a scope can be ended" }, 409);
+      if (p === "/api/sandbox" && req.method === "DELETE") {
+        if (!world.scope) return json({ error: "only a sandbox can be deleted" }, 409);
         const refused = refuseWrite(req, url);
         if (refused) return refused;
         stack.scopes.remove(world.scope);
         return json({ deleted: true });
       }
-      if (p === "/api/policy" && req.method === "GET") return json(panelOf(world.store));
+      if (p === "/api/sandbox/policy" && req.method === "GET") return json(panelOf(world.store));
       const started = p.match(/^\/api\/flows\/([^/]+)\/start$/);
       if (started && req.method === "POST") {
         const r = await startRun(started[1]!);

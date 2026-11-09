@@ -535,7 +535,7 @@ describe("saved policy and scopes", () => {
   test("a session at the root works on saved policy, and one in a scope on that scope's", async () => {
     await browser().pick("josh");
     expect(stack.store.approvals().some(g => g.by === "user:josh")).toBe(true);
-    const { base, scope } = await (await post("/api/scopes")).json() as any;
+    const { base, sandbox: scope } = await (await post("/api/sandboxes")).json() as any;
     const world = (stack.scopes.resolve(scope) as any).world;
     const b = browser(base);
     const s = await b.pick("sam-caregiver");

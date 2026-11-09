@@ -18,7 +18,7 @@ const form = (o: Record<string, string>) => ({ method: "POST", headers: { "conte
 test("from the root it says how to make a sandbox", async () => {
   const { r, text } = await guide("");
   expect(r.headers.get("content-type")).toContain("text/plain");
-  expect(text).toContain("/api/scopes");
+  expect(text).toContain("/api/sandboxes");
   expect(text).not.toContain("{{");
 });
 test("from a sandbox it names that sandbox, and keeps it out of indexes", async () => {
@@ -31,7 +31,7 @@ test("from a sandbox it names that sandbox, and keeps it out of indexes", async 
 });
 test("the documented sign-in, reads, and management all work", async () => {
   const w = stack.scopes.mint(), S = w.urls.auth, redirect = "https://example.org/callback";
-  const made = await (await demo.fetch(new Request(`${CONFIG.demoUrl}${w.prefix}/api/clients`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Agent", redirectUris: [redirect] }) }))).json() as any;
+  const made = await (await demo.fetch(new Request(`${CONFIG.demoUrl}${w.prefix}/api/sandbox/clients`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Agent", redirectUris: [redirect] }) }))).json() as any;
   const verifier = randomBytes(32).toString("base64url"), challenge = createHash("sha256").update(verifier).digest("base64url");
   const url = new URL(`${S}/authorize`);
   Object.entries({ response_type: "code", client_id: made.id, redirect_uri: redirect, scope: "launch/patient patient/*.rs", aud: `${S}/fhir`, state: "x", code_challenge: challenge, code_challenge_method: "S256" }).forEach(([k, v]) => url.searchParams.set(k, v));
@@ -50,5 +50,5 @@ test("the documented sign-in, reads, and management all work", async () => {
   expect((await fetch(`${S}/fhir/Condition?patient=Patient/josh-example&clinical-status=active`, auth)).status).toBe(200);
   const studies: any = await (await fetch(`${w.urls.imaging}/fhir/ImagingStudy?patient=Patient/josh-example&_include=ImagingStudy:endpoint`, auth)).json();
   expect(studies.entry.filter((e: any) => e.resource.resourceType === "ImagingStudy").length).toBe(6);
-  for (const path of ["/api/world", "/api/clients", "/api/policy", "/api/settings/status", "/api/settings/backends"]) expect((await demo.fetch(new Request(`${CONFIG.demoUrl}${w.prefix}${path}`))).status).toBe(200);
+  for (const path of ["/api/sandbox", "/api/sandbox/clients", "/api/sandbox/policy", "/api/sandbox", "/api/sandbox/storage"]) expect((await demo.fetch(new Request(`${CONFIG.demoUrl}${w.prefix}${path}`))).status).toBe(200);
 });

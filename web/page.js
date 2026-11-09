@@ -42,16 +42,16 @@ const offsetText = s => s === 0 ? "real time" : `${s > 0 ? "+" : "−"}${Math.ab
 async function renderSettings(message = "") {
   const panel = $("#settings");
   let st;
-  try { st = await api("GET", "/api/settings/status"); } catch (e) { panel.innerHTML = `<p class="error">${esc(e.message)}</p>`; return; }
+  try { st = await api("GET", "/api/sandbox"); } catch (e) { panel.innerHTML = `<p class="error">${esc(e.message)}</p>`; return; }
   panel.innerHTML = `
     <h2 tabindex="-1">Settings</h2>
     <section><h3 id="h-signin">Signing in</h3>
       <div class="row" role="radiogroup" aria-labelledby="h-signin">${[["auto", "Automatic"], ["window", "In a window"]].map(([v, l]) => `<label class="radio"><input type="radio" name="signin" value="${v}" ${signInMode() === v ? "checked" : ""}> ${l}</label>`).join("")}</div></section>
-    <p class="group">${st.scope ? "This tour's scope" : "Saved policy"}</p>
+    <p class="group">${st.sandbox ? "This sandbox" : "Saved policy"}</p>
     <section><h3><label for="set-backend">Images come from</label></h3>
-      <div class="row"><select id="set-backend">${st.backend.names.map(n => `<option value="${esc(n)}" ${n === st.backend.current ? "selected" : ""}>${esc(BACKEND_LABELS[n] ?? n)}</option>`).join("")}</select></div>
+      <div class="row"><select id="set-backend">${st.storage.names.map(n => `<option value="${esc(n)}" ${n === st.storage.current ? "selected" : ""}>${esc(BACKEND_LABELS[n] ?? n)}</option>`).join("")}</select></div>
       <p id="backend-health"></p></section>
-    ${st.scope ? `<section><h3><label for="set-topology">Imaging FHIR server</label></h3>
+    ${st.sandbox ? `<section><h3><label for="set-topology">Imaging FHIR server</label></h3>
       <div class="row"><select id="set-topology"><option value="separate" ${st.topology.current === "separate" ? "selected" : ""}>Separate, named in discovery</option><option value="unified" ${st.topology.current === "unified" ? "selected" : ""}>Unified with the clinical server</option></select></div></section>` : ""}
     <section><h3>Demo clock</h3><p>Now ${esc(offsetText(st.clock.offsetSeconds))}. Moving it ahead shows links and tokens expiring.</p>
       <div class="row">${st.clockChoices.map(c => `<button class="secondary" data-advance="${c.value}">Ahead ${esc(c.label)}</button>`).join("")}<button class="secondary" data-clock-reset ${st.clock.offsetSeconds ? "" : "disabled"}>Back to real time</button></div></section>
@@ -60,16 +60,16 @@ async function renderSettings(message = "") {
     <section><h3>End access now</h3><p>Signed links and cached decisions otherwise last until they expire.</p>
       <div class="row"><button class="secondary" data-end="/tokens/revoke-all">Revoke every token</button><button class="secondary" data-end="/proxy/flush">Flush cached decisions</button><button class="secondary" data-end="/signing-key/rotate">Rotate the signing key</button></div></section>
     <p class="msg" role="status">${esc(message)}</p>`;
-  const act = async (route, body, said) => { try { await api("POST", `/api/settings${route}`, body); await renderSettings(said); document.dispatchEvent(new CustomEvent("settings-changed")); } catch (e) { $("#settings .msg").textContent = e.message; } };
+  const act = async (route, body, said, method = "POST") => { try { await api(method, `/api/sandbox${route}`, body); await renderSettings(said); document.dispatchEvent(new CustomEvent("settings-changed")); } catch (e) { $("#settings .msg").textContent = e.message; } };
   for (const r of $$("input[name=signin]", panel)) r.addEventListener("change", () => setSignInMode(r.value));
-  $("#set-backend").addEventListener("change", e => act("/backend", { backend: e.target.value }, `Images now come from ${BACKEND_LABELS[e.target.value] ?? e.target.value}.`));
-  $("#set-topology")?.addEventListener("change", e => act("/topology", { topology: e.target.value }, e.target.value === "unified" ? "Imaging is now on the clinical FHIR server." : "Imaging is now on a separate FHIR server."));
+  $("#set-backend").addEventListener("change", e => act("", { storage: e.target.value }, `Images now come from ${BACKEND_LABELS[e.target.value] ?? e.target.value}.`, "PATCH"));
+  $("#set-topology")?.addEventListener("change", e => act("", { topology: e.target.value }, e.target.value === "unified" ? "Imaging is now on the clinical FHIR server." : "Imaging is now on a separate FHIR server.", "PATCH"));
   for (const b of $$("[data-advance]", panel)) b.addEventListener("click", () => act("/clock", { advanceSeconds: Number(b.dataset.advance) }, "The clock moved ahead."));
   $("[data-clock-reset]", panel).addEventListener("click", () => act("/clock", { reset: true }, "The clock is back to real time."));
   $("[data-reset]", panel).addEventListener("click", () => act("/reset", { confirm: true }, "Policy is as it is on file."));
   for (const b of $$("[data-end]", panel)) b.addEventListener("click", () => act(b.dataset.end, undefined, `${b.textContent}: done.`));
-  api("GET", "/api/settings/backends").then(r => {
-    const mine = r.backends.find(b => b.name === r.current);
+  api("GET", "/api/sandbox/storage").then(r => {
+    const mine = r.stores.find(b => b.name === r.current);
     const el = $("#backend-health");
     if (el && mine) el.textContent = mine.ok ? `Working: ${mine.detail}.` : `Not working: ${mine.detail}.`;
   }).catch(() => {});

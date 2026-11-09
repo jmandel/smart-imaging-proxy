@@ -38,15 +38,15 @@ describe("clinical search", () => {
 
 describe("a public deployment's root", () => {
   test("is read-only, with one way to get a sandbox", () => {
-    expect(publicRootGate("POST", "/api/settings/reset")?.status).toBe(403);
+    expect(publicRootGate("POST", "/api/sandbox/reset")?.status).toBe(403);
     expect(publicRootGate("POST", "/token")?.status).toBe(403);
-    expect(publicRootGate("POST", "/api/scopes")).toBeUndefined();
+    expect(publicRootGate("POST", "/api/sandboxes")).toBeUndefined();
     expect(publicRootGate("OPTIONS", "/token")).toBeUndefined();
   });
   test("reads pass, and pages that change things open a scope only by running a script", async () => {
     expect(publicRootGate("GET", "/")).toBeUndefined();
     expect(publicRootGate("GET", "/fhir/metadata")).toBeUndefined();
     const page = publicRootGate("GET", "/explore")!;
-    expect(await page.text()).toContain('fetch("/api/scopes",{method:"POST"})');
+    expect(await page.text()).toContain('fetch("/api/sandboxes",{method:"POST"})');
   });
 });

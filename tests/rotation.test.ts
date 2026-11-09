@@ -22,7 +22,7 @@ afterAll(() => stack.stop());
 beforeEach(async () => { await stack.resetSaved(); stack.store.revokeAllTokens(); stack.proxy.reset(); resetClock(); });
 
 const admin = async (path: string) => {
-  const r = await demo.fetch(new Request(`${CONFIG.demoUrl}/api/settings${path}`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host } }));
+  const r = await demo.fetch(new Request(`${CONFIG.demoUrl}/api/sandbox${path}`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host } }));
   expect(r.status).toBe(200);
 };
 async function get(url: string, token: string) {
@@ -231,7 +231,7 @@ test("a proxy that isn't told keeps a rotated key until its TTL, and no longer",
 });
 
 test("the admin action reports whether the proxy was told", async () => {
-  const r = await demo.fetch(new Request(`${CONFIG.demoUrl}/api/settings/signing-key/rotate`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host } }));
+  const r = await demo.fetch(new Request(`${CONFIG.demoUrl}/api/sandbox/signing-key/rotate`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host } }));
   expect((await r.json() as any).rotation).toEqual({ proxyTold: true });
 });
 

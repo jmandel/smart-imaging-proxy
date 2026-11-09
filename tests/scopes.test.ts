@@ -126,12 +126,12 @@ describe("isolation", () => {
 describe("the backend", () => {
   test("a scope picks its own, the root's stays as it was, and a new scope starts on the root's", async () => {
     const w = stack.scopes.mint();
-    const pick = (base: string, backend: string) => get(`${base}/api/backend`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ backend }) });
+    const pick = (base: string, backend: string) => get(`${base}/api/sandbox`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ storage: backend }) });
     expect((await pick(w.urls.demo, "orthanc")).status).toBe(200);
     expect([w.backend, w.catalogSource]).toEqual(["orthanc", "orthanc"]);
     expect([stack.backend, stack.catalogSource, stack.root.backend]).toEqual(["static-files", "archive", "static-files"]);
-    expect(((await (await get(`${w.urls.demo}/api/backends`)).json()) as any).current).toBe("orthanc");
-    expect(((await (await get(`${CONFIG.demoUrl}/api/backends`)).json()) as any).current).toBe("static-files");
+    expect(((await (await get(`${w.urls.demo}/api/sandbox/storage`)).json()) as any).current).toBe("orthanc");
+    expect(((await (await get(`${CONFIG.demoUrl}/api/sandbox/storage`)).json()) as any).current).toBe("static-files");
     expect(((await (await get(`${w.urls.demo}/api/flows`)).json()) as any).backend).toBe("orthanc");
     stack.setBackend("s3");
     expect(stack.scopes.mint().backend).toBe("s3");
@@ -143,9 +143,9 @@ describe("a scope's rest of path", () => {
   test("is never read as another origin, so the write guard and the internal-path block still hold", async () => {
     const a = stack.scopes.mint();
     const evil = { method: "POST", headers: { origin: "http://evil.example", "content-type": "application/json" }, body: "{}" };
-    expect((await get(`${CONFIG.demoUrl}/api/scopes`, evil)).status).toBe(403);
+    expect((await get(`${CONFIG.demoUrl}/api/sandboxes`, evil)).status).toBe(403);
     const before = stack.scopes.size;
-    const sneaky = await get(`${urlsFor(`/s/${a.scope}`).demo}//evil.example/api/scopes`, evil);
+    const sneaky = await get(`${urlsFor(`/s/${a.scope}`).demo}//evil.example/api/sandboxes`, evil);
     expect([403, 404]).toContain(sneaky.status);
     expect(stack.scopes.size).toBe(before);
     for (const path of ["//h/policy/v2/document", "//127.0.0.1/policy/v2/document"]) {

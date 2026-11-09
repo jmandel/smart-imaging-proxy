@@ -42,7 +42,7 @@ Sign-in has no passwords.
 Public clients with PKCE (S256) are supported. Register one in the sandbox, or use the page at `$SANDBOX/connect`.
 
 ```sh
-curl -X POST "$SANDBOX/api/clients" -H 'content-type: application/json' \
+curl -X POST "$SANDBOX/api/sandbox/clients" -H 'content-type: application/json' \
   -d '{"name":"My app","redirectUris":["https://example.org/callback"]}'
 ```
 
@@ -57,7 +57,7 @@ Add `"type"` for the other kinds of client. Both sign a `private_key_jwt` assert
 | `backend` | `jwk` or `jwksUrl`, and `patients`: `any` or one patient id | `client_credentials` with scope `system/ImagingStudy.rs`. No one signs in |
 
 ```sh
-curl -X POST "$SANDBOX/api/clients" -H 'content-type: application/json' \
+curl -X POST "$SANDBOX/api/sandbox/clients" -H 'content-type: application/json' \
   -d '{"name":"Referral service","type":"backend","patients":"josh-example","jwk":{"kty":"EC","crv":"P-256","x":"...","y":"...","kid":"key-1"}}'
 ```
 
@@ -98,23 +98,23 @@ All paths are under `$SANDBOX`. Bodies are JSON.
 
 | Method and path | Does |
 |---|---|
-| `GET /api/world` | Its friendly name |
-| `POST /api/world` `{"name":"..."}` | Renames it |
-| `DELETE /api/scopes/current` | Deletes it permanently |
-| `GET /api/clients` | Registered apps |
-| `POST /api/clients` `{"name":"...","redirectUris":["..."]}` | Registers an app |
-| `DELETE /api/clients/{id}` | Removes an app |
-| `GET /api/policy` | Relationships, policies, shares and approvals |
-| `GET /api/settings/status` | Image storage, demo clock, and the allowed clock moves |
-| `GET /api/settings/backends` | Health of each image store |
-| `POST /api/settings/backend` `{"backend":"static-files"}` | Image storage: `static-files`, `s3` or `orthanc` |
-| `POST /api/settings/topology` `{"topology":"unified"}` | Where imaging is advertised: `separate` or `unified` |
-| `POST /api/settings/clock` `{"advanceSeconds":N}` or `{"reset":true}` | Moves the demo clock. `N` must be one of the choices in the status |
-| `POST /api/settings/reset` `{"confirm":true}` | Puts policy back to what's on file |
-| `POST /api/settings/tokens/revoke-all` | Revokes every token |
-| `POST /api/settings/proxy/flush` | Forgets cached access decisions |
+| `GET /api/sandbox` | Name, topology, image storage, demo clock, and the allowed clock moves |
+| `PATCH /api/sandbox` `{"name":"..."}` | Renames it |
+| `PATCH /api/sandbox` `{"topology":"unified"}` | Where imaging is advertised: `separate` or `unified` |
+| `PATCH /api/sandbox` `{"storage":"s3"}` | Image storage: `static-files`, `s3` or `orthanc` |
+| `DELETE /api/sandbox` | Deletes it permanently |
+| `GET /api/sandbox/storage` | Health of each image store |
+| `GET /api/sandbox/clients` | Registered apps |
+| `POST /api/sandbox/clients` `{"name":"...","redirectUris":["..."]}` | Registers an app |
+| `DELETE /api/sandbox/clients/{id}` | Removes an app |
+| `GET /api/sandbox/policy` | Relationships, policies, shares and approvals |
+| `POST /api/sandbox/clock` `{"advanceSeconds":N}` or `{"reset":true}` | Moves the demo clock. `N` must be one of the choices in `GET /api/sandbox` |
+| `POST /api/sandbox/reset` `{"confirm":true}` | Puts policy back to what's on file |
+| `POST /api/sandbox/tokens/revoke-all` | Revokes every token |
+| `POST /api/sandbox/proxy/flush` | Forgets cached access decisions |
+| `POST /api/sandbox/signing-key/rotate` | Replaces the key that signs retrieval addresses |
 
-Create a new sandbox with `POST {{ORIGIN}}/api/scopes`. The response has `base`, a path to add to the origin.
+Create a new sandbox with `POST {{ORIGIN}}/api/sandboxes`. The response has `base`, a path to add to the origin.
 
 Starting a guided tour resets a sandbox's policy, but keeps its registered apps, and other apps' tokens and approvals.
 

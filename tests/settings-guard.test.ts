@@ -93,9 +93,9 @@ describe("over HTTP", () => {
 
   /** Every write route that takes a field: where it lives, the field, and a value that's a real choice. */
   const FIELDS: [string, string, string, unknown][] = [
-    ["POST", "/api/settings/reset", "confirm", undefined],
-    ["POST", "/api/settings/clock", "advanceSeconds", CLOCK_CHOICES[0]!.value],
-    ["POST", "/api/settings/backend", "backend", "static-files"],
+    ["POST", "/api/sandbox/reset", "confirm", undefined],
+    ["POST", "/api/sandbox/clock", "advanceSeconds", CLOCK_CHOICES[0]!.value],
+    ["PATCH", "/api/sandbox", "storage", "static-files"],
   ];
   // These fields have some values that are real choices, which the list of hostile values holds too.
   const allowedHostile: Record<string, unknown[]> = { confirm: [true] };
@@ -121,38 +121,38 @@ describe("over HTTP", () => {
   }
   test("reset saved takes only confirm: true", async () => {
     const before = fingerprint();
-    expect((await send("POST", "/api/settings/reset", { confirm: true, path: bait })).status).toBe(400);
-    expect((await send("POST", `/api/settings/reset?path=${encodeURIComponent(bait)}`, { confirm: true })).status).toBe(400);
+    expect((await send("POST", "/api/sandbox/reset", { confirm: true, path: bait })).status).toBe(400);
+    expect((await send("POST", `/api/sandbox/reset?path=${encodeURIComponent(bait)}`, { confirm: true })).status).toBe(400);
     expect(fingerprint()).toBe(before);
   });
   test("the clock takes only one named action", async () => {
-    for (const body of [{ reset: true, advanceSeconds: 60 }, { reset: true, path: bait }, { advanceSeconds: 61 }, {}]) expect((await send("POST", "/api/settings/clock", body)).status).toBe(400);
-    expect((await (await send("GET", "/api/settings/status")).json() as any).clock.offsetSeconds).toBe(0);
+    for (const body of [{ reset: true, advanceSeconds: 60 }, { reset: true, path: bait }, { advanceSeconds: 61 }, {}]) expect((await send("POST", "/api/sandbox/clock", body)).status).toBe(400);
+    expect((await (await send("GET", "/api/sandbox")).json() as any).clock.offsetSeconds).toBe(0);
   });
   for (const path of ["/tokens/revoke-all", "/proxy/flush", "/signing-key/rotate"]) {
-    test(`POST /api/settings${path} takes no input at all`, async () => {
+    test(`POST /api/sandbox${path} takes no input at all`, async () => {
       const before = fingerprint();
-      for (const body of [{ path: bait }, { file: canary }, { store: "'; DROP TABLE rules; --" }, "../../etc/passwd", "[1]"]) expect((await send("POST", `/api/settings${path}`, body)).status).toBe(400);
-      expect((await send("POST", `/api/settings${path}?path=${encodeURIComponent(bait)}`)).status).toBe(400);
+      for (const body of [{ path: bait }, { file: canary }, { store: "'; DROP TABLE rules; --" }, "../../etc/passwd", "[1]"]) expect((await send("POST", `/api/sandbox${path}`, body)).status).toBe(400);
+      expect((await send("POST", `/api/sandbox${path}?path=${encodeURIComponent(bait)}`)).status).toBe(400);
       expect(fingerprint()).toBe(before);
       stillIntact();
     });
   }
   test("no route accepts a path, and the replaced routes are gone", async () => {
-    for (const [method, path] of [["POST", "/api/settings/rule-set"], ["PUT", "/api/settings/settings"], ["POST", "/api/settings/outage"], ["DELETE", "/api/settings/shares"], ["POST", "/api/admin/store/reset-saved"], ["GET", "/api/admin/status"], ["PUT", "/api/admin/rules"], ["POST", "/api/admin/rules"], ["PUT", "/api/admin/rule-set"], ["POST", "/api/admin/settings"], ["PUT", "/api/admin/clock"], ["POST", "/api/admin/store/path"], ["PUT", "/api/admin/store"], ["POST", "/api/admin/store/open"], ["POST", "/api/admin/store/activate"], ["POST", "/api/admin/store/reset-scratch"], ["POST", "/api/admin/catalog"], ["POST", "/api/admin/export"], ["POST", "/api/admin/import"], ["DELETE", "/api/admin/delegations"], ["DELETE", "/api/admin/app-grants"], ["POST", "/api/admin/../../etc/passwd"]] as const) {
+    for (const [method, path] of [["POST", "/api/sandbox/rule-set"], ["PUT", "/api/sandbox/settings"], ["POST", "/api/sandbox/outage"], ["DELETE", "/api/sandbox/shares"], ["POST", "/api/admin/store/reset-saved"], ["GET", "/api/admin/status"], ["PUT", "/api/admin/rules"], ["POST", "/api/admin/rules"], ["PUT", "/api/admin/rule-set"], ["POST", "/api/admin/settings"], ["PUT", "/api/admin/clock"], ["POST", "/api/admin/store/path"], ["PUT", "/api/admin/store"], ["POST", "/api/admin/store/open"], ["POST", "/api/admin/store/activate"], ["POST", "/api/admin/store/reset-scratch"], ["POST", "/api/admin/catalog"], ["POST", "/api/admin/export"], ["POST", "/api/admin/import"], ["DELETE", "/api/admin/delegations"], ["DELETE", "/api/admin/app-grants"], ["POST", "/api/admin/../../etc/passwd"]] as const) {
       expect((await send(method, path, { path: bait, rules: [] })).status).toBe(404);
     }
     stillIntact();
   });
   test("the status shows store and catalog paths, read-only", async () => {
-    const s: any = await (await send("GET", "/api/settings/status")).json();
+    const s: any = await (await send("GET", "/api/sandbox")).json();
     expect(s.store.path).toBe(":memory:");
     expect(s.catalog.path).toBe(":memory:");
     const js = await (await send("GET", "/page.js")).text();
     expect(js).not.toMatch(/api\("(POST|PUT|DELETE)"[^)]*\bpath\b/);
   });
   test("the status is refused under another Host, before it shows anything", async () => {
-    const status = (host: string) => demo.fetch(new Request(`${CONFIG.demoUrl}/api/settings/status`, { headers: { host } }));
+    const status = (host: string) => demo.fetch(new Request(`${CONFIG.demoUrl}/api/sandbox`, { headers: { host } }));
     const r = await status("evil.example");
     expect(r.status).toBe(403);
     expect(await r.text()).not.toContain("store");
@@ -166,15 +166,15 @@ describe("over HTTP", () => {
     expect(fingerprint()).toBe(before);
     stillIntact();
   });
-  test("/api/backend takes a backend name, and nothing else", async () => {
-    for (const body of [{ backend: canary }, { backend: "'; DROP TABLE rules; --" }, { backend: "s3", path: bait }, "[]"]) expect((await send("POST", "/api/backend", body)).status).toBe(400);
+  test("storage takes a store name, and nothing else", async () => {
+    for (const body of [{ storage: canary }, { storage: "'; DROP TABLE rules; --" }, { storage: "s3", path: bait }, "[]"]) expect((await send("PATCH", "/api/sandbox", body)).status).toBe(400);
     expect(stack.backend).toBe("static-files");
     stillIntact();
   });
-  test("/api/policy takes no writes, at the root or in a scope, whatever they hold", async () => {
-    const { base } = await (await send("POST", "/api/scopes")).json() as any;
-    for (const path of ["/api/policy", `${base}/api/policy`]) for (const body of [{ policies: [] }, { path: bait }, { shares: [{ ...SHARE, file: canary }] }, "'; DROP TABLE policies; --"]) expect((await send("PUT", path, body)).status).toBe(404);
-    expect((await (await send("GET", `${base}/api/policy`)).json() as any).policies.map((p: any) => p.type)).toEqual(["guardian-access", "guardian-access", "sharing"]);
+  test("/api/sandbox/policy takes no writes, at the root or in a scope, whatever they hold", async () => {
+    const { base } = await (await send("POST", "/api/sandboxes")).json() as any;
+    for (const path of ["/api/sandbox/policy", `${base}/api/sandbox/policy`]) for (const body of [{ policies: [] }, { path: bait }, { shares: [{ ...SHARE, file: canary }] }, "'; DROP TABLE policies; --"]) expect((await send("PUT", path, body)).status).toBe(404);
+    expect((await (await send("GET", `${base}/api/sandbox/policy`)).json() as any).policies.map((p: any) => p.type)).toEqual(["guardian-access", "guardian-access", "sharing"]);
     stillIntact();
   });
 });

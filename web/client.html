@@ -4,6 +4,10 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SMART Imaging Demo</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Crect width='20' height='20' rx='3' fill='%230f2a3d'/%3E%3Ccircle cx='10' cy='10' r='4' fill='%23e8f1f6'/%3E%3C/svg%3E">
+<script>
+// Decided before anything paints, so a page that's only passing through never shows the landing page.
+(() => { const base = (location.pathname.match(/^\/s\/[^/]+/) || [""])[0]; let session; try { session = JSON.parse(sessionStorage.getItem(`smart-imaging-client:${base}`) || "{}").session; } catch {} if (/[?&](connect=1|code=|error=)/.test(location.search) || session) document.documentElement.classList.add("connecting"); })();
+</script>
 <link rel="stylesheet" href="/styles.css">
 <link rel="stylesheet" href="/client.css">
 </head>
@@ -14,6 +18,7 @@
 </header>
 <div id="announce" class="sr-only" role="status" aria-live="polite"></div>
 
+<p class="connecting-note" id="connecting" role="status">Connecting…</p>
 <main id="landing" class="landing">
   <h1>One sign-in, for a patient's chart and their images</h1>
   <p class="lead">This app connects to a health system the way any SMART app would, using <a href="https://build.fhir.org/ig/argonautproject/smart-imaging/">SMART Imaging Access</a>. Choose a server, sign in, then watch every step of the protocol.</p>

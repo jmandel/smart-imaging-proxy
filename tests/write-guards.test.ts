@@ -144,7 +144,7 @@ describe("the Authorization Server's forms", () => {
 
 test("a refused scope mint makes no scope", async () => {
   const before = stack.scopes.size;
-  const send = (body: string, headers: Record<string, string> = {}) => fetch(`${CONFIG.demoUrl}/api/scopes`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body });
+  const send = (body: string, headers: Record<string, string> = {}) => fetch(`${CONFIG.demoUrl}/api/sandboxes`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body });
   expect((await send('{"store":"elsewhere"}')).status).toBe(400);
   expect((await send("{}", { origin: "https://evil.example" })).status).toBe(403);
   expect(stack.scopes.size).toBe(before);
@@ -152,7 +152,7 @@ test("a refused scope mint makes no scope", async () => {
 
 test("the demo's pages and read APIs answer only at its own addresses", async () => {
   const demo = (path: string, headers: Record<string, string> = {}) => fetch(`http://127.0.0.1:${PORTS.demo}${path}`, { headers });
-  for (const path of ["/", "/tours", "/explore", "/activity", "/api/activity", "/api/activity/summary", "/api/policy", "/api/backends", "/api/flows", "/api/explore/options", "/api/settings/status"]) {
+  for (const path of ["/", "/tours", "/explore", "/activity", "/api/activity", "/api/activity/summary", "/api/sandbox/policy", "/api/sandbox/storage", "/api/flows", "/api/explore/options", "/api/sandbox"]) {
     expect((await demo(path, { host: "evil.example" })).status).toBe(403);
     expect((await demo(path)).status).toBe(200);
   }

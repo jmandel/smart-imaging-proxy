@@ -248,7 +248,7 @@ describe("the demo client", () => {
     await signIn(page, "josh");
     const base = new URL(page.url()).pathname.replace(/\/$/, "");
     await page.locator(".study-button").first().waitFor();
-    await page.evaluate(async b => { await fetch(`${b}/api/settings/topology`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ topology: "unified" }) }); }, base);
+    await page.evaluate(async b => { await fetch(`${b}/api/sandbox`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ topology: "unified" }) }); }, base);
     await page.evaluate(() => sessionStorage.clear());
     await page.goto(`${ORIGIN}${base}/`);
     await page.getByRole("button", { name: "Connect", exact: true }).click();
@@ -296,6 +296,28 @@ describe("the demo client", () => {
     await page.getByRole("button", { name: "Approve" }).click();
     await page.locator(".study-button").nth(5).waitFor();
     await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
+    await context.close();
+  });
+  test("passing through on the way to sign-in shows one steady state", async () => {
+    const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    await page.goto(`${ORIGIN}/`);
+    const base = await page.evaluate(async () => (await (await fetch("/api/sandboxes", { method: "POST" })).json()).base);
+    await page.route("**/.well-known/smart-configuration", async route => { await new Promise(r => setTimeout(r, 700)); await route.continue(); });
+    await page.goto(`${ORIGIN}${base}/?connect=1`, { waitUntil: "commit" });
+    await page.locator("#connecting").waitFor({ state: "visible" });
+    expect(await page.locator("#landing").isVisible()).toBe(false);
+    await page.locator("input[name=username]").first().waitFor();
+    await context.close();
+  });
+  test("a server that can't be reached brings the landing page back with the error", async () => {
+    const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    await page.route("**/.well-known/smart-configuration", route => route.abort());
+    await page.goto(`${ORIGIN}/`);
+    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await page.locator("#connect-error").waitFor({ state: "visible" });
+    expect(await page.locator("#landing").isVisible()).toBe(true);
     await context.close();
   });
   test("a patient with no studies gets a real empty result", async () => {

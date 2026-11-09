@@ -1,5 +1,8 @@
 /* The public demo client: a chart, an image, and the protocol behind them. */
 [hidden] { display:none !important; }
+.connecting-note { display:none; margin:0; padding:4rem 1rem; text-align:center; color:var(--muted); font-size:1.1rem; }
+html.connecting .connecting-note { display:block; }
+html.connecting #landing, html.connecting #app { display:none; }
 .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 .landing { max-width:46rem; margin:0 auto; padding:clamp(1.5rem, 6vw, 4rem) 1rem 3rem; }
 .landing h1 { font-size:clamp(1.8rem, 5vw, 2.8rem); margin:0 0 .8rem; }

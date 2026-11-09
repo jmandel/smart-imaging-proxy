@@ -1,4 +1,4 @@
-// The settings menu's API, for the world a page is in: the backend images come from, the demo clock,
+// A sandbox's own API: what the settings menu uses, for the world a page is in: the backend images come from, the demo clock,
 // resetting policy, and ending access. The demo has no login: every service binds to 127.0.0.1 and the
 // tailnet address, and a request naming another Host, or a write from another web origin, is refused.
 // Every write takes a fixed choice from this file, and nothing else. At the root it acts on the one
@@ -44,31 +44,33 @@ export function refuseWrite(req: Request, url: URL, port: number = PORTS.demo): 
 
 export function settingsStatus(stack: Stack, world: World) {
   return {
-    scope: world.scope ? { id: world.scope, base: world.prefix } : null,
+    sandbox: world.scope ? { id: world.scope, base: world.prefix } : null,
+    name: world.name ?? null,
     clock: { offsetSeconds: world.clock.offset(), now: world.clock.now() },
     clockChoices: CLOCK_CHOICES,
-    backend: { current: world.backend, names: BACKEND_NAMES },
+    storage: { current: world.backend, names: BACKEND_NAMES },
     topology: { current: world.topology, names: ["separate", "unified"] },
     catalog: { source: world.catalogSource, ...world.catalog.stats() },
     signing: { kid: world.imaging.signingKid },
     proxy: { cachedDecisions: world.proxy.cachedDecisions },
     // Only the root's store is a file, and only the root sees how many scopes there are.
-    ...(world.scope ? {} : { store: stack.store.info(), scopes: { live: stack.scopes.size } }),
+    ...(world.scope ? {} : { store: stack.store.info(), sandboxes: { live: stack.scopes.size } }),
   };
 }
 
 const NO_INPUT = ["/tokens/revoke-all", "/proxy/flush", "/signing-key/rotate"];
-const WITH_INPUT = ["/reset", "/clock", "/backend", "/topology"];
+const WITH_INPUT = ["/reset", "/clock"];
+const NAME_LIMIT = 40;
 
 export async function settingsApi(stack: Stack, world: World, req: Request, url: URL): Promise<Response> {
-  const p = url.pathname.slice("/api/settings".length);
+  const p = url.pathname.slice("/api/sandbox".length);
   const m = req.method;
   const status = () => json(settingsStatus(stack, world));
   const refused = m === "GET" ? refuseHost(req) : refuseWrite(req, url);
   if (refused) return refused;
 
-  if (p === "/status" && m === "GET") return status();
-  if (p === "/backends" && m === "GET") return json({ current: world.backend, backends: await Promise.all(BACKEND_NAMES.map(n => stack.selfTest(n))) });
+  if (p === "" && m === "GET") return status();
+  if (p === "/storage" && m === "GET") return json({ current: world.backend, stores: await Promise.all(BACKEND_NAMES.map(n => stack.selfTest(n))) });
 
   if (m === "POST" && NO_INPUT.includes(p)) {
     const unwanted = url.search ? "this action takes no input" : await unwantedBody(req);
@@ -79,7 +81,7 @@ export async function settingsApi(stack: Stack, world: World, req: Request, url:
     return json({ ...settingsStatus(stack, world), rotation: { proxyTold } });
   }
 
-  if (!WITH_INPUT.includes(p) || m !== "POST") return new Response("not found", { status: 404 });
+  if (!(p === "" && m === "PATCH") && !(WITH_INPUT.includes(p) && m === "POST")) return new Response("not found", { status: 404 });
   if (url.search) return bad("this request takes its input in the body");
   const b = await readJson(req);
   if (b === undefined || b === null || typeof b !== "object" || Array.isArray(b)) return bad("the request body must be a JSON object");
@@ -97,15 +99,17 @@ export async function settingsApi(stack: Stack, world: World, req: Request, url:
     world.clock.advance(b.advanceSeconds);
     return status();
   }
-  if (p === "/topology") {
-    const extra = only("topology"); if (extra) return extra;
-    if (!world.scope) return bad("only a sandbox can change this");
-    if (b.topology !== "separate" && b.topology !== "unified") return bad("topology must be separate or unified");
-    world.setTopology(b.topology);
+  if (p === "") {
+    const extra = only("name", "topology", "storage"); if (extra) return extra;
+    if (b.name === undefined && b.topology === undefined && b.storage === undefined) return bad("send name, topology or storage");
+    if ((b.name !== undefined || b.topology !== undefined) && !world.scope) return bad("only a sandbox can change this");
+    if (b.name !== undefined && (typeof b.name !== "string" || !b.name.trim() || b.name.trim().length > NAME_LIMIT)) return bad(`a name is 1 to ${NAME_LIMIT} characters`);
+    if (b.topology !== undefined && b.topology !== "separate" && b.topology !== "unified") return bad("topology must be separate or unified");
+    if (b.storage !== undefined && !BACKEND_NAMES.includes(b.storage)) return bad(`storage must be one of ${BACKEND_NAMES.join(", ")}`);
+    if (b.name !== undefined) world.setName(b.name.trim());
+    if (b.topology !== undefined) world.setTopology(b.topology);
+    if (b.storage !== undefined) world.setBackend(b.storage);
     return status();
   }
-  const extra = only("backend"); if (extra) return extra;
-  if (!BACKEND_NAMES.includes(b.backend)) return bad(`backend must be one of ${BACKEND_NAMES.join(", ")}`);
-  world.setBackend(b.backend);
-  return status();
+  return new Response("not found", { status: 404 });
 }

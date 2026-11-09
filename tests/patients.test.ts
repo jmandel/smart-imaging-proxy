@@ -115,7 +115,7 @@ describe("the guardian", () => {
   test("survives every reset, and is in every new scope, and a reset still clears what people chose", async () => {
     await shareFromJosh(["Lakeside Imaging"]);
     await launchFor("riley-example");
-    const res = await demo.fetch(new Request(`${CONFIG.demoUrl}/api/settings/reset`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host, "content-type": "application/json" }, body: JSON.stringify({ confirm: true }) }));
+    const res = await demo.fetch(new Request(`${CONFIG.demoUrl}/api/sandbox/reset`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host, "content-type": "application/json" }, body: JSON.stringify({ confirm: true }) }));
     const status: any = await res.json();
     const after = stack.store.snapshot();
     expect(after.relationships).toMatchObject([riley]);

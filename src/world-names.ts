@@ -3,4 +3,3 @@ const ADJECTIVES = ["Quiet", "Amber", "Bright", "Calm", "Cedar", "Clear", "Coppe
 const NOUNS = ["Brook", "Canyon", "Cove", "Delta", "Field", "Grove", "Harbor", "Hollow", "Lake", "Meadow", "Mesa", "Prairie", "Ridge", "River", "Shore", "Valley"];
 const pick = <T>(list: T[]) => list[Math.floor(Math.random() * list.length)]!;
 export const friendlyName = () => `${pick(ADJECTIVES)} ${pick(NOUNS)}`;
-export const NAME_LIMIT = 40;
