@@ -30,8 +30,11 @@
       <p class="note">Must match exactly at sign-in. Use https, or http on localhost.</p>
     </div>
     <div id="key-field" hidden>
-      <label for="app-key">Public key (ES256 JWK)</label>
-      <textarea id="app-key" rows="4" spellcheck="false" autocapitalize="off" placeholder="Leave empty to generate a key pair in this browser"></textarea>
+      <label for="app-jwks">JWKS URL</label>
+      <input type="url" id="app-jwks" placeholder="https://example.org/.well-known/jwks.json" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <label for="app-key">Or a public key (JWK)</label>
+      <textarea id="app-key" rows="4" spellcheck="false" autocapitalize="off" placeholder="Leave both empty to generate a key pair in this browser"></textarea>
+      <p class="note">Keys may be ES256, ES384 or RS384.</p>
       <p class="note">A generated private key stays in this browser, so use it only for testing.</p>
     </div>
     <div id="patients-field" hidden>

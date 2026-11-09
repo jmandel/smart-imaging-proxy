@@ -163,3 +163,51 @@ test("a confidential app can't get a backend token, and needs its key to use a c
   expect(ok.status).toBe(200);
   expect(((await ok.json()) as any).patient).toBe("josh-example");
 });
+
+// Clients that publish their keys, and what a public deployment refuses to fetch.
+import { clearJwksCache, fetchJwks, isAllowedUrl, isBlockedAddress } from "../src/jwks";
+test("internal addresses are blocked, however they're written", () => {
+  for (const ip of ["127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "::1", "::", "fc00::1", "fe80::1", "::ffff:127.0.0.1", "::ffff:7f00:1", "not an ip"]) expect(isBlockedAddress(ip)).toBe(true);
+  for (const ip of ["8.8.8.8", "140.82.112.3", "2606:4700::1111"]) expect(isBlockedAddress(ip)).toBe(false);
+});
+test("a public deployment accepts only public https URLs", async () => {
+  const resolve = (map: Record<string, string[]>) => async (h: string) => { if (!map[h]) throw new Error("no such host"); return map[h]!; };
+  const dns = resolve({ "keys.example.org": ["93.184.216.34"], "sneaky.example.org": ["93.184.216.34", "10.0.0.5"], "meta.example.org": ["169.254.169.254"] });
+  expect(await isAllowedUrl("https://keys.example.org/jwks.json", true, dns)).toBe(true);
+  expect(await isAllowedUrl("https://keys.example.org:8443/jwks.json", true, dns)).toBe(true);
+  for (const bad of ["http://keys.example.org/jwks", "https://sneaky.example.org/j", "https://meta.example.org/j", "https://127.0.0.1/j", "https://2130706433/j", "https://0x7f.0.0.1/j", "https://[::1]/j", "https://localhost/j", "https://orthanc.svc/j", "https://user:p@keys.example.org/j", "https://keys.example.org:22/j", "file:///etc/passwd", "https://nowhere.example.org/j", "nonsense"]) expect(await isAllowedUrl(bad, true, dns)).toBe(false);
+});
+test("a JWKS URL works for ES384 and RS384, follows rotation, and a key it stops publishing stops working", async () => {
+  clearJwksCache();
+  const w = stack.scopes.mint();
+  const es = generateKeyPairSync("ec", { namedCurve: "P-384" }), rs = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const pub = (k: any, kid: string) => ({ ...k.export({ format: "jwk" }), kid });
+  let published: any[] = [pub(es.publicKey, "es")];
+  let hits = 0;
+  const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => { hits++; return Response.json({ keys: published }); } });
+  try {
+    const made = await call("POST", `${w.prefix}/api/clients`, { name: "Rotating", type: "backend", jwksUrl: `http://127.0.0.1:${server.port}/jwks` });
+    expect(made.status).toBe(201);
+    const c = await made.json() as any, aud = `${w.urls.auth}/token`;
+    const jwt = (alg: string, hash: string, key: any, kid: string, ieee: boolean) => {
+      const head = `${b({ alg, kid, typ: "JWT" })}.${b({ iss: c.id, sub: c.id, aud, exp: Math.floor(Date.now() / 1000) + 200, jti: rb(8).toString("hex") })}`;
+      return `${head}.${ecSign(hash, Buffer.from(head), { key, ...(ieee ? { dsaEncoding: "ieee-p1363" as const } : {}) }).toString("base64url")}`;
+    };
+    expect((await tokenCall(w, c.id, jwt("ES384", "sha384", es.privateKey, "es", true))).status).toBe(200);
+    expect((await tokenCall(w, c.id, jwt("RS384", "sha384", rs.privateKey, "rs", false))).status).toBe(401);
+    expect((await tokenCall(w, c.id, jwt("ES256", "sha256", es.privateKey, "es", true))).status).toBe(401);
+    const before = hits;
+    expect((await tokenCall(w, c.id, jwt("ES384", "sha384", es.privateKey, "es", true))).status).toBe(200);
+    expect(hits).toBe(before);
+    published = [pub(rs.publicKey, "rs")];
+    clearJwksCache();
+    expect((await tokenCall(w, c.id, jwt("RS384", "sha384", rs.privateKey, "rs", false))).status).toBe(200);
+    expect((await tokenCall(w, c.id, jwt("ES384", "sha384", es.privateKey, "es", true))).status).toBe(401);
+  } finally { server.stop(true); clearJwksCache(); }
+});
+test("what can't be fetched gives the same answer as what isn't there", async () => {
+  const w = stack.scopes.mint();
+  const r = await call("POST", `${w.prefix}/api/clients`, { name: "Nope", type: "backend", jwksUrl: "http://127.0.0.1:1/jwks" });
+  expect(r.status).toBe(400);
+  expect(await fetchJwks("http://127.0.0.1:1/jwks", true)).toBeUndefined();
+});

@@ -36,6 +36,7 @@ function clientHtml(c) {
       ${c.redirectUris.length ? `<dt>Redirect URI</dt><dd>${c.redirectUris.map(u => `<code>${esc(u)}</code>`).join(" ")}</dd>` : ""}
       ${c.type === "backend" ? `<dt>May reach</dt><dd>${esc(c.patients === "any" ? "Any patient" : c.patients)}</dd>` : ""}
       ${c.jwk ? `<dt>Key id</dt><dd><code>${esc(c.jwk.kid)}</code></dd>` : ""}
+      ${c.jwksUrl ? `<dt>JWKS URL</dt><dd><code>${esc(c.jwksUrl)}</code></dd>` : ""}
     </dl>
     <div class="configure-actions">${copyButton("Copy FHIR base", fhirBase())}${copyButton("Copy client ID", c.id)}${copyButton("Copy viewer config", snippet)}${savedKeys()[c.id] ? copyButton("Copy private key", JSON.stringify(savedKeys()[c.id])) : ""}${canTry(c) ? `<button type="button" class="primary" data-try="${esc(c.id)}">Try it in the viewer</button>` : ""}</div>
   </article>`;
@@ -55,8 +56,9 @@ $("#register").addEventListener("submit", async e => {
     let priv;
     if (type !== "backend") body.redirectUris = [$("#app-redirect").value.trim()];
     if (type !== "public") {
-      const pasted = $("#app-key").value.trim();
-      if (pasted) { try { body.jwk = JSON.parse(pasted); } catch { throw new Error("The key isn't valid JSON."); } }
+      const pasted = $("#app-key").value.trim(), jwksUrl = $("#app-jwks").value.trim();
+      if (jwksUrl) body.jwksUrl = jwksUrl;
+      else if (pasted) { try { body.jwk = JSON.parse(pasted); } catch { throw new Error("The key isn't valid JSON."); } }
       else { const made = await generateKey(); body.jwk = made.pub; priv = made.priv; }
     }
     if (type === "backend") body.patients = $("#app-patients").value;

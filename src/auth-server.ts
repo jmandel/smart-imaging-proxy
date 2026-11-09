@@ -5,10 +5,11 @@ import { createECDH, createHash, createPrivateKey, createPublicKey, generateKeyP
 import { ath, b64url, sameSecret, type Clock, type PolicyStore } from "@smart-imaging-proxy/core";
 import { demoClock } from "./clock";
 import { refuseWrite } from "./settings-api";
-import { PORTS } from "./config";
+import { PORTS, PUBLIC_DEMO } from "./config";
 import { check, recordEvent, traced } from "./trace";
 import { clinicalSearch, demographics, isClinicalType } from "./clinical";
 import { BACKEND_SCOPES } from "./clients";
+import { jwksKey } from "./jwks";
 
 const IMAGING_CAPABILITIES = ["smart-imaging-access", "http://fhir.org/argonaut/smart-imaging/capabilities/app-launch", "http://fhir.org/argonaut/smart-imaging/capabilities/backend-services"];
 export interface Grant { client_id: string; scope: string; patient?: string; sub?: string; fhirUser?: string; family?: string; }
@@ -153,7 +154,7 @@ form.inline{display:inline}
  * Every URL it issues starts at `issuer`, including the paths in its own pages and redirects, so it can
  * be served under a prefix. It answers requests with the prefix already taken off.
  */
-export function createAuthServer(opts: { issuer: string; imagingFhirBase: string; serviceSecret: string; redirectUri: string; demoClientRedirectUri: string; unified?: () => boolean; imagingFetch?: (req: Request) => Response | Promise<Response>; registeredClient?: (id: string) => { name: string; type?: string; redirectUris: string[]; jwk?: JsonWebKey & { kid: string } } | undefined; directory: Directory; store: () => PolicyStore; clock?: Clock }) {
+export function createAuthServer(opts: { issuer: string; imagingFhirBase: string; serviceSecret: string; redirectUri: string; demoClientRedirectUri: string; unified?: () => boolean; imagingFetch?: (req: Request) => Response | Promise<Response>; registeredClient?: (id: string) => { name: string; type?: string; redirectUris: string[]; jwk?: JsonWebKey & { kid: string }; jwksUrl?: string } | undefined; directory: Directory; store: () => PolicyStore; clock?: Clock }) {
   const clock = opts.clock ?? demoClock;
   const now = () => clock.now();
   /** The path the issuer adds, which every path this server writes into a page or a redirect starts with. */
@@ -196,19 +197,29 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     catch { return undefined; }
   };
 
-  function verifyAssertion(jwt: string, tokenUrl: string) {
+  /** What each signing algorithm a client may use needs of its key, and how it's verified. */
+  const ALGORITHMS: Record<string, { hash: string; kty: string; crv?: string; ieee?: boolean }> = { ES256: { hash: "sha256", kty: "ec", crv: "prime256v1", ieee: true }, ES384: { hash: "sha384", kty: "ec", crv: "secp384r1", ieee: true }, RS384: { hash: "sha384", kty: "rsa" } };
+  const algorithmFits = (alg: unknown, key: KeyObject) => {
+    const a = typeof alg === "string" ? ALGORITHMS[alg] : undefined;
+    if (!a || key.asymmetricKeyType !== a.kty) return false;
+    return !a.crv || key.asymmetricKeyDetails?.namedCurve === a.crv;
+  };
+  async function verifyAssertion(jwt: string, tokenUrl: string) {
     const [h, b, s] = jwt.split(".");
     const head = jwtPart(h), claims = jwtPart(b);
     if (!check("authorization-server", "client assertion is a three-part JWT", !!(head && claims && s))) return undefined;
     const registered = opts.registeredClient?.(claims.iss);
-    const reg = registered?.jwk ? { kid: registered.jwk.kid, publicKey: createPublicKey({ key: registered.jwk as any, format: "jwk" }), scopes: registered.type === "backend" ? BACKEND_SCOPES : [] } : backendKeys.get(claims.iss);
+    const publishedKey = registered?.jwksUrl && typeof head.kid === "string" ? await jwksKey(registered.jwksUrl, head.kid, PUBLIC_DEMO) : undefined;
+    const clientKey = registered?.jwk ?? publishedKey;
+    const reg = registered ? (clientKey ? { kid: (clientKey as any).kid as string, publicKey: createPublicKey({ key: clientKey as any, format: "jwk" }), scopes: registered.type === "backend" ? BACKEND_SCOPES : [] } : undefined) : backendKeys.get(claims.iss);
     if (!check("authorization-server", "client is registered, with its public key on file", !!reg && head.kid === reg.kid, { client: claims.iss, kid: head.kid, registered_scopes: reg?.scopes.join(" ") })) return undefined;
-    if (!check("authorization-server", "assertion is ES256, and iss equals sub", head.alg === "ES256" && claims.sub === claims.iss, { alg: head.alg, iss: claims.iss, sub: claims.sub })) return undefined;
+    if (!check("authorization-server", "assertion's algorithm suits its key, and iss equals sub", algorithmFits(head.alg, reg!.publicKey) && claims.sub === claims.iss, { alg: head.alg, iss: claims.iss, sub: claims.sub })) return undefined;
     if (!check("authorization-server", "assertion's aud is this token endpoint", claims.aud === tokenUrl, { aud: claims.aud })) return undefined;
     if (!check("authorization-server", "assertion hasn't expired", Number.isInteger(claims.exp) && claims.exp >= now(), { exp: claims.exp, now: now() })) return undefined;
     if (!check("authorization-server", "assertion's exp is no more than five minutes ahead", claims.exp <= now() + 300, { exp: claims.exp, now: now() })) return undefined;
     if (!check("authorization-server", "assertion's jti hasn't been used", typeof claims.jti === "string" && !!claims.jti && !usedJti.has(claims.jti), { jti: claims.jti })) return undefined;
-    const ok = verify("sha256", Buffer.from(`${h}.${b}`), { key: reg!.publicKey, dsaEncoding: "ieee-p1363" }, Buffer.from(s!, "base64url"));
+    const algorithm = ALGORITHMS[head.alg]!;
+    const ok = verify(algorithm.hash, Buffer.from(`${h}.${b}`), { key: reg!.publicKey, ...(algorithm.ieee ? { dsaEncoding: "ieee-p1363" as const } : {}) }, Buffer.from(s!, "base64url"));
     check("authorization-server", "client assertion signature verifies", ok, { client: claims.iss, kid: head.kid, alg: head.alg });
     if (ok) usedJti.add(claims.jti);
     return ok ? { client_id: claims.iss as string, scopes: reg!.scopes } : undefined;
@@ -448,7 +459,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
         introspection_endpoint: `${opts.issuer}/introspect`, revocation_endpoint: `${opts.issuer}/revoke`,
         grant_types_supported: ["authorization_code", "client_credentials", "refresh_token"],
         response_types_supported: ["code"], code_challenge_methods_supported: ["S256"],
-        token_endpoint_auth_methods_supported: ["private_key_jwt"], token_endpoint_auth_signing_alg_values_supported: ["ES256"],
+        token_endpoint_auth_methods_supported: ["private_key_jwt"], token_endpoint_auth_signing_alg_values_supported: ["ES256", "ES384", "RS384"],
         scopes_supported: ["patient/ImagingStudy.rs", "patient/Patient.rs", "patient/AllergyIntolerance.rs", "patient/Condition.rs", "patient/MedicationRequest.rs", "patient/*.rs", "system/ImagingStudy.rs", "launch/patient", "online_access"],
         capabilities: ["launch-standalone", "client-public", "client-confidential-asymmetric", "permission-v2", "context-standalone-patient", ...(opts.unified?.() ? IMAGING_CAPABILITIES : [])],
         ...(opts.unified?.() ? {} : { associated_endpoints: [{ url: opts.imagingFhirBase, capabilities: IMAGING_CAPABILITIES }] }),
@@ -459,7 +470,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
       const grant = f.get("grant_type");
       if (grant === "client_credentials") {
         if (!check("authorization-server", "client authenticates with private_key_jwt", f.get("client_assertion_type") === "urn:ietf:params:oauth:client-assertion-type:jwt-bearer")) return oauthError("invalid_client", 401);
-        const reg = verifyAssertion(f.get("client_assertion") ?? "", tokenUrl);
+        const reg = await verifyAssertion(f.get("client_assertion") ?? "", tokenUrl);
         if (!reg) return oauthError("invalid_client", 401);
         const asked = (f.get("scope") ?? "").split(" ").filter(s => reg.scopes.includes(s));
         if (!check("authorization-server", "requested scope is within the client's registration", asked.length > 0, { requested: f.get("scope"), granted: asked.join(" ") })) return oauthError("invalid_scope");
@@ -474,7 +485,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
         if (!check("authorization-server", "client_id and redirect_uri match the authorization request", c!.client_id === f.get("client_id") && c!.redirect_uri === f.get("redirect_uri"))) return oauthError("invalid_grant");
         // A confidential app proves who it is as well as holding the code.
         if (opts.registeredClient?.(c!.client_id)?.type === "confidential") {
-          const proved = f.get("client_assertion_type") === "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" ? verifyAssertion(f.get("client_assertion") ?? "", tokenUrl) : undefined;
+          const proved = f.get("client_assertion_type") === "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" ? await verifyAssertion(f.get("client_assertion") ?? "", tokenUrl) : undefined;
           if (!check("authorization-server", "confidential client authenticated with private_key_jwt", proved?.client_id === c!.client_id, { client: c!.client_id })) return oauthError("invalid_client", 401);
         }
         const verifier = f.get("code_verifier") ?? "";

@@ -48,13 +48,13 @@ curl -X POST "$SANDBOX/api/clients" -H 'content-type: application/json' \
 
 The response has the `id` to use as `client_id`. Redirect URIs must match exactly, and use https, or http on localhost. Authorize with `aud=$SANDBOX/fhir` and `scope=launch/patient patient/*.rs`.
 
-Add `"type"` for the other kinds of client. Both sign a `private_key_jwt` assertion with ES256, and register the public half as `"jwk"`, an EC P-256 JWK with a `kid`.
+Add `"type"` for the other kinds of client. Both sign a `private_key_jwt` assertion with ES256, ES384 or RS384. Register the public half as `"jwk"`, a JWK with a `kid`, or publish keys at a public https address and register it as `"jwksUrl"`, which also lets you rotate them. Internal addresses are refused.
 
 | `type` | Needs | Flow |
 |---|---|---|
 | `public` (default) | `redirectUris` | Authorization code with PKCE |
-| `confidential` | `redirectUris`, `jwk` | The same, plus `client_assertion_type` and `client_assertion` at `/token` |
-| `backend` | `jwk`, and `patients`: `any` or one patient id | `client_credentials` with scope `system/ImagingStudy.rs`. No one signs in |
+| `confidential` | `redirectUris`, and `jwk` or `jwksUrl` | The same, plus `client_assertion_type` and `client_assertion` at `/token` |
+| `backend` | `jwk` or `jwksUrl`, and `patients`: `any` or one patient id | `client_credentials` with scope `system/ImagingStudy.rs`. No one signs in |
 
 ```sh
 curl -X POST "$SANDBOX/api/clients" -H 'content-type: application/json' \

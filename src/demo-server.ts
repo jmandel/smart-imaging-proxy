@@ -2,6 +2,8 @@
 // flow API the checks and tests run flows through. `/s/{scope}/...` is that scope's own: its Explore,
 // its tour, its activity, its settings and its redirects. Starting a tour or a flow mints a scope for it.
 import { join } from "node:path";
+import { fetchJwks } from "./jwks";
+import { PUBLIC_DEMO } from "./config";
 import { friendlyName, NAME_LIMIT } from "./world-names";
 import { addClient, listClients, removeClient } from "./clients";
 import { traced } from "./trace";
@@ -237,7 +239,9 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         if (refused) return refused;
         if (req.method === "POST" && p === "/api/clients") {
           const body = await req.json().catch(() => ({}));
-          const made = addClient(world.store, body as any);
+          // A URL has to work when it's registered, which also shows its owner any mistake straight away.
+          const jwksUrl = (body as any).jwksUrl, jwksOk = typeof jwksUrl === "string" && jwksUrl ? !!(await fetchJwks(jwksUrl, PUBLIC_DEMO))?.length : true;
+          const made = addClient(world.store, body as any, { jwksReachable: () => jwksOk });
           return "error" in made ? json(made, 400) : json(made, 201);
         }
         const id = p.slice("/api/clients/".length);

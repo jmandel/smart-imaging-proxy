@@ -3,12 +3,15 @@
 // owner starts over and a tour leaves them alone. A service has no one to approve it, so registering one grants its access.
 import { randomBytes } from "node:crypto";
 import type { PolicyStore, ServiceAccessPolicy } from "@smart-imaging-proxy/core";
+import { JWKS_REFUSED } from "./jwks";
 
 export type ClientType = "public" | "confidential" | "backend";
 export interface RegisteredClient {
   id: string; name: string; type: ClientType; redirectUris: string[];
   /** The public key a confidential app or a service signs with. */
   jwk?: JsonWebKey & { kid: string };
+  /** Or where it publishes its keys, so it can rotate them. */
+  jwksUrl?: string;
   /** Which patients a service may reach: any, or one. */
   patients?: string;
 }
@@ -29,14 +32,15 @@ function redirectProblem(uri: unknown): string | undefined {
   if (u.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname)) return undefined;
   return "a redirect URI must use https, or http on localhost";
 }
-/** An ES256 public key, as one JWK or a JWKS of one, or why not. A private key is refused rather than stored. */
-function publicKeyOf(input: any): (JsonWebKey & { kid: string }) | { error: string } {
+/** A public key for ES256, ES384 or RS384, as one JWK or a JWKS of one, or why not. A private key is refused rather than stored. */
+export function publicKeyOf(input: any): (JsonWebKey & { kid: string }) | { error: string } {
   const k = Array.isArray(input?.keys) ? input.keys[0] : input;
   if (typeof k !== "object" || k === null) return { error: "give a public key as a JWK" };
   if ("d" in k) return { error: "that's a private key: give only the public part" };
-  if (k.kty !== "EC" || k.crv !== "P-256" || typeof k.x !== "string" || typeof k.y !== "string") return { error: "the key must be an EC P-256 public JWK, for ES256" };
   if (typeof k.kid !== "string" || !k.kid) return { error: "the key needs a kid" };
-  return { kty: k.kty, crv: k.crv, x: k.x, y: k.y, kid: k.kid };
+  if (k.kty === "EC" && (k.crv === "P-256" || k.crv === "P-384") && typeof k.x === "string" && typeof k.y === "string") return { kty: k.kty, crv: k.crv, x: k.x, y: k.y, kid: k.kid };
+  if (k.kty === "RSA" && typeof k.n === "string" && typeof k.e === "string" && Buffer.from(k.n, "base64url").length >= 256) return { kty: k.kty, n: k.n, e: k.e, kid: k.kid };
+  return { error: "the key must be EC P-256, EC P-384, or RSA of at least 2048 bits" };
 }
 
 const grantId = (id: string) => `service-grant-${id}`;
@@ -47,7 +51,7 @@ function grant(store: PolicyStore, c: RegisteredClient) {
 /** Puts back what registered services were granted, after something resets policy. */
 export function restoreGrants(store: PolicyStore) { for (const c of listClients(store)) if (c.type === "backend") grant(store, c); }
 
-export function addClient(store: PolicyStore, input: { name?: unknown; type?: unknown; redirectUris?: unknown; jwk?: unknown; patients?: unknown }): RegisteredClient | { error: string } {
+export function addClient(store: PolicyStore, input: { name?: unknown; type?: unknown; redirectUris?: unknown; jwk?: unknown; jwksUrl?: unknown; patients?: unknown }, check: { jwksReachable?: (url: string) => boolean } = {}): RegisteredClient | { error: string } {
   const name = typeof input.name === "string" ? input.name.trim() : "";
   if (!name || name.length > 80) return { error: "give the app a name of at most 80 characters" };
   const type = (input.type ?? "public") as ClientType;
@@ -60,9 +64,15 @@ export function addClient(store: PolicyStore, input: { name?: unknown; type?: un
     client.redirectUris = uris.map(String);
   }
   if (type !== "public") {
-    const key = publicKeyOf(input.jwk);
-    if ("error" in key) return key;
-    client.jwk = key;
+    if (typeof input.jwksUrl === "string" && input.jwksUrl) {
+      if (input.jwk) return { error: "give a public key or a JWKS URL, not both" };
+      if (check.jwksReachable && !check.jwksReachable(input.jwksUrl)) return { error: JWKS_REFUSED };
+      client.jwksUrl = input.jwksUrl;
+    } else {
+      const key = publicKeyOf(input.jwk);
+      if ("error" in key) return key;
+      client.jwk = key;
+    }
   }
   if (type === "backend") {
     const patients = input.patients ?? "any";

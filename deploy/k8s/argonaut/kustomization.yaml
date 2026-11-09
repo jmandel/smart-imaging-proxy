@@ -5,6 +5,7 @@ namespace: smart-imaging-sandbox
 resources:
   - namespace.yaml
   - launcher-redirect.yaml
+  - network-policy.yaml
   - ../base
 images:
   - name: smart-imaging-proxy
