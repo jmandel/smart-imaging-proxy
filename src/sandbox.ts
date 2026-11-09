@@ -87,7 +87,7 @@ export function createSandbox(o: { id?: string; store: PolicyStore; clock: DemoC
   const directoryPolicy = policyClient(local(PORTS.imaging), policySecret, "authorization-server");
 
   const auth = createAuthServer({
-    issuer: urls.auth, imagingFhirBase: `${urls.imaging}/fhir`, serviceSecret, redirectUri: urls.callback, demoClientRedirectUri: `${urls.demo}/`, unified: () => store.note("topology") === "unified", imagingFetch: (req: Request) => imaging.fetch(req), ...(o.id ? { registeredClient: (id: string) => listClients(store).find(c => c.id === id) } : {}), store: () => store, clock,
+    issuer: urls.auth, imagingFhirBase: `${urls.imaging}/fhir`, serviceSecret, redirectUri: urls.callback, demoClientRedirectUri: `${urls.demo}/`, unified: () => store.note("topology") === "unified", releasedStudies: async t => { const x: any = await policy.explain({ client: t.client_id, ...(t.sub ? { user: t.sub, fhirUser: t.fhirUser } : {}), patient: t.patient! } as any); const ids = new Set((x.studies ?? []).filter((d: any) => d.release !== "none").map((d: any) => d.id)); return catalog().allStudies().filter(st => ids.has(st.id)); }, imagingFetch: (req: Request) => imaging.fetch(req), ...(o.id ? { registeredClient: (id: string) => listClients(store).find(c => c.id === id) } : {}), store: () => store, clock,
     // The Authorization Server's pages, in their own terms, over the policy API's three levels.
     directory: {
       relationships: async () => [

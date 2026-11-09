@@ -2,14 +2,37 @@
   "_note": "Josh Example is the de-identified name of the real patient whose studies are published in github.com/jmandel/my-health-data/imaging. The birth date keeps only the year, as in the DICOM headers. The whole-slide study is rewritten to this patient. Sam Example and Riley Example are invented, and their studies are fully synthetic: scripts/generate-synthetic.ts makes them, and no person's images are in them.",
   "id": "josh-example",
   "family": "Example",
-  "given": ["Josh"],
+  "given": [
+    "Josh"
+  ],
   "dicomName": "Example^Josh",
   "birthDate": "1982-01-01",
   "gender": "male",
   "mrn": "JEXAMPLE01",
   "otherPatients": [
-    { "id": "robin-example", "mrn": "REXAMPLE01", "_note": "Robin has an account and a Patient ID, and no studies link to it, so Robin's search is a real empty result." },
-    { "id": "sam-example", "mrn": "SEXAMPLE01", "birthDate": "1985-01-01", "_note": "Invented. Sam has an account, fully synthetic studies, and cares for Riley." },
-    { "id": "riley-example", "mrn": "RYEXAMPLE01", "birthDate": "2011-01-01", "guardians": [{ "account": "sam-caregiver" }], "_note": "Invented. Riley is Sam's child, aged 15, with fully synthetic studies and no account. The guardian on file is a fact registration recorded, which a policy reset puts back. The skin biopsy is labeled confidential-adolescent in data/studies.source.json." }
+    {
+      "id": "robin-example",
+      "mrn": "REXAMPLE01",
+      "_note": "Robin has an account and a Patient ID, and no studies link to it, so Robin's search is a real empty result."
+    },
+    {
+      "id": "sam-example",
+      "mrn": "SEXAMPLE01",
+      "birthDate": "1985-01-01",
+      "_note": "Invented. Sam has an account, fully synthetic studies, and cares for Riley.",
+      "gender": "other"
+    },
+    {
+      "id": "riley-example",
+      "mrn": "RYEXAMPLE01",
+      "birthDate": "2011-01-01",
+      "guardians": [
+        {
+          "account": "sam-caregiver"
+        }
+      ],
+      "_note": "Invented. Riley is Sam's child, aged 15, with fully synthetic studies and no account. The guardian on file is a fact registration recorded, which a policy reset puts back. The skin biopsy is labeled confidential-adolescent in data/studies.source.json.",
+      "gender": "other"
+    }
   ]
 }

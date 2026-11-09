@@ -556,7 +556,7 @@
       },
       "clinical": {
         "encounter": "bronch-2023-04-17",
-        "orderedBy": "riley-example",
+        "orderedBy": "rowan-example",
         "readBy": "sasha-sample",
         "orderedAt": "2023-04-17T12:30:00-07:00",
         "signed": "2023-04-19T11:15:00-07:00",
@@ -580,7 +580,23 @@
       "studyTime": "09:20:00",
       "description": "SYNTHETIC: Chest X-ray, 2 views",
       "report": {
-        "title": "SYNTHETIC CHEST X-RAY, 2 VIEWS"
+        "title": "SYNTHETIC CHEST X-RAY, 2 VIEWS",
+        "code": {
+          "system": "http://loinc.org",
+          "code": "36554-4",
+          "display": "XR Chest 2 Views"
+        },
+        "indication": "Persistent cough for three weeks.",
+        "comparison": "None available.",
+        "technique": "PA and lateral views of the chest.",
+        "findings": [
+          "Lungs: Clear, with no focal consolidation, effusion or pneumothorax.",
+          "Heart and mediastinum: Normal size and contour.",
+          "Bones: No acute abnormality."
+        ],
+        "impression": [
+          "No acute cardiopulmonary abnormality."
+        ]
       },
       "series": [
         {
@@ -599,7 +615,13 @@
           "bodyPart": "CHEST",
           "instances": 1
         }
-      ]
+      ],
+      "clinical": {
+        "orderedBy": "casey-example",
+        "readBy": "avery-sample",
+        "signed": "2021-03-14 11:02 PST",
+        "location": "Outpatient Imaging"
+      }
     },
     {
       "id": "syn-sam-ct-sinus-2024",
@@ -617,7 +639,23 @@
       "studyTime": "14:05:00",
       "description": "SYNTHETIC: CT sinuses without contrast",
       "report": {
-        "title": "SYNTHETIC CT SINUSES WITHOUT CONTRAST"
+        "title": "SYNTHETIC CT SINUSES WITHOUT CONTRAST",
+        "code": {
+          "system": "http://loinc.org",
+          "code": "30618-3",
+          "display": "CT Sinuses"
+        },
+        "indication": "Chronic sinus congestion, not improving with medical therapy.",
+        "comparison": "None available.",
+        "technique": "Axial images through the paranasal sinuses without intravenous contrast, with coronal and sagittal reformats.",
+        "findings": [
+          "Maxillary sinuses: Mild bilateral mucosal thickening, with no air-fluid level.",
+          "Ethmoid, frontal and sphenoid sinuses: Clear.",
+          "Ostiomeatal units: Patent."
+        ],
+        "impression": [
+          "Mild bilateral maxillary sinus mucosal thickening, consistent with mild chronic sinusitis."
+        ]
       },
       "series": [
         {
@@ -636,7 +674,13 @@
           "bodyPart": "HEAD",
           "instances": 3
         }
-      ]
+      ],
+      "clinical": {
+        "orderedBy": "taylor-example",
+        "readBy": "quinn-sample",
+        "signed": "2024-09-02 16:40 CDT",
+        "location": "Outpatient Imaging"
+      }
     },
     {
       "id": "syn-riley-knee-mr-2022",
@@ -654,7 +698,24 @@
       "studyTime": "11:40:00",
       "description": "SYNTHETIC: MRI left knee without contrast",
       "report": {
-        "title": "SYNTHETIC MRI LEFT KNEE WITHOUT CONTRAST"
+        "title": "SYNTHETIC MRI LEFT KNEE WITHOUT CONTRAST",
+        "code": {
+          "system": "http://loinc.org",
+          "code": "26210-1",
+          "display": "MR Knee Left"
+        },
+        "indication": "Left knee pain after a soccer injury.",
+        "comparison": "None available.",
+        "technique": "Multiplanar, multisequence MR imaging of the left knee without intravenous contrast.",
+        "findings": [
+          "Ligaments: Grade 1 sprain of the medial collateral ligament. The cruciate ligaments are intact.",
+          "Menisci: Intact.",
+          "Cartilage and bones: No focal defect or fracture."
+        ],
+        "impression": [
+          "Grade 1 medial collateral ligament sprain.",
+          "No meniscal tear."
+        ]
       },
       "series": [
         {
@@ -681,12 +742,20 @@
           "bodyPart": "KNEE",
           "instances": 2
         }
-      ]
+      ],
+      "clinical": {
+        "orderedBy": "jordan-sample",
+        "readBy": "quinn-sample",
+        "signed": "2022-06-21 15:30 CDT",
+        "location": "Outpatient Imaging"
+      }
     },
     {
       "id": "syn-riley-skin-slide-2023",
       "site": "Northside Pathology",
-      "labels": ["confidential-adolescent"],
+      "labels": [
+        "confidential-adolescent"
+      ],
       "synthetic": true,
       "patient": {
         "id": "riley-example",
@@ -700,7 +769,25 @@
       "studyTime": "16:15:00",
       "description": "SYNTHETIC: Skin biopsy, slide photo",
       "report": {
-        "title": "SYNTHETIC SKIN BIOPSY, SLIDE PHOTO"
+        "title": "SYNTHETIC SKIN BIOPSY, SLIDE PHOTO",
+        "kind": "pathology",
+        "code": {
+          "system": "http://loinc.org",
+          "code": "60567-5",
+          "display": "Pathology report"
+        },
+        "indication": "Pigmented lesion on the left forearm.",
+        "specimen": "Skin, left forearm, punch biopsy.",
+        "gross": "One tan punch of skin, 4 mm in diameter, submitted entirely.",
+        "microscopic": [
+          "Sections show a benign compound melanocytic nevus with no atypia. Margins are clear."
+        ],
+        "diagnosis": [
+          "Skin, left forearm, punch biopsy: benign compound melanocytic nevus."
+        ],
+        "impression": [
+          "Benign compound melanocytic nevus."
+        ]
       },
       "series": [
         {
@@ -711,7 +798,13 @@
           "bodyPart": "SKIN",
           "instances": 2
         }
-      ]
+      ],
+      "clinical": {
+        "orderedBy": "casey-example",
+        "readBy": "sasha-sample",
+        "signed": "2023-11-10 09:15 PST",
+        "location": "Outpatient Dermatology"
+      }
     }
   ]
 }

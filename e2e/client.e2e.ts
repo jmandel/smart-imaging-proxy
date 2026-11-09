@@ -73,6 +73,12 @@ describe("the demo client", () => {
     for (const stage of ["discover", "authorize", "clinical", "imaging", "retrieve"]) await page.locator(`[data-stage=${stage}][data-state=done]`).waitFor();
     expect(await page.locator("[data-state=failed]").count()).toBe(0);
     await page.locator("[data-stage=imaging] .fact", { hasText: "Studies" }).locator("dd", { hasText: "6" }).waitFor();
+    // Reports sit beside the images, and lead to them.
+    await page.locator(".report").nth(5).waitFor();
+    const brainReport = page.locator(".report", { hasText: /MRI BRAIN/i });
+    await brainReport.locator("summary").click();
+    await brainReport.getByRole("button", { name: "View images" }).click();
+    await page.locator('.study-button[aria-pressed="true"]', { hasText: "BRAIN" }).waitFor();
     // A stack: the middle image first, then scrolling, the slider, and another series.
     await page.locator(".study-button", { hasText: "BRAIN" }).click();
     await page.locator("#slice:enabled").waitFor({ timeout: 15000 });

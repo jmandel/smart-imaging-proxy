@@ -339,6 +339,36 @@ async function loadClinical(s) {
     } catch (e) { group.innerHTML = `<h3>${label}</h3><p class="none">${e.status === 404 ? "This server doesn't offer this search." : esc(e.message)}</p>`; }
   }));
 }
+/** The patient's reports. Each opens as its PDF, and leads to the images of the same accession number. */
+async function loadReports(s) {
+  const el = $("#reports");
+  let bundle;
+  try { bundle = await traced({ id: "reports", kind: "clinical", title: "Search DiagnosticReport" }, `${s.iss}/DiagnosticReport?patient=${encodeURIComponent(s.patient)}`, { headers: fhirHeaders(s.token) }, b => ({ Reports: b.entry?.length ?? 0 })); }
+  catch (e) { el.innerHTML = `<p class="note">${e.status === 404 ? "This server doesn't offer reports." : esc(e.message)}</p>`; return; }
+  const reports = (bundle.entry ?? []).map(e => e.resource).filter(r => r?.resourceType === "DiagnosticReport").sort((a, b) => String(b.effectiveDateTime ?? "").localeCompare(String(a.effectiveDateTime ?? "")));
+  if (!reports.length) { el.innerHTML = `<p class="note">No reports this app can see.</p>`; return; }
+  el.innerHTML = `<ul class="report-list">${reports.map((r, i) => `<li><details class="report"><summary><span class="report-title">${esc(r.code?.text ?? r.code?.coding?.[0]?.display ?? "Report")}</span><span class="report-date">${esc(studyDate(r.effectiveDateTime))}</span></summary><div class="report-body">${r.conclusion ? `<p>${esc(r.conclusion)}</p>` : ""}<div class="report-actions">${r.presentedForm?.some(f => f.contentType === "application/pdf") ? `<button type="button" class="tool" data-pdf="${i}">Open PDF</button>` : ""}<button type="button" class="tool" data-images="${i}">View images</button></div></div></details></li>`).join("")}</ul>`;
+  el.onclick = async e => {
+    const pdf = e.target.closest("[data-pdf]"), images = e.target.closest("[data-images]");
+    if (images) {
+      const r = reports[Number(images.dataset.images)], accession = r.identifier?.map(i => i.value) ?? [];
+      const i = currentStudies.findIndex(st => st.identifier?.some(x => accession.includes(x.value)));
+      const button = i >= 0 && !$(`.study-button[data-i="${i}"]`)?.disabled ? $(`.study-button[data-i="${i}"]`) : null;
+      if (button) button.click(); else images.textContent = "No images available";
+      return;
+    }
+    if (!pdf) return;
+    // Opened before the fetch, while the tap still counts, so a phone doesn't block it.
+    const tab = window.open("", "_blank");
+    const form = reports[Number(pdf.dataset.pdf)].presentedForm.find(f => f.contentType === "application/pdf");
+    const res = await fetch(new URL(form.url, `${s.iss}/`), { headers: { authorization: `Bearer ${s.token}` } });
+    addStep({ id: "report-pdf", kind: "clinical", title: "Retrieve a report PDF", status: `${res.status}`, failed: !res.ok, request: requestLine("GET", form.url, { authorization: "x" }), response: `HTTP ${res.status}\ncontent-type: ${res.headers.get("content-type")}` });
+    if (!res.ok) { tab?.close(); pdf.textContent = "Couldn't open"; return; }
+    const url = URL.createObjectURL(await res.blob());
+    if (tab) tab.location = url; else location.assign(url);
+  };
+}
+let currentStudies = [];
 const connectionOf = e => e?.connectionType?.code ?? e?.connectionType?.coding?.[0]?.code;
 /** An Endpoint by reference: contained, a response-local urn:uuid, or a full or relative URL in the Bundle. */
 function resolveEndpoint(owner, ref, entries) {
@@ -386,6 +416,7 @@ async function loadStudies(s) {
     address: r.status === "available" || r.status === undefined ? wadoAddress(r, r.endpoint, entries) : undefined,
     series: (r.series ?? []).map(x => ({ ...x, address: wadoAddress(r, x.endpoint, entries) })),
   })).sort((a, b) => String(b.started ?? "").localeCompare(String(a.started ?? "")));
+  currentStudies = studies;
   const warning = incomplete ? `<p class="note">The server says these results are incomplete. Some sources haven't answered yet.</p>` : "";
   if (!studies.length) { el.innerHTML = `${warning}<p class="note">This patient has no studies this app can see.</p>`; $("#stage-note").textContent = "No studies to show."; return; }
   const usable = st => st.address && st.uid;
@@ -711,9 +742,10 @@ async function run(session) {
   if (session.backend) {
     $("#patient").innerHTML = `<p class="who">Patient ${esc(session.patient)}</p><p class="facts">Backend service: no one signed in</p>`;
     $("#clinical").hidden = true;
+    $("#reports-panel").hidden = true;
     renderTrail();
   }
-  const results = await Promise.allSettled(session.backend ? [loadStudies(session)] : [loadPatient(session), loadClinical(session), loadStudies(session)]);
+  const results = await Promise.allSettled(session.backend ? [loadStudies(session)] : [loadPatient(session), loadClinical(session), loadReports(session), loadStudies(session)]);
   if (results.some(r => r.reason?.status === 401)) { save({ session: undefined }); announce("Your session ended. Connect again."); note("Your session ended. Disconnect, then connect again."); }
 }
 renderServers();

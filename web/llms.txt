@@ -10,7 +10,7 @@ A real deployment has separate systems, and here they share one origin.
 
 | Role | URL | What it does |
 |---|---|---|
-| Clinical FHIR server | `$SANDBOX/fhir` | SMART discovery, `Patient`, `AllergyIntolerance`, `Condition`, `MedicationRequest` |
+| Clinical FHIR server | `$SANDBOX/fhir` | SMART discovery, `Patient`, `AllergyIntolerance`, `Condition`, `MedicationRequest`, `DiagnosticReport`, `Binary` |
 | Authorization server | `$SANDBOX/authorize`, `/token`, `/introspect`, `/revoke` | Sign-in, consent, tokens |
 | Imaging FHIR server | `$SANDBOX/imaging/fhir` | `ImagingStudy` search, with each study's `Endpoint`. Applies policy |
 | DICOMweb proxy | `$SANDBOX/wado/{signed-context}/studies/...` | WADO-RS retrieval. Enforces the decision signed into the address |
@@ -80,6 +80,12 @@ To limit what's approved, add `sites_shown=1` and a `sites` field per site. Site
 curl "$SANDBOX/fhir/Patient/josh-example" -H "authorization: Bearer $TOKEN"
 curl "$SANDBOX/fhir/Condition?patient=Patient/josh-example&clinical-status=active" -H "authorization: Bearer $TOKEN"
 curl "$SANDBOX/imaging/fhir/ImagingStudy?patient=Patient/josh-example&_include=ImagingStudy:endpoint" -H "authorization: Bearer $TOKEN"
+```
+
+Reports link to their images by accession number, and each has a PDF and a text attachment at the URLs in `presentedForm`. A report is available only when the study it describes is released to the token.
+
+```sh
+curl "$SANDBOX/fhir/DiagnosticReport?patient=Patient/josh-example" -H "authorization: Bearer $TOKEN"
 ```
 
 Retrieve images from each study's `Endpoint.address`, still sending the token:

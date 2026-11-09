@@ -49,10 +49,19 @@ html.has-sandbox .sandbox { display:block; min-height:8.6rem; }
 .panel + .panel { margin-top:.75rem; }
 .chart, .viewer, .protocol { min-width:0; }
 .protocol { max-height:calc(100vh - 5.5rem); overflow:auto; position:sticky; top:.75rem; }
-#patient { min-height:3.6rem; }
-#clinical { min-height:15rem; }
-#studies { min-height:14rem; }
-.clinical-group { min-height:3.1rem; }
+#patient { min-height:5.8rem; }
+#clinical { min-height:17rem; }
+#reports { min-height:9rem; }
+.report-list { list-style:none; margin:0; padding:0; display:grid; gap:.3rem; }
+.report { border:1px solid var(--line); border-radius:6px; }
+.report > summary { cursor:pointer; padding:.45rem .6rem; min-height:2.5rem; overflow-wrap:anywhere; }
+.report-title { font-weight:600; }
+.report-date { display:block; color:var(--muted); font-size:.85rem; }
+.report-body { padding:.1rem .6rem .6rem; border-top:1px solid var(--line); }
+.report-body p { margin:.4rem 0; }
+.report-actions { display:flex; flex-wrap:wrap; gap:.4rem; }
+#studies { min-height:21rem; }
+.clinical-group { min-height:4.4rem; }
 .stage-row[data-state=waiting] .stage-body { min-height:7rem; }
 .who { font-size:1.25rem; font-weight:700; margin:0; overflow-wrap:anywhere; }
 .facts { color:var(--muted); margin:.1rem 0 0; }
@@ -164,6 +173,7 @@ html.has-sandbox .sandbox { display:block; min-height:8.6rem; }
   .pages a { min-height:2.5rem; white-space:nowrap; }
   .workspace { grid-template-columns:minmax(0, 1fr); padding:.5rem; gap:.5rem; }
   .chart { display:contents; }
+  #studies { min-height:14rem; }
   .patient-panel { order:1; flex-wrap:nowrap; align-items:center; padding:.5rem .7rem; height:3.75rem; }
   #patient { min-height:0; flex:1 1 auto; }
   #patient .who, #patient .facts { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -173,6 +183,7 @@ html.has-sandbox .sandbox { display:block; min-height:8.6rem; }
   .viewer { order:2; }
   .studies-panel { order:3; }
   #clinical { order:4; }
+  #reports-panel { order:4; }
   .protocol { order:5; }
   .panel + .panel { margin-top:0; }
   .stage { height:56vh; min-height:15rem; }

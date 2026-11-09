@@ -19,6 +19,7 @@ export function hasClinicalScope(scope: string, type: string): boolean {
   return scope.split(" ").some(s => s === `patient/${type}.rs` || s === `patient/${type}.s` || s === `patient/${type}.read` || s === "patient/*.rs" || s === "patient/*.s" || s === "patient/*.read");
 }
 
+export const patientOnFile = (id: string) => onFile.get(id);
 /** What's on file for a patient's demographics, beyond the name. */
 export function demographics(id: string) {
   const p = onFile.get(id);

@@ -2,14 +2,15 @@
 // and users manage apps, SMART App Launch (authorization code with PKCE), Backend Services
 // (signed client assertions), refresh, revocation, introspection, and SMART discovery.
 import { createECDH, createHash, createPrivateKey, createPublicKey, generateKeyPairSync, hkdfSync, randomBytes, sign, verify, type KeyObject } from "node:crypto";
-import { ath, b64url, sameSecret, type Clock, type PolicyStore } from "@smart-imaging-proxy/core";
+import { ath, b64url, sameSecret, type CatalogStudy, type Clock, type PolicyStore } from "@smart-imaging-proxy/core";
 import { demoClock } from "./clock";
 import { refuseWrite } from "./settings-api";
 import { PORTS, PUBLIC_DEMO } from "./config";
 import { check, recordEvent, traced } from "./trace";
-import { clinicalSearch, demographics, isClinicalType } from "./clinical";
+import { clinicalSearch, demographics, hasClinicalScope, isClinicalType } from "./clinical";
 import { BACKEND_SCOPES } from "./clients";
 import { jwksKey } from "./jwks";
+import { reportAttachment, reportSearch, reportRead } from "./reports";
 
 const IMAGING_CAPABILITIES = ["smart-imaging-access", "http://fhir.org/argonaut/smart-imaging/capabilities/app-launch", "http://fhir.org/argonaut/smart-imaging/capabilities/backend-services"];
 export interface Grant { client_id: string; scope: string; patient?: string; sub?: string; fhirUser?: string; family?: string; }
@@ -155,7 +156,7 @@ form.inline{display:inline}
  * Every URL it issues starts at `issuer`, including the paths in its own pages and redirects, so it can
  * be served under a prefix. It answers requests with the prefix already taken off.
  */
-export function createAuthServer(opts: { issuer: string; imagingFhirBase: string; serviceSecret: string; redirectUri: string; demoClientRedirectUri: string; unified?: () => boolean; imagingFetch?: (req: Request) => Response | Promise<Response>; registeredClient?: (id: string) => { name: string; type?: string; redirectUris: string[]; jwk?: JsonWebKey & { kid: string }; jwksUrl?: string } | undefined; directory: Directory; store: () => PolicyStore; clock?: Clock }) {
+export function createAuthServer(opts: { issuer: string; imagingFhirBase: string; serviceSecret: string; redirectUri: string; demoClientRedirectUri: string; unified?: () => boolean; releasedStudies?: (token: Grant) => Promise<CatalogStudy[]>; imagingFetch?: (req: Request) => Response | Promise<Response>; registeredClient?: (id: string) => { name: string; type?: string; redirectUris: string[]; jwk?: JsonWebKey & { kid: string }; jwksUrl?: string } | undefined; directory: Directory; store: () => PolicyStore; clock?: Clock }) {
   const clock = opts.clock ?? demoClock;
   const now = () => clock.now();
   /** The path the issuer adds, which every path this server writes into a page or a redirect starts with. */
@@ -461,7 +462,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
         grant_types_supported: ["authorization_code", "client_credentials", "refresh_token"],
         response_types_supported: ["code"], code_challenge_methods_supported: ["S256"],
         token_endpoint_auth_methods_supported: ["private_key_jwt"], token_endpoint_auth_signing_alg_values_supported: ["ES256", "ES384", "RS384"],
-        scopes_supported: ["patient/ImagingStudy.rs", "patient/Patient.rs", "patient/AllergyIntolerance.rs", "patient/Condition.rs", "patient/MedicationRequest.rs", "patient/*.rs", "system/ImagingStudy.rs", "launch/patient", "online_access"],
+        scopes_supported: ["patient/ImagingStudy.rs", "patient/Patient.rs", "patient/DiagnosticReport.rs", "patient/AllergyIntolerance.rs", "patient/Condition.rs", "patient/MedicationRequest.rs", "patient/*.rs", "system/ImagingStudy.rs", "launch/patient", "online_access"],
         capabilities: ["launch-standalone", "client-public", "client-confidential-asymmetric", "permission-v2", "context-standalone-patient", ...(opts.unified?.() ? IMAGING_CAPABILITIES : [])],
         ...(opts.unified?.() ? {} : { associated_endpoints: [{ url: opts.imagingFhirBase, capabilities: IMAGING_CAPABILITIES }] }),
       });
@@ -544,6 +545,23 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
       if (!check("authorization-server", "the token's patient context is this patient", t!.patient === id, { patient: id, patient_context: t!.patient })) return new Response(null, { status: 403, headers: { "WWW-Authenticate": 'Bearer error="insufficient_scope"' } });
       if (!Object.hasOwn(PATIENT_NAMES, id)) return new Response(null, { status: 404 });
       return Response.json({ resourceType: "Patient", id, name: [{ family: "Example", given: [PATIENT_NAMES[id]!.split(" ")[0]] }], ...demographics(id) });
+    }
+    // A report is as private as the study it describes, so it's released by that study's own decision.
+    const reportPath = url.pathname.match(/^\/fhir\/(?:DiagnosticReport(?:\/([^/]+))?|Binary\/([^/]+))$/);
+    if (reportPath && req.method === "GET" && opts.releasedStudies) {
+      const bearer = req.headers.get("authorization")?.match(/^Bearer (.+)$/i)?.[1];
+      const t = bearer ? opts.store().getToken(bearer, "access") : undefined;
+      if (!check("authorization-server", "report read has a live access token", !!t && !t.revoked && t.exp! > now(), {})) return new Response(null, { status: 401, headers: { "WWW-Authenticate": bearer ? 'Bearer error="invalid_token"' : "Bearer" } });
+      const refused = (status: number, code: string, diagnostics: string) => Response.json({ resourceType: "OperationOutcome", issue: [{ severity: "error", code, diagnostics }] }, { status, headers: { "content-type": "application/fhir+json" } });
+      if (!t!.patient || !hasClinicalScope(t!.scope, "DiagnosticReport")) return refused(403, "forbidden", "scope does not cover DiagnosticReport");
+      const released = await opts.releasedStudies(t!), fhir = `${opts.issuer}/fhir`, json = (b: unknown) => Response.json(b, { headers: { "content-type": "application/fhir+json" } });
+      if (reportPath[2]) { const file = reportAttachment(reportPath[2], released, fhir); return file ? new Response(file.bytes as any, { headers: { "content-type": file.contentType } }) : refused(404, "not-found", "no such report"); }
+      if (reportPath[1]) { const found = reportRead(reportPath[1], released, fhir, opts.imagingFhirBase); return found ? json(found) : refused(404, "not-found", "no such report"); }
+      const asked = url.searchParams.get("patient");
+      if (!asked) return refused(400, "required", "the patient parameter is required");
+      const id = asked.startsWith(`${fhir}/Patient/`) ? asked.slice(`${fhir}/Patient/`.length) : asked.replace(/^Patient\//, "");
+      if (id !== t!.patient) return refused(403, "forbidden", "patient does not match the token's patient context");
+      return json(reportSearch(released, fhir, opts.imagingFhirBase));
     }
     const clinicalType = url.pathname.match(/^\/fhir\/([A-Za-z]+)$/)?.[1];
     if (clinicalType && isClinicalType(clinicalType) && req.method === "GET") {
