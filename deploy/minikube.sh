@@ -5,8 +5,11 @@
 #
 #   kubectl --kubeconfig .run/minikube.kubeconfig --context imaging-local -n smart-imaging get pods
 #
-# MINIKUBE_DRIVER picks the driver. A machine running a kernel whose modules a package update has replaced
-# can't give the docker driver's pods a network, and MINIKUBE_DRIVER=virtualbox brings its own kernel.
+# MINIKUBE_ARGS goes to `minikube start`. A machine running a kernel whose modules a package update has replaced
+# can't give the docker driver's pods a network, and a VM brings its own kernel. QEMU's builtin network gives the
+# VM no address the host can reach, so INGRESS_FORWARD=1 tests through a port-forward instead:
+#
+#   MINIKUBE_ARGS="--driver=qemu --network=builtin --qemu-firmware-path=/usr/share/edk2/x64/OVMF_CODE.4m.fd" INGRESS_FORWARD=1 deploy/minikube.sh
 set -euo pipefail
 trap 'echo "minikube.sh: failed at line $LINENO" >&2' ERR
 cd "$(dirname "$0")/.."
@@ -16,13 +19,13 @@ export KUBECONFIG="$PWD/.run/minikube.kubeconfig"
 K="kubectl --context $PROFILE -n $NS"
 
 echo "== Cluster"
-minikube status -p "$PROFILE" >/dev/null 2>&1 || timeout 600 minikube start -p "$PROFILE" --cpus=4 --memory=6g --disk-size=30g ${MINIKUBE_DRIVER:+--driver="$MINIKUBE_DRIVER"}
+minikube status -p "$PROFILE" >/dev/null 2>&1 || timeout 600 minikube start -p "$PROFILE" --cpus=4 --memory=6g --disk-size=30g ${MINIKUBE_ARGS:-}
 timeout 300 minikube addons enable ingress -p "$PROFILE" >/dev/null
 kubectl --context "$PROFILE" -n ingress-nginx rollout status deploy/ingress-nginx-controller --timeout=180s
 IP=$(minikube ip -p "$PROFILE")
 
 echo "== Image"
-( eval "$(minikube -p "$PROFILE" docker-env)"; docker build -q -f deploy/Dockerfile -t smart-imaging-proxy:local . )
+minikube -p "$PROFILE" image build -f deploy/Dockerfile -t smart-imaging-proxy:local . | tail -1
 
 echo "== Certificate"
 [ -f .run/tls.crt ] || mkcert -cert-file .run/tls.crt -key-file .run/tls.key "$HOST"
@@ -38,7 +41,14 @@ if ! $K rollout status deploy/smart-imaging --timeout="${ROLLOUT_TIMEOUT:-900s}"
 fi
 
 echo "== Browser test"
-[ "${SKIP_TEST:-}" ] || BASE_URL="https://$HOST" HOST_RULES="MAP $HOST $IP" timeout 180 bun test ./e2e/client.e2e.ts
+RULES="MAP $HOST $IP"
+if [ "${INGRESS_FORWARD:-}" ]; then
+  kubectl --context "$PROFILE" -n ingress-nginx port-forward svc/ingress-nginx-controller 18443:443 >/dev/null &
+  FORWARD=$!; trap 'kill $FORWARD 2>/dev/null || true' EXIT
+  for _ in $(seq 1 30); do curl -sk -o /dev/null --connect-to "$HOST:443:127.0.0.1:18443" "https://$HOST/" && break; read -rt 1 <> <(:) || true; done
+  RULES="MAP $HOST:443 127.0.0.1:18443"
+fi
+[ "${SKIP_TEST:-}" ] || BASE_URL="https://$HOST" HOST_RULES="$RULES" timeout 180 bun test ./e2e/client.e2e.ts
 
-grep -q "$IP.*$HOST" /etc/hosts 2>/dev/null || echo "Add to /etc/hosts: $IP $HOST"
+[ "${INGRESS_FORWARD:-}" ] || grep -q "$IP.*$HOST" /etc/hosts 2>/dev/null || echo "Add to /etc/hosts: $IP $HOST"
 echo "Running at https://$HOST/"
