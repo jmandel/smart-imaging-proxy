@@ -1,4 +1,4 @@
-// Demo clocks, so flows can show expiry without waiting. The root's is this module's; each scope has its own.
+// Demo clocks, so flows can show expiry without waiting. The root's is this module's; each sandbox has its own.
 import type { Clock } from "@smart-imaging-proxy/core";
 
 /** A clock running at an offset from real time, which the demo can move. */

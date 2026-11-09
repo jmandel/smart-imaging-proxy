@@ -77,7 +77,7 @@ describe("the Authorization Server's forms", () => {
   test("every account_session cookie is tried, so a stale one sent first doesn't sign the person out", async () => {
     const cookie = await signedIn();
     const page = (c: string) => fetch(`${CONFIG.authUrl}/account`, { headers: { cookie: c } }).then(r => r.text());
-    expect(await page(`account_session=stale-from-a-dropped-scope; ${cookie}`)).toContain("Sign out");
+    expect(await page(`account_session=stale-from-a-dropped-sandbox; ${cookie}`)).toContain("Sign out");
     expect(await page(`x${cookie}`)).not.toContain("Sign out");
   });
   const newTxn = async () => {
@@ -142,12 +142,12 @@ describe("the Authorization Server's forms", () => {
   });
 });
 
-test("a refused scope mint makes no scope", async () => {
-  const before = stack.scopes.size;
+test("a refused sandbox mint makes no sandbox", async () => {
+  const before = stack.sandboxes.size;
   const send = (body: string, headers: Record<string, string> = {}) => fetch(`${CONFIG.demoUrl}/api/sandboxes`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body });
   expect((await send('{"store":"elsewhere"}')).status).toBe(400);
   expect((await send("{}", { origin: "https://evil.example" })).status).toBe(403);
-  expect(stack.scopes.size).toBe(before);
+  expect(stack.sandboxes.size).toBe(before);
 });
 
 test("the demo's pages and read APIs answer only at its own addresses", async () => {
@@ -183,8 +183,8 @@ test("the Bearer scheme is case-insensitive on the Clinical FHIR Server, and an 
 });
 
 test("a malformed step request isn't a server error", async () => {
-  const { scope } = await (await fetch(`http://127.0.0.1:${PORTS.demo}/api/flows/patient-sites/start`, { method: "POST" })).json() as any;
-  const step = (name: string, body: string) => fetch(`http://127.0.0.1:${PORTS.demo}${scope.base}/api/flows/patient-sites/steps/${name}`, { method: "POST", headers: { "content-type": "application/json" }, body });
+  const { sandbox } = await (await fetch(`http://127.0.0.1:${PORTS.demo}/api/flows/patient-sites/start`, { method: "POST" })).json() as any;
+  const step = (name: string, body: string) => fetch(`http://127.0.0.1:${PORTS.demo}${sandbox.base}/api/flows/patient-sites/steps/${name}`, { method: "POST", headers: { "content-type": "application/json" }, body });
   expect((await step("constructor", "{}")).status).toBe(404);
   const nulled = await step("consent", "null");
   expect(nulled.status).toBeLessThan(500);
@@ -209,12 +209,12 @@ test("the proxy answers odd Hosts and request targets without a 500", async () =
 test("a step's input has to be one of its choices", async () => {
   const start = await fetch(`http://127.0.0.1:${PORTS.demo}/api/flows/caregiver/start`, { method: "POST" });
   expect(start.status).toBe(200);
-  const { scope } = await start.json() as any;
-  const step = (name: string, inputs: unknown) => fetch(`http://127.0.0.1:${PORTS.demo}${scope.base}/api/flows/caregiver/steps/${name}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ inputs }) });
+  const { sandbox } = await start.json() as any;
+  const step = (name: string, inputs: unknown) => fetch(`http://127.0.0.1:${PORTS.demo}${sandbox.base}/api/flows/caregiver/steps/${name}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ inputs }) });
   for (const inputs of [{ sites: null }, { sites: "notalist" }, "text", null]) expect((await step("delegate", inputs)).status).toBeLessThan(500);
   expect((await step("sam-launch", { whose: ["x"] })).status).toBe(400);
   expect((await step("sam-launch", { whose: "robin-example" })).status).toBe(400);
   expect((await step("delegate", { sites: ["Not A Site"] })).status).toBe(400);
-  const broken = await fetch(`http://127.0.0.1:${PORTS.demo}${scope.base}/api/flows/caregiver/steps/delegate`, { method: "POST", headers: { "content-type": "application/json" }, body: "{" });
+  const broken = await fetch(`http://127.0.0.1:${PORTS.demo}${sandbox.base}/api/flows/caregiver/steps/delegate`, { method: "POST", headers: { "content-type": "application/json" }, body: "{" });
   expect(broken.status).toBe(400);
 });

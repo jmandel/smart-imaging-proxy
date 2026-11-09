@@ -158,7 +158,7 @@ export const policyFlows: Flow[] = [
           if (!s) { c.check("Sam's app held no URL, so there's no revocation window to show", true); return; }
           const inside = await c.retrieve("App (Sam)", "A URL Sam already holds", c.studyUrl(s.base, s.uid), c.state.sam);
           c.check("The existing URL still works until it expires", inside.status === 200 && inside.authz === "instant", "This is the revocation window");
-          c.advanceClock(c.world.store.getSettings().contextLifetimeSeconds + 5);
+          c.advanceClock(c.sandbox.store.getSettings().contextLifetimeSeconds + 5);
           const later = await c.retrieve("App (Sam)", "The same URL, after expiry", c.studyUrl(s.base, s.uid), c.state.sam);
           c.check("Then the proxy asks, and access has ended", later.status === 404 && later.authz === "asked", `status ${later.status}, authorization: ${later.authz}`);
         },
@@ -285,7 +285,7 @@ export const policyFlows: Flow[] = [
           const s = c.study(MRI).series;
           c.state.hidden = s[0].uid;
           c.state.limit = Number(i.limit);
-          await c.world.policy.setSettings({ maxSeriesInContext: c.state.limit });
+          await c.sandbox.policy.setSettings({ maxSeriesInContext: c.state.limit });
           await c.setServicePolicies([serviceAccess("long-rule", "outside-release-service", "One series withheld, leaving a long release list", { allow: { studies: [MRI] }, withholdSeries: [c.state.hidden] })]);
           c.state.token = (await c.backendToken("outside-release-service")).access_token;
           c.check("Token issued", !!c.state.token);
@@ -335,7 +335,7 @@ export const policyFlows: Flow[] = [
         inputs: () => [{ id: "lifetime", label: "Context lifetime", type: "select", options: [{ value: "60", label: "1 minute" }, { value: "300", label: "5 minutes" }, { value: "1800", label: "30 minutes" }], default: "300" }],
         run: async (c, i) => {
           c.state.lifetime = Number(i.lifetime);
-          await c.world.policy.setSettings({ contextLifetimeSeconds: c.state.lifetime });
+          await c.sandbox.policy.setSettings({ contextLifetimeSeconds: c.state.lifetime });
           await c.setServicePolicies([serviceAccess("research-consent", "research-donation", "Josh's research donation consent", { allow: { all: true } })]);
           c.state.token = (await c.backendToken("research-donation")).access_token;
           const r = await c.search(c.state.token, undefined, "research-donation");
@@ -349,7 +349,7 @@ export const policyFlows: Flow[] = [
         id: "withdraw", title: "Josh withdraws consent", actor: "Patient", doc: `<p>Withdrawing removes the service-access policy that granted access. Policy changes immediately at the Imaging Server. New searches reflect it at once. The proxy hasn't heard, because it holds no policy and isn't told.</p>`,
         run: async c => {
           c.need(c.state.s, "The service has to be enrolled first");
-          await c.world.policy.removePolicy("research-consent");
+          await c.sandbox.policy.removePolicy("research-consent");
           const r = await c.search(c.state.token, undefined, "research-donation");
           c.check("Search reflects it immediately", Object.keys(r.studies).length === 0);
           const g = await c.retrieve("research-donation", "Retrieve inside the window", c.studyUrl(c.state.s.base, c.state.s.uid), c.state.token);
@@ -388,7 +388,7 @@ export const policyFlows: Flow[] = [
         id: "guardian", title: "Sam opens Riley's records, as guardian", actor: "Guardian", doc: `<p>Riley is Sam's child, and has no account. Sam is Riley's guardian on file at the Imaging Server, a fact that grants nothing alone. The organization's policy lets guardians of 13- to 17-year-olds see all but confidential adolescent care, and Riley is 15, so nobody has to share anything first. One of Riley's studies is labeled confidential adolescent care, so having Riley's patient context doesn't bring it. Choosing Riley is a new authorization with its own token and app approval. Riley's images are synthetic too.</p>`,
         inputs: () => [{ id: "mode", label: "Who signs in and approves", type: "select", options: [{ value: "window", label: "You, in a real window (Sam Example and Riley's records are preselected)" }, { value: "scripted", label: "Scripted" }], default: "scripted", clickDefault: "window" }],
         run: async (c, i) => {
-          const policy = c.world.store.snapshot();
+          const policy = c.sandbox.store.snapshot();
           const onFile = policy.relationships.filter(r => r.relation === "guardian_of");
           c.check("The guardian is on file, and nobody has shared anything", onFile.some(r => r.object === `patient:${RILEY}` && r.subject === `user:${SAM_ACCOUNT}`) && !policy.shares.some(s => s.patient === `patient:${RILEY}`), onFile.map(r => `${r.subject} ${r.relation} ${r.object}`).join(", "));
           const t = await c.launch(SAM_ACCOUNT, "portal-app", { window: i.mode === "window", patient: RILEY });

@@ -13,7 +13,7 @@ import { accountUrl, submitAppRevocation, submitDelegation, submitRevocation } f
 import { ACCEPT_ANY, browserFetch, Ctx } from "./flows/runtime";
 import { citedBy, referralsFrom, reportTitle } from "./referrals";
 import { referenceModel } from "./reference-model";
-import { nameOf, type World } from "./world";
+import { nameOf, type Sandbox } from "./sandbox";
 import { patientAttributes } from "./stores";
 import { recordEvent, runInSession, sessionKey, tfetch, traceSettled, withSpan } from "./trace";
 import { forViewer, viewerKnows } from "./viewer-events";
@@ -59,33 +59,33 @@ const possessive = (name: string) => `${name}'s`;
 const cap = (s: string) => s ? s[0]!.toUpperCase() + s.slice(1) : s;
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-/** Explore in one world: the root, or a scope, whose sign-ins, searches and shares all stay in it. */
-export function createExplore(world: World, clients: Record<string, BackendClient>, stack: Stack) {
+/** Explore in one sandbox: the root, or a sandbox, whose sign-ins, searches and shares all stay in it. */
+export function createExplore(sandbox: Sandbox, clients: Record<string, BackendClient>, stack: Stack) {
   const sessions = new Map<string, Session>();
   const json = (b: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(b, { status, headers });
-  const scope = world.scope ? { id: world.scope, base: world.prefix } : null;
-  const model = createModel({ patientOf: user => USERS[user]?.patient, attributesOf: patientAttributes, now: () => world.clock.now(), name: nameOf });
-  const studiesOf = (patient: string) => world.catalog.allStudies().filter(st => st.patient === patient);
+  const sandboxRef = sandbox.id ? { id: sandbox.id, base: sandbox.prefix } : null;
+  const model = createModel({ patientOf: user => USERS[user]?.patient, attributesOf: patientAttributes, now: () => sandbox.clock.now(), name: nameOf });
+  const studiesOf = (patient: string) => sandbox.catalog.allStudies().filter(st => st.patient === patient);
   /** The ids of a patient's studies some route reaches for a user, before any app approval. */
-  const reachedBy = (user: string, patient: string) => new Set(model.visible(world.store.patientSnapshot(ref("patient", patient)), ref("user", user), ref("patient", patient), studiesOf(patient), USERS[user]?.fhirUser).map(st => st.id));
+  const reachedBy = (user: string, patient: string) => new Set(model.visible(sandbox.store.patientSnapshot(ref("patient", patient)), ref("user", user), ref("patient", patient), studiesOf(patient), USERS[user]?.fhirUser).map(st => st.id));
   const sitesOf = (studies: CatalogStudy[]) => [...new Set(studies.flatMap(s => s.site ? [s.site] : []))];
   const reachedSites = (user: string, patient: string) => { const r = reachedBy(user, patient); return sitesOf(studiesOf(patient).filter(s => r.has(s.id))); };
   /** The sites a person may name to someone else: those of what they see as the patient or a guardian. */
-  const nameable = (user: string, patient: string) => { const snap = world.store.patientSnapshot(ref("patient", patient)); return sitesOf(studiesOf(patient).filter(st => model.baseline(snap, ref("user", user), ref("patient", patient), st).ok)); };
+  const nameable = (user: string, patient: string) => { const snap = sandbox.store.patientSnapshot(ref("patient", patient)); return sitesOf(studiesOf(patient).filter(st => model.baseline(snap, ref("user", user), ref("patient", patient), st).ok)); };
 
   /** Everyone a person holds, as the Imaging Server's model decides it. */
   function recordsOf(id: string) {
     const u = USERS[id]!;
     const out: { patient: string; name: string; via: "self" | "guardian" | "share"; relationship?: string }[] = [];
     if (u.patient) out.push({ patient: u.patient, name: patientFirst(u.patient), via: "self" });
-    const mine = world.store.personSnapshot(ref("user", id));
+    const mine = sandbox.store.personSnapshot(ref("user", id));
     for (const r of mine.relationships) {
       const patient = r.relation === "guardian_of" ? r.object.replace(/^patient:/, "") : undefined;
-      if (patient && patient !== u.patient && !out.some(x => x.patient === patient) && model.guardianPolicies(world.store.patientSnapshot(r.object), r.object).policies.length) out.push({ patient, name: patientFirst(patient), via: "guardian", relationship: "guardian" });
+      if (patient && patient !== u.patient && !out.some(x => x.patient === patient) && model.guardianPolicies(sandbox.store.patientSnapshot(r.object), r.object).policies.length) out.push({ patient, name: patientFirst(patient), via: "guardian", relationship: "guardian" });
     }
     for (const s of mine.shares) {
       const patient = s.patient.replace(/^patient:/, "");
-      if (s.with !== ref("user", id) || out.some(r => r.patient === patient) || !model.sharingFor(world.store.patientSnapshot(s.patient), s.from, s.patient).policy) continue;
+      if (s.with !== ref("user", id) || out.some(r => r.patient === patient) || !model.sharingFor(sandbox.store.patientSnapshot(s.patient), s.from, s.patient).policy) continue;
       out.push({ patient, name: patientFirst(patient), via: "share", relationship: s.label });
     }
     return out;
@@ -93,17 +93,17 @@ export function createExplore(world: World, clients: Record<string, BackendClien
   /** Who could share a patient's records: the patient's own account, and guardians on file. */
   const sharersOf = (patient: string) => [
     ...Object.entries(USERS).filter(([, u]) => u.patient === patient).map(([id]) => id),
-    ...world.store.patientSnapshot(ref("patient", patient)).relationships.filter(r => r.relation === "guardian_of" && r.object === ref("patient", patient)).map(r => r.subject.replace(/^user:/, "")),
+    ...sandbox.store.patientSnapshot(ref("patient", patient)).relationships.filter(r => r.relation === "guardian_of" && r.object === ref("patient", patient)).map(r => r.subject.replace(/^user:/, "")),
   ].filter((v, i, a) => a.indexOf(v) === i && USERS[v]);
   /** A share someone could make for this person, from their own account page. */
   const shareOffer = (from: string, to: string, patient: string) => ({ kind: "share", label: `As ${first(from)}: share ${from === "josh" && USERS[from]?.patient === patient ? "his" : possessive(patientFirst(patient))} studies with ${first(to)}`, from, with: to, patient, sites: nameable(from, patient) });
   const serviceName = (client: string) => cap(nameOf(ref("service", client)).replace(/^the /, ""));
-  const referrals = () => referralsFrom(world.catalog, world.urls.clinicalFhir);
+  const referrals = () => referralsFrom(sandbox.catalog, sandbox.urls.clinicalFhir);
 
   /** Who someone is, in one line that says why they're in the demo. */
   const castOf = (id: string) => PEOPLE_LINES[id] ?? (USERS[id]?.patient ? "A patient" : "A person with an account");
   function options() {
-    const linked = new Set(world.catalog.linkedPatients());
+    const linked = new Set(sandbox.catalog.linkedPatients());
     return {
       people: Object.entries(USERS).map(([id, u]) => {
         const records = recordsOf(id);
@@ -114,10 +114,10 @@ export function createExplore(world: World, clients: Record<string, BackendClien
         return { id, name: first(id), first: first(id), role: castOf(id), records, others, ...(own === undefined ? {} : { own }) };
       }),
       services: Object.keys(clients).map(id => {
-        const mine = world.store.policiesOf("service-access").filter(r => r.service === `service:${id}`);
+        const mine = sandbox.store.policiesOf("service-access").filter(r => r.service === `service:${id}`);
         return { id, name: serviceName(id), role: SERVICE_LINES[id] ?? "A backend service", policies: mine.length };
       }),
-      relationships: RELATIONSHIPS, scope, backend: world.backend, app: APP_NAMES[APP],
+      relationships: RELATIONSHIPS, sandbox: sandboxRef, backend: sandbox.backend, app: APP_NAMES[APP],
       names: { ...Object.fromEntries(Object.keys(USERS).map(id => [`user:${id}`, first(id)])), ...Object.fromEntries(Object.keys(PATIENT_NAMES).map(id => [`patient:${id}`, patientFirst(id)])), ...Object.fromEntries(Object.keys(clients).map(id => [`client:${id}`, serviceName(id)])), ...Object.fromEntries(Object.entries(APP_NAMES).map(([id, n]) => [`app:${id}`, `the ${n}`])) },
     };
   }
@@ -127,13 +127,13 @@ export function createExplore(world: World, clients: Record<string, BackendClien
 
   const act = async <T>(s: Session, name: string, attrs: Record<string, unknown>, fn: () => Promise<T>): Promise<T> => {
     s.c.beginStep();
-    try { return await runInSession(s.name, () => withSpan("user", "action", name, { backend: world.backend, ...attrs }, fn, { session: s.name, trace: hex(16) })); }
+    try { return await runInSession(s.name, () => withSpan("user", "action", name, { backend: sandbox.backend, ...attrs }, fn, { session: s.name, trace: hex(16) })); }
     finally { await traceSettled(); }
   };
 
   /** Every page of a search, followed to the end. */
   async function searchAll(s: Session, query: string, actor: string) {
-    let url: string | undefined = `${world.urls.imaging}/fhir/ImagingStudy?${query}`;
+    let url: string | undefined = `${sandbox.urls.imaging}/fhir/ImagingStudy?${query}`;
     const entries: any[] = [];
     let status = 200, body: any;
     while (url) {
@@ -185,13 +185,13 @@ export function createExplore(world: World, clients: Record<string, BackendClien
       if (!patient) {
         s.headline = `No one shares any studies with ${first(who)}`;
         // Anyone who holds records with studies could share them.
-        const offers = world.catalog.linkedPatients().filter(p => studiesOf(p).length).flatMap(patient => sharersOf(patient).filter(x => x !== who).map(from => ({ from, patient })));
+        const offers = sandbox.catalog.linkedPatients().filter(p => studiesOf(p).length).flatMap(patient => sharersOf(patient).filter(x => x !== who).map(from => ({ from, patient })));
         s.empty = { text: `${first(who)} can see no one's studies, so there was nothing for ${first(who)} to let the app see.`, actions: offers.map(o => shareOffer(o.from, who, o.patient)) };
         s.tech = `The sign-in ended with ${t.error ?? "an error"}, and the app has no access token.`;
         return;
       }
-      const x: any = await world.explain({ client: APP, patient, user: who, fhirUser: USERS[who]?.fhirUser ?? "" });
-      const snap = world.store.patientSnapshot(ref("patient", patient)), me = ref("user", who);
+      const x: any = await sandbox.explain({ client: APP, patient, user: who, fhirUser: USERS[who]?.fhirUser ?? "" });
+      const snap = sandbox.store.patientSnapshot(ref("patient", patient)), me = ref("user", who);
       // With no row giving a route, the reason is the route's, which names no study.
       const anyRow = USERS[who]?.patient === patient || snap.relationships.some(r => r.subject === me) || snap.shares.some(sh => sh.with === me);
       const noRoute = !anyRow ? x.studies[0]?.why : undefined;
@@ -210,10 +210,10 @@ export function createExplore(world: World, clients: Record<string, BackendClien
       return;
     }
     s.token = t.access_token;
-    s.signedIn = world.auth.grantOf(t.access_token)?.sub ?? who;
+    s.signedIn = sandbox.auth.grantOf(t.access_token)?.sub ?? who;
     const search = await searchAll(s, new URLSearchParams({ patient: patient!, _include: "ImagingStudy:endpoint", _count: "100" }).toString(), "App");
     if (search.status !== 200) { s.status = search.status === 401 ? "token-rejected" : "failed"; s.headline = "The search was refused"; s.tech = `HTTP ${search.status}. ${search.body?.issue?.[0]?.diagnostics ?? ""}`.trim(); return; }
-    const x: any = await world.explain({ client: APP, patient: patient!, user: s.signedIn!, fhirUser: USERS[s.signedIn!]?.fhirUser ?? "" });
+    const x: any = await sandbox.explain({ client: APP, patient: patient!, user: s.signedIn!, fhirUser: USERS[s.signedIn!]?.fhirUser ?? "" });
     const reached = reachedBy(s.signedIn!, patient!);
     s.knowable = reached;
     const rows = new Map<string, any>(x.studies.map((r: any) => [r.id, r]));
@@ -234,11 +234,11 @@ export function createExplore(world: World, clients: Record<string, BackendClien
     else if (!found.length) s.empty = { text: `${first(s.signedIn!)} hasn't let the ${app} see any of these.`, actions: [{ kind: "approve", label: changeLabel, sites: reachedSites(s.signedIn!, patient!), ticked: reachedSites(s.signedIn!, patient!) }] };
     // What this person can do from here.
     const sites = reachedSites(s.signedIn!, patient!);
-    const approval = world.store.personSnapshot(ref("user", s.signedIn!)).approvals.find(a => a.app === ref("app", APP) && a.patient === ref("patient", patient!));
+    const approval = sandbox.store.personSnapshot(ref("user", s.signedIn!)).approvals.find(a => a.app === ref("app", APP) && a.patient === ref("patient", patient!));
     s.actions = sites.length ? [{ kind: "approve", label: changeLabel, sites, ticked: approval?.sites ?? sites }] : [];
     if ((via === "self" || via === "guardian") && nameable(s.signedIn!, patient!).length) {
       s.actions.push({ kind: "share", label: `Share ${possessive(pname)} studies with…`, from: s.signedIn, patient, sites: nameable(s.signedIn!, patient!), people: Object.keys(USERS).filter(id => id !== s.signedIn).map(id => ({ id, name: first(id) })) });
-      for (const sh of world.store.personSnapshot(ref("user", s.signedIn!)).shares.filter(x => x.from === ref("user", s.signedIn!) && x.patient === ref("patient", patient!))) {
+      for (const sh of sandbox.store.personSnapshot(ref("user", s.signedIn!)).shares.filter(x => x.from === ref("user", s.signedIn!) && x.patient === ref("patient", patient!))) {
         const to = sh.with.replace(/^user:/, "");
         s.actions.push({ kind: "unshare", label: `Stop sharing with ${first(to)}`, with: to });
       }
@@ -250,10 +250,10 @@ export function createExplore(world: World, clients: Record<string, BackendClien
     const referral = referrals().find(r => r.id === st.referral);
     if (!referral) { s.status = "failed"; s.headline = "That referral isn't one the catalog makes"; return; }
     const cited = citedBy(referral.bundle);
-    const base = `${world.urls.clinicalFhir}/Patient/`;
+    const base = `${sandbox.urls.clinicalFhir}/Patient/`;
     const onBase = !!cited.patientRef?.startsWith(base) && /^[A-Za-z0-9\-.]{1,64}$/.test(cited.patientRef.slice(base.length));
-    recordEvent("app", { kind: "referral.checked", client: st.client, referral: referral.id, reference: cited.patientRef, authorizedBase: world.urls.clinicalFhir, ok: onBase, accession: cited.accession, system: cited.system });
-    if (!onBase || !cited.accession || !cited.system) { s.status = "failed"; s.headline = `${serviceName(st.client)} can't act on this referral`; s.empty = { text: !onBase ? `Its patient isn't on the clinical records server ${serviceName(st.client)} may use.` : "Its report doesn't say which study it's about.", actions: [] }; s.tech = !onBase ? `${cited.patientRef} isn't on ${world.urls.clinicalFhir}` : "The report carries no accession number with a system."; return; }
+    recordEvent("app", { kind: "referral.checked", client: st.client, referral: referral.id, reference: cited.patientRef, authorizedBase: sandbox.urls.clinicalFhir, ok: onBase, accession: cited.accession, system: cited.system });
+    if (!onBase || !cited.accession || !cited.system) { s.status = "failed"; s.headline = `${serviceName(st.client)} can't act on this referral`; s.empty = { text: !onBase ? `Its patient isn't on the clinical records server ${serviceName(st.client)} may use.` : "Its report doesn't say which study it's about.", actions: [] }; s.tech = !onBase ? `${cited.patientRef} isn't on ${sandbox.urls.clinicalFhir}` : "The report carries no accession number with a system."; return; }
     const patient = cited.patientRef!.slice(base.length);
     s.patient = patient;
     const t = await s.c.backendToken(st.client);
@@ -261,7 +261,7 @@ export function createExplore(world: World, clients: Record<string, BackendClien
     s.token = t.access_token;
     const query = new URLSearchParams({ patient: cited.patientRef!, identifier: `${cited.system}|${cited.accession}`, _include: "ImagingStudy:endpoint" }).toString();
     const search = await searchAll(s, query, st.client);
-    const x: any = await world.explain({ client: st.client, patient });
+    const x: any = await sandbox.explain({ client: st.client, patient });
     // The study the referral cites: the service knows of it from the referral itself.
     const study = studiesOf(patient).find(c => c.accession === cited.accession);
     s.cited = study?.id;
@@ -290,19 +290,19 @@ export function createExplore(world: World, clients: Record<string, BackendClien
   /** Another referral this service can act on: one whose study its policies, or one of its named rule sets, reach. */
   function referralToTry(client: string, not: string) {
     const r = referrals().find(x => {
-      const st = world.catalog.allStudies().find(c => c.id === x.study);
-      return x.id !== not && st && (model.evaluate(world.store.patientSnapshot(ref("patient", st.patient)), { client_id: client }, st).release !== "none" || !!applyFor(client, st.patient, st.id));
+      const st = sandbox.catalog.allStudies().find(c => c.id === x.study);
+      return x.id !== not && st && (model.evaluate(sandbox.store.patientSnapshot(ref("patient", st.patient)), { client_id: client }, st).release !== "none" || !!applyFor(client, st.patient, st.id));
     });
     return r ? [{ kind: "referral", label: `Open the ${citedBy(r.bundle).report} referral`, referral: r.id }] : [];
   }
   /** A named rule set whose policy for this service would reach the study, checked with the reference model. */
   function applyFor(client: string, patient: string, study: string) {
-    const doc = world.store.snapshot();
-    const studies = world.catalog.allStudies().map(st => ({ id: st.id, patient: st.patient, site: st.site, labels: st.labels, date: st.date, modalities: [...new Set(st.series.map(x => x.modality))], seriesUids: st.series.map(x => x.uid) }));
+    const doc = sandbox.store.snapshot();
+    const studies = sandbox.catalog.allStudies().map(st => ({ id: st.id, patient: st.patient, site: st.site, labels: st.labels, date: st.date, modalities: [...new Set(st.series.map(x => x.modality))], seriesUids: st.series.map(x => x.uid) }));
     for (const set of RULE_SETS) {
-      const rules = set.rules(world.catalog)?.filter(r => r.service === `service:${client}`);
+      const rules = set.rules(sandbox.catalog)?.filter(r => r.service === `service:${client}`);
       if (!rules?.length) continue;
-      const m = referenceModel({ doc: { ...doc, policies: [...doc.policies.filter(p => !rules.some(r => r.id === p.id)), ...rules] }, studies, now: world.clock.now(), birthDate: p => patientAttributes(p)?.birthDate, patientOf: u => USERS[u]?.patient });
+      const m = referenceModel({ doc: { ...doc, policies: [...doc.policies.filter(p => !rules.some(r => r.id === p.id)), ...rules] }, studies, now: sandbox.clock.now(), birthDate: p => patientAttributes(p)?.birthDate, patientOf: u => USERS[u]?.patient });
       if (m.serviceReach(client, patient).some(st => st.id === study)) return { kind: "apply-policy", label: `As the imaging network: ${RULE_SET_WORDS[set.id] ?? `add the rule "${set.label}"`}`, ruleSet: set.id, text: set.description };
     }
     return undefined;
@@ -319,7 +319,7 @@ export function createExplore(world: World, clients: Record<string, BackendClien
       // The chain holds only what this viewer may know of: with nothing known, there's no chain to show.
       if (s.patient) {
         const viewer = st.kind === "user" ? { user: s.signedIn ?? st.user, patient: s.patient, app: APP } : { service: st.client, patient: s.patient, cited: s.cited };
-        try { s.chain = chainFor({ snap: world.store.patientSnapshot(ref("patient", s.patient)), studies: world.catalog.allStudies(), now: world.clock.now(), viewer, known: new Set(knownOf(s)), title: st => reportTitle(st) }); } catch { s.chain = undefined; }
+        try { s.chain = chainFor({ snap: sandbox.store.patientSnapshot(ref("patient", s.patient)), studies: sandbox.catalog.allStudies(), now: sandbox.clock.now(), viewer, known: new Set(knownOf(s)), title: st => reportTitle(st) }); } catch { s.chain = undefined; }
       }
     }
   }
@@ -330,7 +330,7 @@ export function createExplore(world: World, clients: Record<string, BackendClien
     const strings = (v: unknown) => Array.isArray(v) && v.every(x => typeof x === "string");
     if (typeof body.user === "string") {
       if (!Object.hasOwn(USERS, body.user)) return { error: "that isn't one of the demo accounts", status: 400 };
-      if (body.patient !== undefined && !world.catalog.linkedPatients().includes(body.patient)) return { error: "that patient isn't in the catalog's links", status: 400 };
+      if (body.patient !== undefined && !sandbox.catalog.linkedPatients().includes(body.patient)) return { error: "that patient isn't in the catalog's links", status: 400 };
       if (body.sites !== undefined && !strings(body.sites)) return { error: "sites must be a list", status: 400 };
       start = { kind: "user", user: body.user, mode: body.mode === "window" ? "window" : "scripted", ...(body.patient ? { patient: body.patient } : {}), ...(body.sites ? { sites: body.sites } : {}) };
     } else if (typeof body.client === "string") {
@@ -341,8 +341,8 @@ export function createExplore(world: World, clients: Record<string, BackendClien
     } else return { error: "choose a user or a backend client", status: 400 };
     keep?.abort.abort();
     const id = keep?.id ?? randomBytes(24).toString("base64url");
-    const c = new Ctx(world, clients);
-    const name = same && keep ? keep.name : sessionKey(world.scope, `explore-${start.kind === "user" ? start.user : start.client}-${hex(3)}`);
+    const c = new Ctx(sandbox, clients);
+    const name = same && keep ? keep.name : sessionKey(sandbox.id, `explore-${start.kind === "user" ? start.user : start.client}-${hex(3)}`);
     c.session = name;
     const s: Session = { id, name, c, start, running: true, status: "signing-in", sheets: [], endpoints: new Map(), knowable: new Set(), actions: [], retrievals: new Map(), abort: new AbortController(), metadata: new Map() };
     sessions.delete(id);
@@ -367,7 +367,7 @@ export function createExplore(world: World, clients: Record<string, BackendClien
       session: s.name, running: s.running, status: s.status, who, patient: s.patient, patientName: s.patient && patientFirst(s.patient),
       headline: s.running ? undefined : s.headline, detail: s.detail, tech: s.running ? undefined : s.tech, whyTitle: whyTitle(s), chain: s.running ? undefined : s.chain, sheets: s.sheets, empty: s.empty, actions: s.actions,
       authUrl: s.c.pendingAuthUrl ?? null, mode: st.kind === "user" ? st.mode : "scripted", tokenHash: s.tokenHash,
-      activityUrl: `${world.prefix}/activity?session=${encodeURIComponent(s.name)}`,
+      activityUrl: `${sandbox.prefix}/activity?session=${encodeURIComponent(s.name)}`,
       retrievals: [...s.retrievals.values()],
     };
   }
@@ -448,7 +448,7 @@ export function createExplore(world: World, clients: Record<string, BackendClien
       await act(s, `Explore: retrieve ${study}`, { study }, async () => {
         const res = await tfetch("app", "GET WADO-RS", `${ep.address}/studies/${ep.uid}`, { headers: { Authorization: `Bearer ${s.token}`, Accept: ACCEPT_ANY, "Accept-Encoding": "zstd" }, decompress: false, signal: s.abort.signal } as any, { study });
         r.status = res.status;
-        r.authz = world.proxy.events.findLast(e => e.path === new URL(`${ep.address}/studies/${ep.uid}`).pathname)?.authz;
+        r.authz = sandbox.proxy.events.findLast(e => e.path === new URL(`${ep.address}/studies/${ep.uid}`).pathname)?.authz;
         r.encoding = res.headers.get("content-encoding") ?? "identity";
         const boundary = boundaryOf(res.headers.get("content-type"));
         if (!res.ok || !boundary || !res.body) { await res.body?.cancel(); return; }
@@ -467,7 +467,7 @@ export function createExplore(world: World, clients: Record<string, BackendClien
 
   /** The studies a session's viewer knows of beyond its events: what their routes reach, what's on their page, and the study a referral cites. */
   const knownOf = (s: Session) => [...s.knowable, ...s.sheets.map(x => x.id)];
-  const idOfUid = (uid: string) => world.catalog.studyByUid(uid)?.id;
+  const idOfUid = (uid: string) => sandbox.catalog.studyByUid(uid)?.id;
   /** A session's events, or those given of it, as its viewer may see them. */
   function forSession(s: Session, events?: ReturnType<typeof stack.collector.store.events>) {
     const all = stack.collector.store.events({ session: s.name });
@@ -476,7 +476,7 @@ export function createExplore(world: World, clients: Record<string, BackendClien
   /** What happened in this session, as recorded events, as its viewer may see them, and for a study, only what's about it: the same events the activity log shows for the session and study. */
   async function happened(s: Session, study?: string) {
     await traceSettled();
-    const uid = study ? s.endpoints.get(study)?.uid ?? world.catalog.allStudies().find(x => x.id === study)?.uid : undefined;
+    const uid = study ? s.endpoints.get(study)?.uid ?? sandbox.catalog.allStudies().find(x => x.id === study)?.uid : undefined;
     const about = (e: any) => !e.links.some((l: string) => l.startsWith("uid:") || (l.startsWith("study:") && e.kind !== "search.returned")) || (study && (e.links.includes(`study:${study}`) || (uid && e.links.includes(`uid:${uid}`))));
     return forSession(s).filter(e => !study || about(e));
   }
@@ -499,7 +499,7 @@ export function createExplore(world: World, clients: Record<string, BackendClien
 
   const byName = (name: string) => [...sessions.values()].find(s => s.name === name);
   return {
-    /** What the viewer of this Explore session knows of beyond its events, if it's one of this world's. */
+    /** What the viewer of this Explore session knows of beyond its events, if it's one of this sandbox's. */
     knownIn(name: string) { const s = byName(name); return s && knownOf(s); },
     receiveCallback(url: URL) { const s = waiting(url); s?.c.resolveCallback?.(url); return !!s; },
     callbackContext(url: URL) { return waiting(url)?.c.callbackContext; },
@@ -513,7 +513,7 @@ export function createExplore(world: World, clients: Record<string, BackendClien
           return json({ service, referrals: referralList() });
         }
         const s = sessionOf(req);
-        if (p === "/session") return json({ session: s ? view(s) : null, scope, backend: world.backend });
+        if (p === "/session") return json({ session: s ? view(s) : null, sandbox: sandboxRef, backend: sandbox.backend });
         if (!s) return gone();
         if (p === "/happened") {
           // One line for a study's chain, and the link to it in the activity log.
@@ -534,11 +534,11 @@ export function createExplore(world: World, clients: Record<string, BackendClien
       if (refused) return refused;
       const body = await readJson(req);
       if (body === undefined || body === null || typeof body !== "object" || Array.isArray(body)) return json({ error: "the request body must be a JSON object" }, 400);
-      const cookie = (s: Session) => ({ "Set-Cookie": `${COOKIE}=${s.id}; HttpOnly; SameSite=Strict; Path=${world.prefix}/api/explore` });
+      const cookie = (s: Session) => ({ "Set-Cookie": `${COOKIE}=${s.id}; HttpOnly; SameSite=Strict; Path=${sandbox.prefix}/api/explore` });
       if (p === "/start") {
         const r = begin(body, sessionOf(req));
         if ("error" in r) return json({ error: r.error }, r.status);
-        return json({ session: view(r.session), scope, backend: world.backend }, 202, cookie(r.session));
+        return json({ session: view(r.session), sandbox: sandboxRef, backend: sandbox.backend }, 202, cookie(r.session));
       }
       const s = sessionOf(req);
       if (!s) return gone();
@@ -555,19 +555,19 @@ export function createExplore(world: World, clients: Record<string, BackendClien
         const sites = Array.isArray(body.sites) ? body.sites.filter((x: unknown) => typeof x === "string") : [];
         const relationship = RELATIONSHIPS.includes(body.relationship) ? body.relationship : RELATIONSHIPS[0]!;
         if (!USERS[from] || !USERS[to] || from === to || !sharersOf(patient).includes(from)) return json({ error: "that share isn't one this page offers" }, 400);
-        const failed = await change(s, `Explore: ${first(from)} shares with ${first(to)}`, () => withSpan("user", "action", `Browser: ${first(from)} signs in and shares with ${first(to)}`, { sites: sites.join(", ") }, () => submitDelegation(accountUrl(from, undefined, undefined, world.urls), { user: from, delegate: to, relationship, sites, patient }, browserFetch)));
+        const failed = await change(s, `Explore: ${first(from)} shares with ${first(to)}`, () => withSpan("user", "action", `Browser: ${first(from)} signs in and shares with ${first(to)}`, { sites: sites.join(", ") }, () => submitDelegation(accountUrl(from, undefined, undefined, sandbox.urls), { user: from, delegate: to, relationship, sites, patient }, browserFetch)));
         return failed ?? again(s.start.kind === "user" && s.start.user === to ? { patient } : {});
       }
       if (s.start.kind !== "user" && p !== "/apply-policy" && p !== "/retrieve") return json({ error: "a service has no account page" }, 400);
       const user = s.signedIn ?? (s.start.kind === "user" ? s.start.user : "");
       if (p === "/unshare") {
         const to = String(body.with ?? "");
-        if (!s.patient || !world.store.shares().some(x => x.from === ref("user", user) && x.with === ref("user", to) && x.patient === ref("patient", s.patient!))) return json({ error: "there's no such share" }, 400);
-        const failed = await change(s, `Explore: ${first(user)} stops sharing with ${first(to)}`, () => submitRevocation(accountUrl(user, undefined, undefined, world.urls), { user, delegate: to, patient: s.patient }, browserFetch));
+        if (!s.patient || !sandbox.store.shares().some(x => x.from === ref("user", user) && x.with === ref("user", to) && x.patient === ref("patient", s.patient!))) return json({ error: "there's no such share" }, 400);
+        const failed = await change(s, `Explore: ${first(user)} stops sharing with ${first(to)}`, () => submitRevocation(accountUrl(user, undefined, undefined, sandbox.urls), { user, delegate: to, patient: s.patient }, browserFetch));
         return failed ?? again();
       }
       if (p === "/revoke-app") {
-        const failed = await change(s, `Explore: ${first(user)} revokes the app`, () => submitAppRevocation(accountUrl(user, undefined, undefined, world.urls), { user, client: APP, patient: s.patient }, browserFetch));
+        const failed = await change(s, `Explore: ${first(user)} revokes the app`, () => submitAppRevocation(accountUrl(user, undefined, undefined, sandbox.urls), { user, client: APP, patient: s.patient }, browserFetch));
         return failed ?? again();
       }
       if (p === "/approve") {
@@ -577,9 +577,9 @@ export function createExplore(world: World, clients: Record<string, BackendClien
       if (p === "/apply-policy") {
         if (s.start.kind !== "service") return json({ error: "a service-access policy is for a service" }, 400);
         const set = RULE_SETS.find(r => r.id === body.ruleSet);
-        const rules = set?.rules(world.catalog)?.filter(r => r.service === `service:${(s.start as ServiceStart).client}`);
+        const rules = set?.rules(sandbox.catalog)?.filter(r => r.service === `service:${(s.start as ServiceStart).client}`);
         if (!set || !rules?.length) return json({ error: "that isn't a policy set for this service" }, 400);
-        await act(s, `Explore: the organization applies "${set.label}"`, { ruleSet: set.id }, async () => { for (const r of rules) await world.policy.putPolicy(r); });
+        await act(s, `Explore: the organization applies "${set.label}"`, { ruleSet: set.id }, async () => { for (const r of rules) await sandbox.policy.putPolicy(r); });
         return again();
       }
       if (p === "/retrieve") {

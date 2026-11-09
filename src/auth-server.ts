@@ -374,7 +374,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
   }
 
   // Every account_session cookie the browser sends: a scope's and the root's can both reach a scope's
-  // path, and a stale one from a dropped scope can come first. This world uses the one it knows.
+  // path, and a stale one from a dropped scope can come first. This sandbox uses the one it knows.
   const sessionIds = (req: Request) => [...(req.headers.get("cookie") ?? "").matchAll(/(?:^|;\s*)account_session=([^;]*)/g)].map(m => m[1]!);
   const accountUser = (req: Request) => sessionIds(req).map(id => accountSessions.get(id)).find(Boolean);
   const appName = (id: string) => clientOf(id)?.name ?? id;

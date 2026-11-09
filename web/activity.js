@@ -4,7 +4,7 @@
 // is what that session's viewer may see. With none, it's the operator's view of every session.
 const W = EventWords;
 const TYPES = {
-  tokens: { name: "Tokens issued", cols: ["Time", "Who", "Client", "How", "Scope", "Lasts", "Token"] },
+  tokens: { name: "Tokens issued", cols: ["Time", "Who", "Client", "How", "Sandbox", "Lasts", "Token"] },
   referrals: { name: "Referrals checked", cols: ["Time", "Service", "Patient reference", "Accession", "Result"] },
   searches: { name: "Searches", cols: ["Time", "Who", "Status", "Returned", "Withheld", "Query"] },
   links: { name: "Signed links made", cols: ["Time", "Study", "Form", "Series", "Expires", "Key"] },
@@ -218,7 +218,7 @@ function cells(e, type) {
   const study = e.study ?? "";
   const status = (s, ok = s < 400) => html(`<span class="tag ${ok ? "ok" : "denied"}">${esc(s)}</span>`);
   switch (type) {
-    case "tokens": return [whoName(e.who), clientName(d.client), d.grant?.replaceAll("_", " "), d.scope, d.expiresIn && `${Math.round(d.expiresIn / 60)} min`, d.tokenHash && html(`<code>${esc(d.tokenHash)}</code>`)];
+    case "tokens": return [whoName(e.who), clientName(d.client), d.grant?.replaceAll("_", " "), d.sandbox, d.expiresIn && `${Math.round(d.expiresIn / 60)} min`, d.tokenHash && html(`<code>${esc(d.tokenHash)}</code>`)];
     case "referrals": return [clientName(d.client), d.reference, d.accession, d.ok ? status("on the server", true) : status("not on it", false)];
     case "searches": return [whoName(e.who), status(d.status), d.found ? num(d.found.length) : "", d.withheld || d.unreached ? num((d.withheld?.length ?? 0) + (d.unreached?.length ?? 0)) : "", d.query && html(`<code>${esc(d.query)}</code>`)];
     case "links": return [study, d.form, d.series, d.exp && new Date(d.exp * 1000).toLocaleTimeString(), d.kid];
@@ -268,7 +268,7 @@ function filtersHtml() {
   if (p.get("type")) chips.push(["type", `Type: ${TYPES[p.get("type")]?.name ?? p.get("type")}`]);
   if (p.get("link")) chips.push(["link", `Shares ${p.get("link")}`]);
   const studySel = `<label>Study<select name="study"><option value="">Any study</option>${[...new Set([...summary.studies, ...(p.get("study") ? [p.get("study")] : [])])].map(s => `<option ${s === p.get("study") ? "selected" : ""}>${esc(s)}</option>`).join("")}</select></label>`;
-  const scopeSel = summary.scopes?.length ? `<label>World<select name="scope"><option value="">Every world</option><option value="-" ${p.get("scope") === "-" ? "selected" : ""}>Saved policy</option>${summary.scopes.map(s => `<option value="${esc(s)}" ${p.get("scope") === s ? "selected" : ""}>Scope ${esc(s)}</option>`).join("")}</select></label>` : "";
+  const scopeSel = summary.sandboxes?.length ? `<label>Sandbox<select name="sandbox"><option value="">Every sandbox</option><option value="-" ${p.get("sandbox") === "-" ? "selected" : ""}>Saved policy</option>${summary.sandboxes.map(s => `<option value="${esc(s)}" ${p.get("sandbox") === s ? "selected" : ""}>Sandbox ${esc(s)}</option>`).join("")}</select></label>` : "";
   return `${scopeSel}${studySel}${chips.length ? `<ul class="chosen" aria-label="Filters in use">${chips.map(([k, words]) => `<li><span>${esc(words)}</span><a href="${esc(href({ [k]: null }))}" aria-label="${esc(`Remove the filter: ${words}`)}">×</a></li>`).join("")}</ul>` : ""}`;
 }
 function viewLine() {

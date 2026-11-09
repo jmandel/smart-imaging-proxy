@@ -164,8 +164,9 @@ html.has-sandbox .sandbox { display:block; min-height:8.6rem; }
   .pages a { min-height:2.5rem; white-space:nowrap; }
   .workspace { grid-template-columns:minmax(0, 1fr); padding:.5rem; gap:.5rem; }
   .chart { display:contents; }
-  .patient-panel { order:1; align-items:center; padding:.5rem .7rem; }
-  #patient { min-height:2.65rem; }
+  .patient-panel { order:1; flex-wrap:nowrap; align-items:center; padding:.5rem .7rem; height:3.75rem; }
+  #patient { min-height:0; flex:1 1 auto; }
+  #patient .who, #patient .facts { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .connected { display:none; }
   .who { font-size:1.05rem; }
   .facts { font-size:.82rem; }

@@ -17,24 +17,24 @@ export interface SpanRecord {
   session: string; trace: string; span: string; parent?: string;
   service: Service; kind: Kind; name: string; start: number; end?: number;
   status?: typeof STATUSES[number]; attrs: Record<string, unknown>; seq?: number; http?: HttpCapture;
-  /** The policy scope whose services or flow recorded this, if any. */
-  scope?: string;
+  /** The policy sandbox whose services or flow recorded this, if any. */
+  sandbox?: string;
 }
 export interface CapturedMessage { headers: Record<string, string>; body?: string; encoding?: "text" | "hex"; bytes?: number; truncated?: boolean; }
 export interface HttpCapture { method: string; url: string; status?: number; request: CapturedMessage; response?: CapturedMessage; }
-interface Current { session: string; trace: string; span: string; scope?: string; }
+interface Current { session: string; trace: string; span: string; sandbox?: string; }
 const als = new AsyncLocalStorage<Current>();
-/** The scope a request was routed to, for spans that start outside any trace context. */
-const scopes = new AsyncLocalStorage<string | undefined>();
-export const inScope = <T>(scope: string | undefined, fn: () => T) => scopes.run(scope, fn);
+/** The sandbox a request was routed to, for spans that start outside any trace context. */
+const sandboxes = new AsyncLocalStorage<string | undefined>();
+export const inSandbox = <T>(sandbox: string | undefined, fn: () => T) => sandboxes.run(sandbox, fn);
 /**
- * A session's key, which says whose it is: a scope's end in `@{scope}`, and the root's hold no `@`. A
- * span's scope is the world that recorded it, so a session named from outside, such as by baggage, can
- * only ever be one of that world's own.
+ * A session's key, which says whose it is: a sandbox's end in `@{sandbox}`, and the root's hold no `@`. A
+ * span's sandbox is the sandbox that recorded it, so a session named from outside, such as by baggage, can
+ * only ever be one of that sandbox's own.
  */
-export const sessionKey = (scope: string | undefined, session: string) => scope ? (session.endsWith(`@${scope}`) ? session : `${session}@${scope}`) : session.replaceAll("@", "_");
-/** The scope a session key belongs to, if any. */
-export const scopeOfSession = (session: string) => session.includes("@") ? session.slice(session.lastIndexOf("@") + 1) : undefined;
+export const sessionKey = (sandbox: string | undefined, session: string) => sandbox ? (session.endsWith(`@${sandbox}`) ? session : `${session}@${sandbox}`) : session.replaceAll("@", "_");
+/** The sandbox a session key belongs to, if any. */
+export const sandboxOfSession = (session: string) => session.includes("@") ? session.slice(session.lastIndexOf("@") + 1) : undefined;
 
 /**
  * A typed event: a stable `kind`, its fields in `data`, and what the activity view filters and links
@@ -42,7 +42,7 @@ export const scopeOfSession = (session: string) => session.includes("@") ? sessi
  * cards join on: `token:{hash}`, `context:{hash}`, `study:{id}`, `uid:{study uid}`, `patient:{id}`.
  */
 export interface EventRecord {
-  session: string; trace: string; span?: string; scope?: string; service: Service; at: number;
+  session: string; trace: string; span?: string; sandbox?: string; service: Service; at: number;
   kind: string; outcome: "ok" | "denied" | "error" | "info"; who?: string; links: string[]; data: Record<string, unknown>; seq?: number;
 }
 export const OUTCOMES = ["ok", "denied", "error", "info"] as const;
@@ -86,9 +86,9 @@ function describeEvent(e: Record<string, any>): Pick<EventRecord, "outcome" | "w
 /** Records a typed event in the current span's session and trace. */
 export function recordEvent(service: Service, e: { kind: string } & Record<string, unknown>) {
   const p = als.getStore();
-  const scope = p?.scope ?? scopes.getStore();
+  const sandbox = p?.sandbox ?? sandboxes.getStore();
   const { kind, ...data } = e;
-  events.push({ session: sessionKey(scope, p?.session ?? "unattributed"), trace: p?.trace ?? hex(16), ...(p?.span ? { span: p.span } : {}), ...(scope ? { scope } : {}), service, at: nowMs(), kind, ...describeEvent(e), data: JSON.parse(JSON.stringify(data)) });
+  events.push({ session: sessionKey(sandbox, p?.session ?? "unattributed"), trace: p?.trace ?? hex(16), ...(p?.span ? { span: p.span } : {}), ...(sandbox ? { sandbox } : {}), service, at: nowMs(), kind, ...describeEvent(e), data: JSON.parse(JSON.stringify(data)) });
   timer ??= setTimeout(flush, 25);
 }
 
@@ -171,11 +171,11 @@ export interface SpanHandle { record: SpanRecord; ctx: Current; end(status?: Spa
 
 export function startSpan(service: Service, kind: Kind, name: string, attrs: Record<string, unknown> = {}, ctx?: Partial<Current>): SpanHandle {
   const p = ctx ?? als.getStore();
-  const scope = p?.scope ?? scopes.getStore();
-  const record: SpanRecord = { session: sessionKey(scope, p?.session ?? "unattributed"), trace: p?.trace ?? hex(16), span: hex(8), parent: p?.span, service, kind, name, start: nowMs(), attrs, ...(scope ? { scope } : {}) };
+  const sandbox = p?.sandbox ?? sandboxes.getStore();
+  const record: SpanRecord = { session: sessionKey(sandbox, p?.session ?? "unattributed"), trace: p?.trace ?? hex(16), span: hex(8), parent: p?.span, service, kind, name, start: nowMs(), attrs, ...(sandbox ? { sandbox } : {}) };
   emit(record);
   return {
-    record, ctx: { session: record.session, trace: record.trace, span: record.span, ...(scope ? { scope } : {}) },
+    record, ctx: { session: record.session, trace: record.trace, span: record.span, ...(sandbox ? { sandbox } : {}) },
     set(a) { Object.assign(record.attrs, a); },
     update() { emit(record); },
     end(status = "ok", a) { if (record.end) return; record.end = nowMs(); record.status = status; if (a) Object.assign(record.attrs, a); emit(record); },
@@ -198,7 +198,7 @@ export function check(service: Service, name: string, ok: boolean, attrs: Record
   return ok;
 }
 
-export const runInSession = <T>(session: string, fn: () => T) => { const scope = scopes.getStore(); return als.run({ session, trace: hex(16), span: "", ...(scope ? { scope } : {}) }, fn); };
+export const runInSession = <T>(session: string, fn: () => T) => { const sandbox = sandboxes.getStore(); return als.run({ session, trace: hex(16), span: "", ...(sandbox ? { sandbox } : {}) }, fn); };
 export const currentContext = () => als.getStore();
 /** Runs `fn` as part of a span, for work a stream does long after its handler returned. */
 export const inSpan = <T>(ctx: Current, fn: () => T) => als.run(ctx, fn);

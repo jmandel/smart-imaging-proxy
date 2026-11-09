@@ -22,7 +22,7 @@ test("from the root it says how to make a sandbox", async () => {
   expect(text).not.toContain("{{");
 });
 test("from a sandbox it names that sandbox, and keeps it out of indexes", async () => {
-  const w = stack.scopes.mint();
+  const w = stack.sandboxes.mint();
   const { r, text } = await guide(w.prefix);
   expect(text).toContain(`SANDBOX=${w.urls.demo}`);
   expect(text).toContain(`](${w.urls.demo}/connect)`);
@@ -30,7 +30,7 @@ test("from a sandbox it names that sandbox, and keeps it out of indexes", async 
   expect(text).not.toContain("{{");
 });
 test("the documented sign-in, reads, and management all work", async () => {
-  const w = stack.scopes.mint(), S = w.urls.auth, redirect = "https://example.org/callback";
+  const w = stack.sandboxes.mint(), S = w.urls.auth, redirect = "https://example.org/callback";
   const made = await (await demo.fetch(new Request(`${CONFIG.demoUrl}${w.prefix}/api/sandbox/clients`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Agent", redirectUris: [redirect] }) }))).json() as any;
   const verifier = randomBytes(32).toString("base64url"), challenge = createHash("sha256").update(verifier).digest("base64url");
   const url = new URL(`${S}/authorize`);

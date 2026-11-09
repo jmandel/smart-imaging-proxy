@@ -126,7 +126,7 @@ describe("the guardian", () => {
     expect((await search((await launchFor("riley-example")).access_token, "riley-example")).ids).toEqual(RILEY);
     await stack.resetSaved();
     await stack.resetAll();
-    expect(stack.scopes.mint().store.relationships()).toMatchObject([riley]);
+    expect(stack.sandboxes.mint().store.relationships()).toMatchObject([riley]);
     expect(stack.store.relationships()).toMatchObject([riley]);
   }, 60000);
   test("is a fact that grants through policy: taking away either ends Sam's access at once, and a reset puts both back", async () => {
@@ -158,13 +158,13 @@ describe("the guardian", () => {
       { level: "fact", ref: `study:${CONFIDENTIAL}`, text: "Labeled confidential adolescent care" },
     ]);
   }, 60000);
-  test("the age bands follow the world's clock: under 13 the guardian sees the confidential study, and at 18 nothing", async () => {
-    const w = stack.scopes.mint();
+  test("the age bands follow the sandbox's clock: under 13 the guardian sees the confidential study, and at 18 nothing", async () => {
+    const w = stack.sandboxes.mint();
     // Five years back, Riley is 10.
     w.clock.setOffset(-5 * 366 * 86400);
     const young = await scriptedLaunch(SAM_ACCOUNT, "portal-app", { patient: "riley-example", at: w.urls });
-    const inScope = (token: string) => fetch(`${w.urls.imaging}/fhir/ImagingStudy?patient=riley-example`, { headers: { Authorization: `Bearer ${token}` } }).then(async r => ((await r.json()) as any).entry?.filter((e: any) => e.resource.resourceType === "ImagingStudy").map((e: any) => e.resource.id).sort() ?? []);
-    expect(await inScope(young.access_token)).toEqual([...RILEY, CONFIDENTIAL].sort());
+    const inSandbox = (token: string) => fetch(`${w.urls.imaging}/fhir/ImagingStudy?patient=riley-example`, { headers: { Authorization: `Bearer ${token}` } }).then(async r => ((await r.json()) as any).entry?.filter((e: any) => e.resource.resourceType === "ImagingStudy").map((e: any) => e.resource.id).sort() ?? []);
+    expect(await inSandbox(young.access_token)).toEqual([...RILEY, CONFIDENTIAL].sort());
     const e = await w.explain({ client: "portal-app", user: SAM_ACCOUNT, fhirUser: "Patient/sam-example", patient: "riley-example" });
     expect(e.studies.find((s: any) => s.id === CONFIDENTIAL).because[1]).toEqual({ level: "policy", ref: "policy:guardians-under-13", text: "Guardians of patients under 13 see all studies" });
     // The 18th birthday, 2029-01-01: no guardian-access policy covers Riley any more.

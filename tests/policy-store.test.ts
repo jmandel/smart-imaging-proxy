@@ -37,7 +37,7 @@ describe("the root and scopes", () => {
   test("with no configuration, the root's store is in memory, and so is every scope's", async () => {
     const stack = await startStack(root);
     expect(stack.store.info().mode).toBe("memory");
-    expect(stack.scopes.mint().store.info().mode).toBe("memory");
+    expect(stack.sandboxes.mint().store.info().mode).toBe("memory");
     stack.stop();
   });
 
@@ -56,24 +56,24 @@ describe("the root and scopes", () => {
 
       const flow = FLOWS.find(f => f.id === "caregiver")!;
       const c = await startFlow(stack, clients, flow);
-      expect(c.world.store).not.toBe(stack.store);
-      expect(c.world.store.policiesOf("service-access")).toEqual([]);
-      expect(c.world.store.shares()).toEqual([]);
-      expect(c.world.store.getSettings().contextLifetimeSeconds).toBe(300);
-      expect(c.world.store.relationships().map(({ id: _, recordedAt: __, ...r }) => r)).toEqual(stack.store.relationships().map(({ id: _, recordedAt: __, ...r }) => r));
+      expect(c.sandbox.store).not.toBe(stack.store);
+      expect(c.sandbox.store.policiesOf("service-access")).toEqual([]);
+      expect(c.sandbox.store.shares()).toEqual([]);
+      expect(c.sandbox.store.getSettings().contextLifetimeSeconds).toBe(300);
+      expect(c.sandbox.store.relationships().map(({ id: _, recordedAt: __, ...r }) => r)).toEqual(stack.store.relationships().map(({ id: _, recordedAt: __, ...r }) => r));
       for (const s of flow.steps) {
         const r = await runStep(c, flow, s.id, defaultsFor(c, flow, s.id));
         expect(r.checks.filter(k => !k.ok)).toEqual([]);
       }
-      expect(c.world.store.approvals().length).toBeGreaterThan(0);
+      expect(c.sandbox.store.approvals().length).toBeGreaterThan(0);
       expect(dump()).toBe(before);
 
       // A second flow gets a scope of its own, which starts empty.
       const second = await startFlow(stack, clients, FLOWS.find(f => f.id === "backend-referral")!);
-      expect(second.world.scope).not.toBe(c.world.scope);
-      expect(second.world.store.approvals()).toEqual([]);
-      expect(second.world.store.info().counts.accessTokens).toBe(0);
-      expect(c.world.store.approvals().length).toBeGreaterThan(0);
+      expect(second.sandbox.id).not.toBe(c.sandbox.id);
+      expect(second.sandbox.store.approvals()).toEqual([]);
+      expect(second.sandbox.store.info().counts.accessTokens).toBe(0);
+      expect(c.sandbox.store.approvals().length).toBeGreaterThan(0);
       expect(dump()).toBe(before);
 
       expect(stack.store.policiesOf("service-access")).toEqual([RULE]);
@@ -81,10 +81,10 @@ describe("the root and scopes", () => {
     } finally { stack.stop(); }
   }, 60000);
 
-  test("a token lives in the world that issued it", async () => {
+  test("a token lives in the sandbox that issued it", async () => {
     const stack = await startStack(root);
     try {
-      const a = stack.scopes.mint(), b = stack.scopes.mint();
+      const a = stack.sandboxes.mint(), b = stack.sandboxes.mint();
       const atRoot = await scriptedLaunch("josh");
       const inA = await scriptedLaunch("josh", "portal-app", { at: a.urls });
       expect(stack.auth.grantOf(atRoot.access_token)!.sub).toBe("josh");
@@ -95,11 +95,11 @@ describe("the root and scopes", () => {
     } finally { stack.stop(); }
   });
 
-  test("each world keeps its own clock", async () => {
+  test("each sandbox keeps its own clock", async () => {
     const stack = await startStack(root);
     try {
       const real = () => Math.floor(Date.now() / 1000);
-      const a = stack.scopes.mint(), b = stack.scopes.mint();
+      const a = stack.sandboxes.mint(), b = stack.sandboxes.mint();
       a.clock.advance(4000);
       expect(a.clock.now()).toBeGreaterThanOrEqual(real() + 3990);
       expect(b.clock.now()).toBeLessThan(real() + 10);
@@ -220,19 +220,19 @@ describe("token lifecycle", () => {
     } finally { stack.stop(); }
   });
 
-  test("each world's tokens expire by its own clock", async () => {
+  test("each sandbox's tokens expire by its own clock", async () => {
     const stack = await startStack(root);
     try {
-      const scope = stack.scopes.mint();
+      const scope = stack.sandboxes.mint();
       const atRoot = await scriptedLaunch("josh");
-      const inScope = await scriptedLaunch("josh", "portal-app", { at: scope.urls });
+      const inSandbox = await scriptedLaunch("josh", "portal-app", { at: scope.urls });
       advance(100000);
       stack.purgeTokens();
       expect(stack.store.getToken(atRoot.access_token, "access")).toBeUndefined();
-      expect(scope.store.getToken(inScope.access_token, "access")).toBeDefined();
+      expect(scope.store.getToken(inSandbox.access_token, "access")).toBeDefined();
       scope.clock.advance(100000);
       stack.purgeTokens();
-      expect(scope.store.getToken(inScope.access_token, "access")).toBeUndefined();
+      expect(scope.store.getToken(inSandbox.access_token, "access")).toBeUndefined();
     } finally { stack.stop(); }
   });
 

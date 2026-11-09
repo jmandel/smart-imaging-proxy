@@ -1,4 +1,4 @@
-// Apps registered in a world: they work there, only there, and a tour leaves them alone.
+// Apps registered in a sandbox: they work there, only there, and a tour leaves them alone.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { join } from "node:path";
 import { addClient, listClients, removeClient } from "../src/clients";
@@ -19,13 +19,13 @@ const authorize = (w: ReturnType<Stack["scopes"]["mint"]>, client: string, redir
 };
 
 test("redirect URIs and names are checked", () => {
-  const w = stack.scopes.mint();
+  const w = stack.sandboxes.mint();
   for (const redirectUris of [["http://app.example/cb"], ["https://app.example/cb#x"], ["not a url"], []]) expect(addClient(w.store, { name: "A", redirectUris })).toHaveProperty("error");
   expect(addClient(w.store, { name: "", redirectUris: [REDIRECT] })).toHaveProperty("error");
   expect(addClient(w.store, { name: "Local", redirectUris: ["http://localhost:3000/cb"] })).toHaveProperty("id");
 });
-test("a registered app can start sign-in in its own world, and only with its own redirect", async () => {
-  const w = stack.scopes.mint(), other = stack.scopes.mint();
+test("a registered app can start sign-in in its own sandbox, and only with its own redirect", async () => {
+  const w = stack.sandboxes.mint(), other = stack.sandboxes.mint();
   const r = await call("POST", `${w.prefix}/api/sandbox/clients`, { name: "My app", redirectUris: [REDIRECT] });
   expect(r.status).toBe(201);
   const { id } = await r.json() as any;
@@ -35,7 +35,7 @@ test("a registered app can start sign-in in its own world, and only with its own
   expect((await (await call("GET", `${w.prefix}/api/sandbox/clients`)).json() as any).clients.map((c: any) => c.id)).toEqual([id]);
 });
 test("a tour leaves registrations alone, and removal ends them", async () => {
-  const w = stack.scopes.mint();
+  const w = stack.sandboxes.mint();
   const c = addClient(w.store, { name: "Kept", redirectUris: [REDIRECT] }) as any;
   expect((await call("POST", `${w.prefix}/api/tours/own/start`, {})).status).toBe(201);
   expect(listClients(w.store).map(x => x.id)).toEqual([c.id]);
@@ -45,7 +45,7 @@ test("a tour leaves registrations alone, and removal ends them", async () => {
 test("the shared root has no registrations", async () => expect((await call("GET", "/api/sandbox/clients")).status).toBe(409));
 
 test("named studies add to an approval's sites, and only what the person can see counts", async () => {
-  const w = stack.scopes.mint();
+  const w = stack.sandboxes.mint();
   const by = "user:josh", app = "app:demo-client", patient = "patient:josh-example";
   const all = w.catalog.allStudies().filter(st => st.patient === "josh-example");
   const site = all.find(st => all.filter(x => x.site === st.site).length > 1)!.site!;
@@ -71,7 +71,7 @@ test("a store saved before named studies keeps working", () => {
 });
 
 test("a sandbox has a friendly name it keeps, and can be renamed", async () => {
-  const w = stack.scopes.mint();
+  const w = stack.sandboxes.mint();
   const first = (await (await call("GET", `${w.prefix}/api/sandbox`)).json() as any).name;
   expect(first).toMatch(/^[A-Z][a-z]+ [A-Z][a-z]+$/);
   expect((await (await call("GET", `${w.prefix}/api/sandbox`)).json() as any).name).toBe(first);
@@ -82,7 +82,7 @@ test("a sandbox has a friendly name it keeps, and can be renamed", async () => {
 });
 
 test("a sandbox can advertise imaging on its clinical server instead of a separate one", async () => {
-  const w = stack.scopes.mint();
+  const w = stack.sandboxes.mint();
   const config = async () => (await fetch(`${w.urls.auth}/fhir/.well-known/smart-configuration`)).json() as any;
   const before = await config();
   expect(before.associated_endpoints[0].url).toBe(`${w.urls.imaging}/fhir`);
@@ -111,7 +111,7 @@ const FORM = { "content-type": "application/x-www-form-urlencoded" };
 const tokenCall = (w: any, id: string, jwt: string) => fetch(`${w.urls.auth}/token`, { method: "POST", headers: FORM, body: new URLSearchParams({ grant_type: "client_credentials", scope: "system/ImagingStudy.rs", client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: jwt }).toString() });
 
 test("keys are public ES256 JWKs with a kid, and private ones are refused", () => {
-  const w = stack.scopes.mint(), { privateKey, jwk } = pair();
+  const w = stack.sandboxes.mint(), { privateKey, jwk } = pair();
   expect(addClient(w.store, { name: "S", type: "backend", jwk: privateKey.export({ format: "jwk" }) })).toHaveProperty("error");
   expect(addClient(w.store, { name: "S", type: "backend", jwk: { ...jwk, kid: undefined } })).toHaveProperty("error");
   expect(addClient(w.store, { name: "S", type: "backend", jwk: { keys: [jwk] } })).toHaveProperty("id");
@@ -119,7 +119,7 @@ test("keys are public ES256 JWKs with a kid, and private ones are refused", () =
   expect(addClient(w.store, { name: "S", type: "nope" as any })).toHaveProperty("error");
 });
 test("a backend service reaches only what it was granted, and its grant outlasts a tour", async () => {
-  const w = stack.scopes.mint(), { privateKey, jwk } = pair();
+  const w = stack.sandboxes.mint(), { privateKey, jwk } = pair();
   const c = addClient(w.store, { name: "Svc", type: "backend", jwk, patients: "josh-example" }) as any;
   const search = (t: string, p: string) => fetch(`${w.urls.imaging}/fhir/ImagingStudy?patient=${p}&_include=ImagingStudy:endpoint`, { headers: { authorization: `Bearer ${t}` } });
   const jwt = () => assertion(privateKey, jwk.kid, c.id, `${w.urls.auth}/token`);
@@ -134,7 +134,7 @@ test("a backend service reaches only what it was granted, and its grant outlasts
   expect((await tokenCall(w, c.id, jwt())).status).toBe(401);
 });
 test("a bad assertion gets nothing: wrong key, wrong audience, or used twice", async () => {
-  const w = stack.scopes.mint(), { privateKey, jwk } = pair(), other = pair();
+  const w = stack.sandboxes.mint(), { privateKey, jwk } = pair(), other = pair();
   const c = addClient(w.store, { name: "Svc", type: "backend", jwk }) as any, aud = `${w.urls.auth}/token`;
   expect((await tokenCall(w, c.id, assertion(other.privateKey, jwk.kid, c.id, aud))).status).toBe(401);
   expect((await tokenCall(w, c.id, assertion(privateKey, jwk.kid, c.id, "https://elsewhere.example/token"))).status).toBe(401);
@@ -143,7 +143,7 @@ test("a bad assertion gets nothing: wrong key, wrong audience, or used twice", a
   expect((await tokenCall(w, c.id, once)).status).toBe(401);
 });
 test("a confidential app can't get a backend token, and needs its key to use a code", async () => {
-  const w = stack.scopes.mint(), { privateKey, jwk } = pair(), S = w.urls.auth, aud = `${S}/token`;
+  const w = stack.sandboxes.mint(), { privateKey, jwk } = pair(), S = w.urls.auth, aud = `${S}/token`;
   const c = addClient(w.store, { name: "Conf", type: "confidential", redirectUris: [REDIRECT], jwk }) as any;
   expect((await tokenCall(w, c.id, assertion(privateKey, jwk.kid, c.id, aud))).status).toBe(400);
   const verifier = rb(32).toString("base64url"), challenge = require("node:crypto").createHash("sha256").update(verifier).digest("base64url");
@@ -179,7 +179,7 @@ test("a public deployment accepts only public https URLs", async () => {
 });
 test("a JWKS URL works for ES384 and RS384, follows rotation, and a key it stops publishing stops working", async () => {
   clearJwksCache();
-  const w = stack.scopes.mint();
+  const w = stack.sandboxes.mint();
   const es = generateKeyPairSync("ec", { namedCurve: "P-384" }), rs = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const pub = (k: any, kid: string) => ({ ...k.export({ format: "jwk" }), kid });
   let published: any[] = [pub(es.publicKey, "es")];
@@ -206,7 +206,7 @@ test("a JWKS URL works for ES384 and RS384, follows rotation, and a key it stops
   } finally { server.stop(true); clearJwksCache(); }
 });
 test("what can't be fetched gives the same answer as what isn't there", async () => {
-  const w = stack.scopes.mint();
+  const w = stack.sandboxes.mint();
   const r = await call("POST", `${w.prefix}/api/sandbox/clients`, { name: "Nope", type: "backend", jwksUrl: "http://127.0.0.1:1/jwks" });
   expect(r.status).toBe(400);
   expect(await fetchJwks("http://127.0.0.1:1/jwks", true)).toBeUndefined();

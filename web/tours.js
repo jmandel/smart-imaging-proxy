@@ -1,6 +1,6 @@
 // Tours, the home page: six stories as cards, each drawing the layer chain it ends on. Choosing one
-// starts it in a scope of its own and opens its step runner there. Each step is an action. What it
-// should come to is the reference model's, computed from the scope's policy as it is when the step
+// starts it in a sandbox of its own and opens its step runner there. Each step is an action. What it
+// should come to is the reference model's, computed from the sandbox's policy as it is when the step
 // runs, and the step passes when the system's real answer matches. The protocol checks sit below.
 let list, state = null, running = false, popup, popupSent = false, wantFocus = false, pageError = "";
 const checks = {};
@@ -122,7 +122,7 @@ async function runStep(id) {
 async function start(id) {
   try {
     const r = await api("POST", `/api/tours/${encodeURIComponent(id)}/start`, {});
-    location.href = `${r.scope.base}/tours?tour=${encodeURIComponent(id)}`;
+    location.href = `${r.sandbox.base}/tours?tour=${encodeURIComponent(id)}`;
   } catch (e) { pageError = e.message; render(); }
 }
 async function runChecks() {

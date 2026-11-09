@@ -11,7 +11,7 @@ import { startStack, type Stack } from "../src/stack";
 
 setDefaultTimeout(30000);
 const CAPS = ["smart-imaging-access", "http://fhir.org/argonaut/smart-imaging/capabilities/app-launch"];
-let stack: Stack, demo: ReturnType<typeof Bun.serve>, fixture: ReturnType<typeof Bun.serve>, browser: Browser, world: ReturnType<Stack["scopes"]["mint"]>;
+let stack: Stack, demo: ReturnType<typeof Bun.serve>, fixture: ReturnType<typeof Bun.serve>, browser: Browser, sandbox: ReturnType<Stack["scopes"]["mint"]>;
 let clientId = "", FIX = "", trapHits = 0;
 const retried = new Set<string>();
 const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization, accept, content-type", "access-control-allow-methods": "GET, POST" };
@@ -39,13 +39,13 @@ beforeAll(async () => {
   const root = join(import.meta.dir, "..");
   stack = await startStack(root);
   demo = Bun.serve({ port: PORTS.demo, hostname: "127.0.0.1", fetch: createDemoServer(stack, registerClients(stack), root).fetch });
-  world = stack.scopes.mint();
-  clientId = (addClient(world.store, { name: "Spec test", redirectUris: [`${CONFIG.demoUrl}/`] }) as any).id;
+  sandbox = stack.sandboxes.mint();
+  clientId = (addClient(sandbox.store, { name: "Spec test", redirectUris: [`${CONFIG.demoUrl}/`] }) as any).id;
   fixture = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) {
     const url = new URL(req.url), [, kind, ...rest] = url.pathname.split("/"), path = `/${rest.join("/")}`;
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
     if (kind === "trap") { if (req.headers.has("authorization")) trapHits++; return json({}); }
-    const real = world.urls.auth, auth = { headers: { authorization: req.headers.get("authorization") ?? "", accept: "application/fhir+json" } };
+    const real = sandbox.urls.auth, auth = { headers: { authorization: req.headers.get("authorization") ?? "", accept: "application/fhir+json" } };
     if (path === "/fhir/.well-known/smart-configuration") {
       const c: any = await (await fetch(`${real}/fhir/.well-known/smart-configuration`)).json();
       const base = { ...c, authorization_endpoint: `${FIX}/${kind}/authorize` }; delete base.associated_endpoints;
@@ -57,7 +57,7 @@ beforeAll(async () => {
     if (path.endsWith("/ImagingStudy")) {
       if (kind === "retry" && !retried.has(kind)) { retried.add(kind); return new Response(null, { status: 503, headers: { ...cors, "retry-after": "1", "access-control-expose-headers": "retry-after" } }); }
       const q = new URLSearchParams(url.search); q.delete("page"); q.set("_count", "100");
-      const answer: any = await (await fetch(`${world.urls.imaging}/fhir/ImagingStudy?${q}`, auth)).json();
+      const answer: any = await (await fetch(`${sandbox.urls.imaging}/fhir/ImagingStudy?${q}`, auth)).json();
       return json(reshape(kind!, answer, url));
     }
     if (path.startsWith("/fhir/")) { const r = await fetch(`${real}${path}${url.search}`, auth); return new Response(r.body, { status: r.status, headers: { ...cors, "content-type": "application/fhir+json" } }); }

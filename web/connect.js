@@ -1,6 +1,7 @@
-// Registering an app in this browser's own world. Everything here happens in that world.
-const WORLD_KEY_ = "smart-imaging-client:world";
+// Registering an app in this browser's own sandbox. Everything here happens in that sandbox.
+const SANDBOX_KEY_ = "smart-imaging-client:sandbox";
 const copyButton = (label, value) => `<button type="button" class="tool" data-copy="${esc(value)}" data-label="${esc(label)}">${esc(label)}</button>`;
+try { for(const[o,n]of[["world","sandbox"],["worlds","sandboxes"]]){const a="smart-imaging-client:"+o,b="smart-imaging-client:"+n,v=localStorage.getItem(a);if(v!==null){if(localStorage.getItem(b)===null)localStorage.setItem(b,v);localStorage.removeItem(a)}} } catch {}
 const KEYS_KEY = "smart-imaging-client:keys";
 const savedKeys = () => { try { return JSON.parse(localStorage.getItem(KEYS_KEY) ?? "{}"); } catch { return {}; } };
 const keepKey = (id, jwk) => { try { localStorage.setItem(KEYS_KEY, JSON.stringify({ ...savedKeys(), [id]: jwk })); } catch {} };
@@ -81,13 +82,13 @@ $("#clients").addEventListener("click", async e => {
 });
 (async () => {
   if (!BASE) {
-    let world = null;
-    try { world = localStorage.getItem(WORLD_KEY_); } catch {}
-    if (!world || !(await fetch(`${world}/api/sandbox`)).ok) {
-      ({ base: world } = await (await fetch("/api/sandboxes", { method: "POST" })).json());
-      try { localStorage.setItem(WORLD_KEY_, world); } catch {}
+    let sandbox = null;
+    try { sandbox = localStorage.getItem(SANDBOX_KEY_); } catch {}
+    if (!sandbox || !(await fetch(`${sandbox}/api/sandbox`)).ok) {
+      ({ base: sandbox } = await (await fetch("/api/sandboxes", { method: "POST" })).json());
+      try { localStorage.setItem(SANDBOX_KEY_, sandbox); } catch {}
     }
-    location.replace(`${world}/connect`);
+    location.replace(`${sandbox}/connect`);
     return;
   }
   for (const a of $$("a[href^='/']:not([data-scoped])")) a.setAttribute("href", `${BASE}${a.getAttribute("href")}`);

@@ -1,5 +1,5 @@
 // The settings menu's API, the pages, and the demo server's routes that touch policy. Requests go
-// straight to the handler. The stack's saved store is in memory. Flows run in scopes of their own.
+// straight to the handler. The stack's saved store is in memory. Flows run in sandboxes of their own.
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { startStack, type Stack } from "../src/stack";
@@ -28,7 +28,7 @@ const refused = async (method: string, path: string, body: unknown, message: str
   return b;
 };
 const RULE = { id: "r1", type: "service-access" as const, service: "service:c", patients: "any" as const, allow: { all: true } };
-/** A fresh scope's base path. */
+/** A fresh sandbox's base path. */
 const mint = async () => { const r = await call("POST", "/api/sandboxes"); expect(r.status).toBe(201); return ((await r.json()) as any).base as string; };
 const SHARE = { from: "user:josh", with: "user:sam-caregiver", patient: "patient:josh-example", sites: ["Lakeside Imaging"], label: "caregiver" };
 const APPROVAL = { by: "user:josh", app: "app:portal-app", patient: "patient:josh-example" };
@@ -65,11 +65,11 @@ describe("status", () => {
     await ok("PATCH", "/api/sandbox", { storage: "orthanc" });
     expect((await ok("GET", "/api/sandbox")).catalog.source).toBe("orthanc");
   });
-  test("reports the saved store: mode, path, durability, schema version, and row counts, and how many scopes are live", async () => {
+  test("reports the saved store: mode, path, durability, schema version, and row counts, and how many sandboxes are live", async () => {
     setSaved({ rules: [RULE], shares: [SHARE], approvals: [APPROVAL] });
     const s = await ok("GET", "/api/sandbox");
     expect(s.store).toMatchObject({ mode: "memory", path: ":memory:", schemaVersion: SCHEMA_VERSION, counts: { relationships: 1, policies: 4, shares: 1, approvals: 1 } });
-    expect(s.sandboxes.live).toBe(stack.scopes.size);
+    expect(s.sandboxes.live).toBe(stack.sandboxes.size);
     expect(s.sandbox).toBeNull();
     expect(s.storage.current).toBe("static-files");
   });
@@ -103,51 +103,51 @@ describe("resetting saved policy", () => {
 });
 
 describe("flows and saved policy, over HTTP", () => {
-  test("starting a flow mints a scope that starts from the guardians on file, and saved policy is untouched", async () => {
+  test("starting a flow mints a sandbox that starts from the guardians on file, and saved policy is untouched", async () => {
     setSaved({ rules: [RULE], shares: [SHARE] });
     const started = await ok("POST", "/api/flows/patient-sites/start");
-    expect(started.scope.base).toBe(`/s/${started.scope.id}`);
+    expect(started.sandbox.base).toBe(`/s/${started.sandbox.id}`);
     expect(services(started.policy)).toEqual([]);
     expect(started.policy.shares).toEqual([]);
-    // The same facts on file; each world gives its rows its own ids.
+    // The same facts on file; each sandbox gives its rows its own ids.
     const fact = ({ id: _, recordedAt: __, ...r }: any) => r;
     expect(started.policy.relationships.map(fact)).toEqual(stack.store.relationships().map(fact));
     expect(started.policy.policies).toEqual(stack.store.policiesOf("guardian-access").concat(stack.store.policiesOf("sharing") as any));
     expect(services(await ok("GET", "/api/sandbox/policy"))).toEqual([RULE]);
-    expect(services(await ok("GET", `${started.scope.base}/api/sandbox/policy`))).toEqual([]);
+    expect(services(await ok("GET", `${started.sandbox.base}/api/sandbox/policy`))).toEqual([]);
     const again = await ok("POST", "/api/flows/patient-sites/start");
-    expect(again.scope.id).not.toBe(started.scope.id);
+    expect(again.sandbox.id).not.toBe(started.sandbox.id);
   });
-  test("a flow's steps run in its scope, and a step at the root is refused", async () => {
+  test("a flow's steps run in its sandbox, and a step at the root is refused", async () => {
     setSaved({ rules: [RULE] });
-    const { scope } = await ok("POST", "/api/flows/patient-sites/start");
+    const { sandbox } = await ok("POST", "/api/flows/patient-sites/start");
     expect((await call("POST", "/api/flows/patient-sites/steps/consent", { inputs: { mode: "scripted" } })).status).toBe(409);
-    const r = await ok("POST", `${scope.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
-    expect(r.scope).toEqual(scope);
+    const r = await ok("POST", `${sandbox.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
+    expect(r.sandbox).toEqual(sandbox);
     expect(r.policy.approvals.length).toBe(1);
-    expect(stack.scopes.resolve(scope.id)).toMatchObject({ world: { scope: scope.id } });
+    expect(stack.sandboxes.resolve(sandbox.id)).toMatchObject({ sandbox: { id: sandbox.id } });
     expect(stack.store.approvals()).toEqual([]);
     expect(services(stack.store.snapshot())).toEqual([RULE]);
-    // Another flow's steps don't run in this scope.
-    expect((await call("POST", `${scope.base}/api/flows/caregiver/steps/delegate`, {})).status).toBe(409);
+    // Another flow's steps don't run in this sandbox.
+    expect((await call("POST", `${sandbox.base}/api/flows/caregiver/steps/delegate`, {})).status).toBe(409);
   });
-  test("the flow state is the scope's, so a reload there comes back to the run", async () => {
-    const { scope } = await ok("POST", "/api/flows/patient-sites/start");
-    await ok("POST", `${scope.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted" } });
-    const state = await ok("GET", `${scope.base}/api/flow-state`);
+  test("the flow state is the sandbox's, so a reload there comes back to the run", async () => {
+    const { sandbox } = await ok("POST", "/api/flows/patient-sites/start");
+    await ok("POST", `${sandbox.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted" } });
+    const state = await ok("GET", `${sandbox.base}/api/flow-state`);
     expect(state.flow).toBe("patient-sites");
     expect(Object.keys(state.completed)).toEqual(["consent"]);
     expect((await ok("GET", "/api/flow-state")).flow).toBeNull();
-    expect(await (await call("GET", `${scope.base}/explore`)).text()).toContain('src="/explore.js"');
-    expect(await (await call("GET", `${scope.base}/tours`)).text()).toContain('src="/tours.js"');
+    expect(await (await call("GET", `${sandbox.base}/explore`)).text()).toContain('src="/explore.js"');
+    expect(await (await call("GET", `${sandbox.base}/tours`)).text()).toContain('src="/tours.js"');
   });
-  test("a minted scope, and an unknown one", async () => {
+  test("a minted sandbox, and an unknown one", async () => {
     const r = await call("POST", "/api/sandboxes", {});
     expect(r.status).toBe(201);
     const made: any = await r.json();
     expect(made.sandbox).toMatch(/^[A-Za-z0-9_-]{22}$/);
     expect(made.urls.auth).toBe(`${new URL(CONFIG.authUrl).origin}/s/${made.sandbox}${new URL(CONFIG.authUrl).pathname.replace(/\/$/, "")}`);
-    expect((await ok("GET", `/s/${made.sandbox}/api/flow-state`)).scope.id).toBe(made.sandbox);
+    expect((await ok("GET", `/s/${made.sandbox}/api/flow-state`)).sandbox.id).toBe(made.sandbox);
     const gone = await call("GET", "/s/AAAAAAAAAAAAAAAAAAAAAA/api/flow-state");
     expect(gone.status).toBe(404);
     expect(((await gone.json()) as any).error).toContain("doesn't exist");
@@ -210,36 +210,36 @@ describe("backend", () => {
   });
 });
 
-describe("a scope's settings", () => {
+describe("a sandbox's settings", () => {
   test("move its own clock and backend, reset its own policy, and leave the root's alone", async () => {
     const base = await mint();
-    const world = (stack.scopes.resolve(base.slice(3)) as any).world;
-    await world.policy.putPolicy(RULE);
+    const sandbox = (stack.sandboxes.resolve(base.slice(3)) as any).sandbox;
+    await sandbox.policy.putPolicy(RULE);
     const s = await ok("POST", `${base}/api/sandbox/clock`, { advanceSeconds: 3600 });
     expect(s.sandbox.base).toBe(base);
     expect(s.store).toBeUndefined();
-    expect(world.clock.offset()).toBe(3600);
+    expect(sandbox.clock.offset()).toBe(3600);
     expect((await ok("GET", "/api/sandbox")).clock.offsetSeconds).toBe(0);
     await ok("PATCH", `${base}/api/sandbox`, { storage: "s3" });
-    expect(world.backend).toBe("s3");
+    expect(sandbox.backend).toBe("s3");
     expect(stack.backend).toBe("static-files");
     setSaved({ rules: [RULE] });
     await ok("POST", `${base}/api/sandbox/reset`, { confirm: true });
     expect(services(await ok("GET", `${base}/api/sandbox/policy`))).toEqual([]);
     expect(services(stack.store.snapshot())).toEqual([RULE]);
   });
-  test("end access in that scope only", async () => {
+  test("end access in that sandbox only", async () => {
     const base = await mint();
-    const world = (stack.scopes.resolve(base.slice(3)) as any).world;
-    const inScope = await scriptedLaunch("josh", "portal-app", { at: world.urls });
+    const sandbox = (stack.sandboxes.resolve(base.slice(3)) as any).sandbox;
+    const inSandbox = await scriptedLaunch("josh", "portal-app", { at: sandbox.urls });
     const atRoot = await scriptedLaunch("josh");
-    const kid = world.imaging.signingKid, rootKid = stack.imaging.signingKid;
+    const kid = sandbox.imaging.signingKid, rootKid = stack.imaging.signingKid;
     await ok("POST", `${base}/api/sandbox/tokens/revoke-all`);
-    expect(world.store.getToken(inScope.access_token, "access")!.revoked).toBe(true);
+    expect(sandbox.store.getToken(inSandbox.access_token, "access")!.revoked).toBe(true);
     expect(stack.store.getToken(atRoot.access_token, "access")!.revoked).toBe(false);
     const r = await ok("POST", `${base}/api/sandbox/signing-key/rotate`);
     expect(r.rotation.proxyTold).toBe(true);
-    expect(world.imaging.signingKid).not.toBe(kid);
+    expect(sandbox.imaging.signingKid).not.toBe(kid);
     expect(stack.imaging.signingKid).toBe(rootKid);
     expect((await call("POST", `${base}/api/sandbox/proxy/flush`, { anything: 1 })).status).toBe(400);
   });
@@ -248,8 +248,8 @@ describe("a scope's settings", () => {
 describe("tokens", () => {
   test("revoke all ends access and refresh tokens in saved policy only", async () => {
     await stack.resetAll();
-    const scope = stack.scopes.mint();
-    const inScope = await scriptedLaunch("josh", "portal-app", { at: scope.urls });
+    const sandbox = stack.sandboxes.mint();
+    const inSandbox = await scriptedLaunch("josh", "portal-app", { at: sandbox.urls });
 
     const t = await scriptedLaunch("josh");
     const search = () => fetch(`${CONFIG.imagingUrl}/fhir/ImagingStudy?patient=josh-example`, { headers: { Authorization: `Bearer ${t.access_token}` } });
@@ -259,20 +259,20 @@ describe("tokens", () => {
     expect((await search()).status).toBe(401);
     const refreshed = await fetch(stack.auth.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: t.refresh_token, client_id: "portal-app" }).toString() });
     expect(refreshed.status).toBe(400);
-    expect(scope.store.getToken(inScope.access_token, "access")!.revoked).toBe(false);
+    expect(sandbox.store.getToken(inSandbox.access_token, "access")!.revoked).toBe(false);
   });
 });
 
 describe("/api/sandbox/policy", () => {
-  test("reads a world's policy, and takes no writes: policy changes go through the policy API and the settings menu", async () => {
+  test("reads a sandbox's policy, and takes no writes: policy changes go through the policy API and the settings menu", async () => {
     setSaved({ rules: [RULE] });
     const base = await mint(), other = await mint();
     for (const path of ["/api/sandbox/policy", `${base}/api/sandbox/policy`]) for (const method of ["PUT", "POST", "PATCH", "DELETE"]) expect([path, method, (await call(method, path, { policies: [] })).status]).toEqual([path, method, 404]);
     expect(services(stack.store.snapshot())).toEqual([RULE]);
-    // A scope's own policy changes through its policy API, and leaves saved policy and other scopes alone.
-    const world = (stack.scopes.resolve(base.slice(3)) as any).world;
-    const changed = { ...RULE, id: "scope-rule" };
-    await world.policy.putPolicy(changed);
+    // A sandbox's own policy changes through its policy API, and leaves saved policy and other sandboxes alone.
+    const sandbox = (stack.sandboxes.resolve(base.slice(3)) as any).sandbox;
+    const changed = { ...RULE, id: "sandbox-rule" };
+    await sandbox.policy.putPolicy(changed);
     expect(services(await ok("GET", `${base}/api/sandbox/policy`))).toEqual([changed]);
     expect(services(await ok("GET", `${other}/api/sandbox/policy`))).toEqual([]);
     expect(services(await ok("GET", "/api/sandbox/policy"))).toEqual([RULE]);
@@ -306,10 +306,10 @@ describe("writes naming another Host, over real HTTP", () => {
   });
   test("this server's own address and port are accepted, with or without naming it", async () => {
     const base = await mint();
-    const world = (stack.scopes.resolve(base.slice(3)) as any).world;
+    const sandbox = (stack.sandboxes.resolve(base.slice(3)) as any).sandbox;
     expect((await send(`${base}/api/sandbox/clock`, undefined, { method: "POST", body: JSON.stringify({ advanceSeconds: 60 }) })).status).toBe(200);
     expect((await send(`${base}/api/sandbox/clock`, `localhost:${PORTS.demo}`, { method: "POST", body: JSON.stringify({ advanceSeconds: 300 }) })).status).toBe(200);
-    expect(world.clock.offset()).toBe(360);
+    expect(sandbox.clock.offset()).toBe(360);
     expect((await ok("GET", "/api/sandbox")).clock.offsetSeconds).toBe(0);
   });
   test("the admin status is refused under another Host too, and answers with no Host named", async () => {
@@ -322,21 +322,21 @@ describe("writes naming another Host, over real HTTP", () => {
 
 describe("loading pages", () => {
   test("nothing a page loads changes saved policy or the flow", async () => {
-    const { scope } = await ok("POST", "/api/flows/patient-sites/start");
-    await ok("POST", `${scope.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
+    const { sandbox } = await ok("POST", "/api/flows/patient-sites/start");
+    await ok("POST", `${sandbox.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
     const saved = JSON.stringify([stack.store.snapshot(), stack.store.getSettings()]);
     for (const path of ["/", "/tours", "/activity", "/explore.js", "/styles.css", "/api/flows", "/api/flow-state", "/api/session", "/api/sandbox", "/api/sandbox/policy", "/api/explore/options", "/api/explore/session", "/api/tours", "/api/activity"]) {
       expect((await call("GET", path)).status).toBe(200);
     }
-    for (const path of ["/", "/tours", "/api/flows", "/api/flow-state", "/api/session", "/api/sandbox/policy", "/api/sandbox", "/api/tours/state"]) expect((await call("GET", `${scope.base}${path}`)).status).toBe(200);
+    for (const path of ["/", "/tours", "/api/flows", "/api/flow-state", "/api/session", "/api/sandbox/policy", "/api/sandbox", "/api/tours/state"]) expect((await call("GET", `${sandbox.base}${path}`)).status).toBe(200);
     expect(JSON.stringify([stack.store.snapshot(), stack.store.getSettings()])).toBe(saved);
-    const state = await ok("GET", `${scope.base}/api/flow-state`);
+    const state = await ok("GET", `${sandbox.base}/api/flow-state`);
     expect(state.flow).toBe("patient-sites");
     expect(Object.keys(state.completed)).toEqual(["consent"]);
     expect(state.completed.consent.result.checks.every((c: any) => c.ok)).toBe(true);
     expect(state.completed.consent.inputs.sites).toEqual(["Lakeside Imaging"]);
     expect(state.policy.approvals.length).toBe(1);
-    expect(state.scope).toEqual(scope);
+    expect(state.sandbox).toEqual(sandbox);
   });
   test("each page's script sends nothing on load except reads", async () => {
     for (const file of ["/explore.js", "/tours.js", "/activity.js"]) {
@@ -346,38 +346,38 @@ describe("loading pages", () => {
       expect([file, /"POST"|method: "POST"/.test(onLoad)]).toEqual([file, false]);
     }
   });
-  test("a flow carries on from its scope after the root was used", async () => {
-    const { scope } = await ok("POST", "/api/flows/patient-sites/start");
-    await ok("POST", `${scope.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
+  test("a flow carries on from its sandbox after the root was used", async () => {
+    const { sandbox } = await ok("POST", "/api/flows/patient-sites/start");
+    await ok("POST", `${sandbox.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
     await scriptedLaunch("josh");
     await stack.policy.putPolicy(RULE_SETS.find(s => s.id === "research-donation")!.rules(stack.catalog)![0]!);
-    const search = await ok("POST", `${scope.base}/api/flows/patient-sites/steps/search`, {});
-    expect(search.scope).toEqual(scope);
+    const search = await ok("POST", `${sandbox.base}/api/flows/patient-sites/steps/search`, {});
+    expect(search.sandbox).toEqual(sandbox);
     expect(search.result.checks.every((c: any) => c.ok)).toBe(true);
   });
 });
 
 describe("a second tab", () => {
   test("can't rerun a finished step, or disturb a flow by running a step of another", async () => {
-    const { scope } = await ok("POST", "/api/flows/patient-sites/start");
-    await ok("POST", `${scope.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
-    expect((await call("POST", `${scope.base}/api/flows/patient-sites/steps/consent`, { inputs: {} })).status).toBe(409);
-    expect((await call("POST", `${scope.base}/api/flows/caregiver/steps/delegate`, { inputs: {} })).status).toBe(409);
-    const state = await ok("GET", `${scope.base}/api/flow-state`);
+    const { sandbox } = await ok("POST", "/api/flows/patient-sites/start");
+    await ok("POST", `${sandbox.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
+    expect((await call("POST", `${sandbox.base}/api/flows/patient-sites/steps/consent`, { inputs: {} })).status).toBe(409);
+    expect((await call("POST", `${sandbox.base}/api/flows/caregiver/steps/delegate`, { inputs: {} })).status).toBe(409);
+    const state = await ok("GET", `${sandbox.base}/api/flow-state`);
     expect(state.flow).toBe("patient-sites");
     expect(state.policy.approvals[0].sites).toEqual(["Lakeside Imaging"]);
   });
   test("can't start a step while another is running", async () => {
-    const { scope } = await ok("POST", "/api/flows/patient-sites/start");
-    const first = call("POST", `${scope.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
-    const second = await call("POST", `${scope.base}/api/flows/patient-sites/steps/search`, {});
+    const { sandbox } = await ok("POST", "/api/flows/patient-sites/start");
+    const first = call("POST", `${sandbox.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
+    const second = await call("POST", `${sandbox.base}/api/flows/patient-sites/steps/search`, {});
     expect(second.status).toBe(409);
     expect((await first).status).toBe(200);
   });
-  test("starting the same flow again gets a new scope, and the first run keeps its own", async () => {
-    const a = (await ok("POST", "/api/flows/patient-sites/start")).scope;
+  test("starting the same flow again gets a new sandbox, and the first run keeps its own", async () => {
+    const a = (await ok("POST", "/api/flows/patient-sites/start")).sandbox;
     await ok("POST", `${a.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
-    const b = (await ok("POST", "/api/flows/patient-sites/start")).scope;
+    const b = (await ok("POST", "/api/flows/patient-sites/start")).sandbox;
     expect(b.id).not.toBe(a.id);
     expect(Object.keys((await ok("GET", `${a.base}/api/flow-state`)).completed)).toEqual(["consent"]);
     expect((await ok("GET", `${b.base}/api/flow-state`)).completed).toEqual({});

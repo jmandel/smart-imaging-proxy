@@ -195,7 +195,7 @@ describe("rotation", () => {
     expect(await get(url, t.access_token)).toMatchObject({ status: 200, authz: "asked" });
     expect(stack.store.info().counts.retiredSigningKeys).toBeGreaterThan(0);
     // A scope signs with its own key, which the root's rotation leaves alone.
-    const scope = stack.scopes.mint();
+    const scope = stack.sandboxes.mint();
     const kid = scope.imaging.signingKid;
     await admin("/signing-key/rotate");
     expect(scope.imaging.signingKid).toBe(kid);

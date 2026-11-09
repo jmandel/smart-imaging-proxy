@@ -172,7 +172,7 @@ describe("the demo client", () => {
     await page.waitForURL(u => u.pathname === first);
     await page.goto(`${ORIGIN}/`);
     await page.getByRole("button", { name: "Start over with a new sandbox" }).click();
-    await page.waitForFunction(() => !localStorage.getItem("smart-imaging-client:world"));
+    await page.waitForFunction(() => !localStorage.getItem("smart-imaging-client:sandbox"));
     await page.getByRole("button", { name: "Connect", exact: true }).click();
     await page.waitForURL(u => /^\/s\//.test(u.pathname) || u.pathname.includes("authorize"));
     expect(new URL(page.url()).pathname.startsWith(first)).toBe(false);
@@ -237,7 +237,7 @@ describe("the demo client", () => {
     await other.getByText("invited to “Team demo”").waitFor();
     await other.getByRole("button", { name: "Join this sandbox" }).click();
     await other.getByRole("button", { name: "Leave this sandbox" }).click();
-    await other.waitForFunction(() => !localStorage.getItem("smart-imaging-client:world"));
+    await other.waitForFunction(() => !localStorage.getItem("smart-imaging-client:sandbox"));
     await page.reload();
     await page.locator("#sandbox-name", { hasText: "Team demo" }).waitFor();
     await guest.close(); await owner.close();
@@ -318,6 +318,17 @@ describe("the demo client", () => {
     await page.getByRole("button", { name: "Connect", exact: true }).click();
     await page.locator("#connect-error").waitFor({ state: "visible" });
     expect(await page.locator("#landing").isVisible()).toBe(true);
+    await context.close();
+  });
+  test("a browser that saved its sandbox under the old key keeps it", async () => {
+    const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    await signIn(page, "josh");
+    const base = new URL(page.url()).pathname.replace(/\/$/, "");
+    await page.evaluate(b => { sessionStorage.clear(); localStorage.removeItem("smart-imaging-client:sandbox"); localStorage.removeItem("smart-imaging-client:sandboxes"); localStorage.setItem("smart-imaging-client:world", b); }, base);
+    await page.goto(`${ORIGIN}/`);
+    await page.locator("#sandbox-name").waitFor();
+    expect(await page.evaluate(() => [localStorage.getItem("smart-imaging-client:sandbox"), localStorage.getItem("smart-imaging-client:world")])).toEqual([base, null]);
     await context.close();
   });
   test("a patient with no studies gets a real empty result", async () => {

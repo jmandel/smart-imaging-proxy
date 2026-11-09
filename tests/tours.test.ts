@@ -9,7 +9,7 @@ import { createDemoServer } from "../src/demo-server";
 import { CONFIG } from "../src/config";
 import { USERS } from "../src/auth-server";
 import { patientAttributes, ON_FILE } from "../src/stores";
-import { nameOf } from "../src/world";
+import { nameOf } from "../src/sandbox";
 import { ageAt, cascade, referenceModel, type RefStudy } from "../src/reference-model";
 import { RULE_SETS } from "../src/rule-presets";
 import { Ctx } from "../src/flows/runtime";
@@ -28,7 +28,7 @@ const TOURS = ["own", "guardian", "caregiver", "revoke", "backend", "turns-18"];
 async function start(tour: string) {
   const r = await call("POST", `/api/tours/${tour}/start`, {});
   expect(r.status).toBe(201);
-  return r.body.scope.base as string;
+  return r.body.sandbox.base as string;
 }
 async function runAll(tour: string) {
   const base = await start(tour);
@@ -60,13 +60,13 @@ describe("each tour", () => {
         expect([s.id, logged.body.events.length]).toEqual([s.id, s.result.eventCount]);
         expect(logged.body.events.every((e: any) => e.trace === s.result.trace)).toBe(true);
       }
-      expect(state.scope.base).toBe(base);
-      // A tour's scope is its own: saved policy has none of what it did.
+      expect(state.sandbox.base).toBe(base);
+      // A tour's sandbox is its own: saved policy has none of what it did.
       expect(stack.store.shares()).toEqual([]);
       expect(stack.store.policiesOf("service-access")).toEqual([]);
     }, 120000);
   }
-  test("the shown expectation comes from the scope's policy at that moment", async () => {
+  test("the shown expectation comes from the sandbox's policy at that moment", async () => {
     const base = await start("caregiver");
     const before = (await call("GET", `${base}/api/tours/state?tour=caregiver`)).body;
     expect(before.steps[0].expect).toBe("Sam can see Josh's studies at Lakeside and Northside");
@@ -74,9 +74,9 @@ describe("each tour", () => {
     await call("POST", `${base}/api/tours/caregiver/steps/launch`, {});
     const now = (await call("GET", `${base}/api/tours/state`)).body;
     expect(now.steps.find((s: any) => s.id === "search")).toMatchObject({ expect: "1 study:", expectItems: ["MRI brain without contrast"] });
-    // Change the scope's policy behind the tour's back, and the model's expectation follows it.
-    const world = (stack.scopes.resolve(base.slice(3)) as any).world;
-    await world.policy.approveApp({ by: "user:sam-caregiver", app: "app:portal-app", patient: "patient:josh-example", sites: ["Lakeside Imaging", "Northside Pathology"] });
+    // Change the sandbox's policy behind the tour's back, and the model's expectation follows it.
+    const sandbox = (stack.sandboxes.resolve(base.slice(3)) as any).sandbox;
+    await sandbox.policy.approveApp({ by: "user:sam-caregiver", app: "app:portal-app", patient: "patient:josh-example", sites: ["Lakeside Imaging", "Northside Pathology"] });
     expect((await call("GET", `${base}/api/tours/state`)).body.steps.find((s: any) => s.id === "search")).toMatchObject({ expect: "2 studies:", expectItems: ["MRI brain without contrast", "Lung, digital slide, H&E"] });
   }, 60000);
   test("the revoke story's panels come from its run: the links the app really held, and once they expire, nothing", async () => {
@@ -93,8 +93,8 @@ describe("each tour", () => {
     const base = await start("revoke");
     for (const s of ["share", "launch", "search", "revoke", "search-again"]) expect((await call("POST", `${base}/api/tours/revoke/steps/${s}`, {})).status).toBe(200);
     // Rotating the key ends the signed URL early, which the model, reading only policy and the clock, doesn't know.
-    const world = (stack.scopes.resolve(base.slice(3)) as any).world;
-    await world.rotateSigningKey();
+    const sandbox = (stack.sandboxes.resolve(base.slice(3)) as any).sandbox;
+    await sandbox.rotateSigningKey();
     const r = await call("POST", `${base}/api/tours/revoke/steps/signed`, {});
     const step = r.body.steps.find((s: any) => s.id === "signed");
     expect(step.result.ok).toBe(false);
@@ -120,7 +120,7 @@ describe("each tour", () => {
     expect(none.find(s => s.id === "share").result).toMatchObject({ ok: false, write: expect.stringContaining("shares: it intended") });
     const more = await runWith("caregiver", "delegate", real => async function (this: any, ...args: any[]) {
       const status = await real.apply(this, args);
-      await this.world.policy.share({ from: "user:josh", with: "user:alex-neighbor", patient: "patient:josh-example", sites: ["Lakeside Imaging"], label: "neighbor" });
+      await this.sandbox.policy.share({ from: "user:josh", with: "user:alex-neighbor", patient: "patient:josh-example", sites: ["Lakeside Imaging"], label: "neighbor" });
       return status;
     });
     const share = more.find(s => s.id === "share").result;
@@ -137,11 +137,11 @@ describe("each tour", () => {
       expect(state.steps[0].expect).toBeTruthy();
     }
     expect((await call("GET", `${base}/api/tours`)).body.current).toBeNull();
-    // The scope is still free for whichever tour runs a step first.
+    // The sandbox is still free for whichever tour runs a step first.
     expect((await call("POST", `${base}/api/tours/revoke/steps/share`, {})).status).toBe(200);
     expect((await call("GET", `${base}/api/tours`)).body.current).toBe("revoke");
   }, 60000);
-  test("steps run in order, once, only in the tour's own scope", async () => {
+  test("steps run in order, once, only in the tour's own sandbox", async () => {
     expect((await call("POST", "/api/tours/caregiver/steps/share", {})).status).toBe(409);
     expect((await call("POST", "/api/tours/nope/start", {})).status).toBe(404);
     const base = await start("caregiver");
@@ -155,13 +155,13 @@ describe("each tour", () => {
 });
 
 describe("checks", () => {
-  test("each protocol flow is one line, run in a scope of its own, that opens its activity", async () => {
+  test("each protocol flow is one line, run in a sandbox of its own, that opens its activity", async () => {
     const list = (await call("GET", "/api/tours")).body.checks.map((c: any) => c.id);
     expect(list).toEqual(["token-refresh", "viewer", "decision-outage", "attacks", "transfer-syntax", "truncation", "metadata", "paged-search"]);
     const r = await call("POST", "/api/checks/token-refresh", {});
     expect(r.body).toMatchObject({ id: "token-refresh", ok: true, failures: [] });
     expect(r.body.passed).toBeGreaterThan(0);
-    expect(r.body.activityUrl).toMatch(new RegExp(`^/s/${r.body.scope}/activity\\?session=`));
+    expect(r.body.activityUrl).toMatch(new RegExp(`^/s/${r.body.sandbox}/activity\\?session=`));
     expect((await call("POST", "/api/checks/patient-sites", {})).status).toBe(404);
   }, 60000);
 });
@@ -170,20 +170,20 @@ describe("the layer chain", () => {
   test("each card's chain, drawn with core's model, matches the reference model, and every study the outcome holds is in every row that grants", async () => {
     const list = (await call("GET", "/api/tours")).body;
     expect(list.tours.map((t: any) => t.id)).toEqual(TOURS);
-    const world = stack.root;
+    const sandbox = stack.root;
     for (const card of list.tours) {
-      const tour = tourById(card.id)!, v: any = typeof tour.viewer === "function" ? tour.viewer(world) : tour.viewer;
+      const tour = tourById(card.id)!, v: any = typeof tour.viewer === "function" ? tour.viewer(sandbox) : tour.viewer;
       // A change's panels: before it, after it, and when links outlast it, once they expire, which is the after scene again.
-      const scenes = tour.change ? [tour.change.before(world), tour.scene(world), ...(tour.change.links ? [tour.scene(world)] : [])] : [tour.scene(world)];
+      const scenes = tour.change ? [tour.change.before(sandbox), tour.scene(sandbox), ...(tour.change.links ? [tour.scene(sandbox)] : [])] : [tour.scene(sandbox)];
       expect([card.id, card.chains.length]).toEqual([card.id, scenes.length]);
       // The links the app already had: what a search in the before scene released to it.
-      const linked = tour.change?.links ? (() => { const b = tour.change!.before(world); return referenceModel({ doc: b.doc, studies: refStudies(world), now: b.now ?? world.clock.now(), birthDate: p => patientAttributes(p)?.birthDate, patientOf: u => USERS[u]?.patient }).appReach(v.user, v.app, v.patient).map(x => x.id).sort(); })() : [];
+      const linked = tour.change?.links ? (() => { const b = tour.change!.before(sandbox); return referenceModel({ doc: b.doc, studies: refStudies(sandbox), now: b.now ?? sandbox.clock.now(), birthDate: p => patientAttributes(p)?.birthDate, patientOf: u => USERS[u]?.patient }).appReach(v.user, v.app, v.patient).map(x => x.id).sort(); })() : [];
       scenes.forEach((scene, i) => {
         const chain = card.chains[i].chain;
         expect(chain.viewer).toBe(false);
-        const m = referenceModel({ doc: scene.doc, studies: refStudies(world), now: scene.now ?? world.clock.now(), birthDate: p => patientAttributes(p)?.birthDate, patientOf: u => USERS[u]?.patient });
+        const m = referenceModel({ doc: scene.doc, studies: refStudies(sandbox), now: scene.now ?? sandbox.clock.now(), birthDate: p => patientAttributes(p)?.birthDate, patientOf: u => USERS[u]?.patient });
         const ids = (xs: { id: string }[]) => xs.map(x => x.id).sort();
-        const mine = refStudies(world).filter(s => s.patient === v.patient);
+        const mine = refStudies(sandbox).filter(s => s.patient === v.patient);
         const all = ids(mine);
         expect([card.id, chain.columns.map((c: any) => c.id).sort()]).toEqual([card.id, all]);
         const approval = v.user && scene.doc.approvals.find(a => a.by === `user:${v.user}` && a.app === `app:${v.app}` && a.patient === `patient:${v.patient}`);

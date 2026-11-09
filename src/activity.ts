@@ -97,7 +97,7 @@ export function sessionRows(events: EventRecord[], labelOf: (session: string) =>
   for (const e of events) {
     let mine = bySession.get(e.session); if (!mine) bySession.set(e.session, mine = []); mine.push(e);
     let r = rows.get(e.session);
-    if (!r) rows.set(e.session, r = { session: e.session, ...(e.scope ? { scope: e.scope } : {}), label: labelOf(e.session), from: e.at, to: e.at, events: 0, tokens: 0, searches: 0, studies: new Set<string>(), links: 0, retrievals: 0, bytes: 0, problems: 0 });
+    if (!r) rows.set(e.session, r = { session: e.session, ...(e.sandbox ? { sandbox: e.sandbox } : {}), label: labelOf(e.session), from: e.at, to: e.at, events: 0, tokens: 0, searches: 0, studies: new Set<string>(), links: 0, retrievals: 0, bytes: 0, problems: 0 });
     const d = e.data as any;
     r.from = Math.min(r.from, e.at); r.to = Math.max(r.to, e.at); r.events++;
     if (isProblem(e)) r.problems++;

@@ -8,12 +8,12 @@ import { dirname } from "node:path";
 import type { EventRecord, SpanRecord } from "./trace";
 
 /**
- * What the activity view filters events by. `scope: ""` is the root's alone. `kinds` and `outcomes`
+ * What the activity view filters events by. `sandbox: ""` is the root's alone. `kinds` and `outcomes`
  * match any one given, as does `anyLink`. `about` keeps a study's own events, by id or UID, with every search and every
  * event that names no study at all. `before` and `after` are bounds on `seq`.
  */
 export interface EventQuery {
-  session?: string; scope?: string; kind?: string; kinds?: string[]; outcome?: string; outcomes?: string[]; who?: string; trace?: string; link?: string; anyLink?: string[];
+  session?: string; sandbox?: string; kind?: string; kinds?: string[]; outcome?: string; outcomes?: string[]; who?: string; trace?: string; link?: string; anyLink?: string[];
   about?: { study: string; uid?: string }; after?: number; before?: number; limit?: number;
 }
 /** The most events one read returns, and the most a summary reads. */
@@ -104,11 +104,13 @@ export class TraceStore {
       CREATE INDEX IF NOT EXISTS spans_by_start ON spans (session, start);
       CREATE INDEX IF NOT EXISTS spans_by_trace ON spans (session, trace, start) WHERE has_http = 1;
       CREATE TABLE IF NOT EXISTS bodies (session TEXT NOT NULL, span TEXT NOT NULL, http TEXT NOT NULL, PRIMARY KEY (session, span)) WITHOUT ROWID;
-      CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY, session TEXT NOT NULL, scope TEXT, trace TEXT NOT NULL, span TEXT, service TEXT NOT NULL, at REAL NOT NULL, kind TEXT NOT NULL, outcome TEXT NOT NULL, who TEXT, links TEXT NOT NULL, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY, session TEXT NOT NULL, sandbox TEXT, trace TEXT NOT NULL, span TEXT, service TEXT NOT NULL, at REAL NOT NULL, kind TEXT NOT NULL, outcome TEXT NOT NULL, who TEXT, links TEXT NOT NULL, data TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS events_by_session ON events (session, seq);
       CREATE INDEX IF NOT EXISTS events_by_kind ON events (kind, seq);
       PRAGMA user_version = 1;
     `);
+    // Traces saved before the column was renamed keep working.
+    if ((db.query("PRAGMA table_info(events)").all() as { name: string }[]).some(c => c.name === "scope")) db.exec("ALTER TABLE events RENAME COLUMN scope TO sandbox");
     this.db = db;
     this.q = {
       spanBytes: db.query("SELECT bytes FROM spans WHERE session = ? AND span = ?"),
@@ -225,7 +227,7 @@ export class TraceStore {
 
   /**
    * Drops the sessions least recently active, past the session or size limit. The root's sessions and
-   * the scopes' each have their own session budget, and past the size limit the scopes' go first, so
+   * the sandboxes' each have their own session budget, and past the size limit the sandboxes' go first, so
    * scratch activity never pushes out the root's history. The root's newest always stays, and so does
    * the newest of all.
    */
@@ -233,15 +235,15 @@ export class TraceStore {
     const totals = this.q.totals!.get() as { sessions: number; bytes: number };
     if (totals.sessions <= this.maxSessions && totals.bytes <= this.maxBytes) return;
     const oldest = this.q.oldest!.all() as { id: string; bytes: number }[];
-    const scoped = (id: string) => id.includes("@");
-    const count = { root: oldest.filter(s => !scoped(s.id)).length, scoped: oldest.filter(s => scoped(s.id)).length };
+    const sandboxed = (id: string) => id.includes("@");
+    const count = { root: oldest.filter(s => !sandboxed(s.id)).length, sandboxed: oldest.filter(s => sandboxed(s.id)).length };
     let bytes = totals.bytes;
     const removed: string[] = [];
     this.db.transaction(() => {
-      for (const kind of ["scoped", "root"] as const) {
+      for (const kind of ["sandboxed", "root"] as const) {
         for (const s of oldest) {
-          if (scoped(s.id) !== (kind === "scoped")) continue;
-          if ((kind === "root" && count.root <= 1) || count.root + count.scoped <= 1) break;
+          if (sandboxed(s.id) !== (kind === "sandboxed")) continue;
+          if ((kind === "root" && count.root <= 1) || count.root + count.sandboxed <= 1) break;
           if (count[kind] <= this.maxSessions && bytes <= this.maxBytes) break;
           for (const t of ["bodies", "spans", "events"]) this.db.query(`DELETE FROM ${t} WHERE session = ?`).run(s.id);
           this.db.query("DELETE FROM sessions WHERE id = ?").run(s.id);
@@ -289,7 +291,7 @@ export class TraceStore {
   putEvents(records: EventRecord[]) {
     if (this.closed || !records.length) return;
     if (!this.whoByToken.size) for (const r of this.db.query("SELECT who, links FROM events WHERE who IS NOT NULL").all() as { who: string; links: string }[]) for (const l of r.links.trim().split(" ")) if (l.startsWith("token:")) this.whoByToken.set(l, r.who);
-    const insert = this.db.query("INSERT INTO events (session, scope, trace, span, service, at, kind, outcome, who, links, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    const insert = this.db.query("INSERT INTO events (session, sandbox, trace, span, service, at, kind, outcome, who, links, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     try {
       this.db.transaction(() => {
         for (const r of records) {
@@ -297,7 +299,7 @@ export class TraceStore {
           if (!r.who && token) r.who = this.whoByToken.get(token);
           if (r.who && token) this.whoByToken.set(token, r.who);
           if (r.who && !r.links.includes(r.who)) r.links.push(r.who);
-          r.seq = Number(insert.run(r.session, r.scope ?? null, r.trace, r.span ?? null, r.service, r.at, r.kind, r.outcome, r.who ?? null, ` ${r.links.join(" ")} `, JSON.stringify(r.data)).lastInsertRowid);
+          r.seq = Number(insert.run(r.session, r.sandbox ?? null, r.trace, r.span ?? null, r.service, r.at, r.kind, r.outcome, r.who ?? null, ` ${r.links.join(" ")} `, JSON.stringify(r.data)).lastInsertRowid);
         }
       })();
     } catch (e) { this.counters.failures++; this.lastError = (e as Error).message; }
@@ -306,7 +308,7 @@ export class TraceStore {
   events(q: EventQuery = {}, max = EVENT_PAGE_MAX): EventRecord[] {
     const where: string[] = [], args: (string | number)[] = [];
     if (q.session) { where.push("session = ?"); args.push(q.session); }
-    if (q.scope !== undefined) { if (q.scope === "") where.push("scope IS NULL"); else { where.push("scope = ?"); args.push(q.scope); } }
+    if (q.sandbox !== undefined) { if (q.sandbox === "") where.push("sandbox IS NULL"); else { where.push("sandbox = ?"); args.push(q.sandbox); } }
     for (const [col, v] of [["kind", q.kind], ["outcome", q.outcome], ["who", q.who], ["trace", q.trace]] as const) if (v) { where.push(`${col} = ?`); args.push(v); }
     for (const [col, vs] of [["kind", q.kinds], ["outcome", q.outcomes]] as const) if (vs?.length) { where.push(`${col} IN (${vs.map(() => "?").join(", ")})`); args.push(...vs); }
     if (q.link) { where.push("instr(links, ?) > 0"); args.push(` ${q.link} `); }
@@ -320,7 +322,7 @@ export class TraceStore {
     const limit = Math.min(Math.max(1, q.limit ?? 500), max);
     // The newest `limit`, oldest first.
     const rows = this.db.query(`SELECT * FROM (SELECT * FROM events ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY seq DESC LIMIT ${limit}) ORDER BY seq`).all(...args) as any[];
-    return rows.map(r => ({ seq: r.seq, session: r.session, ...(r.scope ? { scope: r.scope } : {}), trace: r.trace, ...(r.span ? { span: r.span } : {}), service: r.service, at: r.at, kind: r.kind, outcome: r.outcome, ...(r.who ? { who: r.who } : {}), links: r.links.trim().split(" ").filter(Boolean), data: JSON.parse(r.data) }));
+    return rows.map(r => ({ seq: r.seq, session: r.session, ...(r.sandbox ? { sandbox: r.sandbox } : {}), trace: r.trace, ...(r.span ? { span: r.span } : {}), service: r.service, at: r.at, kind: r.kind, outcome: r.outcome, ...(r.who ? { who: r.who } : {}), links: r.links.trim().split(" ").filter(Boolean), data: JSON.parse(r.data) }));
   }
   /** How long each span took, in milliseconds, for those of a session that have ended. */
   spanDurations(session: string, spans: string[]): Record<string, number> {
@@ -330,9 +332,9 @@ export class TraceStore {
     return Object.fromEntries(rows.filter(r => typeof r.ms === "number").map(r => [r.span, Math.round(r.ms! * 10) / 10]));
   }
   /** The values events can be filtered by, for the activity view's choices. */
-  eventFacets(scope?: string) {
-    const by = (col: string) => (this.db.query(`SELECT DISTINCT ${col} AS v FROM events WHERE ${col} IS NOT NULL ${scope !== undefined ? "AND scope IS ?" : ""} ORDER BY v`).all(...(scope !== undefined ? [scope || null] : [])) as { v: string }[]).map(r => r.v);
-    return { kinds: by("kind"), outcomes: by("outcome"), who: by("who"), scopes: scope !== undefined ? [] : by("scope") };
+  eventFacets(sandbox?: string) {
+    const by = (col: string) => (this.db.query(`SELECT DISTINCT ${col} AS v FROM events WHERE ${col} IS NOT NULL ${sandbox !== undefined ? "AND sandbox IS ?" : ""} ORDER BY v`).all(...(sandbox !== undefined ? [sandbox || null] : [])) as { v: string }[]).map(r => r.v);
+    return { kinds: by("kind"), outcomes: by("outcome"), who: by("who"), sandboxes: sandbox !== undefined ? [] : by("sandbox") };
   }
 
   fileBytes(): number {

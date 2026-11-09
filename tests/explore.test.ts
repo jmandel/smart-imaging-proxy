@@ -37,7 +37,7 @@ beforeAll(async () => {
 afterAll(() => { stack.stop(); globalThis.fetch = realFetch; });
 beforeEach(async () => { await stack.resetSaved(); resetClock(); stack.setBackend("static-files"); });
 
-/** One browser: its cookie, and everything it has been sent. With `base`, it's on that scope's pages. */
+/** One browser: its cookie, and everything it has been sent. With `base`, it's on that sandbox's pages. */
 function browser(base = "") {
   let cookie = "";
   const seen: string[] = [];
@@ -453,7 +453,7 @@ describe("thumbnails", () => {
     const backend = stack.backends["static-files"];
     const real = backend.getMetadata.bind(backend);
     // Every image's SOP Instance UID is one a URL path mustn't take.
-    backend.getMetadata = async (scope: any) => (await real(scope)).map((i: any) => ({ ...i, "00080018": { vr: "UI", Value: ["1.2.3/../../../studies"] } }));
+    backend.getMetadata = async (sandbox: any) => (await real(sandbox)).map((i: any) => ({ ...i, "00080018": { vr: "UI", Value: ["1.2.3/../../../studies"] } }));
     try {
       const b = browser();
       await b.pick("josh");
@@ -530,24 +530,24 @@ describe("a real window", () => {
   }, 60000);
 });
 
-describe("saved policy and scopes", () => {
+describe("saved policy and sandboxes", () => {
   const post = (path: string, body: unknown = {}) => demo.fetch(new Request(`${CONFIG.demoUrl}${path}`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host, "content-type": "application/json" }, body: JSON.stringify(body) }));
-  test("a session at the root works on saved policy, and one in a scope on that scope's", async () => {
+  test("a session at the root works on saved policy, and one in a sandbox on that sandbox's", async () => {
     await browser().pick("josh");
     expect(stack.store.approvals().some(g => g.by === "user:josh")).toBe(true);
-    const { base, sandbox: scope } = await (await post("/api/sandboxes")).json() as any;
-    const world = (stack.scopes.resolve(scope) as any).world;
+    const { base, sandbox: id } = await (await post("/api/sandboxes")).json() as any;
+    const sandbox = (stack.sandboxes.resolve(id) as any).sandbox;
     const b = browser(base);
     const s = await b.pick("sam-caregiver");
     expect(s.status).toBe("results");
     expect(s.activityUrl).toBe(`${base}/activity?session=${encodeURIComponent(s.session)}`);
-    expect(world.store.approvals().some((g: any) => g.by === "user:sam-caregiver")).toBe(true);
+    expect(sandbox.store.approvals().some((g: any) => g.by === "user:sam-caregiver")).toBe(true);
     expect(stack.store.approvals().some(g => g.by === "user:sam-caregiver")).toBe(false);
     expect((await browser().call("GET", "/api/explore/session")).json().session).toBeNull();
-    // A scope's activity lists only its own events.
+    // A sandbox's activity lists only its own events.
     const activity = (await b.call("GET", "/api/activity")).json();
     expect(activity.events.length).toBeGreaterThan(0);
-    expect(activity.events.every((e: any) => e.scope === scope)).toBe(true);
+    expect(activity.events.every((e: any) => e.sandbox === id)).toBe(true);
   }, 60000);
   test("starting a flow leaves an Explore session alone", async () => {
     const b = browser();

@@ -1,10 +1,10 @@
-// A sandbox's own API: what the settings menu uses, for the world a page is in: the backend images come from, the demo clock,
+// A sandbox's own API: what the settings menu uses, for the sandbox a page is in: the backend images come from, the demo clock,
 // resetting policy, and ending access. The demo has no login: every service binds to 127.0.0.1 and the
 // tailnet address, and a request naming another Host, or a write from another web origin, is refused.
 // Every write takes a fixed choice from this file, and nothing else. At the root it acts on the one
-// real policy database, and in a scope on that scope's. Policy changes go through the policy API.
+// real policy database, and in a sandbox on that sandbox's. Policy changes go through the policy API.
 import type { BackendName, Stack } from "./stack";
-import type { World } from "./world";
+import type { Sandbox } from "./sandbox";
 import { ownHosts, PORTS } from "./config";
 
 export const BACKEND_NAMES: BackendName[] = ["static-files", "s3", "orthanc"];
@@ -42,19 +42,19 @@ export function refuseWrite(req: Request, url: URL, port: number = PORTS.demo): 
   return undefined;
 }
 
-export function settingsStatus(stack: Stack, world: World) {
+export function settingsStatus(stack: Stack, sandbox: Sandbox) {
   return {
-    sandbox: world.scope ? { id: world.scope, base: world.prefix } : null,
-    name: world.name ?? null,
-    clock: { offsetSeconds: world.clock.offset(), now: world.clock.now() },
+    sandbox: sandbox.id ? { id: sandbox.id, base: sandbox.prefix } : null,
+    name: sandbox.name ?? null,
+    clock: { offsetSeconds: sandbox.clock.offset(), now: sandbox.clock.now() },
     clockChoices: CLOCK_CHOICES,
-    storage: { current: world.backend, names: BACKEND_NAMES },
-    topology: { current: world.topology, names: ["separate", "unified"] },
-    catalog: { source: world.catalogSource, ...world.catalog.stats() },
-    signing: { kid: world.imaging.signingKid },
-    proxy: { cachedDecisions: world.proxy.cachedDecisions },
-    // Only the root's store is a file, and only the root sees how many scopes there are.
-    ...(world.scope ? {} : { store: stack.store.info(), sandboxes: { live: stack.scopes.size } }),
+    storage: { current: sandbox.backend, names: BACKEND_NAMES },
+    topology: { current: sandbox.topology, names: ["separate", "unified"] },
+    catalog: { source: sandbox.catalogSource, ...sandbox.catalog.stats() },
+    signing: { kid: sandbox.imaging.signingKid },
+    proxy: { cachedDecisions: sandbox.proxy.cachedDecisions },
+    // Only the root's store is a file, and only the root sees how many sandboxes there are.
+    ...(sandbox.id ? {} : { store: stack.store.info(), sandboxes: { live: stack.sandboxes.size } }),
   };
 }
 
@@ -62,23 +62,23 @@ const NO_INPUT = ["/tokens/revoke-all", "/proxy/flush", "/signing-key/rotate"];
 const WITH_INPUT = ["/reset", "/clock"];
 const NAME_LIMIT = 40;
 
-export async function settingsApi(stack: Stack, world: World, req: Request, url: URL): Promise<Response> {
+export async function settingsApi(stack: Stack, sandbox: Sandbox, req: Request, url: URL): Promise<Response> {
   const p = url.pathname.slice("/api/sandbox".length);
   const m = req.method;
-  const status = () => json(settingsStatus(stack, world));
+  const status = () => json(settingsStatus(stack, sandbox));
   const refused = m === "GET" ? refuseHost(req) : refuseWrite(req, url);
   if (refused) return refused;
 
   if (p === "" && m === "GET") return status();
-  if (p === "/storage" && m === "GET") return json({ current: world.backend, stores: await Promise.all(BACKEND_NAMES.map(n => stack.selfTest(n))) });
+  if (p === "/storage" && m === "GET") return json({ current: sandbox.backend, stores: await Promise.all(BACKEND_NAMES.map(n => stack.selfTest(n))) });
 
   if (m === "POST" && NO_INPUT.includes(p)) {
     const unwanted = url.search ? "this action takes no input" : await unwantedBody(req);
     if (unwanted) return bad(unwanted);
-    if (p === "/tokens/revoke-all") { world.store.revokeAllTokens(); return status(); }
-    if (p === "/proxy/flush") { world.proxy.flushDecisions(); return status(); }
-    const { proxyTold } = await world.rotateSigningKey();
-    return json({ ...settingsStatus(stack, world), rotation: { proxyTold } });
+    if (p === "/tokens/revoke-all") { sandbox.store.revokeAllTokens(); return status(); }
+    if (p === "/proxy/flush") { sandbox.proxy.flushDecisions(); return status(); }
+    const { proxyTold } = await sandbox.rotateSigningKey();
+    return json({ ...settingsStatus(stack, sandbox), rotation: { proxyTold } });
   }
 
   if (!(p === "" && m === "PATCH") && !(WITH_INPUT.includes(p) && m === "POST")) return new Response("not found", { status: 404 });
@@ -90,25 +90,25 @@ export async function settingsApi(stack: Stack, world: World, req: Request, url:
   if (p === "/reset") {
     const extra = only("confirm"); if (extra) return extra;
     if (b.confirm !== true) return bad("resetting policy needs confirm: true");
-    await world.resetPolicy();
+    await sandbox.resetPolicy();
     return status();
   }
   if (p === "/clock") {
-    if (b.reset === true) { const extra = only("reset"); if (extra) return extra; world.clock.reset(); return status(); }
+    if (b.reset === true) { const extra = only("reset"); if (extra) return extra; sandbox.clock.reset(); return status(); }
     if (extraField(b, ["advanceSeconds"]) || !CLOCK_CHOICES.some(c => c.value === b.advanceSeconds)) return bad(`send reset: true, or advanceSeconds, one of ${values(CLOCK_CHOICES)}`);
-    world.clock.advance(b.advanceSeconds);
+    sandbox.clock.advance(b.advanceSeconds);
     return status();
   }
   if (p === "") {
     const extra = only("name", "topology", "storage"); if (extra) return extra;
     if (b.name === undefined && b.topology === undefined && b.storage === undefined) return bad("send name, topology or storage");
-    if ((b.name !== undefined || b.topology !== undefined) && !world.scope) return bad("only a sandbox can change this");
+    if ((b.name !== undefined || b.topology !== undefined) && !sandbox.id) return bad("only a sandbox can change this");
     if (b.name !== undefined && (typeof b.name !== "string" || !b.name.trim() || b.name.trim().length > NAME_LIMIT)) return bad(`a name is 1 to ${NAME_LIMIT} characters`);
     if (b.topology !== undefined && b.topology !== "separate" && b.topology !== "unified") return bad("topology must be separate or unified");
     if (b.storage !== undefined && !BACKEND_NAMES.includes(b.storage)) return bad(`storage must be one of ${BACKEND_NAMES.join(", ")}`);
-    if (b.name !== undefined) world.setName(b.name.trim());
-    if (b.topology !== undefined) world.setTopology(b.topology);
-    if (b.storage !== undefined) world.setBackend(b.storage);
+    if (b.name !== undefined) sandbox.setName(b.name.trim());
+    if (b.topology !== undefined) sandbox.setTopology(b.topology);
+    if (b.storage !== undefined) sandbox.setBackend(b.storage);
     return status();
   }
   return new Response("not found", { status: 404 });

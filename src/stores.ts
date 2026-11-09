@@ -1,4 +1,4 @@
-// The root's policy store, and what's on file that every world starts with: the guardians registration
+// The root's policy store, and what's on file that every sandbox starts with: the guardians registration
 // recorded in data/patient.json, the organization's guardian and sharing policies, and patient
 // attributes, such as birth dates, which policy by age reads.
 import { DURABILITIES, PolicyStore, validateDocument, validateSetting, type Durability, type OnFile, type OrgPolicy, type PatientAttributes, type PolicyDocument, type Relationship, type Settings, type StoreConfig } from "@smart-imaging-proxy/core";

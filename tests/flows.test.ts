@@ -104,7 +104,7 @@ describe("a redirect back to the app", () => {
       const post = (path: string, body: unknown = {}) => fetch(`${CONFIG.demoUrl}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       const started: any = await (await post("/api/flows/patient-sites/start")).json();
       // The run is in its own scope, and so is everything after.
-      const base = started.scope.base;
+      const base = started.sandbox.base;
       expect(base).toMatch(/^\/s\/[A-Za-z0-9_-]{22}$/);
       const stepping = post(`${base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "window" } });
       const pending = async () => ((await (await fetch(`${CONFIG.demoUrl}${base}/api/pending-authorization`)).json()) as any).url as string | null;
@@ -126,7 +126,7 @@ describe("a redirect back to the app", () => {
       expect(spans.filter(s => s.kind === "server" && s.http?.url.endsWith("/token")).length).toBe(1);
       const forged = spans.filter(s => s.name.startsWith("Redirect back") && s.status === "denied");
       expect(forged.length).toBe(4);
-      expect(spans.every(s => s.scope === started.scope.id)).toBe(true);
+      expect(spans.every(s => s.sandbox === started.sandbox.id)).toBe(true);
       expect(JSON.stringify(spans)).not.toContain("attacker-code");
     } finally { server.stop(true); }
   });
@@ -134,7 +134,7 @@ describe("a redirect back to the app", () => {
     stack.setBackend("static-files");
     const demo = createDemoServer(stack, clients, join(import.meta.dir, ".."));
     const call = (path: string, body: unknown = {}) => demo.fetch(new Request(`${CONFIG.demoUrl}${path}`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host, "content-type": "application/json" }, body: JSON.stringify(body) }));
-    const { scope } = await (await call("/api/flows/patient-sites/start")).json() as any;
+    const { sandbox: scope } = await (await call("/api/flows/patient-sites/start")).json() as any;
     const stepping = call(`${scope.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "window" } });
     let url: string | null = null;
     while (!url) { url = ((await (await demo.fetch(new Request(`${CONFIG.demoUrl}${scope.base}/api/pending-authorization`, { headers: { host: new URL(CONFIG.demoUrl).host } }))).json()) as any).url; await Bun.sleep(5); }

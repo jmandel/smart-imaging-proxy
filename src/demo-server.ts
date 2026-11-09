@@ -1,6 +1,6 @@
 // The demo's own web server: the tours, which are its home page, Explore, and the activity log, backed by the real services, and the
-// flow API the checks and tests run flows through. `/s/{scope}/...` is that scope's own: its Explore,
-// its tour, its activity, its settings and its redirects. Starting a tour or a flow mints a scope for it.
+// flow API the checks and tests run flows through. `/s/{sandbox}/...` is that sandbox's own: its Explore,
+// its tour, its activity, its settings and its redirects. Starting a tour or a flow mints a sandbox for it.
 import { join } from "node:path";
 import { fetchJwks } from "./jwks";
 import { PUBLIC_DEMO } from "./config";
@@ -17,66 +17,66 @@ import { eventQueryOf } from "./trace-collector";
 import { EVENT_SUMMARY_MAX, type EventQuery } from "./trace-store";
 import { activityType, sessionRows, sessionStudies, studiesNamed, tiles, timeline, ACTIVITY_TYPES } from "./activity";
 import { reportTitle } from "./referrals";
-import { scopeOfSession, type EventRecord } from "./trace";
+import { sandboxOfSession, type EventRecord } from "./trace";
 import { forViewer, viewerKnows } from "./viewer-events";
 import { loadViewerKit, VIEWER_KIT_FILES } from "./vendor";
 import { panelOf } from "./stores";
-import type { World } from "./world";
+import type { Sandbox } from "./sandbox";
 
 const json = (b: unknown, status = 200) => Response.json(b, { status });
 
 /** `viewerKitDir` is where viewer-kit was downloaded, `$DEMO_STORAGE/vendor/{tag}` unless given. */
 export function createDemoServer(stack: Stack, clients: Record<string, BackendClient>, root: string, options: { viewerKitDir?: string } = {}) {
-  const perWorld = new WeakMap<World, ReturnType<typeof worldServer>>();
-  const serverOf = (w: World) => { let s = perWorld.get(w); if (!s) perWorld.set(w, s = worldServer(w)); return s; };
+  const perSandbox = new WeakMap<Sandbox, ReturnType<typeof sandboxServer>>();
+  const serverOf = (w: Sandbox) => { let s = perSandbox.get(w); if (!s) perSandbox.set(w, s = sandboxServer(w)); return s; };
   const file = (name: string) => new Response(Bun.file(join(root, "web", name)));
   /** The guide for agents. A sandbox's own copy names that sandbox, so handing over its one link is enough. */
-  async function llmsTxt(world: World) {
-    const site = world.urls.demo, origin = new URL(site).origin;
-    const name = world.scope ? world.store.note("name") : undefined;
-    const section = world.scope
+  async function llmsTxt(sandbox: Sandbox) {
+    const site = sandbox.urls.demo, origin = new URL(site).origin;
+    const name = sandbox.id ? sandbox.store.note("name") : undefined;
+    const section = sandbox.id
       ? `## This sandbox\n\n${name ? `This is "${name}". ` : ""}Everything below works here now. This link is its access, so share it only with those who should use it.\n\n\`\`\`sh\nSANDBOX=${site}\n\`\`\``
       : `## Start here\n\nCreate a sandbox, and use it for everything below:\n\n\`\`\`sh\nSANDBOX=${origin}$(curl -sX POST ${origin}/api/sandboxes | jq -r .base)\n\`\`\`\n\nOr open the site in a browser and press Connect. Each sandbox has its own copy of this file at \`$SANDBOX/llms.txt\`, which names it.`;
     const text = (await Bun.file(join(root, "web", "llms.txt")).text()).replaceAll("{{SANDBOX_SECTION}}", section).replaceAll("{{ORIGIN}}", origin).replaceAll("{{SITE}}", site);
-    return new Response(text, { headers: { "content-type": "text/plain; charset=utf-8", ...(world.scope ? { "x-robots-tag": "noindex", "cache-control": "no-store" } : {}) } });
+    return new Response(text, { headers: { "content-type": "text/plain; charset=utf-8", ...(sandbox.id ? { "x-robots-tag": "noindex", "cache-control": "no-store" } : {}) } });
   }
-  const scopeOf = (w: World) => w.scope ? { id: w.scope, base: w.prefix } : null;
+  const sandboxOf = (w: Sandbox) => w.id ? { id: w.id, base: w.prefix } : null;
 
-  /** Mints a scope and starts `flowId` there. */
+  /** Mints a sandbox and starts `flowId` there. */
   async function startRun(flowId: string) {
     const flow = flowById(flowId);
     if (!flow) return undefined;
-    const world = stack.scopes.mint();
-    const run = await serverOf(world).start(flow.id);
-    return { world, run: run! };
+    const sandbox = stack.sandboxes.mint();
+    const run = await serverOf(sandbox).start(flow.id);
+    return { sandbox, run: run! };
   }
 
-  function worldServer(world: World) {
-    const services = { proxy: world.urls.proxy, imaging: world.urls.imaging, authorization: world.urls.auth, "live trace": world.urls.trace };
-    // What a reload needs to show this world's flow run again, and what stops another tab from disturbing it.
+  function sandboxServer(sandbox: Sandbox) {
+    const services = { proxy: sandbox.urls.proxy, imaging: sandbox.urls.imaging, authorization: sandbox.urls.auth, "live trace": sandbox.urls.trace };
+    // What a reload needs to show this sandbox's flow run again, and what stops another tab from disturbing it.
     let session: { flowId: string; ctx: Ctx; completed: Record<string, { inputs: unknown; result: unknown }>; running?: string } | undefined;
 
     // The redirect URI the demo app registered. Whoever is waiting takes only its own redirect, by `state`.
     // The redirect is a real protocol message with no trace fields, so its span joins the flow waiting on it.
-    const explore = createExplore(world, clients, stack);
-    const tours = createTours(world, clients, stack);
+    const explore = createExplore(sandbox, clients, stack);
+    const tours = createTours(sandbox, clients, stack);
     /** A session's events as its viewer may see them: an Explore view's person or service, a tour's taker, or whoever a flow acts as. */
-    const idOfUid = (uid: string) => world.catalog.studyByUid(uid)?.id;
+    const idOfUid = (uid: string) => sandbox.catalog.studyByUid(uid)?.id;
     const viewerEvents = (session: string, events: EventRecord[]) => {
       const all = stack.collector.store.events({ session, limit: EVENT_SUMMARY_MAX }, EVENT_SUMMARY_MAX);
       return forViewer(events, viewerKnows(all, explore.knownIn(session) ?? tours.knownIn(session) ?? []), idOfUid);
     };
     /**
-     * The log's filters. A scope's log is its own, and the root's covers every world, filtered by
-     * scope. With a session, a study keeps that study's events and the session's events about no
+     * The log's filters. A sandbox's log is its own, and the root's covers every sandbox, filtered by
+     * sandbox. With a session, a study keeps that study's events and the session's events about no
      * study, as Explore tells its chain. With none, it keeps only events that name the study.
      */
     function activityQuery(url: URL): EventQuery | string {
       const q = eventQueryOf(url);
-      if (world.scope) q.scope = world.scope;
+      if (sandbox.id) q.sandbox = sandbox.id;
       const study = url.searchParams.get("study");
       if (study) {
-        const uid = world.catalog.allStudies().find(s => s.id === study)?.uid;
+        const uid = sandbox.catalog.allStudies().find(s => s.id === study)?.uid;
         if (q.session) q.about = { study, uid };
         else q.anyLink = [`study:${study}`, ...(uid ? [`uid:${uid}`] : [])];
       }
@@ -91,7 +91,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     /** A session study by study, with each study's title: the events name only studies its viewer may know. */
     const flowOf = (events: EventRecord[]) => {
       const f = sessionStudies(events, idOfUid);
-      const titled = (r: { study: string }) => { const st = world.catalog.allStudies().find(c => c.id === r.study); return { ...r, title: st ? reportTitle(st) : r.study, site: st?.site }; };
+      const titled = (r: { study: string }) => { const st = sandbox.catalog.allStudies().find(c => c.id === r.study); return { ...r, title: st ? reportTitle(st) : r.study, site: st?.site }; };
       return { ...f, phases: f.phases.map(p => ({ ...p, studies: p.studies.map(titled) })) };
     };
     /** What a session is, in words: Explore, a tour, a flow, or one of the protocol checks. */
@@ -131,7 +131,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     async function start(flowId: string) {
       const flow = flowById(flowId);
       if (!flow) return undefined;
-      session = { flowId, ctx: await startFlowIn(world, clients, flow), completed: {} };
+      session = { flowId, ctx: await startFlowIn(sandbox, clients, flow), completed: {} };
       return { flow, ctx: session.ctx, session };
     }
 
@@ -143,13 +143,13 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       if (p === "/explore") return file("index.html");
       if (p === "/activity") return file("activity.html");
       if (p === "/connect") return file("connect.html");
-      if (p === "/llms.txt") return llmsTxt(world);
+      if (p === "/llms.txt") return llmsTxt(sandbox);
       if (p.startsWith("/api/explore/")) return explore.fetch(req, url);
       if (p === "/api/tours" || p.startsWith("/api/tours/") || p.startsWith("/api/checks/")) {
         if (req.method === "POST") { const refused = refuseWrite(req, url); if (refused) return refused; }
         return tours.fetch(req, url);
       }
-      if ((p === "/api/sandbox" && req.method !== "DELETE") || (p.startsWith("/api/sandbox/") && !p.startsWith("/api/sandbox/clients") && p !== "/api/sandbox/policy")) return settingsApi(stack, world, req, url);
+      if ((p === "/api/sandbox" && req.method !== "DELETE") || (p.startsWith("/api/sandbox/") && !p.startsWith("/api/sandbox/clients") && p !== "/api/sandbox/policy")) return settingsApi(stack, sandbox, req, url);
       if (p === "/api/activity" && req.method === "GET") {
         // One page of events, oldest first, ending at `before`. One session's is what its viewer may
         // see; every session's at once is the operator's, which alone links to the live trace.
@@ -160,7 +160,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         const more = page.length > limit;
         const raw = more ? page.slice(1) : page;
         const events = shown(q.session ? viewerEvents(q.session, raw) : raw);
-        return json({ events, more, before: raw[0]?.seq ?? null, ...(q.session ? { viewer: true } : { traceUrl: world.urls.trace }) });
+        return json({ events, more, before: raw[0]?.seq ?? null, ...(q.session ? { viewer: true } : { traceUrl: sandbox.urls.trace }) });
       }
       if (p === "/api/activity/summary" && req.method === "GET") {
         // The rollups, from the same events the log lists, through the same filter, for every type at once.
@@ -173,13 +173,13 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
           viewer: !!base.session, total: events.length, capped: read.length >= EVENT_SUMMARY_MAX,
           types: ACTIVITY_TYPES.map(t => t.id), tiles: tiles(events), timeline: timeline(events),
           sessions: sessionRows(events, sessionLabel, idOfUid).slice(0, 200), studies: studiesNamed(events, idOfUid),
-          ...(base.session ? { flow: flowOf(events) } : { scopes: world.scope ? [] : stack.collector.store.eventFacets().scopes, traceUrl: world.urls.trace }),
+          ...(base.session ? { flow: flowOf(events) } : { sandboxes: sandbox.id ? [] : stack.collector.store.eventFacets().sandboxes, traceUrl: sandbox.urls.trace }),
         });
       }
       if (p === "/api/activity/span" && req.method === "GET") {
         // The exchange behind an event its session's viewer may see, and no other.
         const session = url.searchParams.get("session") ?? "", span = url.searchParams.get("span") ?? "";
-        if (world.scope && scopeOfSession(session) !== world.scope) return json({ error: "not found" }, 404);
+        if (sandbox.id && sandboxOfSession(session) !== sandbox.id) return json({ error: "not found" }, 404);
         if (!span || !viewerEvents(session, stack.collector.store.events({ session, limit: EVENT_SUMMARY_MAX }, EVENT_SUMMARY_MAX)).some(e => e.span === span)) return json({ error: "not found" }, 404);
         const r = stack.collector.store.span(session, span);
         return r ? json(r) : json({ error: "not found" }, 404);
@@ -192,73 +192,73 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         session?.ctx.cancelWindow?.("The sign-in window closed before it finished. Run the step again.");
         return json({ ok: true });
       }
-      if (p === "/api/session") return json({ session: session?.ctx.session ?? null, flow: session?.flowId ?? null, traceUrl: world.urls.trace, scope: scopeOf(world) });
+      if (p === "/api/session") return json({ session: session?.ctx.session ?? null, flow: session?.flowId ?? null, traceUrl: sandbox.urls.trace, sandbox: sandboxOf(sandbox) });
       if (p === "/api/flow-state") {
         const flow = session && flowById(session.flowId);
-        if (!session || !flow) return json({ scope: scopeOf(world), flow: null });
-        return json({ scope: scopeOf(world), flow: session.flowId, running: session.running ?? null, steps: stepInfo(flow, session.ctx), completed: session.completed, policy: panelOf(world.store) });
+        if (!session || !flow) return json({ sandbox: sandboxOf(sandbox), flow: null });
+        return json({ sandbox: sandboxOf(sandbox), flow: session.flowId, running: session.running ?? null, steps: stepInfo(flow, session.ctx), completed: session.completed, policy: panelOf(sandbox.store) });
       }
-      if (p === "/api/flows") return json({ services, backend: world.backend, scope: scopeOf(world), flows: FLOWS.map(f => ({ id: f.id, number: f.number, group: f.group, title: f.title, summary: f.summary, shows: f.shows, steps: f.steps.length })) });
+      if (p === "/api/flows") return json({ services, backend: sandbox.backend, sandbox: sandboxOf(sandbox), flows: FLOWS.map(f => ({ id: f.id, number: f.number, group: f.group, title: f.title, summary: f.summary, shows: f.shows, steps: f.steps.length })) });
       if ((p === "/api/sandboxes" || p.startsWith("/api/flows/")) && req.method === "POST") {
         const refused = refuseWrite(req, url);
         if (refused) return refused;
       }
-      // A new scope, seeded from the guardians on file, for anyone to use by its URLs.
+      // A new sandbox, seeded from the guardians on file, for anyone to use by its URLs.
       if (p === "/api/sandboxes" && req.method === "POST") {
         const unwanted = (await req.text()).trim();
         if (unwanted && unwanted !== "{}") return json({ error: "this action takes no input" }, 400);
-        const w = stack.scopes.mint({ saved: true });
-        return json({ sandbox: w.scope, base: w.prefix, urls: w.urls }, 201);
+        const w = stack.sandboxes.mint({ saved: true });
+        return json({ sandbox: w.id, base: w.prefix, urls: w.urls }, 201);
       }
       if (p === "/api/sandbox/clients" || p.startsWith("/api/sandbox/clients/")) {
-        if (!world.scope) return json({ error: "apps are registered in a sandbox: open /connect" }, 409);
-        if (req.method === "GET" && p === "/api/sandbox/clients") return json({ clients: listClients(world.store) });
+        if (!sandbox.id) return json({ error: "apps are registered in a sandbox: open /connect" }, 409);
+        if (req.method === "GET" && p === "/api/sandbox/clients") return json({ clients: listClients(sandbox.store) });
         const refused = refuseWrite(req, url);
         if (refused) return refused;
         if (req.method === "POST" && p === "/api/sandbox/clients") {
           const body = await req.json().catch(() => ({}));
           // A URL has to work when it's registered, which also shows its owner any mistake straight away.
           const jwksUrl = (body as any).jwksUrl, jwksOk = typeof jwksUrl === "string" && jwksUrl ? !!(await fetchJwks(jwksUrl, PUBLIC_DEMO))?.length : true;
-          const made = addClient(world.store, body as any, { jwksReachable: () => jwksOk });
+          const made = addClient(sandbox.store, body as any, { jwksReachable: () => jwksOk });
           return "error" in made ? json(made, 400) : json(made, 201);
         }
         const id = p.slice("/api/sandbox/clients/".length);
-        if (req.method === "DELETE" && id) return removeClient(world.store, decodeURIComponent(id)) ? json({ removed: true }) : json({ error: "no such app" }, 404);
+        if (req.method === "DELETE" && id) return removeClient(sandbox.store, decodeURIComponent(id)) ? json({ removed: true }) : json({ error: "no such app" }, 404);
         return new Response("not found", { status: 404 });
       }
       if (p === "/api/sandbox" && req.method === "DELETE") {
-        if (!world.scope) return json({ error: "only a sandbox can be deleted" }, 409);
+        if (!sandbox.id) return json({ error: "only a sandbox can be deleted" }, 409);
         const refused = refuseWrite(req, url);
         if (refused) return refused;
-        stack.scopes.remove(world.scope);
+        stack.sandboxes.remove(sandbox.id);
         return json({ deleted: true });
       }
-      if (p === "/api/sandbox/policy" && req.method === "GET") return json(panelOf(world.store));
+      if (p === "/api/sandbox/policy" && req.method === "GET") return json(panelOf(sandbox.store));
       const started = p.match(/^\/api\/flows\/([^/]+)\/start$/);
       if (started && req.method === "POST") {
         const r = await startRun(started[1]!);
         if (!r) return json({ error: "unknown flow" }, 404);
-        return json({ scope: scopeOf(r.world), steps: stepInfo(r.run.flow, r.run.ctx), policy: panelOf(r.world.store), session: r.run.ctx.session });
+        return json({ sandbox: sandboxOf(r.sandbox), steps: stepInfo(r.run.flow, r.run.ctx), policy: panelOf(r.sandbox.store), session: r.run.ctx.session });
       }
       const step = p.match(/^\/api\/flows\/([^/]+)\/steps\/([^/]+)$/);
       if (step && req.method === "POST") {
-        if (!world.scope) return json({ error: "a flow runs in its own scope: start it, and run its steps at that scope's URLs" }, 409);
+        if (!sandbox.id) return json({ error: "a flow runs in its own sandbox: start it, and run its steps at that sandbox's URLs" }, 409);
         const text = await req.text();
         let b: any = {};
         if (text.trim()) { try { b = JSON.parse(text) ?? {}; } catch { return json({ error: "the request body isn't JSON" }, 400); } }
         if (b.inputs !== undefined && (typeof b.inputs !== "object" || b.inputs === null || Array.isArray(b.inputs))) return json({ error: "inputs must be an object" }, 400);
-        if (session && session.flowId !== step[1]) return json({ error: "this scope runs another flow: start this one to get its own scope" }, 409);
+        if (session && session.flowId !== step[1]) return json({ error: "this sandbox runs another flow: start this one to get its own sandbox" }, 409);
         if (session?.running) return json({ error: `the step "${session.running}" is still running` }, 409);
         if (session && Object.hasOwn(session.completed, step[2]!)) return json({ error: "this step has already run: reload to see its result" }, 409);
         if (session) session.running = step[2]!; // Set before anything can yield, so a second tab sees it.
-        // A scope minted with no run takes the first flow asked of it.
+        // A sandbox minted with no run takes the first flow asked of it.
         const s = session ? { flow: flowById(session.flowId)!, ctx: session.ctx, session } : await start(step[1]!);
         if (!s) return json({ error: "unknown flow" }, 404);
         s.session.running = step[2]!;
         try {
           const result = await runStep(s.ctx, s.flow, step[2]!, b.inputs ?? {});
           s.session.completed[step[2]!] = { inputs: b.inputs ?? {}, result };
-          return json({ result, steps: stepInfo(s.flow, s.ctx), policy: panelOf(world.store), events: world.proxy.events.slice(-12), scope: scopeOf(world) });
+          return json({ result, steps: stepInfo(s.flow, s.ctx), policy: panelOf(sandbox.store), events: sandbox.proxy.events.slice(-12), sandbox: sandboxOf(sandbox) });
         } catch (e) { return json({ error: String((e as Error).message ?? e) }, e instanceof StepStopped ? 409 : e instanceof BadStepInput ? 400 : /^no step /.test((e as Error).message) ? 404 : 500); }
         finally { s.session.running = undefined; }
       }
@@ -267,7 +267,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     return { fetch, start };
   }
 
-  // The same files in every world: the pages work out their scope from their own URL.
+  // The same files in every sandbox: the pages work out their sandbox from their own URL.
   const STATIC: Record<string, string> = Object.fromEntries(["styles.css", "page.js", "event-words.js", "layers.js", "explore.js", "tours.js", "activity.js", "thumbs.js", "client.js", "client.css", "connect.js", "fonts/atkinson-next.woff2", "fonts/atkinson-mono.woff2"].map(f => [`/${f}`, f]));
   /**
    * viewer-kit's files, from the pinned download, never from the repository: checked once, here at

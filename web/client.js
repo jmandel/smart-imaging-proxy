@@ -8,7 +8,7 @@ const REDIRECT = `${location.origin}${BASE}/`;
 const ROOT_REDIRECT = `${location.origin}/`;
 const SANDBOX = { id: "sandbox", label: "SMART Imaging sandbox", detail: "Your own sandbox of sample patients", own: true };
 const DEFAULT_SERVERS = [];
-const SERVERS_KEY = "smart-imaging-client:servers", CHOICE_KEY = "smart-imaging-client:choice", WORLD_KEY = "smart-imaging-client:world";
+const SERVERS_KEY = "smart-imaging-client:servers", CHOICE_KEY = "smart-imaging-client:choice", SANDBOX_KEY = "smart-imaging-client:sandbox";
 const stored = key => { try { return localStorage.getItem(key); } catch { return null; } };
 const store = (key, value) => { try { value === null ? localStorage.removeItem(key) : localStorage.setItem(key, value); } catch {} };
 /** What a pasted configuration must be. Gives the servers, or throws saying what's wrong. */
@@ -80,7 +80,7 @@ const IG = "https://build.fhir.org/ig/argonautproject/smart-imaging/", SMART = "
 const STAGES = [
   { key: "discover", from: "This app", to: "Clinical FHIR server", name: "Discover", line: "From one FHIR address, find the sign-in page and the imaging server.", kinds: ["discover"], spec: [`${SMART}conformance.html`, "SMART discovery"] },
   { key: "authorize", from: "Browser and app", to: "Authorization server", name: "Authorize", line: "Sign in, approve this app, and receive an access token for one patient.", kinds: ["authorize", "token", "backend-token"], spec: [`${SMART}app-launch.html`, "SMART App Launch"] },
-  { key: "clinical", from: "This app", to: "Clinical FHIR server", name: "Read the chart", line: "Query the clinical server with that token.", kinds: ["patient", "clinical"], spec: [`${SMART}scopes-and-launch-context.html`, "Scopes and context"] },
+  { key: "clinical", from: "This app", to: "Clinical FHIR server", name: "Read the chart", line: "Query the clinical server with that token.", kinds: ["patient", "clinical"], spec: [`${SMART}scopes-and-launch-context.html`, "Sandboxes and context"] },
   { key: "imaging", from: "This app", to: "Imaging FHIR server", name: "Find studies", line: "Ask the imaging server for studies, and where to retrieve each one.", kinds: ["imaging"], spec: [IG, "SMART Imaging Access"] },
   { key: "retrieve", from: "This app", to: "DICOMweb endpoint", name: "Retrieve images", line: "Download DICOM from each study's Endpoint, and decode it in the browser.", kinds: ["wado"], spec: ["https://www.dicomstandard.org/using/dicomweb/retrieve-wado-rs-and-wado-uri", "DICOMweb WADO-RS"] },
 ];
@@ -233,15 +233,15 @@ async function connect() {
     if (server.mode === "backend") { await connectBackend(server); return; }
     // Another server has a redirect registered for one fixed address, so its sign-in runs from there.
     if (!server.own && BASE) { location.assign("/?connect=1"); return; }
-    // Everyone gets a world of their own, so one visitor's changes never reach another's.
+    // Everyone gets a sandbox of their own, so one visitor's changes never reach another's.
     if (server.own && !BASE) {
       // This browser's sandbox lasts until its owner starts over, so go back to it if it's there.
-      const known = stored(WORLD_KEY);
+      const known = stored(SANDBOX_KEY);
       if (known && (await fetch(`${known}/api/sandbox`)).ok) { location.assign(`${known}/?connect=1`); return; }
       const r = await fetch("/api/sandboxes", { method: "POST" });
       if (!r.ok) throw new Error(r.status === 429 ? "Too many sandboxes from this address. Try again in a while." : `The sandbox couldn't be created (HTTP ${r.status})`);
       const { base } = await r.json();
-      store(WORLD_KEY, base);
+      store(SANDBOX_KEY, base);
       location.assign(`${base}/?connect=1`);
       return;
     }
@@ -628,33 +628,33 @@ $("#reset-view").addEventListener("click", async () => {
   refreshView();
 });
 
-// The sandboxes this browser knows: the current one is WORLD_KEY, and a joined one is someone else's to end.
-const WORLDS_KEY = "smart-imaging-client:worlds";
-function worlds() {
+// The sandboxes this browser knows: the current one is SANDBOX_KEY, and a joined one is someone else's to end.
+const SANDBOXES_KEY = "smart-imaging-client:sandboxes";
+function sandboxes() {
   let list = [];
-  try { list = JSON.parse(stored(WORLDS_KEY) ?? "[]"); } catch {}
-  const current = stored(WORLD_KEY);
+  try { list = JSON.parse(stored(SANDBOXES_KEY) ?? "[]"); } catch {}
+  const current = stored(SANDBOX_KEY);
   if (current && !list.some(w => w.base === current)) list.push({ base: current, joined: false });
   return list;
 }
-const saveWorlds = list => store(WORLDS_KEY, JSON.stringify(list));
+const saveSandboxes = list => store(SANDBOXES_KEY, JSON.stringify(list));
 const shareLink = base => `${location.origin}${base}/?join=1`;
-async function worldName(base) {
+async function sandboxName(base) {
   const r = await fetch(`${base}/api/sandbox`);
   return r.ok ? (await r.json()).name : null;
 }
 async function renderSandbox() {
-  const box = $("#sandbox"), current = stored(WORLD_KEY);
+  const box = $("#sandbox"), current = stored(SANDBOX_KEY);
   if (!current) { document.documentElement.classList.remove("has-sandbox"); return; }
-  let list = worlds();
-  const name = await worldName(current);
+  let list = sandboxes();
+  const name = await sandboxName(current);
   if (!name) { // Ended by someone else.
-    saveWorlds(list.filter(w => w.base !== current));
-    store(WORLD_KEY, list.find(w => w.base !== current)?.base ?? null);
+    saveSandboxes(list.filter(w => w.base !== current));
+    store(SANDBOX_KEY, list.find(w => w.base !== current)?.base ?? null);
     return renderSandbox();
   }
   list = list.map(w => w.base === current ? { ...w, name } : w);
-  saveWorlds(list);
+  saveSandboxes(list);
   const mine = list.find(w => w.base === current), others = list.filter(w => w.base !== current);
   box.innerHTML = `<h2>Your sandbox</h2>
     <div class="sandbox-head"><p class="sandbox-name" id="sandbox-name">${esc(name)}</p><button type="button" class="tool" id="rename">Rename</button></div>
@@ -679,23 +679,23 @@ async function renderSandbox() {
     if (!mine.joined && !confirm(`Delete “${name}” and everything in it? Anyone you shared it with loses it too.`)) return;
     if (!mine.joined) try { await fetch(`${current}/api/sandbox`, { method: "DELETE" }); } catch {}
     const rest = list.filter(w => w.base !== current);
-    saveWorlds(rest);
-    store(WORLD_KEY, rest[0]?.base ?? null);
+    saveSandboxes(rest);
+    store(SANDBOX_KEY, rest[0]?.base ?? null);
     try { sessionStorage.clear(); } catch {}
     location.assign("/");
   });
-  $$("[data-switch]", box).forEach(b => b.addEventListener("click", () => { store(WORLD_KEY, b.dataset.switch); try { sessionStorage.clear(); } catch {} location.assign("/"); }));
+  $$("[data-switch]", box).forEach(b => b.addEventListener("click", () => { store(SANDBOX_KEY, b.dataset.switch); try { sessionStorage.clear(); } catch {} location.assign("/"); }));
 }
 async function showInvite() {
-  const name = await worldName(BASE);
+  const name = await sandboxName(BASE);
   if (!name) return;
   $("#invite-title").textContent = `You've been invited to “${name}”`;
   $("#invite").hidden = false;
   $("#join").addEventListener("click", () => {
-    const list = worlds();
+    const list = sandboxes();
     if (!list.some(w => w.base === BASE)) list.push({ base: BASE, joined: true, name });
-    saveWorlds(list);
-    store(WORLD_KEY, BASE);
+    saveSandboxes(list);
+    store(SANDBOX_KEY, BASE);
     location.assign(`${BASE}/`);
   });
 }
@@ -707,7 +707,7 @@ function showApp() {
 async function run(session) {
   showApp();
   $("#connected").textContent = session.own ? "" : `Connected to ${session.label}`;
-  if (session.own && BASE) worldName(BASE).then(name => { if (name) $("#connected").textContent = `Sandbox: ${name}`; });
+  if (session.own && BASE) sandboxName(BASE).then(name => { if (name) $("#connected").textContent = `Sandbox: ${name}`; });
   if (session.backend) {
     $("#patient").innerHTML = `<p class="who">Patient ${esc(session.patient)}</p><p class="facts">Backend service: no one signed in</p>`;
     $("#clinical").hidden = true;

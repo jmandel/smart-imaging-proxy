@@ -1,5 +1,5 @@
 // A small reference model of the policy rules, written apart from core's evaluation, which the tours
-// check the real system against. It reads a world's policy document and catalog at one moment, and
+// check the real system against. It reads a sandbox's policy document and catalog at one moment, and
 // says which studies each kind of caller should reach. It knows nothing of how core decides.
 //
 // Choices rest on rows by id. A share records the one route its sharer shares through, "self" or their
@@ -8,7 +8,7 @@
 import type { PolicyDocument, Share } from "@smart-imaging-proxy/core";
 
 export interface RefStudy { id: string; patient: string; site?: string; labels?: string[]; date?: string; modalities: string[]; seriesUids: string[]; }
-export interface RefWorld {
+export interface RefSandbox {
   doc: Pick<PolicyDocument, "relationships" | "policies" | "shares" | "approvals">;
   studies: RefStudy[];
   /** Seconds since the epoch. */
@@ -33,7 +33,7 @@ export function ageAt(birthDate: string | undefined, now: number): number | unde
   return age < 0 ? undefined : age;
 }
 
-export function referenceModel(w: RefWorld) {
+export function referenceModel(w: RefSandbox) {
   const { doc } = w;
   const ofPatient = (patient: string) => w.studies.filter(s => s.patient === patient);
   const isPatient = (user: string, patient: string) => w.patientOf(user) === patient;

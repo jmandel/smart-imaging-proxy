@@ -1,12 +1,12 @@
 // A SMART App Launch client: standalone launch, authorization code, PKCE S256, public client.
 // The submit functions do what a browser does on the Authorization Server's pages. Each takes the
-// world it acts in, the root unless given.
+// sandbox it acts in, the root unless given.
 import { createHash, randomBytes } from "node:crypto";
-import { localUrl, ROOT_URLS, type WorldUrls } from "../config";
+import { localUrl, ROOT_URLS, type SandboxUrls } from "../config";
 
 export const CALLBACK = ROOT_URLS.callback;
 export const CLINICAL_FHIR = ROOT_URLS.clinicalFhir;
-type At = Pick<WorldUrls, "auth" | "callback" | "clinicalFhir">;
+type At = Pick<SandboxUrls, "auth" | "callback" | "clinicalFhir">;
 export const DEFAULT_SCOPE = "launch/patient patient/ImagingStudy.rs online_access";
 const FORM = { "content-type": "application/x-www-form-urlencoded" };
 

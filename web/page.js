@@ -1,5 +1,5 @@
-// What every page shares: its scope, small helpers, and the settings menu in the header.
-/** The scope this page is in, if any: every request it makes stays there. */
+// What every page shares: its sandbox, small helpers, and the settings menu in the header.
+/** The sandbox this page is in, if any: every request it makes stays there. */
 const BASE = location.pathname.match(/^\/s\/[^/]+/)?.[0] ?? "";
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -22,7 +22,7 @@ const SIGNIN_KEY = "smart-imaging-signin";
 function signInMode() { try { return localStorage.getItem(SIGNIN_KEY) === "window" ? "window" : "auto"; } catch { return "auto"; } }
 function setSignInMode(mode) { try { localStorage.setItem(SIGNIN_KEY, mode); } catch {} document.dispatchEvent(new CustomEvent("signin-mode", { detail: mode })); }
 
-// The settings menu: how people sign in, where images come from, the demo clock, and resets, for this page's world.
+// The settings menu: how people sign in, where images come from, the demo clock, and resets, for this page's sandbox.
 const BACKEND_LABELS = { "static-files": "Local files", s3: "S3 bucket", orthanc: "Orthanc" };
 function initSettings() {
   const button = $("#settings-button"), panel = $("#settings");
@@ -80,4 +80,4 @@ function initHeader() {
 }
 initHeader();
 // A sandbox's own page links to that sandbox's guide.
-if (BASE) for (const a of $$("a[data-scoped]")) a.setAttribute("href", `${BASE}${a.getAttribute("href")}`);
+if (BASE) for (const a of $$("a[data-sandboxed]")) a.setAttribute("href", `${BASE}${a.getAttribute("href")}`);

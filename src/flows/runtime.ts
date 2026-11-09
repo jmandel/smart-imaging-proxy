@@ -3,7 +3,7 @@ import { boundaryOf, createModel, readMultipart, ref, type AppApproval, type Ser
 import { currentContext, startSpan, tfetch, traceparentOf, withSpan, check as traceCheck } from "../trace";
 import { accountUrl, buildAuthorization, submitConsent, submitDelegation, submitRevocation, tokenRequestBody } from "./oauth";
 import { clientAssertion, PATIENT_NAMES, USERS, type BackendClient } from "../auth-server";
-import { nameOf, type World } from "../world";
+import { nameOf, type Sandbox } from "../sandbox";
 import { patientAttributes } from "../stores";
 
 export interface Input { id: string; label: string; type: "select" | "multi" | "text"; options?: { value: string; label: string }[]; default?: any; clickDefault?: any; help?: string; }
@@ -45,21 +45,21 @@ export class Ctx {
   exchanges: Exchange[] = [];
   checks: Check[] = [];
   private decisionStart = 0;
-  /** A flow acts in one world: its own scope, or for Browse, whichever world the page is in. */
-  constructor(public world: World, public clients: Record<string, BackendClient>) {}
-  get urls() { return this.world.urls; }
-  get backend() { return this.world.backend; }
+  /** A flow acts in one sandbox: its own, or for Browse, whichever sandbox the page is in. */
+  constructor(public sandbox: Sandbox, public clients: Record<string, BackendClient>) {}
+  get urls() { return this.sandbox.urls; }
+  get backend() { return this.sandbox.backend; }
   /** One patient's studies, Josh's unless named, from the catalog in use. For a flow's own displays and expectations. */
-  studies(patient = "josh-example") { return this.world.catalog.allStudies().filter(s => s.patient === patient); }
+  studies(patient = "josh-example") { return this.sandbox.catalog.allStudies().filter(s => s.patient === patient); }
   /** One study, with its full series list. */
   study(id: string): any {
-    const catalog = this.world.catalog;
+    const catalog = this.sandbox.catalog;
     const row = catalog.allStudies().find(s => s.id === id);
     return row && { ...row, series: catalog.hierarchies([row.pk]).get(row.pk)?.series ?? [] };
   }
   /** One patient's sites, Josh's unless named, in the catalog in use. */
   sites(patient = "josh-example") { return [...new Set(this.studies(patient).flatMap(s => s.site ? [s.site] : []))]; }
-  siteOf(id: string) { return this.world.catalog.allStudies().find(s => s.id === id)?.site; }
+  siteOf(id: string) { return this.sandbox.catalog.allStudies().find(s => s.id === id)?.site; }
   /** The patient the last launch asked for, if it named one. */
   private askedPatient: string | undefined;
   /** Set once a person in a window picks an account other than the one a step expects. */
@@ -84,7 +84,7 @@ export class Ctx {
     const who = this.signedIn;
     if (error !== "access_denied" || !who) return `The launch ended in ${error ?? "an error"}, so the app has no token`;
     const name = USERS[who]?.name.split(" ")[0] ?? who;
-    const mine = this.world.store.personSnapshot(ref("user", who));
+    const mine = this.sandbox.store.personSnapshot(ref("user", who));
     const held = [...(USERS[who]?.patient ? [USERS[who]!.patient!] : []), ...mine.relationships.filter(r => r.relation === "guardian_of").map(r => r.object.replace(/^patient:/, "")), ...mine.shares.filter(s => s.with === ref("user", who)).map(s => s.patient.replace(/^patient:/, ""))];
     if (!held.length) return `No patient has shared records with ${name}, so the app has no token`;
     if (this.askedPatient && !held.includes(this.askedPatient)) return `${(PATIENT_NAMES[this.askedPatient] ?? this.askedPatient).split(" ")[0]} hasn't shared records with ${name}, so the app has no token`;
@@ -101,25 +101,25 @@ export class Ctx {
     this.accountNote = same ? undefined : `${actual ?? "No one"} signed in, and this step expected ${expected}`;
     this.check("Signed in with the account this step expects", same, this.accountNote ?? expected);
   }
-  /** Replaces this world's service-access policies. */
-  async setServicePolicies(policies: ServiceAccessPolicy[]) { await this.world.policy.replacePolicies("service-access", policies); }
+  /** Replaces this sandbox's service-access policies. */
+  async setServicePolicies(policies: ServiceAccessPolicy[]) { await this.sandbox.policy.replacePolicies("service-access", policies); }
   /** A user's approval of an app, for one patient if named. */
-  approvalOf(user: string, client: string, patient?: string): AppApproval | undefined { return this.world.store.approvals().find(a => a.by === ref("user", user) && a.app === ref("app", client) && (!patient || a.patient === ref("patient", patient))); }
+  approvalOf(user: string, client: string, patient?: string): AppApproval | undefined { return this.sandbox.store.approvals().find(a => a.by === ref("user", user) && a.app === ref("app", client) && (!patient || a.patient === ref("patient", patient))); }
   /** The patients a user has approved an app for. */
-  approvedPatients(user: string, client: string) { return this.world.store.approvals().filter(a => a.by === ref("user", user) && a.app === ref("app", client)).map(a => a.patient.replace(/^patient:/, "")); }
+  approvedPatients(user: string, client: string) { return this.sandbox.store.approvals().filter(a => a.by === ref("user", user) && a.app === ref("app", client)).map(a => a.patient.replace(/^patient:/, "")); }
   /** The share a user holds of a patient's records, if any. */
-  shareWith(user: string, patient?: string): Share | undefined { return this.world.store.shares().find(s => s.with === ref("user", user) && (!patient || s.patient === ref("patient", patient))); }
+  shareWith(user: string, patient?: string): Share | undefined { return this.sandbox.store.shares().find(s => s.with === ref("user", user) && (!patient || s.patient === ref("patient", patient))); }
   /** A patient's studies a guardian doesn't see, by the organization's policy for the patient's age and the studies' labels. */
   hiddenFrom(user: string, patient: string): string[] {
-    const model = createModel({ patientOf: u => USERS[u]?.patient, attributesOf: patientAttributes, now: () => this.world.clock.now(), name: nameOf });
-    const snap = this.world.store.patientSnapshot(ref("patient", patient));
+    const model = createModel({ patientOf: u => USERS[u]?.patient, attributesOf: patientAttributes, now: () => this.sandbox.clock.now(), name: nameOf });
+    const snap = this.sandbox.store.patientSnapshot(ref("patient", patient));
     if (!model.guardianOf(snap, ref("user", user), ref("patient", patient))) return [];
     return this.studies(patient).filter(st => !model.baseline(snap, ref("user", user), ref("patient", patient), st).ok).map(st => st.id);
   }
-  advanceClock(seconds: number) { this.world.clock.advance(seconds); }
-  beginStep() { this.exchanges = []; this.checks = []; this.decisionStart = this.world.imaging.decisions.length; }
+  advanceClock(seconds: number) { this.sandbox.clock.advance(seconds); }
+  beginStep() { this.exchanges = []; this.checks = []; this.decisionStart = this.sandbox.imaging.decisions.length; }
   endStep(narrative?: string): StepResult {
-    return { narrative, exchanges: this.exchanges, checks: this.checks, decisions: this.world.imaging.decisions.slice(this.decisionStart) };
+    return { narrative, exchanges: this.exchanges, checks: this.checks, decisions: this.sandbox.imaging.decisions.slice(this.decisionStart) };
   }
 
   async json(actor: string, title: string, url: string, init: RequestInit & { headers?: Record<string, string> } = {}) {
@@ -149,7 +149,7 @@ export class Ctx {
     const redirected = `It redirected back with ${back.searchParams.get("code") ? "a single-use code" : `error ${back.searchParams.get("error")}`}.`;
     const browser: Exchange = { title: "Browser: authorization request, sign-in, and approval", actor: "User's browser", method: "GET", url: shown, requestHeaders: {}, status: back.searchParams.get("code") ? 302 : "denied", responseHeaders: {}, summary: `${opts.window ? "A person used the Authorization Server's pages in a window" : `Authorization Server's pages: ${user} signed in`}. ${redirected}` };
     this.exchanges.push(browser);
-    const signedIn = this.world.auth.signedInFor(a.state);
+    const signedIn = this.sandbox.auth.signedInFor(a.state);
     this.signedIn = signedIn;
     if (opts.window) {
       if (signedIn) browser.summary = `Authorization Server's pages: ${signedIn} signed in${back.searchParams.get("code") ? " and approved" : ""}. ${redirected}`;
@@ -195,7 +195,7 @@ export class Ctx {
   async delegate(owner: string, delegate: string, relationship: string, sites: string[], opts: { window?: boolean; patient?: string } = {}) {
     const url = accountUrl(owner, this.traceFields(), delegate, this.urls);
     let status = 303;
-    if (opts.window) { await this.inWindow(url); this.checkAccount(this.world.auth.lastAccountSignIn, owner); }
+    if (opts.window) { await this.inWindow(url); this.checkAccount(this.sandbox.auth.lastAccountSignIn, owner); }
     else status = (await withSpan("user", "action", `Browser: ${owner} signs in and shares with ${delegate}`, { sites: sites.join(", "), patient: opts.patient }, () => submitDelegation(url, { user: owner, delegate, relationship, sites, patient: opts.patient }, browserFetch))).status;
     this.exchanges.push({ title: "Browser: sign in to the account page, and share", actor: "User's browser", method: "POST", url: url.replace(/[?&]demo_[^&]+/g, ""), requestHeaders: {}, status, responseHeaders: {}, summary: status === 303 ? `The share is kept at the Imaging Server, not in any token.` : `The account page refused to record this.` });
     return status;
@@ -208,13 +208,13 @@ export class Ctx {
   async backendToken(clientId: string, scope = "system/ImagingStudy.rs") {
     const c = this.clients[clientId]!;
     const conf = await this.json(clientId, "Discover the token endpoint", `${this.urls.clinicalFhir}/.well-known/smart-configuration`);
-    const assertion = withSpanSync("app", "Sign a client assertion with the client's private key (ES256)", () => clientAssertion(c, conf.body.token_endpoint, this.world.clock), (j: string) => { const [h, b] = j.split("."); return { header: JSON.parse(Buffer.from(h!, "base64url").toString()), claims: JSON.parse(Buffer.from(b!, "base64url").toString()) }; });
+    const assertion = withSpanSync("app", "Sign a client assertion with the client's private key (ES256)", () => clientAssertion(c, conf.body.token_endpoint, this.sandbox.clock), (j: string) => { const [h, b] = j.split("."); return { header: JSON.parse(Buffer.from(h!, "base64url").toString()), claims: JSON.parse(Buffer.from(b!, "base64url").toString()) }; });
     const r = await this.json(clientId, "SMART Backend Services token request", conf.body.token_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "client_credentials", scope, client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: assertion }).toString() });
     return r.body;
   }
   async refresh(refreshToken: string | undefined, client = "portal-app") {
     this.need(refreshToken, this.noToken);
-    const r = await this.json("App", "Refresh the access token", this.world.auth.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: client }).toString() });
+    const r = await this.json("App", "Refresh the access token", this.sandbox.auth.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: client }).toString() });
     return r.body;
   }
   async search(token: string | undefined, query = "patient=josh-example&_include=ImagingStudy:endpoint", actor = "App") {
@@ -273,7 +273,7 @@ export class Ctx {
       }
     } else await res.body?.cancel();
     span.end(res.ok && complete || !res.ok ? (res.ok ? "ok" : "denied") : "error", { status: res.status, parts: parts.length, closing_boundary: complete, failed });
-    const ev = this.world.proxy.events[this.world.proxy.events.length - 1];
+    const ev = this.sandbox.proxy.events[this.sandbox.proxy.events.length - 1];
     const syn = [...new Set(parts.map(p => p.syntax))].join(", ");
     const bytes = parts.reduce((n, p) => n + p.bytes, 0);
     this.exchanges.push({

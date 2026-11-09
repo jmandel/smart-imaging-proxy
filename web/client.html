@@ -6,7 +6,9 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Crect width='20' height='20' rx='3' fill='%230f2a3d'/%3E%3Ccircle cx='10' cy='10' r='4' fill='%23e8f1f6'/%3E%3C/svg%3E">
 <script>
 // Decided before anything paints, so a page that's only passing through never shows the landing page.
-(() => { const base = (location.pathname.match(/^\/s\/[^/]+/) || [""])[0]; let session; try { session = JSON.parse(sessionStorage.getItem(`smart-imaging-client:${base}`) || "{}").session; } catch {} if (/[?&](connect=1|code=|error=)/.test(location.search) || session) document.documentElement.classList.add("connecting"); try { if (localStorage.getItem("smart-imaging-client:world")) document.documentElement.classList.add("has-sandbox"); } catch {} })();
+// Browsers that saved their sandbox under its old name keep it.
+try { for(const[o,n]of[["world","sandbox"],["worlds","sandboxes"]]){const a="smart-imaging-client:"+o,b="smart-imaging-client:"+n,v=localStorage.getItem(a);if(v!==null){if(localStorage.getItem(b)===null)localStorage.setItem(b,v);localStorage.removeItem(a)}} } catch {}
+(() => { const base = (location.pathname.match(/^\/s\/[^/]+/) || [""])[0]; let session; try { session = JSON.parse(sessionStorage.getItem(`smart-imaging-client:${base}`) || "{}").session; } catch {} if (/[?&](connect=1|code=|error=)/.test(location.search) || session) document.documentElement.classList.add("connecting"); try { if (localStorage.getItem("smart-imaging-client:sandbox")) document.documentElement.classList.add("has-sandbox"); } catch {} })();
 </script>
 <link rel="preload" href="/fonts/atkinson-next.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/atkinson-mono.woff2" as="font" type="font/woff2" crossorigin>

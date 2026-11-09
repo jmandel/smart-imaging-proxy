@@ -79,7 +79,7 @@ export const protocolFlows: Flow[] = [
       } },
       { id: "outage", title: "The decision API goes down", actor: "Operations", doc: `<p>The fast path uses only a public key, so it isn't affected. A request needing a decision can't get one. The response is <code>503</code> with <code>Retry-After</code>, which the guide allows, and no data.</p>`, run: async c => {
         const s = c.found(WRIST);
-        c.world.imaging.setOutage(true);
+        c.sandbox.imaging.setOutage(true);
         const a = await c.retrieve("App", "Fast path during the outage", c.studyUrl(s.base, s.uid), c.state.token);
         c.check("Still served", a.status === 200 && a.authz === "instant");
         const n = await c.refresh(c.state.refresh);
@@ -88,7 +88,7 @@ export const protocolFlows: Flow[] = [
         c.check("503, no data", b.status === 503 && b.parts.length === 0, `status ${b.status}`);
       } },
       { id: "restore", title: "The decision API returns", actor: "Operations", doc: `<p>Failures aren't cached, so the next request succeeds.</p>`, run: async c => {
-        c.world.imaging.setOutage(false);
+        c.sandbox.imaging.setOutage(false);
         const s = c.found(WRIST);
         const r = await c.retrieve("App", "Retry", c.studyUrl(s.base, s.uid), c.state.newToken);
         c.check("Recovered", r.status === 200 && r.authz === "asked", `authorization: ${r.authz}`);
@@ -183,7 +183,7 @@ export const protocolFlows: Flow[] = [
           const r = await c.retrieve("App", "Your Accept header", c.studyUrl(s.base, s.uid), c.state.token, i.accept);
           c.check("Either a correct 406, or only labeled parts", r.status === 406 || (r.status === 200 && labelled(r)), `status ${r.status}`);
           if (c.backend === "orthanc") {
-            const raw = await c.world.backends.orthanc.rawProbe!(`/studies/${s.uid}`, `multipart/related; type="application/dicom"; transfer-syntax=${i.accept.match(/transfer-syntax=([^;,\s]+)/)?.[1] ?? "*"}`);
+            const raw = await c.sandbox.backends.orthanc.rawProbe!(`/studies/${s.uid}`, `multipart/related; type="application/dicom"; transfer-syntax=${i.accept.match(/transfer-syntax=([^;,\s]+)/)?.[1] ?? "*"}`);
             c.exchanges.push({ title: "What Orthanc itself returned", actor: "Proxy (for comparison)", method: "GET", url: `${CONFIG.orthanc.base}/dicom-web/studies/…`, requestHeaders: {}, status: raw.status, responseHeaders: raw.contentType ? { "content-type": raw.contentType } : {}, summary: raw.partSyntaxLabel ? `First part header: ${raw.partSyntaxLabel}` : undefined, body: raw.status >= 400 ? raw.bodyPreview : undefined });
           }
         } },
@@ -218,9 +218,9 @@ export const protocolFlows: Flow[] = [
         inputs: () => [{ id: "after", label: "Instances before failure", type: "select", options: ["5", "50", "200"].map(v => ({ value: v, label: v })), default: "50" }],
         run: async (c, i) => {
           const s = c.found(MRI);
-          c.world.setTruncateAfter(Number(i.after));
+          c.sandbox.setTruncateAfter(Number(i.after));
           const r = await c.retrieve("App", "Retrieve during the failure", c.studyUrl(s.base, s.uid), c.state.token);
-          c.world.setTruncateAfter(undefined);
+          c.sandbox.setTruncateAfter(undefined);
           c.check("The client sees it wasn't complete", !r.complete && r.failed, `${r.parts.length} parts, closing boundary: ${r.complete}`);
           c.check("Fewer parts than the manifest lists", r.parts.length < s.resource.numberOfInstances);
         } },
@@ -250,7 +250,7 @@ export const protocolFlows: Flow[] = [
         c.check("No internal hostnames", !text.includes(":4611") && !text.includes(":4610") && !text.includes("bulk:"));
         c.check("Every bulk link goes through the proxy", uris.length > 0 && uris.every(u => u.startsWith(c.urls.proxy)), `${uris.length} links`);
         if (c.backend === "orthanc") {
-          const raw = await c.world.backends.orthanc.rawProbe!(`/studies/${s.uid}/metadata`, "application/dicom+json");
+          const raw = await c.sandbox.backends.orthanc.rawProbe!(`/studies/${s.uid}/metadata`, "application/dicom+json");
           c.exchanges.push({ title: "What Orthanc itself returned", actor: "Proxy (for comparison)", method: "GET", url: `${CONFIG.orthanc.base}/dicom-web/studies/…/metadata`, requestHeaders: {}, status: raw.status, responseHeaders: {}, summary: "Orthanc's own BulkDataURI values are absolute internal URLs." });
         }
       } },
@@ -309,7 +309,7 @@ export const protocolFlows: Flow[] = [
           const onFirst = studiesOn(first.body).map(s => s.id);
           const remaining = c.studies().filter(s => s.site !== i.site);
           // Josh narrows the app's approval, which takes effect at once.
-          const approve = (sites?: string[]) => c.world.policy.approveApp({ by: "user:josh", app: "app:portal-app", patient: "patient:josh-example", fhirUser: "Patient/josh-example", sites: sites ?? c.sites() });
+          const approve = (sites?: string[]) => c.sandbox.policy.approveApp({ by: "user:josh", app: "app:portal-app", patient: "patient:josh-example", fhirUser: "Patient/josh-example", sites: sites ?? c.sites() });
           await approve(c.sites().filter(s => s !== i.site));
           if (!first.next) { c.check("Everything fit on page 1, so there's no page 2 to change", true); await approve(); return; }
           const second = await c.searchPage("Page 2, after the change", c.state.token, first.next);

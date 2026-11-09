@@ -1,5 +1,5 @@
-// Policy scopes: `/s/{scope}/` in front of any path is a world of its own. Nothing one world issues
-// works in another, and every URL a scope issues stays in it. These run in either layout: the one
+// Policy sandboxes: `/s/{sandbox}/` in front of any path is a sandbox of its own. Nothing one sandbox issues
+// works in another, and every URL a sandbox issues stays in it. These run in either layout: the one
 // origin, or DEMO_ONE_ORIGIN=0 with each service on its own port.
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
@@ -10,15 +10,15 @@ import { registerClients } from "../src/flows";
 import { createDemoServer } from "../src/demo-server";
 import { buildAuthorization, scriptedLaunch, submitConsent, tokenRequestBody } from "../src/flows/oauth";
 import { CONFIG, localUrl, ONE_ORIGIN, PORTS, urlsFor } from "../src/config";
-import { createScopes, decodeSeed, encodeSeed, MAX_SEED_BYTES, MAX_SEED_CHARS, splitScope } from "../src/scopes";
+import { createSandboxes, decodeSeed, encodeSeed, MAX_SEED_BYTES, MAX_SEED_CHARS, splitSandbox } from "../src/sandboxes";
 import { flushTraces } from "../src/trace";
 import { TraceStore } from "../src/trace-store";
 import { resetClock } from "../src/clock";
-import type { World } from "../src/world";
+import type { Sandbox } from "../src/sandbox";
 
 const root = join(import.meta.dir, "..");
 const ACCEPT = "multipart/related; type=application/dicom; transfer-syntax=*";
-/** A relationship as a fact, without the ids and times its world gave it. */
+/** A relationship as a fact, without the ids and times its sandbox gave it. */
 const fact = ({ id: _, recordedAt: __, ...r }: any) => r;
 const RULE = { id: "r1", type: "service-access" as const, service: "service:c", patients: "any" as const, allow: { all: true } };
 const services = (store: { policiesOf(type: "service-access"): unknown[] }) => store.policiesOf("service-access");
@@ -31,29 +31,29 @@ afterAll(() => { demo.stop(true); stack.stop(); });
 beforeEach(async () => { await stack.resetAll(); resetClock(); stack.setBackend("static-files"); });
 
 const get = (url: string, init: RequestInit = {}) => fetch(localUrl(url), { redirect: "manual", ...init });
-const searchIn = async (w: { urls: World["urls"] }, token: string) => get(`${w.urls.imaging}/fhir/ImagingStudy?patient=josh-example&_include=ImagingStudy:endpoint&_count=2`, { headers: { Authorization: `Bearer ${token}` } });
-const rootWorld = () => stack.root;
+const searchIn = async (w: { urls: Sandbox["urls"] }, token: string) => get(`${w.urls.imaging}/fhir/ImagingStudy?patient=josh-example&_include=ImagingStudy:endpoint&_count=2`, { headers: { Authorization: `Bearer ${token}` } });
+const rootSandbox = () => stack.root;
 
 describe("isolation", () => {
-  test("a token from one scope works in no other scope, and not at the root", async () => {
-    const a = stack.scopes.mint(), b = stack.scopes.mint();
+  test("a token from one sandbox works in no other sandbox, and not at the root", async () => {
+    const a = stack.sandboxes.mint(), b = stack.sandboxes.mint();
     const t = await scriptedLaunch("josh", "portal-app", { at: a.urls });
     expect((await searchIn(a, t.access_token)).status).toBe(200);
     expect((await searchIn(b, t.access_token)).status).toBe(401);
-    expect((await searchIn(rootWorld(), t.access_token)).status).toBe(401);
+    expect((await searchIn(rootSandbox(), t.access_token)).status).toBe(401);
     // And the root's works only at the root.
     const r = await scriptedLaunch("josh");
-    expect((await searchIn(rootWorld(), r.access_token)).status).toBe(200);
+    expect((await searchIn(rootSandbox(), r.access_token)).status).toBe(200);
     expect((await searchIn(a, r.access_token)).status).toBe(401);
   });
-  test("an authorization code from one scope can't be redeemed in another", async () => {
-    const a = stack.scopes.mint(), b = stack.scopes.mint();
+  test("an authorization code from one sandbox can't be redeemed in another", async () => {
+    const a = stack.sandboxes.mint(), b = stack.sandboxes.mint();
     const conf: any = await (await get(`${a.urls.clinicalFhir}/.well-known/smart-configuration`)).json();
     const auth = buildAuthorization(conf.authorization_endpoint, "portal-app", undefined, undefined, "josh", undefined, a.urls);
     const back = await submitConsent(auth.url, { user: "josh" });
     const code = back.searchParams.get("code")!;
     expect(code).toBeTruthy();
-    for (const w of [b, rootWorld()]) {
+    for (const w of [b, rootSandbox()]) {
       const r = await get(w.auth.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: tokenRequestBody(auth, code) });
       expect(r.status).toBe(400);
       expect(((await r.json()) as any).error).toBe("invalid_grant");
@@ -61,8 +61,8 @@ describe("isolation", () => {
     const ok = await get(a.auth.tokenUrl, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: tokenRequestBody(auth, code) });
     expect(ok.status).toBe(200);
   });
-  test("a signed URL from one scope is instant there, and nothing elsewhere, even moved to another scope's prefix", async () => {
-    const a = stack.scopes.mint(), b = stack.scopes.mint();
+  test("a signed URL from one sandbox is instant there, and nothing elsewhere, even moved to another sandbox's prefix", async () => {
+    const a = stack.sandboxes.mint(), b = stack.sandboxes.mint();
     const t = await scriptedLaunch("josh", "portal-app", { at: a.urls });
     const bundle: any = await (await searchIn(a, t.access_token)).json();
     const study = bundle.entry.find((e: any) => e.resource.resourceType === "ImagingStudy").resource;
@@ -75,15 +75,15 @@ describe("isolation", () => {
     await ok.body?.cancel();
     expect(a.proxy.events.at(-1)!.authz).toBe("instant");
     const ctx = address.split("/wado/")[1];
-    for (const w of [b, rootWorld()]) {
+    for (const w of [b, rootSandbox()]) {
       const r = await retrieve(`${w.urls.proxy}/wado/${ctx}`);
       expect(r.status).toBe(401);
       await r.body?.cancel();
       expect(w.proxy.events.at(-1)!.authz).toBe("asked");
     }
   });
-  test("a policy change in one scope is invisible in another and at the root, and the root's in every scope", async () => {
-    const a = stack.scopes.mint(), b = stack.scopes.mint();
+  test("a policy change in one sandbox is invisible in another and at the root, and the root's in every sandbox", async () => {
+    const a = stack.sandboxes.mint(), b = stack.sandboxes.mint();
     await a.policy.replacePolicies("service-access", [RULE]);
     await a.policy.setSettings({ maxSeriesInContext: 3 });
     expect(services(a.store)).toEqual([RULE]);
@@ -92,40 +92,40 @@ describe("isolation", () => {
     await stack.policy.replacePolicies("service-access", [{ ...RULE, id: "root-rule" }]);
     expect(services(a.store)).toEqual([RULE]);
     expect(services(b.store)).toEqual([]);
-    expect(services(stack.scopes.mint().store)).toEqual([]);
+    expect(services(stack.sandboxes.mint().store)).toEqual([]);
     expect(b.store.getSettings().maxSeriesInContext).toBe(12);
-    // Sharing on one scope's account page reaches only that scope's policy.
+    // Sharing on one sandbox's account page reaches only that sandbox's policy.
     const t = await scriptedLaunch("josh", "portal-app", { at: a.urls, sites: ["Lakeside Imaging"] });
     expect(t.access_token).toBeTruthy();
     expect(a.store.approvals().length).toBe(1);
     expect(b.store.approvals()).toEqual([]);
     expect(stack.store.approvals()).toEqual([]);
   });
-  test("each scope signs with a key of its own, and serves only its own JWKS", async () => {
-    const a = stack.scopes.mint(), b = stack.scopes.mint();
-    const jwks = async (w: World) => ((await (await get(`${w.urls.imaging}/.well-known/jwks.json`)).json()) as any).keys.map((k: any) => k.kid);
+  test("each sandbox signs with a key of its own, and serves only its own JWKS", async () => {
+    const a = stack.sandboxes.mint(), b = stack.sandboxes.mint();
+    const jwks = async (w: Sandbox) => ((await (await get(`${w.urls.imaging}/.well-known/jwks.json`)).json()) as any).keys.map((k: any) => k.kid);
     expect(await jwks(a)).toEqual([a.imaging.signingKid]);
     expect(await jwks(b)).toEqual([b.imaging.signingKid]);
-    expect(await jwks(rootWorld())).toEqual([stack.imaging.signingKid]);
+    expect(await jwks(rootSandbox())).toEqual([stack.imaging.signingKid]);
     expect(new Set([a.imaging.signingKid, b.imaging.signingKid, stack.imaging.signingKid]).size).toBe(3);
   });
-  test("a scope can't hold another, and the internal APIs stay off the one origin in a scope too", async () => {
-    const a = stack.scopes.mint(), b = stack.scopes.mint();
-    expect((await get(`${a.urls.auth}/s/${b.scope}/fhir/.well-known/smart-configuration`)).status).toBe(404);
-    expect((await fetch(`http://127.0.0.1:${PORTS.auth}/s/${a.scope}/s/${b.scope}/fhir/.well-known/smart-configuration`)).status).toBe(404);
+  test("a sandbox can't hold another, and the internal APIs stay off the one origin in a sandbox too", async () => {
+    const a = stack.sandboxes.mint(), b = stack.sandboxes.mint();
+    expect((await get(`${a.urls.auth}/s/${b.id}/fhir/.well-known/smart-configuration`)).status).toBe(404);
+    expect((await fetch(`http://127.0.0.1:${PORTS.auth}/s/${a.id}/s/${b.id}/fhir/.well-known/smart-configuration`)).status).toBe(404);
     if (ONE_ORIGIN) {
       expect((await get(`${a.urls.imaging}/policy/v2/document`, { headers: { Authorization: "Bearer x" } })).status).toBe(404);
       expect((await get(`${a.urls.proxy}/internal/keys/refresh`, { method: "POST" })).status).toBe(404);
     }
-    // On its loopback port, a scope's policy API takes only that scope's credential.
-    expect((await fetch(`http://127.0.0.1:${PORTS.imaging}/s/${a.scope}/policy/v2/document`, { headers: { Authorization: "Bearer x" } })).status).toBe(401);
+    // On its loopback port, a sandbox's policy API takes only that sandbox's credential.
+    expect((await fetch(`http://127.0.0.1:${PORTS.imaging}/s/${a.id}/policy/v2/document`, { headers: { Authorization: "Bearer x" } })).status).toBe(401);
     expect((await a.policy.policies("service-access"))).toEqual([]);
   });
 });
 
 describe("the backend", () => {
-  test("a scope picks its own, the root's stays as it was, and a new scope starts on the root's", async () => {
-    const w = stack.scopes.mint();
+  test("a sandbox picks its own, the root's stays as it was, and a new sandbox starts on the root's", async () => {
+    const w = stack.sandboxes.mint();
     const pick = (base: string, backend: string) => get(`${base}/api/sandbox`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ storage: backend }) });
     expect((await pick(w.urls.demo, "orthanc")).status).toBe(200);
     expect([w.backend, w.catalogSource]).toEqual(["orthanc", "orthanc"]);
@@ -134,33 +134,33 @@ describe("the backend", () => {
     expect(((await (await get(`${CONFIG.demoUrl}/api/sandbox/storage`)).json()) as any).current).toBe("static-files");
     expect(((await (await get(`${w.urls.demo}/api/flows`)).json()) as any).backend).toBe("orthanc");
     stack.setBackend("s3");
-    expect(stack.scopes.mint().backend).toBe("s3");
+    expect(stack.sandboxes.mint().backend).toBe("s3");
     expect(w.backend).toBe("orthanc");
   });
 });
 
-describe("a scope's rest of path", () => {
+describe("a sandbox's rest of path", () => {
   test("is never read as another origin, so the write guard and the internal-path block still hold", async () => {
-    const a = stack.scopes.mint();
+    const a = stack.sandboxes.mint();
     const evil = { method: "POST", headers: { origin: "http://evil.example", "content-type": "application/json" }, body: "{}" };
     expect((await get(`${CONFIG.demoUrl}/api/sandboxes`, evil)).status).toBe(403);
-    const before = stack.scopes.size;
-    const sneaky = await get(`${urlsFor(`/s/${a.scope}`).demo}//evil.example/api/sandboxes`, evil);
+    const before = stack.sandboxes.size;
+    const sneaky = await get(`${urlsFor(`/s/${a.id}`).demo}//evil.example/api/sandboxes`, evil);
     expect([403, 404]).toContain(sneaky.status);
-    expect(stack.scopes.size).toBe(before);
+    expect(stack.sandboxes.size).toBe(before);
     for (const path of ["//h/policy/v2/document", "//127.0.0.1/policy/v2/document"]) {
       expect([path, (await get(`${a.urls.imaging}${path}`, { headers: { Authorization: "Bearer x" } })).status]).toEqual([path, 404]);
       expect([path, (await get(`${CONFIG.imagingUrl}${path}`, { headers: { Authorization: "Bearer x" } })).status]).toEqual([path, 404]);
     }
     // On a service's own port, too.
-    expect((await fetch(`http://127.0.0.1:${PORTS.imaging}/s/${a.scope}//h/policy/v2/document`, { headers: { Authorization: "Bearer x" } })).status).toBe(404);
+    expect((await fetch(`http://127.0.0.1:${PORTS.imaging}/s/${a.id}//h/policy/v2/document`, { headers: { Authorization: "Bearer x" } })).status).toBe(404);
   });
 });
 
-describe("every URL a scope issues carries its prefix", () => {
+describe("every URL a sandbox issues carries its prefix", () => {
   test("discovery, the authorize redirects, a search Bundle and its Endpoint.address, and a next link", async () => {
-    const w = stack.scopes.mint();
-    const prefix = `/s/${w.scope}`;
+    const w = stack.sandboxes.mint();
+    const prefix = `/s/${w.id}`;
     const conf: any = await (await get(`${w.urls.clinicalFhir}/.well-known/smart-configuration`)).json();
     for (const k of ["issuer", "authorization_endpoint", "token_endpoint", "introspection_endpoint", "revocation_endpoint"]) expect([k, new URL(conf[k]).pathname.startsWith(prefix)]).toEqual([k, true]);
     expect(conf.associated_endpoints[0].url).toBe(`${w.urls.imaging}/fhir`);
@@ -199,8 +199,8 @@ describe("every URL a scope issues carries its prefix", () => {
     expect(next.entry.length).toBeGreaterThan(0);
     expect(JSON.stringify([conf, bundle, next])).not.toMatch(new RegExp(`${CONFIG.authUrl.replace(/[.:/]/g, "\\$&")}/(fhir|authorize|token)`));
   });
-  test("metadata's bulk links go through the scope's proxy", async () => {
-    const w = stack.scopes.mint();
+  test("metadata's bulk links go through the sandbox's proxy", async () => {
+    const w = stack.sandboxes.mint();
     const t = await scriptedLaunch("josh", "portal-app", { at: w.urls });
     const bundle: any = await (await get(`${w.urls.imaging}/fhir/ImagingStudy?patient=josh-example&_include=ImagingStudy:endpoint`, { headers: { Authorization: `Bearer ${t.access_token}` } })).json();
     const study = bundle.entry.find((e: any) => e.resource.id === "xr-wrist-left-2012").resource;
@@ -214,28 +214,28 @@ describe("every URL a scope issues carries its prefix", () => {
 });
 
 describe("inline seeds", () => {
-  test("a seed builds its world on first use, the same one after, and its changes stay there", async () => {
+  test("a seed builds its sandbox on first use, the same one after, and its changes stay there", async () => {
     const seed = encodeSeed({ policies: [RULE], contextLifetimeSeconds: 120 });
     expect(seed).toMatch(/^~[A-Za-z0-9_-]+$/);
-    const first = stack.scopes.resolve(seed);
-    expect("world" in first).toBe(true);
-    const w = (first as { world: World }).world;
+    const first = stack.sandboxes.resolve(seed);
+    expect("sandbox" in first).toBe(true);
+    const w = (first as { sandbox: Sandbox }).sandbox;
     expect(services(w.store)).toEqual([RULE]);
     expect(w.store.getSettings().contextLifetimeSeconds).toBe(120);
     expect(w.store.relationships().map(fact)).toEqual(stack.store.relationships().map(fact));
     expect(w.store.policies()).toEqual([RULE]);
-    // Over HTTP, the same world.
+    // Over HTTP, the same sandbox.
     const conf: any = await (await get(`${w.urls.clinicalFhir}/.well-known/smart-configuration`)).json();
     expect(conf.issuer).toBe(w.urls.auth);
     expect(new URL(conf.issuer).pathname.startsWith(`/s/${seed}`)).toBe(true);
     await w.policy.replacePolicies("service-access", []);
-    expect((stack.scopes.resolve(seed) as { world: World }).world).toBe(w);
+    expect((stack.sandboxes.resolve(seed) as { sandbox: Sandbox }).sandbox).toBe(w);
     expect(services(w.store)).toEqual([]);
     expect(services(stack.store)).toEqual([]);
   });
   test("a seed's relationships and policies, when it names them, replace the ones on file, and its choices go in beside them", async () => {
     const share = { from: "user:josh", with: "user:alex-neighbor", patient: "patient:josh-example", sites: ["Lakeside Imaging"], label: "friend" };
-    const w = (stack.scopes.resolve(encodeSeed({ relationships: [], shares: [share] })) as { world: World }).world;
+    const w = (stack.sandboxes.resolve(encodeSeed({ relationships: [], shares: [share] })) as { sandbox: Sandbox }).sandbox;
     expect(w.store.relationships()).toEqual([]);
     expect(w.store.policies()).toEqual(stack.store.policies());
     expect(w.store.shares()).toMatchObject([{ ...share, basis: "self" }]);
@@ -243,7 +243,7 @@ describe("inline seeds", () => {
     w.store.putRelationship({ subject: "user:sam-caregiver", relation: "guardian_of", object: "patient:riley-example" });
     w.store.resetPolicy();
     expect([w.store.relationships(), w.store.shares()]).toEqual([[], []]);
-    const g = (stack.scopes.resolve(encodeSeed({ policies: [] })) as { world: World }).world;
+    const g = (stack.sandboxes.resolve(encodeSeed({ policies: [] })) as { sandbox: Sandbox }).sandbox;
     expect([g.store.policies(), g.store.relationships().map(fact)]).toEqual([[], stack.store.relationships().map(fact)]);
   });
   test("a seed that isn't a valid policy, or is too large, gets a 400 naming why", async () => {
@@ -259,7 +259,7 @@ describe("inline seeds", () => {
       [`~${"A".repeat(MAX_SEED_CHARS + 1)}`, "at most"],
       [raw({ policies: [{ ...RULE, description: "x".repeat(MAX_SEED_BYTES) }] }), `${MAX_SEED_BYTES} bytes`],
     ] as const) {
-      const r = stack.scopes.resolve(seg);
+      const r = stack.sandboxes.resolve(seg);
       expect([why, "error" in r && r.status, "error" in r && r.error.includes(why)]).toEqual([why, 400, true]);
     }
     const over = await get(`${urlsFor(`/s/${raw({ policies: "nope" })}`).clinicalFhir}/.well-known/smart-configuration`);
@@ -269,59 +269,59 @@ describe("inline seeds", () => {
   });
 });
 
-describe("scope lifetimes", () => {
+describe("sandbox lifetimes", () => {
   const catalog = createCatalog();
   const shared = { catalogs: { archive: catalog, orthanc: catalog }, backends: {} as any, clientKeys: new Map(), initialBackend: () => "static-files" as const };
   test("past the cap, the least recently used go first; an evicted id is gone, and an evicted seed builds again", () => {
-    const scopes = createScopes(shared, { max: 2, maxSeeds: 1 });
-    const a = scopes.mint(), b = scopes.mint();
-    expect(scopes.resolve(a.scope!)).toMatchObject({ world: a });
-    const c = scopes.mint();
-    expect(scopes.size).toBe(2);
-    expect(scopes.resolve(b.scope!)).toMatchObject({ status: 404 });
-    expect(scopes.resolve(a.scope!)).toMatchObject({ world: a });
-    expect(scopes.resolve(c.scope!)).toMatchObject({ world: c });
+    const sandboxes = createSandboxes(shared, { max: 2, maxSeeds: 1 });
+    const a = sandboxes.mint(), b = sandboxes.mint();
+    expect(sandboxes.resolve(a.id!)).toMatchObject({ sandbox: a });
+    const c = sandboxes.mint();
+    expect(sandboxes.size).toBe(2);
+    expect(sandboxes.resolve(b.id!)).toMatchObject({ status: 404 });
+    expect(sandboxes.resolve(a.id!)).toMatchObject({ sandbox: a });
+    expect(sandboxes.resolve(c.id!)).toMatchObject({ sandbox: c });
     const seed = encodeSeed({ policies: [RULE] });
-    const s1 = (scopes.resolve(seed) as { world: World }).world;
+    const s1 = (sandboxes.resolve(seed) as { sandbox: Sandbox }).sandbox;
     s1.store.setDocument({ policies: [] });
-    scopes.resolve(encodeSeed({ policies: [] }));
-    const s2 = (scopes.resolve(seed) as { world: World }).world;
+    sandboxes.resolve(encodeSeed({ policies: [] }));
+    const s2 = (sandboxes.resolve(seed) as { sandbox: Sandbox }).sandbox;
     expect(s2).not.toBe(s1);
     expect(services(s2.store)).toEqual([RULE]);
-    scopes.close();
+    sandboxes.close();
   });
-  test("seeds have a pool of their own, so any number of them never evicts a minted scope", () => {
-    const scopes = createScopes(shared, { max: 2, maxSeeds: 2 });
-    const a = scopes.mint(), b = scopes.mint();
-    for (let i = 0; i < 10; i++) expect("world" in scopes.resolve(encodeSeed({ contextLifetimeSeconds: 60 + i }))).toBe(true);
-    expect(scopes.resolve(a.scope!)).toMatchObject({ world: a });
-    expect(scopes.resolve(b.scope!)).toMatchObject({ world: b });
-    expect(scopes.size).toBe(4);
+  test("seeds have a pool of their own, so any number of them never evicts a minted sandbox", () => {
+    const sandboxes = createSandboxes(shared, { max: 2, maxSeeds: 2 });
+    const a = sandboxes.mint(), b = sandboxes.mint();
+    for (let i = 0; i < 10; i++) expect("sandbox" in sandboxes.resolve(encodeSeed({ contextLifetimeSeconds: 60 + i }))).toBe(true);
+    expect(sandboxes.resolve(a.id!)).toMatchObject({ sandbox: a });
+    expect(sandboxes.resolve(b.id!)).toMatchObject({ sandbox: b });
+    expect(sandboxes.size).toBe(4);
     // The seeds' own cap still holds, least recently used first, and a dropped one builds again.
     const kept = encodeSeed({ contextLifetimeSeconds: 69 });
-    const w = (scopes.resolve(kept) as { world: World }).world;
-    expect((scopes.resolve(kept) as { world: World }).world).toBe(w);
-    scopes.resolve(encodeSeed({ contextLifetimeSeconds: 1 })); scopes.resolve(encodeSeed({ contextLifetimeSeconds: 2 }));
-    expect((scopes.resolve(kept) as { world: World }).world).not.toBe(w);
-    scopes.close();
+    const w = (sandboxes.resolve(kept) as { sandbox: Sandbox }).sandbox;
+    expect((sandboxes.resolve(kept) as { sandbox: Sandbox }).sandbox).toBe(w);
+    sandboxes.resolve(encodeSeed({ contextLifetimeSeconds: 1 })); sandboxes.resolve(encodeSeed({ contextLifetimeSeconds: 2 }));
+    expect((sandboxes.resolve(kept) as { sandbox: Sandbox }).sandbox).not.toBe(w);
+    sandboxes.close();
   });
   test("a flow run survives a page full of seeds", async () => {
     const r = await get(`${CONFIG.demoUrl}/api/flows/patient-sites/start`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
-    const { scope } = (await r.json()) as any;
+    const { sandbox } = (await r.json()) as any;
     for (let i = 0; i < 70; i++) expect(await get(`${urlsFor(`/s/${encodeSeed({ contextLifetimeSeconds: 100 + i })}`).clinicalFhir}/.well-known/smart-configuration`).then(x => x.status)).toBe(200);
-    expect(((await (await get(`${CONFIG.demoUrl}${scope.base}/api/flow-state`)).json()) as any).flow).toBe("patient-sites");
+    expect(((await (await get(`${CONFIG.demoUrl}${sandbox.base}/api/flow-state`)).json()) as any).flow).toBe("patient-sites");
   }, 60000);
-  test("an idle scope is dropped", async () => {
-    const scopes = createScopes(shared, { idleMs: 40 });
-    const a = scopes.mint(), b = scopes.mint();
+  test("an idle sandbox is dropped", async () => {
+    const sandboxes = createSandboxes(shared, { idleMs: 40 });
+    const a = sandboxes.mint(), b = sandboxes.mint();
     await Bun.sleep(25);
-    scopes.resolve(b.scope!);
+    sandboxes.resolve(b.id!);
     await Bun.sleep(25);
-    expect(scopes.resolve(a.scope!)).toMatchObject({ status: 404 });
-    expect(scopes.resolve(b.scope!)).toMatchObject({ world: b });
-    scopes.close();
+    expect(sandboxes.resolve(a.id!)).toMatchObject({ status: 404 });
+    expect(sandboxes.resolve(b.id!)).toMatchObject({ sandbox: b });
+    sandboxes.close();
   });
-  test("an unknown scope gets a clear 404 at every service", async () => {
+  test("an unknown sandbox gets a clear 404 at every service", async () => {
     const id = "B".repeat(22);
     const w = urlsFor(`/s/${id}`);
     for (const u of [`${w.clinicalFhir}/.well-known/smart-configuration`, `${w.demo}/api/flow-state`, `${w.imaging}/fhir/metadata`, `${w.proxy}/wado/-/studies/1.2`, `${w.trace}/api/sessions`, `http://127.0.0.1:${PORTS.imaging}/s/${id}/fhir/metadata`]) {
@@ -329,49 +329,49 @@ describe("scope lifetimes", () => {
       expect([u, r.status]).toEqual([u, 404]);
       expect(((await r.json()) as any).error).toContain("doesn't exist");
     }
-    expect(splitScope("/s/x/a")).toEqual({ scope: "x", rest: "/a" });
-    expect(splitScope("/s/x")).toEqual({ scope: "x", rest: "/" });
-    expect(splitScope("/a/s/x")).toEqual({ rest: "/a/s/x" });
+    expect(splitSandbox("/s/x/a")).toEqual({ sandbox: "x", rest: "/a" });
+    expect(splitSandbox("/s/x")).toEqual({ sandbox: "x", rest: "/" });
+    expect(splitSandbox("/a/s/x")).toEqual({ rest: "/a/s/x" });
   });
 });
 
-describe("trace sessions belong to the world that recorded them", () => {
+describe("trace sessions belong to the sandbox that recorded them", () => {
   const settle = async () => { flushTraces(); await Bun.sleep(150); };
-  test("each scope has its own unattributed bucket, and the root's stays the root's", async () => {
-    const w = stack.scopes.mint();
+  test("each sandbox has its own unattributed bucket, and the root's stays the root's", async () => {
+    const w = stack.sandboxes.mint();
     await get(`${CONFIG.imagingUrl}/fhir/metadata`);
     await get(`${w.urls.imaging}/fhir/metadata`);
     await settle();
-    expect(stack.collector.scopeOf("unattributed")).toBeUndefined();
-    const listed = ((await (await get(`${urlsFor(`/s/${w.scope}`).trace}/api/sessions`)).json()) as any[]).map(x => x.id);
+    expect(stack.collector.sandboxOf("unattributed")).toBeUndefined();
+    const listed = ((await (await get(`${urlsFor(`/s/${w.id}`).trace}/api/sessions`)).json()) as any[]).map(x => x.id);
     expect(listed).not.toContain("unattributed");
     expect(listed.length).toBe(1);
-    expect(stack.collector.scopeOf(listed[0])).toBe(w.scope);
-    expect([...stack.collector.sessions.get(listed[0])!.spans.values()].every(x => x.scope === w.scope)).toBe(true);
+    expect(stack.collector.sandboxOf(listed[0])).toBe(w.id);
+    expect([...stack.collector.sessions.get(listed[0])!.spans.values()].every(x => x.sandbox === w.id)).toBe(true);
   });
-  test("baggage naming a root session, sent to a scope, can't move that session into the scope", async () => {
-    const w = stack.scopes.mint();
+  test("baggage naming a root session, sent to a sandbox, can't move that session into the sandbox", async () => {
+    const w = stack.sandboxes.mint();
     const victim = `victim-${Date.now()}`;
     const baggage = { baggage: `demo.session=${victim}` };
     await get(`${CONFIG.imagingUrl}/fhir/metadata`, { headers: baggage });
     await get(`${w.urls.imaging}/fhir/metadata`, { headers: baggage });
     await settle();
-    expect(stack.collector.scopeOf(victim)).toBeUndefined();
-    expect([...stack.collector.sessions.get(victim)!.spans.values()].every(x => !x.scope)).toBe(true);
-    const listed = ((await (await get(`${urlsFor(`/s/${w.scope}`).trace}/api/sessions`)).json()) as any[]).map(x => x.id);
+    expect(stack.collector.sandboxOf(victim)).toBeUndefined();
+    expect([...stack.collector.sessions.get(victim)!.spans.values()].every(x => !x.id)).toBe(true);
+    const listed = ((await (await get(`${urlsFor(`/s/${w.id}`).trace}/api/sessions`)).json()) as any[]).map(x => x.id);
     expect(listed).not.toContain(victim);
   });
   test("spans are taken only from the services, and never through the one origin", async () => {
-    const forged = JSON.stringify([{ session: "unattributed", scope: "x", trace: "t".repeat(32), span: "f".repeat(16), service: "demo", kind: "check", name: "forged", start: 1, end: 2, attrs: {} }]);
+    const forged = JSON.stringify([{ session: "unattributed", sandbox: "x", trace: "t".repeat(32), span: "f".repeat(16), service: "demo", kind: "check", name: "forged", start: 1, end: 2, attrs: {} }]);
     expect((await fetch(`http://127.0.0.1:${PORTS.trace}/v1/spans`, { method: "POST", headers: { "content-type": "application/json" }, body: forged })).status).toBe(401);
     expect((await fetch(`http://127.0.0.1:${PORTS.trace}/v1/spans`, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer guess" }, body: forged })).status).toBe(401);
     if (ONE_ORIGIN) expect((await get(`${CONFIG.traceUrl}/v1/spans`, { method: "POST", headers: { "content-type": "application/json" }, body: forged })).status).toBe(404);
     await settle();
     expect([...(stack.collector.sessions.get("unattributed")?.spans.values() ?? [])].some(x => x.name === "forged")).toBe(false);
   });
-  test("the root keeps its own budget of sessions, whatever the scopes do", () => {
+  test("the root keeps its own budget of sessions, whatever the sandboxes do", () => {
     const store = new TraceStore({ mode: "memory", maxSessions: 2, flushMs: 1 });
-    const span = (session: string, start: number, scope?: string) => { const r = { session, trace: "t".repeat(32), span: `s${start}`, service: "demo" as const, kind: "check" as const, name: "n", start, end: start, attrs: {}, ...(scope ? { scope } : {}) }; store.put(r, JSON.stringify(r)); store.flush(); };
+    const span = (session: string, start: number, sandbox?: string) => { const r = { session, trace: "t".repeat(32), span: `s${start}`, service: "demo" as const, kind: "check" as const, name: "n", start, end: start, attrs: {}, ...(sandbox ? { sandbox } : {}) }; store.put(r, JSON.stringify(r)); store.flush(); };
     span("root-1", 1); span("root-2", 2);
     for (let i = 0; i < 5; i++) span(`busy-${i}@S`, 10 + i, "S");
     const ids = store.sessions().map(x => x.id);
@@ -384,25 +384,25 @@ describe("trace sessions belong to the world that recorded them", () => {
   });
 });
 
-describe("the trace, filtered to a scope", () => {
-  test("a scope's live trace lists only its sessions, and won't show another's", async () => {
+describe("the trace, filtered to a sandbox", () => {
+  test("a sandbox's live trace lists only its sessions, and won't show another's", async () => {
     const r = await get(`${CONFIG.demoUrl}/api/flows/patient-sites/start`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
-    const { scope, session } = (await r.json()) as any;
-    const other = stack.scopes.mint();
+    const { sandbox, session } = (await r.json()) as any;
+    const other = stack.sandboxes.mint();
     await scriptedLaunch("josh", "portal-app", { at: other.urls });
     await scriptedLaunch("josh");
     flushTraces();
     await Bun.sleep(150);
     const traceOf = (prefix: string) => urlsFor(prefix).trace;
     const listed = async (prefix: string) => ((await (await get(`${traceOf(prefix)}/api/sessions`)).json()) as any[]).map(s => s.id);
-    const mine = await listed(scope.base);
+    const mine = await listed(sandbox.base);
     expect(mine).toContain(session);
-    for (const id of mine) expect(stack.collector.scopeOf(id)).toBe(scope.id);
-    expect(await listed(`/s/${other.scope}`)).not.toContain(session);
+    for (const id of mine) expect(stack.collector.sandboxOf(id)).toBe(sandbox.id);
+    expect(await listed(`/s/${other.id}`)).not.toContain(session);
     expect((await listed("")).length).toBeGreaterThan(mine.length);
-    expect((await get(`${traceOf(`/s/${other.scope}`)}/api/sessions/${encodeURIComponent(session)}/spans`)).status).toBe(404);
-    expect((await get(`${traceOf(scope.base)}/api/sessions/${encodeURIComponent(session)}/spans`)).status).toBe(200);
-    expect((await get(`${traceOf(scope.base)}/v1/spans`, { method: "POST", body: "[]" })).status).toBe(404);
-    expect((await get(`${traceOf(scope.base)}/`)).status).toBe(200);
+    expect((await get(`${traceOf(`/s/${other.id}`)}/api/sessions/${encodeURIComponent(session)}/spans`)).status).toBe(404);
+    expect((await get(`${traceOf(sandbox.base)}/api/sessions/${encodeURIComponent(session)}/spans`)).status).toBe(200);
+    expect((await get(`${traceOf(sandbox.base)}/v1/spans`, { method: "POST", body: "[]" })).status).toBe(404);
+    expect((await get(`${traceOf(sandbox.base)}/`)).status).toBe(200);
   });
 });

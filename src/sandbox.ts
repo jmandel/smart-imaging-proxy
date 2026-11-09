@@ -1,27 +1,27 @@
-// A world: one Authorization Server, Imaging Server and proxy, with their own policy store, signing
-// key, credentials, decision cache and clock. The root world holds the one real policy database. Each
-// scope is a world of its own, whose URLs all start with its prefix. Worlds share only the catalog,
+// A sandbox: one Authorization Server, Imaging Server and proxy, with their own policy store, signing
+// key, credentials, decision cache and clock. The root sandbox holds the one real policy database. Each
+// sandbox is a sandbox of its own, whose URLs all start with its prefix. Sandboxes share only the catalog,
 // the backends and the trace collector, and reach one another only over HTTP, so nothing one issues
 // works in another.
 import { randomBytes, type KeyObject } from "node:crypto";
 import { listClients, restoreGrants } from "./clients";
-import { friendlyName } from "./world-names";
+import { friendlyName } from "./sandbox-names";
 import { createImagingServer, createPolicyClient, createProxy, idOf, ref, withTruncation, type Backend, type CatalogStore, type PolicyOperation, type PolicyStore } from "@smart-imaging-proxy/core";
 import { APP_NAMES, createAuthServer, DEMO_BACKEND_SCOPES, PATIENT_NAMES, USERS, type BackendClient } from "./auth-server";
 import { patientAttributes } from "./stores";
-import { PORTS, urlsFor, type WorldUrls } from "./config";
+import { PORTS, urlsFor, type SandboxUrls } from "./config";
 import { tfetch, traceObserver, type Service } from "./trace";
 import type { DemoClock } from "./clock";
 
 export type BackendName = "static-files" | "s3" | "orthanc";
 
-/** What every world reads and none owns. Which backend a world uses is its own choice. */
+/** What every sandbox reads and none owns. Which backend a sandbox uses is its own choice. */
 export interface Shared {
   catalogs: { archive: CatalogStore; orthanc: CatalogStore };
   backends: Record<BackendName, Backend>;
-  /** The backend a new world starts on. */
+  /** The backend a new sandbox starts on. */
   initialBackend(): BackendName;
-  /** The demo's Backend Services clients, the same in every world. */
+  /** The demo's Backend Services clients, the same in every sandbox. */
   clientKeys: Map<string, KeyObject>;
 }
 
@@ -70,15 +70,15 @@ export const policyClient = (base: string, policySecret: string, service: Servic
   createPolicyClient({ base, policySecret, fetch: (op, url, init) => tfetch(service, POLICY_CALLS[op], url, init) });
 
 export type Topology = "separate" | "unified";
-export function createWorld(o: { scope?: string; store: PolicyStore; clock: DemoClock; shared: Shared; serviceSecret?: string; policySecret?: string; jwksTtlSeconds?: number }) {
+export function createSandbox(o: { id?: string; store: PolicyStore; clock: DemoClock; shared: Shared; serviceSecret?: string; policySecret?: string; jwksTtlSeconds?: number }) {
   const { store, clock, shared } = o;
-  // A scope remembers its own choice, with the rest of its state.
-  const remembered = o.scope ? store.note("backend") as BackendName | undefined : undefined;
+  // A sandbox remembers its own choice, with the rest of its state.
+  const remembered = o.id ? store.note("backend") as BackendName | undefined : undefined;
   let current: BackendName = remembered && remembered in shared.backends ? remembered : shared.initialBackend();
-  /** Search and decisions read the catalog that describes what this world's backend holds. */
+  /** Search and decisions read the catalog that describes what this sandbox's backend holds. */
   const catalog = () => current === "orthanc" ? shared.catalogs.orthanc : shared.catalogs.archive;
-  const prefix = o.scope ? `/s/${o.scope}` : "";
-  const urls: WorldUrls = urlsFor(prefix);
+  const prefix = o.id ? `/s/${o.id}` : "";
+  const urls: SandboxUrls = urlsFor(prefix);
   const local = (port: number) => `http://127.0.0.1:${port}${prefix}`;
   const serviceSecret = o.serviceSecret ?? randomBytes(24).toString("base64url");
   // Only the Authorization Server and the demo hold this one. The proxy never does.
@@ -87,7 +87,7 @@ export function createWorld(o: { scope?: string; store: PolicyStore; clock: Demo
   const directoryPolicy = policyClient(local(PORTS.imaging), policySecret, "authorization-server");
 
   const auth = createAuthServer({
-    issuer: urls.auth, imagingFhirBase: `${urls.imaging}/fhir`, serviceSecret, redirectUri: urls.callback, demoClientRedirectUri: `${urls.demo}/`, unified: () => store.note("topology") === "unified", imagingFetch: (req: Request) => imaging.fetch(req), ...(o.scope ? { registeredClient: (id: string) => listClients(store).find(c => c.id === id) } : {}), store: () => store, clock,
+    issuer: urls.auth, imagingFhirBase: `${urls.imaging}/fhir`, serviceSecret, redirectUri: urls.callback, demoClientRedirectUri: `${urls.demo}/`, unified: () => store.note("topology") === "unified", imagingFetch: (req: Request) => imaging.fetch(req), ...(o.id ? { registeredClient: (id: string) => listClients(store).find(c => c.id === id) } : {}), store: () => store, clock,
     // The Authorization Server's pages, in their own terms, over the policy API's three levels.
     directory: {
       relationships: async () => [
@@ -126,7 +126,7 @@ export function createWorld(o: { scope?: string; store: PolicyStore; clock: Demo
     serviceSecret, policySecret, catalog, keyStore: store, store: () => store, observer: traceObserver, clock,
   });
 
-  // Truncation is this world's own fault injection, over the shared backends.
+  // Truncation is this sandbox's own fault injection, over the shared backends.
   let truncateAfter: number | undefined;
   const wrapped = new Map<Backend, Backend>();
   const backend = () => { const b = shared.backends[current]; let w = wrapped.get(b); if (!w) wrapped.set(b, w = withTruncation(b, () => truncateAfter)); return w; };
@@ -134,15 +134,15 @@ export function createWorld(o: { scope?: string; store: PolicyStore; clock: Demo
 
   const clearRuntime = () => { auth.reset(); imaging.reset(); proxy.reset(); truncateAfter = undefined; };
   return {
-    scope: o.scope, prefix, urls, store, clock, auth, imaging, proxy, clients,
-    /** The policy API, with this world's policy credential. */
+    id: o.id, prefix, urls, store, clock, auth, imaging, proxy, clients,
+    /** The policy API, with this sandbox's policy credential. */
     policy,
     get catalog() { return catalog(); },
     get catalogSource() { return current === "orthanc" ? "orthanc" as const : "archive" as const; },
     get backend() { return current; },
-    setBackend(n: BackendName) { current = n; if (o.scope) store.setNote("backend", n); },
+    setBackend(n: BackendName) { current = n; if (o.id) store.setNote("backend", n); },
     /** A sandbox's friendly label, chosen when first asked for. */
-    get name(): string | undefined { if (!o.scope) return undefined; let n = store.note("name"); if (!n) { n = friendlyName(); store.setNote("name", n); } return n; },
+    get name(): string | undefined { if (!o.id) return undefined; let n = store.note("name"); if (!n) { n = friendlyName(); store.setNote("name", n); } return n; },
     setName(n: string) { store.setNote("name", n); },
     /** Where discovery says imaging is: on a separate FHIR server, or on the clinical one. */
     get topology(): Topology { return store.note("topology") === "unified" ? "unified" : "separate"; },
@@ -161,10 +161,10 @@ export function createWorld(o: { scope?: string; store: PolicyStore; clock: Demo
     explain(q: { client: string; user?: string; fhirUser?: string; patient: string }) {
       return policy.explain(Object.fromEntries(Object.entries(q).filter(e => !!e[1])) as typeof q);
     },
-    /** Tokens expire by this world's clock. */
+    /** Tokens expire by this sandbox's clock. */
     purgeTokens: () => store.purgeExpiredTokens(clock.now()),
     clearRuntime,
     close() { clearRuntime(); store.close(); },
   };
 }
-export type World = ReturnType<typeof createWorld>;
+export type Sandbox = ReturnType<typeof createSandbox>;

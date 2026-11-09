@@ -22,7 +22,7 @@ test("a flow's sign-in, search and retrieval each record events, linked by the t
   const kinds = events.map(e => e.kind);
   for (const k of ["token.issued", "policy.written", "search.returned", "context.signed", "proxy.fast-path", "stream.done"]) expect(kinds).toContain(k);
   const issued = events.find(e => e.kind === "token.issued")!;
-  expect(issued).toMatchObject({ service: "authorization-server", who: "user:josh", outcome: "ok", scope: c.world.scope });
+  expect(issued).toMatchObject({ service: "authorization-server", who: "user:josh", outcome: "ok", sandbox: c.sandbox.id });
   const token = issued.links.find(l => l.startsWith("token:"))!;
   // The proxy knows only the token's hash, and the store names its person from the token.
   const stream = events.find(e => e.kind === "stream.done")!;
@@ -30,10 +30,10 @@ test("a flow's sign-in, search and retrieval each record events, linked by the t
   expect(stream.who).toBe("user:josh");
   expect(stack.collector.store.events({ link: token }).length).toBeGreaterThanOrEqual(4);
   expect(JSON.stringify(events)).not.toMatch(/"access_token":"(?!sha256)/);
-  // Read through the scope's own collector, with filters.
-  const listed: any = await (await fetch(`${c.world.urls.trace}/api/events?kind=search.returned`)).json();
+  // Read through the sandbox's own collector, with filters.
+  const listed: any = await (await fetch(`${c.sandbox.urls.trace}/api/events?kind=search.returned`)).json();
   expect(listed.events.length).toBeGreaterThan(0);
-  expect(listed.events.every((e: any) => e.kind === "search.returned" && e.scope === c.world.scope)).toBe(true);
+  expect(listed.events.every((e: any) => e.kind === "search.returned" && e.sandbox === c.sandbox.id)).toBe(true);
   expect(listed.facets.kinds).toContain("stream.done");
 });
 

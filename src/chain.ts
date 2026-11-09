@@ -10,7 +10,7 @@
 import { ageOn, bandText, createModel, ref, type CatalogStudy, type GuardianAccessPolicy, type ServiceAccessPolicy, type Snapshot } from "@smart-imaging-proxy/core";
 import { APP_NAMES, PATIENT_NAMES, USERS } from "./auth-server";
 import { patientAttributes } from "./stores";
-import { nameOf } from "./world";
+import { nameOf } from "./sandbox";
 
 export type Level = "fact" | "policy" | "choice" | "outcome";
 /** What a row checks, so a test can compare it with the reference model. */

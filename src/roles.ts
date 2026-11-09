@@ -1,12 +1,12 @@
-// Runs some of the root world's services in this process, for a deployment that splits them. They find
-// each other through CONFIG, and act together only over HTTP. Scopes are the whole demo's, not a split one's.
+// Runs some of the root sandbox's services in this process, for a deployment that splits them. They find
+// each other through CONFIG, and act together only over HTTP. Sandboxes are the whole demo's, not a split one's.
 import { createHash, randomBytes } from "node:crypto";
 import { createCatalog, DEFAULT_JWKS_TTL_SECONDS, PolicyStore } from "@smart-imaging-proxy/core";
 import { CONFIG, DEFAULT_CATALOG_DB, GATEWAY_HOSTS, ONE_ORIGIN, PORTS, serveOn, serveStreamingOn } from "./config";
 import { DEMO_BACKEND_CLIENTS, derivedBackendClient } from "./auth-server";
 import { openRootStore, storeConfigFromEnv } from "./stores";
 import { buildBackend, openCatalogs, type BackendName } from "./stack";
-import { createWorld } from "./world";
+import { createSandbox } from "./sandbox";
 import { demoClock } from "./clock";
 import { flushTraces, setTraceSink } from "./trace";
 import { createCollector } from "./trace-collector";
@@ -46,21 +46,21 @@ export async function startRoles(root: string, roles: Role[], env: Record<string
   const store = has("imaging") || has("auth") ? openRootStore(storeConfigFromEnv(env)) : new PolicyStore({ mode: "memory" });
   // The demo's Backend Services clients get keys derived from SERVICE_SECRET, so every process agrees on them.
   const clientKeys = new Map(DEMO_BACKEND_CLIENTS.map(id => [id, derivedBackendClient(id, serviceSecret).privateKey]));
-  const world = createWorld({
+  const sandbox = createSandbox({
     store, clock: demoClock, serviceSecret, policySecret: policySecret ?? randomBytes(24).toString("base64url"), jwksTtlSeconds: Number(env.JWKS_TTL_SECONDS ?? DEFAULT_JWKS_TTL_SECONDS),
     shared: { catalogs: { archive: catalog, orthanc: catalog }, backends, clientKeys, initialBackend: () => name },
   });
   if (has("auth")) {
     // The one origin runs with the Authorization Server, whose base is its root.
-    const servers = serveOn(PORTS.auth, { fetch: withCors(world.auth.fetch), idleTimeout: 120 });
+    const servers = serveOn(PORTS.auth, { fetch: withCors(sandbox.auth.fetch), idleTimeout: 120 });
     stops.push(() => servers.forEach(s => s.stop(true)));
   }
   if (has("imaging")) {
-    const servers = serveOn(PORTS.imaging, { fetch: withCors(world.imaging.fetch), idleTimeout: 120 });
+    const servers = serveOn(PORTS.imaging, { fetch: withCors(sandbox.imaging.fetch), idleTimeout: 120 });
     stops.push(() => servers.forEach(s => s.stop(true)));
   }
   if (has("proxy")) {
-    const server = await serveStreamingOn(PORTS.proxy, withCors(world.proxy.fetch));
+    const server = await serveStreamingOn(PORTS.proxy, withCors(sandbox.proxy.fetch));
     stops.push(() => server.stop());
   }
   stops.push(() => { store.close(); catalogs?.archive.close(); catalogs?.orthanc.close(); });

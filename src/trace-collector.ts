@@ -3,7 +3,7 @@
 import { LISTEN_HOSTS, PORTS, TAILNET } from "./config";
 import { join } from "node:path";
 import { sameSecret } from "@smart-imaging-proxy/core";
-import { KINDS, OUTCOMES, scopeOfSession, SERVICES, STATUSES, type EventRecord, type SpanRecord } from "./trace";
+import { KINDS, OUTCOMES, sandboxOfSession, SERVICES, STATUSES, type EventRecord, type SpanRecord } from "./trace";
 import { summaryOf, TraceStore, type EventQuery, type TraceStoreConfig } from "./trace-store";
 
 const PAGES: Record<string, string> = { "/live.js": "web/live.js", "/live.css": "web/live.css", "/fonts/atkinson-next.woff2": "web/fonts/atkinson-next.woff2", "/fonts/atkinson-mono.woff2": "web/fonts/atkinson-mono.woff2", "/trace-view.js": "web/trace-view.js", "/span.html": "web/span.html", "/span.js": "web/span.js", "/log.html": "web/log.html", "/log.js": "web/log.js" };
@@ -41,8 +41,8 @@ function spanProblem(r: unknown) {
   if (r.parent !== undefined && typeof r.parent !== "string") return "parent must be a string";
   if (r.status !== undefined && !STATUSES.includes(r.status)) return `status must be one of ${STATUSES.join(", ")}`;
   if (!isObject(r.attrs)) return "attrs must be an object";
-  if (r.scope !== undefined && !isText(r.scope)) return "scope must be a non-empty string";
-  if (scopeOfSession(r.session) !== r.scope) return "the session must be its scope's own";
+  if (r.sandbox !== undefined && !isText(r.sandbox)) return "sandbox must be a non-empty string";
+  if (sandboxOfSession(r.session) !== r.sandbox) return "the session must be its sandbox's own";
   if (r.http !== undefined) return httpProblem(r.http);
 }
 /** Why the store couldn't keep this as an event, if so. */
@@ -54,16 +54,16 @@ function eventProblem(r: unknown) {
   if (!isTime(r.at)) return "at must be a number";
   if (!Array.isArray(r.links) || !r.links.every((l: unknown) => isText(l) && !/\s/.test(l as string))) return "links must be a list of values without spaces";
   if (!isObject(r.data)) return "data must be an object";
-  for (const k of ["span", "who", "scope"]) if (r[k] !== undefined && !isText(r[k])) return `${k} must be a non-empty string`;
-  if (scopeOfSession(r.session) !== r.scope) return "the session must be its scope's own";
+  for (const k of ["span", "who", "sandbox"]) if (r[k] !== undefined && !isText(r[k])) return `${k} must be a non-empty string`;
+  if (sandboxOfSession(r.session) !== r.sandbox) return "the session must be its sandbox's own";
 }
 /** The filters `/api/events` takes. */
 export function eventQueryOf(url: URL): EventQuery {
   const q: EventQuery = {};
   for (const k of ["session", "kind", "outcome", "who", "trace", "link"] as const) { const v = url.searchParams.get(k); if (v) q[k] = v; }
   // `-` is the root's alone.
-  const scope = url.searchParams.get("scope");
-  if (scope) q.scope = scope === "-" ? "" : scope;
+  const sandbox = url.searchParams.get("sandbox");
+  if (sandbox) q.sandbox = sandbox === "-" ? "" : sandbox;
   for (const k of ["after", "before", "limit"] as const) { const v = Number(url.searchParams.get(k)); if (url.searchParams.has(k) && Number.isInteger(v)) q[k] = v; }
   return q;
 }
@@ -71,15 +71,15 @@ const decodable = (path: string) => { try { decodeURIComponent(path); return tru
 
 /**
  * With no store config, traces are in memory: only src/main.ts reads the TRACE_* settings. Spans come in
- * only with `spanSecret`, which the services hold, and none at all without one. Served for a scope, it
- * shows only that scope's sessions, and takes no spans.
+ * only with `spanSecret`, which the services hold, and none at all without one. Served for a sandbox, it
+ * shows only that sandbox's sessions, and takes no spans.
  */
 export function createCollector(root: string, config: TraceStoreConfig = { mode: "memory" }, spanSecret?: string) {
   const store = new TraceStore(config);
-  const clients = new Set<{ session?: string; scope?: string; send: (s: string) => void }>();
-  const scopeOf = scopeOfSession;
+  const clients = new Set<{ session?: string; sandbox?: string; send: (s: string) => void }>();
+  const sandboxOf = sandboxOfSession;
   let seq = store.maxSeq();
-  const broadcast = (event: string, data: unknown, session?: string) => { for (const c of clients) if (!c.scope || (session !== undefined && scopeOf(session) === c.scope)) c.send(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
+  const broadcast = (event: string, data: unknown, session?: string) => { for (const c of clients) if (!c.sandbox || (session !== undefined && sandboxOf(session) === c.sandbox)) c.send(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
   store.onRemoved = ids => broadcast("removed", ids);
 
   function ingest(records: SpanRecord[]) {
@@ -88,18 +88,18 @@ export function createCollector(root: string, config: TraceStoreConfig = { mode:
       r.seq = ++seq;
       const summary = JSON.stringify(summaryOf(r));
       store.put(r, summary);
-      for (const c of clients) if ((!c.session || c.session === r.session) && (!c.scope || scopeOf(r.session) === c.scope)) c.send(`event: span\ndata: ${summary}\n\n`);
+      for (const c of clients) if ((!c.session || c.session === r.session) && (!c.sandbox || sandboxOf(r.session) === c.sandbox)) c.send(`event: span\ndata: ${summary}\n\n`);
     }
   }
-  const list = (scope?: string) => store.sessions().filter(s => !scope || scopeOf(s.id) === scope).map(publicSession);
+  const list = (sandbox?: string) => store.sessions().filter(s => !sandbox || sandboxOf(s.id) === sandbox).map(publicSession);
 
   const page = (file: string) => new Response(Bun.file(join(root, file)), { headers: { "cache-control": "no-cache" } });
-  const fetchHandler = async (req: Request, scope?: string): Promise<Response> => {
+  const fetchHandler = async (req: Request, sandbox?: string): Promise<Response> => {
     const url = new URL(req.url);
     const p = url.pathname;
     if (!ownHost(req)) return new Response("this service answers only at its own addresses", { status: 403 });
-    // A scope's view reads only its own sessions, and changes nothing.
-    if (scope && (p === "/v1/spans" || p === "/v1/events" || req.method !== "GET")) return new Response("not found", { status: 404 });
+    // A sandbox's view reads only its own sessions, and changes nothing.
+    if (sandbox && (p === "/v1/spans" || p === "/v1/events" || req.method !== "GET")) return new Response("not found", { status: 404 });
     if (p === "/v1/events" && req.method === "POST") {
       if (req.headers.get("origin")) return new Response(null, { status: 403 });
       if (!sameSecret(req.headers.get("authorization")?.match(/^bearer +(.+)$/i)?.[1], spanSecret)) return new Response(null, { status: 401 });
@@ -110,13 +110,13 @@ export function createCollector(root: string, config: TraceStoreConfig = { mode:
       if (!Array.isArray(records)) return bad("the request body must be a JSON array of events");
       for (const [i, r] of records.entries()) { const problem = eventProblem(r); if (problem) return bad(`event ${i}: ${problem}`); }
       store.putEvents(records as EventRecord[]);
-      for (const r of records as EventRecord[]) for (const c of clients) if ((!c.session || c.session === r.session) && (!c.scope || r.scope === c.scope)) c.send(`event: event\ndata: ${JSON.stringify(r)}\n\n`);
+      for (const r of records as EventRecord[]) for (const c of clients) if ((!c.session || c.session === r.session) && (!c.sandbox || r.sandbox === c.sandbox)) c.send(`event: event\ndata: ${JSON.stringify(r)}\n\n`);
       return new Response(null, { status: 202 });
     }
-    // A scope's view lists only its own events.
-    if (p === "/api/events") { const q = eventQueryOf(url); return Response.json({ events: store.events(scope ? { ...q, scope } : q), facets: store.eventFacets(scope) }); }
+    // A sandbox's view lists only its own events.
+    if (p === "/api/events") { const q = eventQueryOf(url); return Response.json({ events: store.events(sandbox ? { ...q, sandbox } : q), facets: store.eventFacets(sandbox) }); }
     const session = p.match(/^\/api\/sessions\/([^/]+)\//)?.[1];
-    if (scope && session && decodable(session) && scopeOf(decodeURIComponent(session)) !== scope) return new Response("not found", { status: 404 });
+    if (sandbox && session && decodable(session) && sandboxOf(decodeURIComponent(session)) !== sandbox) return new Response("not found", { status: 404 });
     if (p === "/v1/spans" && req.method === "POST") {
       // Services send spans. A browser always names an origin, and has no reason to send any.
       if (req.headers.get("origin")) return new Response(null, { status: 403 });
@@ -140,7 +140,7 @@ export function createCollector(root: string, config: TraceStoreConfig = { mode:
       broadcast("cleared", {});
       return new Response(null, { status: 204 });
     }
-    if (p === "/api/sessions") return Response.json(list(scope));
+    if (p === "/api/sessions") return Response.json(list(sandbox));
     if (p.startsWith("/api/sessions/") && !decodable(p)) return bad("that session name isn't valid percent-encoding");
     const m = p.match(/^\/api\/sessions\/([^/]+)\/spans$/);
     if (m) return json(store.summariesJson(decodeURIComponent(m[1]!)));
@@ -162,14 +162,14 @@ export function createCollector(root: string, config: TraceStoreConfig = { mode:
     }
     if (p === "/stream") {
       const session = url.searchParams.get("session") ?? undefined;
-      let client: { session?: string; scope?: string; send: (s: string) => void };
+      let client: { session?: string; sandbox?: string; send: (s: string) => void };
       let ping: ReturnType<typeof setInterval>;
       const body = new ReadableStream({
         start(c) {
           const enc = new TextEncoder();
-          client = { session, scope, send: s => { try { c.enqueue(enc.encode(s)); } catch { clients.delete(client); } } };
+          client = { session, sandbox, send: s => { try { c.enqueue(enc.encode(s)); } catch { clients.delete(client); } } };
           clients.add(client);
-          client.send(`event: hello\ndata: ${JSON.stringify(list(scope))}\n\n`);
+          client.send(`event: hello\ndata: ${JSON.stringify(list(sandbox))}\n\n`);
           ping = setInterval(() => client.send(": ping\n\n"), 15000);
         },
         cancel() { clients.delete(client); clearInterval(ping); },
@@ -186,5 +186,5 @@ export function createCollector(root: string, config: TraceStoreConfig = { mode:
     },
     has: (id: string) => !!store.session(id),
   };
-  return { fetch: fetchHandler, sessions, list, scopeOf, store, close: () => store.close() };
+  return { fetch: fetchHandler, sessions, list, sandboxOf, store, close: () => store.close() };
 }

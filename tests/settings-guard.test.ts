@@ -38,7 +38,7 @@ describe("the settings API's source", () => {
     test(`${file} has no file, process, or code-running access`, () => { expect(violations(source)).toEqual([]); });
     test(`${file} imports only a short list of the demo's own modules`, () => {
       expect(importsOf(source).length).toBeGreaterThan(0);
-      for (const name of importsOf(source)) expect(["./stack", "./world", "@smart-imaging-proxy/core", "./clock", "./config", "./rule-presets"]).toContain(name);
+      for (const name of importsOf(source)) expect(["./stack", "./sandbox", "@smart-imaging-proxy/core", "./clock", "./config", "./rule-presets"]).toContain(name);
       // From core, only the policy API's error and types.
       const fromCore = [...source.matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+"@smart-imaging-proxy\/core"/g)].flatMap(m => m[1]!.split(",").map(n => n.trim().replace(/^type\s+/, "")).filter(Boolean));
       for (const name of fromCore) expect(["PolicyApiError", "Settings", "CatalogStore", "ServiceAccessPolicy"]).toContain(name);
@@ -62,7 +62,7 @@ describe("over HTTP", () => {
   const RULE = { id: "keep", type: "service-access" as const, service: "service:c", patients: "any" as const, allow: { all: true } };
   const SHARE = { from: "user:josh", with: "user:sam-caregiver", patient: "patient:josh-example", sites: ["Lakeside Imaging"], label: "caregiver" };
   const APPROVAL = { by: "user:josh", app: "app:portal-app", patient: "patient:josh-example" };
-  const fingerprint = () => JSON.stringify({ saved: stack.store.snapshot(), settings: stack.store.getSettings(), scopes: stack.scopes.size, backend: stack.backend, kid: stack.imaging.signingKid });
+  const fingerprint = () => JSON.stringify({ saved: stack.store.snapshot(), settings: stack.store.getSettings(), sandboxes: stack.sandboxes.size, backend: stack.backend, kid: stack.imaging.signingKid });
 
   beforeAll(async () => {
     stack = await startStack(root);
@@ -171,7 +171,7 @@ describe("over HTTP", () => {
     expect(stack.backend).toBe("static-files");
     stillIntact();
   });
-  test("/api/sandbox/policy takes no writes, at the root or in a scope, whatever they hold", async () => {
+  test("/api/sandbox/policy takes no writes, at the root or in a sandbox, whatever they hold", async () => {
     const { base } = await (await send("POST", "/api/sandboxes")).json() as any;
     for (const path of ["/api/sandbox/policy", `${base}/api/sandbox/policy`]) for (const body of [{ policies: [] }, { path: bait }, { shares: [{ ...SHARE, file: canary }] }, "'; DROP TABLE policies; --"]) expect((await send("PUT", path, body)).status).toBe(404);
     expect((await (await send("GET", `${base}/api/sandbox/policy`)).json() as any).policies.map((p: any) => p.type)).toEqual(["guardian-access", "guardian-access", "sharing"]);
