@@ -453,22 +453,60 @@ $("#tool-pan").addEventListener("click", () => setTool("pan"));
 $("#zoom-in").addEventListener("click", () => zoomBy(ZOOM_STEP));
 $("#zoom-out").addEventListener("click", () => zoomBy(1 / ZOOM_STEP));
 $("#invert").addEventListener("click", () => { if (!view) return; view.invert = !view.invert; syncInvert(); refreshView(); });
-stage.addEventListener("pointerdown", e => { if (!view?.window) return; drag = { x: e.clientX, y: e.clientY, panX: view.panX, panY: view.panY, ...view.window }; stage.setPointerCapture(e.pointerId); });
-stage.addEventListener("pointermove", async e => {
-  if (!drag || !view?.window || !renderer) return;
-  if (tool === "pan") {
-    const dpr = devicePixelRatio || 1;
-    view.panX = drag.panX + (e.clientX - drag.x) * dpr; view.panY = drag.panY + (e.clientY - drag.y) * dpr;
+// One finger or the mouse uses the chosen tool. Two fingers pinch to zoom and move the image together.
+const pointers = new Map();
+let pinch;
+/** Where a pointer is, in canvas pixels from the canvas's centre, which is what the renderer's pan is measured from. */
+function fromCentre(e) {
+  const r = canvas.getBoundingClientRect(), dpr = devicePixelRatio || 1;
+  return { x: (e.clientX - r.left - r.width / 2) * dpr, y: (e.clientY - r.top - r.height / 2) * dpr };
+}
+function startPinch() {
+  const [a, b] = [...pointers.values()];
+  pinch = { distance: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), middle: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, zoom: view.zoom, panX: view.panX, panY: view.panY };
+  drag = undefined;
+}
+function startDrag(e) { drag = { x: e.clientX, y: e.clientY, panX: view.panX, panY: view.panY, ...view.window }; }
+stage.addEventListener("pointerdown", e => {
+  if (!view?.window) return;
+  try { stage.setPointerCapture(e.pointerId); } catch {}
+  pointers.set(e.pointerId, fromCentre(e));
+  if (pointers.size === 2) startPinch();
+  else if (pointers.size === 1) startDrag(e);
+});
+stage.addEventListener("pointermove", e => {
+  if (!view?.window || !renderer || !pointers.has(e.pointerId)) return;
+  pointers.set(e.pointerId, fromCentre(e));
+  if (pinch && pointers.size === 2) {
+    const [a, b] = [...pointers.values()];
+    const middle = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    const zoom = Math.min(16, Math.max(0.25, pinch.zoom * Math.hypot(a.x - b.x, a.y - b.y) / pinch.distance));
+    // The point between the fingers stays under them.
+    const ratio = zoom / pinch.zoom;
+    view.zoom = zoom;
+    view.panX = middle.x - (pinch.middle.x - pinch.panX) * ratio;
+    view.panY = middle.y - (pinch.middle.y - pinch.panY) * ratio;
     refreshView();
     return;
   }
-  const gain = Math.max(drag.width, 1) / 400;
-  view.window = { width: Math.max(1, drag.width + (e.clientX - drag.x) * gain), center: drag.center + (e.clientY - drag.y) * gain };
-  const { kit } = await decoder();
-  applyView(kit, view);
+  if (!drag) return;
+  if (tool === "pan") {
+    const dpr = devicePixelRatio || 1;
+    view.panX = drag.panX + (e.clientX - drag.x) * dpr; view.panY = drag.panY + (e.clientY - drag.y) * dpr;
+  } else {
+    const gain = Math.max(drag.width, 1) / 400;
+    view.window = { width: Math.max(1, drag.width + (e.clientX - drag.x) * gain), center: drag.center + (e.clientY - drag.y) * gain };
+  }
+  refreshView();
 });
-const endDrag = () => { drag = undefined; };
-stage.addEventListener("pointerup", endDrag); stage.addEventListener("pointercancel", endDrag);
+function endPointer(e) {
+  pointers.delete(e.pointerId);
+  pinch = undefined;
+  drag = undefined;
+  // A finger left after a pinch carries on from where the image is, without a jump.
+  if (pointers.size === 1 && view?.window) { const rest = [...pointers.values()][0], r = canvas.getBoundingClientRect(), dpr = devicePixelRatio || 1; startDrag({ clientX: rest.x / dpr + r.left + r.width / 2, clientY: rest.y / dpr + r.top + r.height / 2 }); }
+}
+stage.addEventListener("pointerup", endPointer); stage.addEventListener("pointercancel", endPointer);
 $("#reset-view").addEventListener("click", async () => {
   if (!view?.defaultWindow) return;
   view.window = view.defaultWindow;

@@ -200,6 +200,24 @@ describe("the demo client", () => {
     const stage = (await page.locator("#stage").boundingBox())!;
     expect(stage.y).toBeLessThan(160);
     expect(stage.y + stage.height).toBeLessThan(844);
+    // Two fingers: the zoom follows their spread, and the point between them stays put.
+    const touch = (type: string, id: number, x: number, y: number) => page.evaluate(([t, i, cx, cy]) => {
+      document.querySelector("#stage")!.dispatchEvent(new PointerEvent(t as string, { pointerId: i as number, pointerType: "touch", clientX: cx as number, clientY: cy as number, bubbles: true }));
+    }, [type, id, x, y] as const);
+    const cx = stage.x + stage.width / 2, cy = stage.y + stage.height / 2;
+    await touch("pointerdown", 11, cx - 40, cy); await touch("pointerdown", 12, cx + 40, cy);
+    await touch("pointermove", 11, cx - 80, cy); await touch("pointermove", 12, cx + 80, cy);
+    await page.locator("#overlay", { hasText: "Zoom 200%" }).waitFor();
+    await touch("pointermove", 11, cx - 50, cy + 30); await touch("pointermove", 12, cx + 110, cy + 30);
+    const moved = await page.evaluate(() => { const v = (0, eval)("view"); return [v.panX, v.panY]; });
+    expect(moved[0]).toBeGreaterThan(0); expect(moved[1]).toBeGreaterThan(0);
+    await touch("pointerup", 11, cx - 50, cy + 30); await touch("pointerup", 12, cx + 110, cy + 30);
+    // One finger then pans, after choosing the Pan tool.
+    await page.getByRole("button", { name: "Pan", exact: true }).click();
+    await touch("pointerdown", 13, cx, cy); await touch("pointermove", 13, cx + 20, cy);
+    const after = await page.evaluate(() => (0, eval)("view").panX);
+    expect(after).toBeGreaterThan(moved[0]!);
+    await touch("pointerup", 13, cx + 20, cy);
     await shot(page, "phone-390");
     await context.close();
   });
