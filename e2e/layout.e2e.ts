@@ -1,0 +1,39 @@
+// Nothing on these screens should move once it has appeared. Space is reserved for what arrives later.
+import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import { join } from "node:path";
+import { chromium, type Browser, type Page } from "playwright-core";
+import { createDemoServer } from "../src/demo-server";
+import { registerClients } from "../src/flows";
+import { CONFIG, PORTS } from "../src/config";
+import { startStack, type Stack } from "../src/stack";
+setDefaultTimeout(45000);
+let stack: Stack, srv: any, browser: Browser;
+const O = CONFIG.demoUrl;
+beforeAll(async () => { const root = join(import.meta.dir, ".."); stack = await startStack(root); srv = Bun.serve({ port: PORTS.demo, hostname: "127.0.0.1", fetch: createDemoServer(stack, registerClients(stack), root).fetch }); browser = await chromium.launch({ executablePath: "/usr/bin/chromium", headless: true }); });
+afterAll(async () => { await browser.close(); srv.stop(true); stack.stop(); });
+const OBS = () => { (window as any).__s = []; new PerformanceObserver(l => { for (const e of l.getEntries() as any[]) (window as any).__s.push({ v: +e.value.toFixed(4), input: e.hadRecentInput, src: e.sources.map((s: any) => { const n = s.node; return n ? `${n.nodeName}${n.id ? "#" + n.id : ""}${n.className && typeof n.className === "string" ? "." + n.className.split(" ")[0] : ""}` : "?"; }).slice(0, 4) }); }).observe({ type: "layout-shift", buffered: true }); };
+const report = async (name: string, page: Page) => { await page.waitForTimeout(1200); const s = await page.evaluate(() => (window as any).__s); const total = s.reduce((a: number, e: any) => a + e.v, 0); console.log(`[${name}] total=${total.toFixed(3)}  ${s.sort((a: any, b: any) => b.v - a.v).slice(0, 2).map((e: any) => `${e.v}${e.input ? "(input)" : ""}:${e.src.slice(0, 3).join(",")}`).join(" | ")}`); expect(total).toBeLessThan(name.endsWith("connect switch type") ? 0.05 : 0.03); };
+for (const [label, viewport] of [["desktop", { width: 1440, height: 900 }], ["phone", { width: 390, height: 844 }]] as const) test(label, async () => {
+  const ctx = await browser.newContext({ viewport }); ctx.setDefaultTimeout(10000); await ctx.addInitScript(OBS);
+  const p = await ctx.newPage();
+  await p.goto(`${O}/`); await report(`${label} landing first`, p);
+  await p.getByRole("button", { name: "Connect", exact: true }).click();
+  await p.locator("input[name=username][value=josh]").check(); await p.getByRole("button", { name: "Continue" }).click();
+  await p.locator(".site-row summary").first().waitFor();
+  await p.locator(".site-row", { hasText: "Riverside" }).locator("summary").click();
+  await p.waitForTimeout(400); // Opening the list moves what's below it, as asked. That report arrives late.
+  await p.evaluate(() => { (window as any).__s = []; });
+  await p.locator(".site-row", { hasText: "Riverside" }).locator("> label input").uncheck(); await report(`${label} consent untick site`, p);
+  await p.locator(".site-row", { hasText: "Riverside" }).locator("> label input").check();
+  await p.getByRole("button", { name: "Approve" }).click();
+  await p.locator(".study-button").nth(5).waitFor(); await p.locator("#stage-note:empty").waitFor({ state: "attached" }); await report(`${label} viewer load`, p);
+  await p.evaluate(() => { (window as any).__s = []; });
+  await p.locator(".study-button", { hasText: "BRAIN" }).click(); await p.locator("#slice:enabled").waitFor(); await p.locator("#stage-note:empty").waitFor({ state: "attached" }); await report(`${label} open study with series`, p);
+  await p.evaluate(() => { (window as any).__s = []; });
+  await p.locator(".study-button", { hasText: "Histopath" }).click(); await p.waitForTimeout(600); await report(`${label} back to one-series study`, p);
+  const base = new URL(p.url()).pathname.replace(/\/$/, "");
+  await p.evaluate(() => sessionStorage.clear()); await p.goto(`${O}/`); await report(`${label} landing with sandbox`, p);
+  await p.goto(`${O}${base}/connect`); await report(`${label} connect page`, p);
+  await p.evaluate(() => { (window as any).__s = []; }); await p.getByRole("radio", { name: /Backend service/ }).check(); await report(`${label} connect switch type`, p);
+  await ctx.close();
+});

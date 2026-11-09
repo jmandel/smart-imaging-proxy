@@ -11,6 +11,9 @@ html.connecting #landing, html.connecting #app { display:none; }
 .landing .error { color:var(--bad); }
 .connect-actions { display:flex; flex-wrap:wrap; gap:.5rem; }
 .invite, .sandbox { margin:0 0 1rem; }
+/* A returning browser's panel is sized before its name arrives, so nothing below it moves. */
+.sandbox { margin-top:1rem; display:none; }
+html.has-sandbox .sandbox { display:block; min-height:8.6rem; }
 .invite h2, .sandbox h2 { margin:0 0 .3rem; font-size:1.05rem; }
 .sandbox-head { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem .6rem; }
 .sandbox-name { font-size:1.2rem; font-weight:700; margin:0; flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
@@ -33,8 +36,7 @@ html.connecting #landing, html.connecting #app { display:none; }
 .configure textarea { width:100%; font:.85rem/1.45 var(--mono); color:inherit; background:var(--box); border:1px solid var(--line); border-radius:6px; padding:.5rem .6rem; }
 .configure-actions { display:flex; gap:.5rem; }
 .configure-status { min-height:1.4em; margin:.5rem 0 0; }
-.connected { flex-basis:100%; margin:0; color:var(--muted); font-size:.82rem; overflow-wrap:anywhere; }
-.connected:empty { display:none; }
+.connected { flex-basis:100%; min-height:1.2em; margin:0; color:var(--muted); font-size:.82rem; overflow-wrap:anywhere; }
 .preview { list-style:none; counter-reset:step; margin:2rem 0; padding:0; display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap:.75rem; }
 .preview li { counter-increment:step; background:var(--plate); border:1px solid var(--line); border-radius:8px; padding:.8rem .9rem; }
 .preview strong { display:block; }
@@ -47,6 +49,11 @@ html.connecting #landing, html.connecting #app { display:none; }
 .panel + .panel { margin-top:.75rem; }
 .chart, .viewer, .protocol { min-width:0; }
 .protocol { max-height:calc(100vh - 5.5rem); overflow:auto; position:sticky; top:.75rem; }
+#patient { min-height:3.6rem; }
+#clinical { min-height:15rem; }
+#studies { min-height:14rem; }
+.clinical-group { min-height:3.1rem; }
+.stage-row[data-state=waiting] .stage-body { min-height:7rem; }
 .who { font-size:1.25rem; font-weight:700; margin:0; overflow-wrap:anywhere; }
 .facts { color:var(--muted); margin:.1rem 0 0; }
 .clinical-group { margin:.6rem 0 0; }
@@ -158,6 +165,7 @@ html.connecting #landing, html.connecting #app { display:none; }
   .workspace { grid-template-columns:minmax(0, 1fr); padding:.5rem; gap:.5rem; }
   .chart { display:contents; }
   .patient-panel { order:1; align-items:center; padding:.5rem .7rem; }
+  #patient { min-height:2.65rem; }
   .connected { display:none; }
   .who { font-size:1.05rem; }
   .facts { font-size:.82rem; }

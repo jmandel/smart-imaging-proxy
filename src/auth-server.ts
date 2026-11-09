@@ -114,7 +114,8 @@ fieldset label{display:block;padding:.2rem 0}
 .site-row details{margin:0 0 .25rem 1.65rem;font-size:.92rem}
 .site-row summary{cursor:pointer;color:var(--accent);min-height:1.8rem}
 .site-row details label{padding:.3rem 0;overflow-wrap:anywhere}
-.site-row:has(> label input:not(:checked)) details{display:none}
+.site-row:has(> label input:not(:checked)) details{opacity:.45}
+.site-row:has(> label input:not(:checked)) details label{pointer-events:none}
 .legend{font-weight:600;margin:.6rem 0 .1rem}
 label.field{display:block;padding:.25rem 0;font-weight:600;font-size:.9rem}
 select{display:block;width:100%;font:inherit;font-weight:400;color:inherit;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:.4rem .5rem;margin-top:.15rem}

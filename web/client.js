@@ -645,7 +645,7 @@ async function worldName(base) {
 }
 async function renderSandbox() {
   const box = $("#sandbox"), current = stored(WORLD_KEY);
-  if (!current) { box.hidden = true; return; }
+  if (!current) { document.documentElement.classList.remove("has-sandbox"); return; }
   let list = worlds();
   const name = await worldName(current);
   if (!name) { // Ended by someone else.
@@ -661,7 +661,7 @@ async function renderSandbox() {
     <div class="sandbox-actions"><button type="button" class="tool" id="share">Share</button><button type="button" class="tool" id="end">${mine.joined ? "Leave this sandbox" : "Start over with a new sandbox"}</button></div>
     <div id="share-panel" hidden><input type="text" id="share-link" readonly aria-label="Link to this sandbox" value="${esc(shareLink(current))}"><p class="note" id="share-note">Anyone with this link can see and change this sandbox.</p></div>
     ${others.length ? `<ul class="other-sandboxes">${others.map(w => `<li><span>${esc(w.name ?? "Sandbox")}</span><button type="button" class="tool" data-switch="${esc(w.base)}">Switch</button></li>`).join("")}</ul>` : ""}`;
-  box.hidden = false;
+  document.documentElement.classList.add("has-sandbox");
   $("#rename").addEventListener("click", async () => {
     const next = prompt("Name this sandbox", name);
     if (next === null || !next.trim()) return;
