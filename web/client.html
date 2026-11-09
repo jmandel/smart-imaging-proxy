@@ -10,6 +10,7 @@
 try { for(const[o,n]of[["world","sandbox"],["worlds","sandboxes"]]){const a="smart-imaging-client:"+o,b="smart-imaging-client:"+n,v=localStorage.getItem(a);if(v!==null){if(localStorage.getItem(b)===null)localStorage.setItem(b,v);localStorage.removeItem(a)}} } catch {}
 (() => { const base = (location.pathname.match(/^\/s\/[^/]+/) || [""])[0]; let session; try { session = JSON.parse(sessionStorage.getItem(`smart-imaging-client:${base}`) || "{}").session; } catch {} if (/[?&](connect=1|code=|error=)/.test(location.search) || session) document.documentElement.classList.add("connecting"); try { if (localStorage.getItem("smart-imaging-client:sandbox")) document.documentElement.classList.add("has-sandbox"); } catch {} })();
 </script>
+<style>html.connecting #landing, html.connecting #app { display:none; }</style>
 <link rel="preload" href="/fonts/atkinson-next.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/atkinson-mono.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/styles.css">
