@@ -1,0 +1,134 @@
+# SMART Imaging Proxy
+
+> A working, public sandbox of SMART Imaging Access: one sign-in that gives an app a patient's clinical data and their DICOM images. Every sandbox is a private, stateful copy of the whole system, driven by real protocols and a small management API. Sample data only.
+
+{{SANDBOX_SECTION}}
+
+## The parts
+
+A real deployment has separate systems, and here they share one origin.
+
+| Role | URL | What it does |
+|---|---|---|
+| Clinical FHIR server | `$SANDBOX/fhir` | SMART discovery, `Patient`, `AllergyIntolerance`, `Condition`, `MedicationRequest` |
+| Authorization server | `$SANDBOX/authorize`, `/token`, `/introspect`, `/revoke` | Sign-in, consent, tokens |
+| Imaging FHIR server | `$SANDBOX/imaging/fhir` | `ImagingStudy` search, with each study's `Endpoint`. Applies policy |
+| DICOMweb proxy | `$SANDBOX/wado/{signed-context}/studies/...` | WADO-RS retrieval. Enforces the decision signed into the address |
+
+An app starts at the clinical FHIR base. `GET $SANDBOX/fhir/.well-known/smart-configuration` gives the endpoints, and `associated_endpoints` names the imaging server by its `smart-imaging-access` capability.
+
+## The sandbox model
+
+- A sandbox holds its own policy, approvals, tokens, registered apps, demo clock, and choice of image storage. Images and patients are shared and read-only.
+- It's saved to disk, and lasts until its owner deletes it.
+- **Its URL is the access.** Anyone with it can read and change the sandbox, so treat it as a secret. The name is only a label.
+- Access is a union of grants. There are no deny rules: every grant only adds access.
+- The site root is read-only on public deployments. Work in a sandbox.
+
+## Sample accounts
+
+Sign-in has no passwords.
+
+| Username | Patient id | Notes |
+|---|---|---|
+| `josh` | `josh-example` | Six real, de-identified studies |
+| `sam-caregiver` | `sam-example` | Two synthetic studies, and guardian of Riley |
+| `robin` | `robin-example` | No studies: a real empty result |
+
+`riley-example` is Sam's 15-year-old child. One of Riley's studies is confidential adolescent care, which Sam can't see. Clinical entries are invented.
+
+## Connect an app
+
+Public clients with PKCE (S256) are supported. Register one in the sandbox, or use the page at `$SANDBOX/connect`.
+
+```sh
+curl -X POST "$SANDBOX/api/clients" -H 'content-type: application/json' \
+  -d '{"name":"My app","redirectUris":["https://example.org/callback"]}'
+```
+
+The response has the `id` to use as `client_id`. Redirect URIs must match exactly, and use https, or http on localhost. Authorize with `aud=$SANDBOX/fhir` and `scope=launch/patient patient/*.rs`.
+
+## Sign in without a browser
+
+An agent can walk the forms a person would:
+
+1. `GET $SANDBOX/authorize?response_type=code&client_id=...&redirect_uri=...&scope=...&aud=...&state=...&code_challenge=...&code_challenge_method=S256`. The response is a form. Take its `action`.
+2. `POST` that action with the form field `username=josh`. Follow the 303 to the consent page, and take its form `action`.
+3. `POST` that action with `decision=approve` and `patient=josh-example`. The 302 `Location` has the `code`.
+4. `POST $SANDBOX/token` with `grant_type=authorization_code`, `code`, `redirect_uri`, `client_id` and `code_verifier`. The response has `access_token` and `patient`.
+
+To limit what's approved, add `sites_shown=1` and a `sites` field per site. Sites left out aren't approved.
+
+## Read data
+
+```sh
+curl "$SANDBOX/fhir/Patient/josh-example" -H "authorization: Bearer $TOKEN"
+curl "$SANDBOX/fhir/Condition?patient=Patient/josh-example&clinical-status=active" -H "authorization: Bearer $TOKEN"
+curl "$SANDBOX/imaging/fhir/ImagingStudy?patient=Patient/josh-example&_include=ImagingStudy:endpoint" -H "authorization: Bearer $TOKEN"
+```
+
+Retrieve images from each study's `Endpoint.address`, still sending the token:
+
+```sh
+curl "$ADDRESS/studies/$STUDY_UID/series/$SERIES_UID/instances/$INSTANCE_UID" \
+  -H "authorization: Bearer $TOKEN" \
+  -H 'accept: multipart/related; type="application/dicom"; transfer-syntax=*'
+```
+
+`/studies/{uid}` and `/metadata` also work. `/frames`, `/rendered` and `/thumbnail` return 501.
+
+## Manage a sandbox
+
+All paths are under `$SANDBOX`. Bodies are JSON.
+
+| Method and path | Does |
+|---|---|
+| `GET /api/world` | Its friendly name |
+| `POST /api/world` `{"name":"..."}` | Renames it |
+| `DELETE /api/scopes/current` | Deletes it permanently |
+| `GET /api/clients` | Registered apps |
+| `POST /api/clients` `{"name":"...","redirectUris":["..."]}` | Registers an app |
+| `DELETE /api/clients/{id}` | Removes an app |
+| `GET /api/policy` | Relationships, policies, shares and approvals |
+| `GET /api/settings/status` | Image storage, demo clock, and the allowed clock moves |
+| `GET /api/settings/backends` | Health of each image store |
+| `POST /api/settings/backend` `{"backend":"static-files"}` | Image storage: `static-files`, `s3` or `orthanc` |
+| `POST /api/settings/clock` `{"advanceSeconds":N}` or `{"reset":true}` | Moves the demo clock. `N` must be one of the choices in the status |
+| `POST /api/settings/reset` `{"confirm":true}` | Puts policy back to what's on file |
+| `POST /api/settings/tokens/revoke-all` | Revokes every token |
+| `POST /api/settings/proxy/flush` | Forgets cached access decisions |
+
+Create a new sandbox with `POST {{ORIGIN}}/api/scopes`. The response has `base`, a path to add to the origin.
+
+Starting a guided tour resets a sandbox's policy, but keeps its registered apps, and other apps' tokens and approvals.
+
+## Pages
+
+- [Demo client]({{SITE}}/): sign in and view images, with each protocol step shown.
+- [Connect your app]({{SITE}}/connect): register a client.
+- [Tours]({{SITE}}/tours): guided stories about sharing, guardians and policy.
+- [Explore]({{SITE}}/explore): see what each person and service can reach.
+- [Activity]({{SITE}}/activity): what happened, and why.
+- [Live trace]({{SITE}}/trace/): every request between the services.
+
+## Viewer configuration
+
+The demo client can connect to any SMART server with a public PKCE client. Under "Add or change servers", paste:
+
+```json
+[{ "label": "My server", "iss": "https://example.org/fhir", "clientId": "my-client", "scope": "launch/patient patient/*.rs", "imaging": "https://example.org/imaging/fhir" }]
+```
+
+`scope` and `imaging` are optional. `imaging` is needed only if the server's discovery doesn't name its imaging endpoint.
+
+## Specifications
+
+- [SMART Imaging Access](https://build.fhir.org/ig/argonautproject/smart-imaging/)
+- [SMART App Launch](https://build.fhir.org/ig/HL7/smart-app-launch/)
+- [FHIR ImagingStudy](https://build.fhir.org/imagingstudy.html)
+- [FHIR Endpoint](https://build.fhir.org/endpoint.html)
+- [DICOMweb WADO-RS](https://www.dicomstandard.org/using/dicomweb/retrieve-wado-rs-and-wado-uri)
+
+## Source
+
+- [github.com/jmandel/smart-imaging-proxy](https://github.com/jmandel/smart-imaging-proxy)

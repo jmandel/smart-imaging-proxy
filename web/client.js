@@ -619,7 +619,7 @@ initConfigure();
 $("#connect").addEventListener("click", connect);
 $("#disconnect").addEventListener("click", disconnect);
 // The header's links stay in this visitor's sandbox.
-if (BASE) for (const a of $$("a[href^='/']")) a.setAttribute("href", `${BASE}${a.getAttribute("href")}`);
+if (BASE) for (const a of $$("a[href^='/']:not([data-scoped])")) a.setAttribute("href", `${BASE}${a.getAttribute("href")}`);
 
 (async function start() {
   const params = new URLSearchParams(location.search);

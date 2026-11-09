@@ -46,7 +46,7 @@ describe("pages", () => {
     for (const [path, title] of [["/tours", "Tours"], ["/explore", "Explore"], ["/activity", "Activity"]]) {
       const html = await (await call("GET", path)).text();
       expect(html).toContain(`<title>${title}`);
-      expect(html).toMatch(/<nav class="pages" aria-label="Pages"><a href="\/"[^>]*>Demo<\/a><a href="\/tours"[^>]*>Tours<\/a><a href="\/explore"[^>]*>Explore<\/a><a href="\/activity"[^>]*>Activity<\/a><\/nav>/);
+      expect(html).toMatch(/<nav class="pages" aria-label="Pages"><a href="\/"[^>]*>Demo<\/a><a href="\/tours"[^>]*>Tours<\/a><a href="\/explore"[^>]*>Explore<\/a><a href="\/activity"[^>]*>Activity<\/a><a href="\/llms.txt"[^>]*>For agents<\/a><\/nav>/);
       expect(html).toContain('id="settings-button"');
       expect(html).not.toContain("store-badge");
     }

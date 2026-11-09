@@ -29,6 +29,16 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
   const perWorld = new WeakMap<World, ReturnType<typeof worldServer>>();
   const serverOf = (w: World) => { let s = perWorld.get(w); if (!s) perWorld.set(w, s = worldServer(w)); return s; };
   const file = (name: string) => new Response(Bun.file(join(root, "web", name)));
+  /** The guide for agents. A sandbox's own copy names that sandbox, so handing over its one link is enough. */
+  async function llmsTxt(world: World) {
+    const site = world.urls.demo, origin = new URL(site).origin;
+    const name = world.scope ? world.store.note("name") : undefined;
+    const section = world.scope
+      ? `## This sandbox\n\n${name ? `This is "${name}". ` : ""}Everything below works here now. This link is its access, so share it only with those who should use it.\n\n\`\`\`sh\nSANDBOX=${site}\n\`\`\``
+      : `## Start here\n\nCreate a sandbox, and use it for everything below:\n\n\`\`\`sh\nSANDBOX=${origin}$(curl -sX POST ${origin}/api/scopes | jq -r .base)\n\`\`\`\n\nOr open the site in a browser and press Connect. Each sandbox has its own copy of this file at \`$SANDBOX/llms.txt\`, which names it.`;
+    const text = (await Bun.file(join(root, "web", "llms.txt")).text()).replaceAll("{{SANDBOX_SECTION}}", section).replaceAll("{{ORIGIN}}", origin).replaceAll("{{SITE}}", site);
+    return new Response(text, { headers: { "content-type": "text/plain; charset=utf-8", ...(world.scope ? { "x-robots-tag": "noindex", "cache-control": "no-store" } : {}) } });
+  }
   const scopeOf = (w: World) => w.scope ? { id: w.scope, base: w.prefix } : null;
 
   /** Mints a scope and starts `flowId` there. */
@@ -132,6 +142,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       if (p === "/explore") return file("index.html");
       if (p === "/activity") return file("activity.html");
       if (p === "/connect") return file("connect.html");
+      if (p === "/llms.txt") return llmsTxt(world);
       if (p.startsWith("/api/explore/")) return explore.fetch(req, url);
       if (p === "/api/tours" || p.startsWith("/api/tours/") || p.startsWith("/api/checks/")) {
         if (req.method === "POST") { const refused = refuseWrite(req, url); if (refused) return refused; }

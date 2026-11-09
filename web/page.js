@@ -76,3 +76,5 @@ function initHeader() {
   initSettings();
 }
 initHeader();
+// A sandbox's own page links to that sandbox's guide.
+if (BASE) for (const a of $$("a[data-scoped]")) a.setAttribute("href", `${BASE}${a.getAttribute("href")}`);

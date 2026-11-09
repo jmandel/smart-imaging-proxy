@@ -48,6 +48,6 @@ $("#clients").addEventListener("click", async e => {
     location.replace(`${world}/connect`);
     return;
   }
-  for (const a of $$("a[href^='/']")) a.setAttribute("href", `${BASE}${a.getAttribute("href")}`);
+  for (const a of $$("a[href^='/']:not([data-scoped])")) a.setAttribute("href", `${BASE}${a.getAttribute("href")}`);
   await refresh();
 })();
