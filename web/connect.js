@@ -91,6 +91,6 @@ $("#clients").addEventListener("click", async e => {
     location.replace(`${sandbox}/connect`);
     return;
   }
-  for (const a of $$("a[href^='/']:not([data-scoped])")) a.setAttribute("href", `${BASE}${a.getAttribute("href")}`);
+  for (const a of $$("a[href^='/']:not([data-sandbox-guide])")) a.setAttribute("href", `${BASE}${a.getAttribute("href")}`);
   await refresh();
 })();

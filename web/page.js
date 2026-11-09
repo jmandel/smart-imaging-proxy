@@ -79,5 +79,10 @@ function initHeader() {
   initSettings();
 }
 initHeader();
-// A sandbox's own page links to that sandbox's guide.
-if (BASE) for (const a of $$("a[data-sandboxed]")) a.setAttribute("href", `${BASE}${a.getAttribute("href")}`);
+
+// The guide for agents names a sandbox: this page's, or else the one this browser keeps.
+(() => {
+  let home = BASE;
+  if (!home) try { home = localStorage.getItem("smart-imaging-client:sandbox") ?? ""; } catch {}
+  for (const a of $$("a[data-sandbox-guide]")) a.setAttribute("href", `${home}/llms.txt`);
+})();

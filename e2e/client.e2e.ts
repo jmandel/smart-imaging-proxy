@@ -337,6 +337,18 @@ describe("the demo client", () => {
     expect(await page.evaluate(() => [localStorage.getItem("smart-imaging-client:sandbox"), localStorage.getItem("smart-imaging-client:world")])).toEqual([base, null]);
     await context.close();
   });
+  test("the agents' guide link names this sandbox on every page", async () => {
+    const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    await signIn(page, "josh");
+    const base = new URL(page.url()).pathname.replace(/\/$/, "");
+    for (const path of [`${base}/`, `${base}/tours`, `${base}/explore`, `${base}/activity`, `${base}/connect`, "/"]) {
+      await page.goto(`${ORIGIN}${path}`);
+      await page.waitForFunction(() => document.querySelector("a[data-sandbox-guide]")?.getAttribute("href") !== "/llms.txt");
+      expect(await page.locator("a[data-sandbox-guide]").getAttribute("href")).toBe(`${base}/llms.txt`);
+    }
+    await context.close();
+  });
   test("a patient with no studies gets a real empty result", async () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
