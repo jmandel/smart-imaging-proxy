@@ -4,6 +4,9 @@
 # stays in .run/, so it neither reads nor changes yours:
 #
 #   kubectl --kubeconfig .run/minikube.kubeconfig --context imaging-local -n smart-imaging get pods
+#
+# MINIKUBE_DRIVER picks the driver. A machine running a kernel whose modules a package update has replaced
+# can't give the docker driver's pods a network, and MINIKUBE_DRIVER=virtualbox brings its own kernel.
 set -euo pipefail
 trap 'echo "minikube.sh: failed at line $LINENO" >&2' ERR
 cd "$(dirname "$0")/.."
@@ -13,8 +16,8 @@ export KUBECONFIG="$PWD/.run/minikube.kubeconfig"
 K="kubectl --context $PROFILE -n $NS"
 
 echo "== Cluster"
-minikube status -p "$PROFILE" >/dev/null 2>&1 || timeout 300 minikube start -p "$PROFILE" --cpus=4 --memory=6g --disk-size=30g
-timeout 180 minikube addons enable ingress -p "$PROFILE" >/dev/null
+minikube status -p "$PROFILE" >/dev/null 2>&1 || timeout 600 minikube start -p "$PROFILE" --cpus=4 --memory=6g --disk-size=30g ${MINIKUBE_DRIVER:+--driver="$MINIKUBE_DRIVER"}
+timeout 300 minikube addons enable ingress -p "$PROFILE" >/dev/null
 kubectl --context "$PROFILE" -n ingress-nginx rollout status deploy/ingress-nginx-controller --timeout=180s
 IP=$(minikube ip -p "$PROFILE")
 
