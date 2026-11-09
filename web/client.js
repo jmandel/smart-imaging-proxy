@@ -3,7 +3,52 @@
 // shows. Images come one instance at a time, the search result already naming them: the middle one
 // first, then outward, so the first picture doesn't wait for the rest of the study.
 const CLIENT_ID = "demo-client", SCOPE = "launch/patient patient/*.rs";
-const ISS = `${location.origin}${BASE}/fhir`, REDIRECT = `${location.origin}${BASE}/`;
+const REDIRECT = `${location.origin}${BASE}/`;
+/** Where another server sends the browser back: one fixed address, since a server registers its clients' redirects exactly. */
+const ROOT_REDIRECT = `${location.origin}/`;
+const SANDBOX = { id: "sandbox", label: "SMART Imaging sandbox", detail: "A private sandbox of sample patients, just for you", own: true };
+const DEFAULT_SERVERS = [
+  { label: "SMART Imaging Proxy demo", iss: "https://smart-imaging-proxy.exe.xyz/fhir", clientId: "imaging-viewer", scope: SCOPE },
+];
+const SERVERS_KEY = "smart-imaging-client:servers", CHOICE_KEY = "smart-imaging-client:choice";
+const stored = key => { try { return localStorage.getItem(key); } catch { return null; } };
+const store = (key, value) => { try { value === null ? localStorage.removeItem(key) : localStorage.setItem(key, value); } catch {} };
+/** What a pasted configuration must be. Gives the servers, or throws saying what's wrong. */
+function parseServers(text) {
+  const list = JSON.parse(text);
+  if (!Array.isArray(list)) throw new Error("Expected a JSON array of servers.");
+  return list.map((s, i) => {
+    const where = `Server ${i + 1}`;
+    for (const k of ["label", "iss", "clientId"]) if (typeof s?.[k] !== "string" || !s[k].trim()) throw new Error(`${where} needs a "${k}".`);
+    for (const k of ["iss", "imaging"]) if (s[k] !== undefined) {
+      let u; try { u = new URL(s[k]); } catch { throw new Error(`${where}: "${k}" isn't a URL.`); }
+      if (u.protocol !== "https:" && !["localhost", "127.0.0.1"].includes(u.hostname)) throw new Error(`${where}: "${k}" must use https.`);
+    }
+    if (s.scope !== undefined && typeof s.scope !== "string") throw new Error(`${where}: "scope" must be text.`);
+    return { label: s.label, iss: s.iss.replace(/\/$/, ""), clientId: s.clientId, ...(s.scope ? { scope: s.scope } : {}), ...(s.imaging ? { imaging: s.imaging.replace(/\/$/, "") } : {}) };
+  });
+}
+function configuredServers() {
+  try { const text = stored(SERVERS_KEY); if (text) return parseServers(text); } catch {}
+  return DEFAULT_SERVERS;
+}
+const allServers = () => [SANDBOX, ...configuredServers().map((s, i) => ({ ...s, id: `server-${i}`, detail: new URL(s.iss).host }))];
+function chosenServer() { const all = allServers(); return all.find(s => s.id === stored(CHOICE_KEY)) ?? all[0]; }
+function renderServers() {
+  const chosen = chosenServer();
+  $("#servers").innerHTML = allServers().map(s => `<label class="server"><input type="radio" name="server" value="${esc(s.id)}" ${s.id === chosen.id ? "checked" : ""}><strong>${esc(s.label)}</strong><span>${esc(s.detail)}</span></label>`).join("");
+  $$("input[name=server]").forEach(r => r.addEventListener("change", () => store(CHOICE_KEY, r.value)));
+}
+function initConfigure() {
+  $("#redirect-uri").textContent = ROOT_REDIRECT;
+  const box = $("#servers-json"), status = $("#servers-status");
+  box.value = JSON.stringify(configuredServers(), null, 2);
+  $("#servers-save").addEventListener("click", () => {
+    try { const list = parseServers(box.value); store(SERVERS_KEY, JSON.stringify(list)); box.value = JSON.stringify(list, null, 2); renderServers(); status.textContent = `Saved ${plural(list.length, "server")}.`; }
+    catch (e) { status.textContent = `Not saved. ${e.message}`; }
+  });
+  $("#servers-reset").addEventListener("click", () => { store(SERVERS_KEY, null); store(CHOICE_KEY, null); box.value = JSON.stringify(DEFAULT_SERVERS, null, 2); renderServers(); status.textContent = "Back to the default servers."; });
+}
 const STORE = `smart-imaging-client:${BASE}`;
 const WADO_ACCEPT = 'multipart/related; type="application/dicom"; transfer-syntax=*';
 const KIT = "/vendor/viewer-kit/";
@@ -115,8 +160,8 @@ async function traced(step, url, init = {}, learned = () => ({})) {
 // Connecting.
 const b64url = bytes => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const random = () => b64url(crypto.getRandomValues(new Uint8Array(32)));
-async function discover() {
-  return traced({ id: "discover", kind: "discover", title: "Discover the servers" }, `${ISS}/.well-known/smart-configuration`, {}, c => {
+async function discover(iss) {
+  return traced({ id: "discover", kind: "discover", title: "Discover the servers" }, `${iss}/.well-known/smart-configuration`, {}, c => {
     const imaging = (c.associated_endpoints ?? []).find(e => e.capabilities?.includes("smart-imaging-access"));
     return { "Sign-in": new URL(c.authorization_endpoint).host, "Imaging server": imaging ? new URL(imaging.url).host : "None advertised" };
   });
@@ -125,20 +170,25 @@ async function connect() {
   const button = $("#connect");
   button.disabled = true;
   try {
+    const server = chosenServer();
+    // Another server has a redirect registered for one fixed address, so its sign-in runs from there.
+    if (!server.own && BASE) { location.assign("/?connect=1"); return; }
     // Everyone gets a world of their own, so one visitor's changes never reach another's.
-    if (!BASE) {
+    if (server.own && !BASE) {
       const r = await fetch("/api/scopes", { method: "POST" });
       if (!r.ok) throw new Error(`The sandbox couldn't be created (HTTP ${r.status})`);
       location.assign(`${(await r.json()).base}/?connect=1`);
       return;
     }
     trail.length = 0;
-    const config = await discover();
+    const iss = server.own ? `${location.origin}${BASE}/fhir` : server.iss, clientId = server.own ? CLIENT_ID : server.clientId, scope = server.scope ?? SCOPE;
+    const config = await discover(iss);
+    if (config.code_challenge_methods_supported && !config.code_challenge_methods_supported.includes("S256")) throw new Error("This server doesn't offer PKCE with S256.");
     const verifier = random(), state = random();
     const challenge = b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
-    save({ pending: { verifier, state, config } });
+    save({ pending: { verifier, state, config, iss, clientId, imaging: server.imaging, own: !!server.own, label: server.label } });
     const url = new URL(config.authorization_endpoint);
-    Object.entries({ response_type: "code", client_id: CLIENT_ID, redirect_uri: REDIRECT, scope: SCOPE, aud: ISS, state, code_challenge: challenge, code_challenge_method: "S256" }).forEach(([k, v]) => url.searchParams.set(k, v));
+    Object.entries({ response_type: "code", client_id: clientId, redirect_uri: REDIRECT, scope, aud: iss, state, code_challenge: challenge, code_challenge_method: "S256" }).forEach(([k, v]) => url.searchParams.set(k, v));
     addStep({ id: "authorize", kind: "authorize", title: "Sign in and approve the app", request: requestLine("GET", url.toString().replace(/([?&](state|code_challenge)=)[^&]+/g, "$1…")), response: "The browser returned with a one-time code." });
     location.assign(url);
   } catch (e) {
@@ -152,11 +202,12 @@ async function finishSignIn(params) {
   if (!pending || pending.state !== params.get("state")) throw new Error("This sign-in didn't start here. Connect again.");
   save({ pending: undefined });
   if (params.get("error")) { addStep({ id: "authorize", kind: "authorize", title: "Sign in and approve the app", failed: true, response: params.get("error") }); throw new Error(`The sign-in ended with: ${params.get("error")}`); }
-  const body = new URLSearchParams({ grant_type: "authorization_code", code: params.get("code"), redirect_uri: REDIRECT, client_id: CLIENT_ID, code_verifier: pending.verifier }).toString();
+  const body = new URLSearchParams({ grant_type: "authorization_code", code: params.get("code"), redirect_uri: REDIRECT, client_id: pending.clientId, code_verifier: pending.verifier }).toString();
   const token = await traced({ id: "token", kind: "token", title: "Exchange the code for a token" }, pending.config.token_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body }, t => ({ Granted: t.scope, "Token lasts": `${Math.round(t.expires_in / 60)} min` }));
-  const imaging = (pending.config.associated_endpoints ?? []).find(e => e.capabilities?.includes("smart-imaging-access"))?.url;
-  if (!imaging) throw new Error("This server doesn't name an imaging server.");
-  const session = { token: token.access_token, patient: token.patient, imaging };
+  const imaging = (pending.config.associated_endpoints ?? []).find(e => e.capabilities?.includes("smart-imaging-access"))?.url ?? pending.imaging;
+  if (!imaging) throw new Error("This server doesn't name an imaging server. Add \"imaging\" to its configuration.");
+  if (!token.patient) throw new Error("The token response didn't name a patient.");
+  const session = { token: token.access_token, patient: token.patient, imaging, iss: pending.iss, own: pending.own, label: pending.label };
   save({ session });
   return session;
 }
@@ -175,7 +226,7 @@ const CLINICAL = [
 async function loadPatient(s) {
   const el = $("#patient");
   try {
-    const p = await traced({ id: "patient", kind: "patient", title: "Read the patient" }, `${ISS}/Patient/${s.patient}`, { headers: fhirHeaders(s.token) });
+    const p = await traced({ id: "patient", kind: "patient", title: "Read the patient" }, `${s.iss}/Patient/${s.patient}`, { headers: fhirHeaders(s.token) });
     const name = p.name?.[0] ? `${(p.name[0].given ?? []).join(" ")} ${p.name[0].family ?? ""}`.trim() : p.id;
     const facts = [p.birthDate && `Born ${p.birthDate}`, p.gender, p.identifier?.[0]?.value && `MRN ${p.identifier[0].value}`].filter(Boolean);
     el.innerHTML = `<p class="who">${esc(name)}</p>${facts.length ? `<p class="facts">${facts.map(esc).join(" · ")}</p>` : ""}`;
@@ -188,11 +239,19 @@ async function loadClinical(s) {
   await Promise.all(CLINICAL.map(async ([type, filter, label, textOf]) => {
     const group = $(`#c-${type}`);
     try {
-      const b = await traced({ id: `clinical-${type}`, kind: "clinical", title: `Search ${type}` }, `${ISS}/${type}?${filter}&patient=Patient/${s.patient}`, { headers: fhirHeaders(s.token) }, b => ({ [label]: b.entry?.length ?? 0 }));
+      const b = await traced({ id: `clinical-${type}`, kind: "clinical", title: `Search ${type}` }, `${s.iss}/${type}?${filter}&patient=Patient/${s.patient}`, { headers: fhirHeaders(s.token) }, b => ({ [label]: b.entry?.length ?? 0 }));
       const items = (b.entry ?? []).map(e => textOf(e.resource)).filter(Boolean);
       group.innerHTML = `<h3>${label}</h3>${items.length ? `<ul>${items.map(t => `<li>${esc(t)}</li>`).join("")}</ul>` : `<p class="none">None active.</p>`}`;
-    } catch (e) { group.innerHTML = `<h3>${label}</h3><p class="error">${esc(e.message)}</p>`; }
+    } catch (e) { group.innerHTML = `<h3>${label}</h3><p class="none">${e.status === 404 ? "This server doesn't offer this search." : esc(e.message)}</p>`; }
   }));
+}
+/** An ImagingStudy's Endpoint, contained or included, by full URL or relative reference. */
+function endpointOf(study, entries) {
+  const ref = study.endpoint?.[0]?.reference;
+  if (!ref) return undefined;
+  if (ref.startsWith("#")) return study.contained?.find(c => c.id === ref.slice(1));
+  const included = entries.filter(e => e.resource.resourceType === "Endpoint");
+  return (included.find(e => e.fullUrl === ref) ?? included.find(e => e.resource.id === ref.split("/").pop()))?.resource;
 }
 async function loadStudies(s) {
   const el = $("#studies");
@@ -203,7 +262,7 @@ async function loadStudies(s) {
   const studies = entries.filter(e => e.resource.resourceType === "ImagingStudy").map(e => e.resource).map(r => ({
     ...r,
     uid: r.identifier.find(i => i.system === "urn:dicom:uid")?.value.replace(/^urn:oid:/, "") ?? r.identifier[0].value.replace(/^urn:oid:/, ""),
-    address: r.endpoint?.[0] && entries.find(e => e.fullUrl === r.endpoint[0].reference)?.resource.address,
+    address: endpointOf(r, entries)?.address,
   })).sort((a, b) => String(b.started ?? "").localeCompare(String(a.started ?? "")));
   if (!studies.length) { el.innerHTML = `<p class="note">This patient has no studies this app can see.</p>`; $("#stage-note").textContent = "No studies to show."; return; }
   el.innerHTML = `<ul class="study-list-client">${studies.map((st, i) => `<li><button type="button" class="study-button" data-i="${i}" aria-pressed="false" ${st.address ? "" : "disabled"}><strong>${esc(st.description ?? st.modality?.[0]?.code ?? "Study")}</strong><span>${esc([studyDate(st.started), (st.modality ?? []).map(m => m.code).join(", "), st.address ? plural(st.numberOfInstances ?? 0, "image") : "Images not available to this app"].filter(Boolean).join(" · "))}</span></button></li>`).join("")}</ul>`;
@@ -408,7 +467,7 @@ $("#reset-view").addEventListener("click", async () => {
 
 /** Our own sandbox's storage choice. A server that isn't ours has no such API, and the control stays hidden. */
 async function initSource(session) {
-  if (!BASE) return;
+  if (!BASE || !session.own) return;
   let status;
   try { status = await api("GET", "/api/settings/status"); } catch { return; }
   const select = $("#source-select"), health = $("#source-health");
@@ -440,9 +499,12 @@ function showApp() {
 async function run(session) {
   showApp();
   initSource(session);
+  $("#connected").textContent = session.own ? "" : `Connected to ${session.label}`;
   const results = await Promise.allSettled([loadPatient(session), loadClinical(session), loadStudies(session)]);
   if (results.some(r => r.reason?.status === 401)) { save({ session: undefined }); announce("Your session ended. Connect again."); note("Your session ended. Disconnect, then connect again."); }
 }
+renderServers();
+initConfigure();
 $("#connect").addEventListener("click", connect);
 $("#disconnect").addEventListener("click", disconnect);
 // The header's links stay in this visitor's sandbox.
@@ -453,7 +515,7 @@ if (BASE) for (const a of $$("a[href^='/']")) a.setAttribute("href", `${BASE}${a
   try {
     if (params.has("code") || params.has("error")) { const s = await finishSignIn(params); await run(s); return; }
     if (saved().session) { await run(saved().session); return; }
-    if (params.get("connect") === "1" && BASE) { history.replaceState(null, "", REDIRECT); await connect(); }
+    if (params.get("connect") === "1" && (BASE || !chosenServer().own)) { history.replaceState(null, "", REDIRECT); await connect(); }
   } catch (e) {
     $("#landing").hidden = false; $("#app").hidden = true;
     const el = $("#connect-error"); el.hidden = false; el.textContent = e.message;

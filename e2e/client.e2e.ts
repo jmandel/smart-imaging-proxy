@@ -42,7 +42,7 @@ const shot = async (page: Page, name: string) => { if (SHOTS) await page.screens
 
 async function signIn(page: Page, user: string) {
   await page.goto(`${ORIGIN}/`);
-  await page.getByRole("button", { name: "Connect to the sandbox" }).click();
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
   await page.locator(`input[name=username][value=${user}]`).check();
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Approve" }).click();
@@ -131,6 +131,34 @@ describe("the demo client", () => {
     expect(await page.getByText("server-side trace").count()).toBe(0);
     await shot(page, "desktop-protocol");
     expect(problems).toEqual([]);
+    await context.close();
+  });
+  test("a server from the JSON configuration, by its own discovery, with PKCE", async () => {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    await page.goto(`${ORIGIN}/`);
+    await page.locator("#configure summary").click();
+    await page.locator("#servers-json").fill("[{}]");
+    await page.getByRole("button", { name: "Save" }).click();
+    await page.getByText('Not saved. Server 1 needs a "label".').waitFor();
+    const ext = process.env.EXTERNAL_ISS ? { iss: process.env.EXTERNAL_ISS, clientId: process.env.EXTERNAL_CLIENT } : { iss: `${ORIGIN}/fhir`, clientId: "demo-client" };
+    await page.locator("#servers-json").fill(JSON.stringify([{ label: "Another server", ...ext }]));
+    await page.getByRole("button", { name: "Save" }).click();
+    await page.getByText("Saved 1 server.").waitFor();
+    await page.getByRole("radio", { name: /Another server/ }).check();
+    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await page.locator("input[name=username][value=josh]").check();
+    await page.getByRole("button", { name: "Continue" }).click();
+    await page.getByRole("button", { name: "Approve" }).click();
+    await page.locator("#app").waitFor({ state: "visible" });
+    expect(new URL(page.url()).pathname).toBe("/");
+    await page.getByText("Connected to Another server").waitFor();
+    expect(await page.locator("#source").isVisible()).toBe(false);
+    await page.locator(".who").waitFor();
+    await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 45000 });
+    expect(await page.locator(".study-button").count()).toBe(6);
+    expect(await litPixels(page)).toBeGreaterThan(0.01);
+    await shot(page, process.env.EXTERNAL_ISS ? "external-server" : "configured-server");
     await context.close();
   });
   test("a patient with no studies gets a real empty result", async () => {

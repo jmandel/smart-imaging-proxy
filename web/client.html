@@ -16,8 +16,9 @@
 
 <main id="landing" class="landing">
   <h1>One sign-in, for a patient's chart and their images</h1>
-  <p class="lead">This app connects to a sandbox health system the way a real one would, using <a href="https://build.fhir.org/ig/argonautproject/smart-imaging/">SMART Imaging Access</a>. Sign in as a sample patient, then watch every request it makes.</p>
-  <button type="button" class="primary" id="connect">Connect to the sandbox</button>
+  <p class="lead">This app connects to a health system the way any SMART app would, using <a href="https://build.fhir.org/ig/argonautproject/smart-imaging/">SMART Imaging Access</a>. Choose a server, sign in, then watch every step of the protocol.</p>
+  <fieldset class="server-choice"><legend>Connect to</legend><div id="servers"></div></fieldset>
+  <button type="button" class="primary" id="connect">Connect</button>
   <p class="error" id="connect-error" role="alert" hidden></p>
   <ol class="preview">
     <li><strong>Discover</strong><span>From one FHIR address, find the sign-in page and the imaging server.</span></li>
@@ -25,12 +26,21 @@
     <li><strong>Read</strong><span>Use the same token for clinical data and the list of studies.</span></li>
     <li><strong>View</strong><span>Retrieve DICOM images and decode them here in the browser.</span></li>
   </ol>
-  <p class="note">The sandbox is yours alone and resets when idle. Its people are samples: the clinical entries are invented, and the images are synthetic or de-identified.</p>
+  <details class="configure" id="configure">
+    <summary>Add or change servers</summary>
+    <p>A server needs a public client that uses PKCE (S256), registered with this redirect URI:</p>
+    <p><code id="redirect-uri"></code></p>
+    <label for="servers-json">Servers, as JSON</label>
+    <textarea id="servers-json" rows="10" spellcheck="false" autocapitalize="off"></textarea>
+    <p class="note">Each needs <code>label</code>, <code>iss</code> and <code>clientId</code>. <code>scope</code> is optional, and <code>imaging</code> names the imaging FHIR server when the server's discovery doesn't.</p>
+    <div class="configure-actions"><button type="button" class="secondary" id="servers-save">Save</button><button type="button" class="secondary" id="servers-reset">Reset</button></div>
+    <p class="configure-status" id="servers-status" role="status"></p>
+  </details>
 </main>
 
 <main id="app" class="workspace" hidden>
   <section class="chart" aria-label="Patient">
-    <div class="panel patient-panel"><div id="patient"></div><button type="button" class="tool" id="disconnect" hidden>Disconnect</button></div>
+    <div class="panel patient-panel"><div id="patient"></div><p class="connected" id="connected"></p><button type="button" class="tool" id="disconnect" hidden>Disconnect</button></div>
     <div id="clinical" class="panel"></div>
     <div class="panel studies-panel"><h2>Imaging studies</h2><div id="studies"><p class="note">Loading…</p></div>
       <div class="source" id="source" hidden><label for="source-select">This sandbox's images come from</label><select id="source-select"></select><p class="source-health" id="source-health" role="status"></p></div></div>
