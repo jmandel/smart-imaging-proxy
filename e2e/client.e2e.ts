@@ -135,7 +135,8 @@ describe("the demo client", () => {
     expect(problems).toEqual([]);
     await context.close();
   });
-  test("a server from the JSON configuration, by its own discovery, with PKCE", async () => {
+  // A deployment's root is read-only, so it can't stand in for another server. There, this needs a real one.
+  test.skipIf(!!process.env.BASE_URL && !process.env.EXTERNAL_ISS)("a server from the JSON configuration, by its own discovery, with PKCE", async () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     await page.goto(`${ORIGIN}/`);
