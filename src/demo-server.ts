@@ -2,6 +2,7 @@
 // flow API the checks and tests run flows through. `/s/{scope}/...` is that scope's own: its Explore,
 // its tour, its activity, its settings and its redirects. Starting a tour or a flow mints a scope for it.
 import { join } from "node:path";
+import { friendlyName, NAME_LIMIT } from "./world-names";
 import { addClient, listClients, removeClient } from "./clients";
 import { traced } from "./trace";
 import type { BackendName, Stack } from "./stack";
@@ -205,6 +206,18 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         if (unwanted && unwanted !== "{}") return json({ error: "this action takes no input" }, 400);
         const w = stack.scopes.mint({ saved: true });
         return json({ scope: w.scope, base: w.prefix, urls: w.urls }, 201);
+      }
+      if (p === "/api/world") {
+        if (!world.scope) return json({ error: "only a sandbox has a name" }, 409);
+        if (req.method === "GET") { let name = world.store.note("name"); if (!name) { name = friendlyName(); world.store.setNote("name", name); } return json({ name }); }
+        if (req.method !== "POST") return new Response("not found", { status: 404 });
+        const refused = refuseWrite(req, url);
+        if (refused) return refused;
+        const body: any = await req.json().catch(() => ({}));
+        const name = typeof body.name === "string" ? body.name.trim() : "";
+        if (!name || name.length > NAME_LIMIT) return json({ error: `a name is 1 to ${NAME_LIMIT} characters` }, 400);
+        world.store.setNote("name", name);
+        return json({ name });
       }
       if (p === "/api/clients" || p.startsWith("/api/clients/")) {
         if (!world.scope) return json({ error: "apps are registered in a sandbox: open /connect" }, 409);

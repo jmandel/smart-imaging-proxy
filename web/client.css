@@ -7,6 +7,15 @@
 .landing .note { color:var(--muted); }
 .landing .error { color:var(--bad); }
 .connect-actions { display:flex; flex-wrap:wrap; gap:.5rem; }
+.invite, .sandbox { margin:0 0 1rem; }
+.invite h2, .sandbox h2 { margin:0 0 .3rem; font-size:1.05rem; }
+.sandbox-head { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem .6rem; }
+.sandbox-name { font-size:1.2rem; font-weight:700; margin:0; flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
+.sandbox-actions { display:flex; flex-wrap:wrap; gap:.4rem; margin-top:.5rem; }
+.sandbox input[type=text] { width:100%; margin-top:.4rem; background:var(--box); border:1px solid var(--line); border-radius:6px; padding:.45rem .55rem; font:.85rem var(--mono); color:inherit; }
+.sandbox .note { color:var(--muted); font-size:.85rem; margin:.4rem 0 0; }
+.other-sandboxes { list-style:none; margin:.6rem 0 0; padding:.5rem 0 0; border-top:1px solid var(--line); }
+.other-sandboxes li { display:flex; align-items:center; justify-content:space-between; gap:.5rem; padding:.2rem 0; overflow-wrap:anywhere; }
 .server-choice { border:0; padding:0; margin:0 0 .9rem; min-width:0; }
 .server-choice legend { font-weight:700; padding:0; margin-bottom:.35rem; }
 #servers { display:grid; gap:.4rem; }
@@ -140,6 +149,7 @@
   .workspace { grid-template-columns:minmax(0, 1fr); padding:.5rem; gap:.5rem; }
   .chart { display:contents; }
   .patient-panel { order:1; align-items:center; padding:.5rem .7rem; }
+  .connected { display:none; }
   .who { font-size:1.05rem; }
   .facts { font-size:.82rem; }
   .viewer { order:2; }

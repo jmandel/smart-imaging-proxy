@@ -69,3 +69,14 @@ test("a store saved before named studies keeps working", () => {
   expect(up.approvals()).toEqual([]);
   up.close(); require("node:fs").rmSync(path, { force: true });
 });
+
+test("a sandbox has a friendly name it keeps, and can be renamed", async () => {
+  const w = stack.scopes.mint();
+  const first = (await (await call("GET", `${w.prefix}/api/world`)).json() as any).name;
+  expect(first).toMatch(/^[A-Z][a-z]+ [A-Z][a-z]+$/);
+  expect((await (await call("GET", `${w.prefix}/api/world`)).json() as any).name).toBe(first);
+  expect((await call("POST", `${w.prefix}/api/world`, { name: "Josh's demo" })).status).toBe(200);
+  expect((await (await call("GET", `${w.prefix}/api/world`)).json() as any).name).toBe("Josh's demo");
+  expect((await call("POST", `${w.prefix}/api/world`, { name: "x".repeat(41) })).status).toBe(400);
+  expect((await call("GET", "/api/world")).status).toBe(409);
+});

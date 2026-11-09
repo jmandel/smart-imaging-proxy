@@ -161,6 +161,7 @@ describe("the demo client", () => {
   test("a browser keeps its sandbox until it starts over", async () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
+    page.on("dialog", d => d.accept());
     await signIn(page, "josh");
     const first = new URL(page.url()).pathname;
     await page.goto(`${ORIGIN}/`);
@@ -212,6 +213,33 @@ describe("the demo client", () => {
     expect(await page.locator(".study-button").count()).toBe(5);
     expect(await page.locator(".study-button", { hasText: "CT ABDOMEN" }).count()).toBe(0);
     await context.close();
+  });
+  test("a sandbox can be named, shared, joined, and left without ending it", async () => {
+    const owner = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
+    const page = await owner.newPage();
+    page.on("dialog", d => d.accept("Team demo"));
+    await signIn(page, "josh");
+    const base = new URL(page.url()).pathname.replace(/\/$/, "");
+    await page.evaluate(() => sessionStorage.clear());
+    await page.goto(`${ORIGIN}/`);
+    await page.getByRole("button", { name: "Rename" }).click();
+    await page.locator("#sandbox-name", { hasText: "Team demo" }).waitFor();
+    await page.getByRole("button", { name: "Share" }).click();
+    const link = await page.locator("#share-link").inputValue();
+    expect(link).toBe(`${ORIGIN}${base}/?join=1`);
+    await page.locator("#share-note", { hasText: "Anyone with" }).waitFor();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+    await shot(page, "sandbox-share");
+    const guest = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
+    const other = await guest.newPage();
+    await other.goto(link);
+    await other.getByText("invited to “Team demo”").waitFor();
+    await other.getByRole("button", { name: "Join this sandbox" }).click();
+    await other.getByRole("button", { name: "Leave this sandbox" }).click();
+    await other.waitForFunction(() => !localStorage.getItem("smart-imaging-client:world"));
+    await page.reload();
+    await page.locator("#sandbox-name", { hasText: "Team demo" }).waitFor();
+    await guest.close(); await owner.close();
   });
   test("a patient with no studies gets a real empty result", async () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });

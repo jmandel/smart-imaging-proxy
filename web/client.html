@@ -17,8 +17,10 @@
 <main id="landing" class="landing">
   <h1>One sign-in, for a patient's chart and their images</h1>
   <p class="lead">This app connects to a health system the way any SMART app would, using <a href="https://build.fhir.org/ig/argonautproject/smart-imaging/">SMART Imaging Access</a>. Choose a server, sign in, then watch every step of the protocol.</p>
+  <section class="invite panel" id="invite" hidden><h2 id="invite-title"></h2><p class="note">Anyone with this link can see and change this sandbox. It holds sample data only.</p><button type="button" class="primary" id="join">Join this sandbox</button></section>
+  <section class="sandbox panel" id="sandbox" hidden></section>
   <fieldset class="server-choice"><legend>Connect to</legend><div id="servers"></div></fieldset>
-  <div class="connect-actions"><button type="button" class="primary" id="connect">Connect</button><button type="button" class="secondary" id="start-over" hidden>Start over with a new sandbox</button></div>
+  <div class="connect-actions"><button type="button" class="primary" id="connect">Connect</button></div>
   <p class="error" id="connect-error" role="alert" hidden></p>
   <p class="note">Building a SMART app? <a href="/connect">Connect it to a sandbox</a>.</p>
   <ol class="preview">

@@ -6,7 +6,7 @@ const CLIENT_ID = "demo-client", SCOPE = "launch/patient patient/*.rs";
 const REDIRECT = `${location.origin}${BASE}/`;
 /** Where another server sends the browser back: one fixed address, since a server registers its clients' redirects exactly. */
 const ROOT_REDIRECT = `${location.origin}/`;
-const SANDBOX = { id: "sandbox", label: "SMART Imaging sandbox", detail: "A private sandbox of sample patients, just for you", own: true };
+const SANDBOX = { id: "sandbox", label: "SMART Imaging sandbox", detail: "Your own sandbox of sample patients", own: true };
 const DEFAULT_SERVERS = [
   { label: "SMART Imaging Proxy demo", iss: "https://smart-imaging-proxy.exe.xyz/fhir", clientId: "imaging-viewer", scope: SCOPE },
 ];
@@ -532,6 +532,77 @@ $("#reset-view").addEventListener("click", async () => {
   refreshView();
 });
 
+// The sandboxes this browser knows: the current one is WORLD_KEY, and a joined one is someone else's to end.
+const WORLDS_KEY = "smart-imaging-client:worlds";
+function worlds() {
+  let list = [];
+  try { list = JSON.parse(stored(WORLDS_KEY) ?? "[]"); } catch {}
+  const current = stored(WORLD_KEY);
+  if (current && !list.some(w => w.base === current)) list.push({ base: current, joined: false });
+  return list;
+}
+const saveWorlds = list => store(WORLDS_KEY, JSON.stringify(list));
+const shareLink = base => `${location.origin}${base}/?join=1`;
+async function worldName(base) {
+  const r = await fetch(`${base}/api/world`);
+  return r.ok ? (await r.json()).name : null;
+}
+async function renderSandbox() {
+  const box = $("#sandbox"), current = stored(WORLD_KEY);
+  if (!current) { box.hidden = true; return; }
+  let list = worlds();
+  const name = await worldName(current);
+  if (!name) { // Ended by someone else.
+    saveWorlds(list.filter(w => w.base !== current));
+    store(WORLD_KEY, list.find(w => w.base !== current)?.base ?? null);
+    return renderSandbox();
+  }
+  list = list.map(w => w.base === current ? { ...w, name } : w);
+  saveWorlds(list);
+  const mine = list.find(w => w.base === current), others = list.filter(w => w.base !== current);
+  box.innerHTML = `<h2>Your sandbox</h2>
+    <div class="sandbox-head"><p class="sandbox-name" id="sandbox-name">${esc(name)}</p><button type="button" class="tool" id="rename">Rename</button></div>
+    <div class="sandbox-actions"><button type="button" class="tool" id="share">Share</button><button type="button" class="tool" id="end">${mine.joined ? "Leave this sandbox" : "Start over with a new sandbox"}</button></div>
+    <div id="share-panel" hidden><input type="text" id="share-link" readonly aria-label="Link to this sandbox" value="${esc(shareLink(current))}"><p class="note" id="share-note">Anyone with this link can see and change this sandbox.</p></div>
+    ${others.length ? `<ul class="other-sandboxes">${others.map(w => `<li><span>${esc(w.name ?? "Sandbox")}</span><button type="button" class="tool" data-switch="${esc(w.base)}">Switch</button></li>`).join("")}</ul>` : ""}`;
+  box.hidden = false;
+  $("#rename").addEventListener("click", async () => {
+    const next = prompt("Name this sandbox", name);
+    if (next === null || !next.trim()) return;
+    await fetch(`${current}/api/world`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: next }) });
+    renderSandbox();
+  });
+  $("#share").addEventListener("click", async () => {
+    const url = shareLink(current), panel = $("#share-panel"), note = $("#share-note");
+    panel.hidden = false;
+    $("#share-link").select();
+    if (navigator.share) { try { await navigator.share({ title: `SMART Imaging sandbox: ${name}`, url }); return; } catch (e) { if (e.name === "AbortError") return; } }
+    try { await navigator.clipboard.writeText(url); note.textContent = "Link copied. Anyone with it can see and change this sandbox."; } catch {}
+  });
+  $("#end").addEventListener("click", async () => {
+    if (!mine.joined && !confirm(`Delete “${name}” and everything in it? Anyone you shared it with loses it too.`)) return;
+    if (!mine.joined) try { await fetch(`${current}/api/scopes/current`, { method: "DELETE" }); } catch {}
+    const rest = list.filter(w => w.base !== current);
+    saveWorlds(rest);
+    store(WORLD_KEY, rest[0]?.base ?? null);
+    try { sessionStorage.clear(); } catch {}
+    location.assign("/");
+  });
+  $$("[data-switch]", box).forEach(b => b.addEventListener("click", () => { store(WORLD_KEY, b.dataset.switch); try { sessionStorage.clear(); } catch {} location.assign("/"); }));
+}
+async function showInvite() {
+  const name = await worldName(BASE);
+  if (!name) return;
+  $("#invite-title").textContent = `You've been invited to “${name}”`;
+  $("#invite").hidden = false;
+  $("#join").addEventListener("click", () => {
+    const list = worlds();
+    if (!list.some(w => w.base === BASE)) list.push({ base: BASE, joined: true, name });
+    saveWorlds(list);
+    store(WORLD_KEY, BASE);
+    location.assign(`${BASE}/`);
+  });
+}
 function showApp() {
   $("#landing").hidden = true; $("#app").hidden = false; $("#disconnect").hidden = false;
   renderTrail();
@@ -539,21 +610,12 @@ function showApp() {
 async function run(session) {
   showApp();
   $("#connected").textContent = session.own ? "" : `Connected to ${session.label}`;
+  if (session.own && BASE) worldName(BASE).then(name => { if (name) $("#connected").textContent = `Sandbox: ${name}`; });
   const results = await Promise.allSettled([loadPatient(session), loadClinical(session), loadStudies(session)]);
   if (results.some(r => r.reason?.status === 401)) { save({ session: undefined }); announce("Your session ended. Connect again."); note("Your session ended. Disconnect, then connect again."); }
 }
 renderServers();
 initConfigure();
-const startOver = $("#start-over");
-startOver.hidden = !stored(WORLD_KEY);
-startOver.addEventListener("click", async () => {
-  startOver.disabled = true;
-  const known = stored(WORLD_KEY);
-  try { await fetch(`${known}/api/scopes/current`, { method: "DELETE" }); } catch {}
-  store(WORLD_KEY, null);
-  try { sessionStorage.clear(); } catch {}
-  location.assign("/");
-});
 $("#connect").addEventListener("click", connect);
 $("#disconnect").addEventListener("click", disconnect);
 // The header's links stay in this visitor's sandbox.
@@ -561,6 +623,7 @@ if (BASE) for (const a of $$("a[href^='/']")) a.setAttribute("href", `${BASE}${a
 
 (async function start() {
   const params = new URLSearchParams(location.search);
+  if (params.get("join") === "1" && BASE) showInvite(); else renderSandbox();
   try {
     if (params.has("code") || params.has("error")) { const s = await finishSignIn(params); await run(s); return; }
     if (saved().session) { await run(saved().session); return; }
