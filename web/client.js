@@ -10,7 +10,7 @@ const SANDBOX = { id: "sandbox", label: "SMART Imaging sandbox", detail: "A priv
 const DEFAULT_SERVERS = [
   { label: "SMART Imaging Proxy demo", iss: "https://smart-imaging-proxy.exe.xyz/fhir", clientId: "imaging-viewer", scope: SCOPE },
 ];
-const SERVERS_KEY = "smart-imaging-client:servers", CHOICE_KEY = "smart-imaging-client:choice";
+const SERVERS_KEY = "smart-imaging-client:servers", CHOICE_KEY = "smart-imaging-client:choice", WORLD_KEY = "smart-imaging-client:world";
 const stored = key => { try { return localStorage.getItem(key); } catch { return null; } };
 const store = (key, value) => { try { value === null ? localStorage.removeItem(key) : localStorage.setItem(key, value); } catch {} };
 /** What a pasted configuration must be. Gives the servers, or throws saying what's wrong. */
@@ -28,11 +28,18 @@ function parseServers(text) {
     return { label: s.label, iss: s.iss.replace(/\/$/, ""), clientId: s.clientId, ...(s.scope ? { scope: s.scope } : {}), ...(s.imaging ? { imaging: s.imaging.replace(/\/$/, "") } : {}) };
   });
 }
-function configuredServers() {
+/** The servers this browser has added. */
+function savedServers() {
   try { const text = stored(SERVERS_KEY); if (text) return parseServers(text); } catch {}
-  return DEFAULT_SERVERS;
+  return [];
 }
-const allServers = () => [SANDBOX, ...configuredServers().map((s, i) => ({ ...s, id: `server-${i}`, detail: new URL(s.iss).host }))];
+const serverKey = s => `${s.iss}|${s.clientId}`;
+/** The built-ins, then this browser's own. An entry for the same server and client replaces the built-in. */
+function configuredServers() {
+  const saved = savedServers(), mine = new Map(saved.map(s => [serverKey(s), s]));
+  return [...DEFAULT_SERVERS.map(s => mine.get(serverKey(s)) ?? s), ...saved.filter(s => !DEFAULT_SERVERS.some(d => serverKey(d) === serverKey(s)))];
+}
+const allServers = () => [SANDBOX, ...configuredServers().map(s => ({ ...s, id: serverKey(s), detail: new URL(s.iss).host }))];
 function chosenServer() { const all = allServers(); return all.find(s => s.id === stored(CHOICE_KEY)) ?? all[0]; }
 function renderServers() {
   const chosen = chosenServer();
@@ -42,12 +49,12 @@ function renderServers() {
 function initConfigure() {
   $("#redirect-uri").textContent = ROOT_REDIRECT;
   const box = $("#servers-json"), status = $("#servers-status");
-  box.value = JSON.stringify(configuredServers(), null, 2);
+  box.value = JSON.stringify(savedServers(), null, 2);
   $("#servers-save").addEventListener("click", () => {
-    try { const list = parseServers(box.value); store(SERVERS_KEY, JSON.stringify(list)); box.value = JSON.stringify(list, null, 2); renderServers(); status.textContent = `Saved ${plural(list.length, "server")}.`; }
+    try { const list = parseServers(box.value); store(SERVERS_KEY, JSON.stringify(list)); box.value = JSON.stringify(list, null, 2); renderServers(); status.textContent = `Saved ${plural(list.length, "server")} of your own.`; }
     catch (e) { status.textContent = `Not saved. ${e.message}`; }
   });
-  $("#servers-reset").addEventListener("click", () => { store(SERVERS_KEY, null); store(CHOICE_KEY, null); box.value = JSON.stringify(DEFAULT_SERVERS, null, 2); renderServers(); status.textContent = "Back to the default servers."; });
+  $("#servers-reset").addEventListener("click", () => { store(SERVERS_KEY, null); store(CHOICE_KEY, null); box.value = "[]"; renderServers(); status.textContent = "Only the built-in servers remain."; });
 }
 const STORE = `smart-imaging-client:${BASE}`;
 const WADO_ACCEPT = 'multipart/related; type="application/dicom"; transfer-syntax=*';
@@ -175,9 +182,14 @@ async function connect() {
     if (!server.own && BASE) { location.assign("/?connect=1"); return; }
     // Everyone gets a world of their own, so one visitor's changes never reach another's.
     if (server.own && !BASE) {
+      // This browser's sandbox lasts until its owner starts over, so go back to it if it's there.
+      const known = stored(WORLD_KEY);
+      if (known && (await fetch(`${known}/api/settings/status`)).ok) { location.assign(`${known}/?connect=1`); return; }
       const r = await fetch("/api/scopes", { method: "POST" });
-      if (!r.ok) throw new Error(`The sandbox couldn't be created (HTTP ${r.status})`);
-      location.assign(`${(await r.json()).base}/?connect=1`);
+      if (!r.ok) throw new Error(r.status === 429 ? "Too many sandboxes from this address. Try again in a while." : `The sandbox couldn't be created (HTTP ${r.status})`);
+      const { base } = await r.json();
+      store(WORLD_KEY, base);
+      location.assign(`${base}/?connect=1`);
       return;
     }
     trail.length = 0;
@@ -505,6 +517,16 @@ async function run(session) {
 }
 renderServers();
 initConfigure();
+const startOver = $("#start-over");
+startOver.hidden = !stored(WORLD_KEY);
+startOver.addEventListener("click", async () => {
+  startOver.disabled = true;
+  const known = stored(WORLD_KEY);
+  try { await fetch(`${known}/api/scopes/current`, { method: "DELETE" }); } catch {}
+  store(WORLD_KEY, null);
+  try { sessionStorage.clear(); } catch {}
+  location.assign("/");
+});
 $("#connect").addEventListener("click", connect);
 $("#disconnect").addEventListener("click", disconnect);
 // The header's links stay in this visitor's sandbox.

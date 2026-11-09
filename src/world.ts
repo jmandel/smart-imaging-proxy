@@ -69,7 +69,9 @@ export const policyClient = (base: string, policySecret: string, service: Servic
 
 export function createWorld(o: { scope?: string; store: PolicyStore; clock: DemoClock; shared: Shared; serviceSecret?: string; policySecret?: string; jwksTtlSeconds?: number }) {
   const { store, clock, shared } = o;
-  let current: BackendName = shared.initialBackend();
+  // A scope remembers its own choice, with the rest of its state.
+  const remembered = o.scope ? store.note("backend") as BackendName | undefined : undefined;
+  let current: BackendName = remembered && remembered in shared.backends ? remembered : shared.initialBackend();
   /** Search and decisions read the catalog that describes what this world's backend holds. */
   const catalog = () => current === "orthanc" ? shared.catalogs.orthanc : shared.catalogs.archive;
   const prefix = o.scope ? `/s/${o.scope}` : "";
@@ -135,7 +137,7 @@ export function createWorld(o: { scope?: string; store: PolicyStore; clock: Demo
     get catalog() { return catalog(); },
     get catalogSource() { return current === "orthanc" ? "orthanc" as const : "archive" as const; },
     get backend() { return current; },
-    setBackend(n: BackendName) { current = n; },
+    setBackend(n: BackendName) { current = n; if (o.scope) store.setNote("backend", n); },
     backends: shared.backends,
     setTruncateAfter(n: number | undefined) { truncateAfter = n; },
     /** Replaces the signing key, then tells the proxy over HTTP, so it stops trusting the old one now. A proxy that isn't told learns within its TTL. */

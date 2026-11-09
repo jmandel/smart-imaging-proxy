@@ -480,6 +480,8 @@ export class PolicyStore {
   }
   revokeToken(token: string) { this.db.run("UPDATE tokens SET revoked = 1 WHERE hash = ?", [sha(token)]); }
   deleteToken(token: string) { this.db.run("DELETE FROM tokens WHERE hash = ?", [sha(token)]); }
+  /** Drops every token issued to these clients, and returns how many. */
+  deleteTokensOf(clients: string[]): number { return clients.reduce((n, c) => n + this.db.run("DELETE FROM tokens WHERE json_extract(record, '$.client_id') = ?", [c]).changes, 0); }
   /** Revokes every token in a family, and returns how many were still live. */
   revokeTokenFamily(family: string): number { return this.db.run("UPDATE tokens SET revoked = 1 WHERE revoked = 0 AND json_extract(record, '$.family') = ?", [family]).changes; }
   revokeAllTokens(): number { return this.db.run("UPDATE tokens SET revoked = 1 WHERE revoked = 0").changes; }
@@ -513,5 +515,8 @@ export class PolicyStore {
       },
     };
   }
+  /** A small value its owner keeps with this store, such as a world's choice of backend. */
+  note(key: string): string | undefined { return (this.db.query("SELECT value FROM meta WHERE key = ?").get(`note:${key}`) as { value: string } | null)?.value; }
+  setNote(key: string, value: string) { this.db.run("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", [`note:${key}`, value]); }
   close() { this.db.close(); }
 }

@@ -18,7 +18,7 @@
   <h1>One sign-in, for a patient's chart and their images</h1>
   <p class="lead">This app connects to a health system the way any SMART app would, using <a href="https://build.fhir.org/ig/argonautproject/smart-imaging/">SMART Imaging Access</a>. Choose a server, sign in, then watch every step of the protocol.</p>
   <fieldset class="server-choice"><legend>Connect to</legend><div id="servers"></div></fieldset>
-  <button type="button" class="primary" id="connect">Connect</button>
+  <div class="connect-actions"><button type="button" class="primary" id="connect">Connect</button><button type="button" class="secondary" id="start-over" hidden>Start over with a new sandbox</button></div>
   <p class="error" id="connect-error" role="alert" hidden></p>
   <ol class="preview">
     <li><strong>Discover</strong><span>From one FHIR address, find the sign-in page and the imaging server.</span></li>
@@ -30,7 +30,7 @@
     <summary>Add or change servers</summary>
     <p>A server needs a public client that uses PKCE (S256), registered with this redirect URI:</p>
     <p><code id="redirect-uri"></code></p>
-    <label for="servers-json">Servers, as JSON</label>
+    <label for="servers-json">Your servers, as JSON (added to the built-in list)</label>
     <textarea id="servers-json" rows="10" spellcheck="false" autocapitalize="off"></textarea>
     <p class="note">Each needs <code>label</code>, <code>iss</code> and <code>clientId</code>. <code>scope</code> is optional, and <code>imaging</code> names the imaging FHIR server when the server's discovery doesn't.</p>
     <div class="configure-actions"><button type="button" class="secondary" id="servers-save">Save</button><button type="button" class="secondary" id="servers-reset">Reset</button></div>

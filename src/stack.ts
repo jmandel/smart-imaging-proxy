@@ -2,7 +2,7 @@
 // for the root world and every scope. They talk only over HTTP, so src/roles.ts can run the root's in
 // separate processes. Each service's listener sends `/s/{scope}/...` to that scope's own instance of
 // the same service, with the prefix taken off, and everything else to the root's.
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { generateKeyPairSync, randomBytes, type KeyObject } from "node:crypto";
 import { S3Client } from "bun";
 import { ArchiveBackend, catalogFromOrthanc, createCatalog, fileStore, orthancCatalogPath, OrthancBackend, rebuildFromArchive, s3Store, seedPatientLinks, type Backend, type CatalogStore, type StoreConfig } from "@smart-imaging-proxy/core";
@@ -84,7 +84,7 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
   let rootWorld!: World;
   const shared: Shared = { catalogs, backends, clientKeys, initialBackend: () => (rootWorld as World | undefined)?.backend ?? "static-files" };
   rootWorld = createWorld({ store, clock: demoClock, shared });
-  const scopes = createScopes(shared, opts.scopes);
+  const scopes = createScopes(shared, { ...(opts.store?.mode === "file" ? { worldsDir: join(dirname(opts.store.path!), "worlds") } : {}), ...opts.scopes });
   const route = (serviceOf: (w: World) => (req: Request) => Promise<Response> | Response) => scopedHandler(rootWorld, scopes, serviceOf);
 
   const servers = [
@@ -122,6 +122,7 @@ export async function startStack(root: string, opts: { store?: StoreConfig; trac
     auth: rootWorld.auth, imaging: rootWorld.imaging, proxy: rootWorld.proxy, policy: rootWorld.policy,
     /** The listener a scope-aware service port uses, for the demo's own pages. */
     route,
+    shared,
     /** The root's catalog in use. Its `allStudies` is for the demo's displays and tests. */
     get catalog() { return rootWorld.catalog; },
     get catalogSource() { return rootWorld.catalogSource; },

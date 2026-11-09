@@ -27,19 +27,30 @@ function target(path: string, prefix: string): string {
 /** Service-to-service APIs, which callers reach on the services' own loopback ports, never through here. */
 const INTERNAL = /^\/imaging\/policy(\/|$)|^\/internal\/|^\/trace\/v1\//;
 
-/** The pages at the root of a public deployment that open a visitor's own scope. The home page does it on Connect. */
+/** The pages at the root of a public deployment that go to the browser's own world. The home page does it on Connect. */
 const SCOPED_PAGES = new Set(["/tours", "/explore", "/activity", "/account"]);
 /**
- * A page that mints a scope and goes there. Only a browser running it mints one, so a crawler
+ * A page that goes to this browser's world, making one if it has none. Only a browser running it makes one, so a crawler
  * following links can't use up the scopes people are in.
  */
-const OPEN_A_SCOPE = (path: string) => new Response(`<!doctype html><meta charset="utf-8"><title>SMART Imaging</title><meta name="robots" content="noindex"><p>Opening a sandbox of your own…</p><script>fetch("/api/scopes",{method:"POST"}).then(r=>r.json()).then(b=>location.replace(b.base+${JSON.stringify(path)}+location.search))</script>`, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+const OPEN_A_SCOPE = (path: string) => new Response(`<!doctype html><meta charset="utf-8"><title>SMART Imaging</title><meta name="robots" content="noindex"><p>Opening your sandbox…</p><script>(async()=>{const k="smart-imaging-client:world";let b=localStorage.getItem(k);if(!b||!(await fetch(b+"/api/settings/status")).ok){b=(await(await fetch("/api/scopes",{method:"POST"})).json()).base;localStorage.setItem(k,b)}location.replace(b+${JSON.stringify(path)}+location.search)})()</script>`, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
 
 /** What a public deployment's root world refuses or redirects: everyone shares it, so nobody changes it. */
 export function publicRootGate(method: string, path: string): Response | undefined {
   if (method === "GET" || method === "HEAD") return SCOPED_PAGES.has(path) ? OPEN_A_SCOPE(path) : undefined;
   if (method === "OPTIONS" || (method === "POST" && path === "/api/scopes")) return undefined;
   return Response.json({ error: "the shared world is read-only here: POST /api/scopes for a sandbox of your own, and work at its URLs" }, { status: 403 });
+}
+
+/** Each new world is a file, so one address can't make them without end. Normal use never comes close. */
+const MINTS_PER_HOUR = 120, recentMints = new Map<string, number[]>();
+export function allowMint(address: string, now = Date.now()): boolean {
+  const hourAgo = now - 3600_000, recent = (recentMints.get(address) ?? []).filter(t => t > hourAgo);
+  if (recent.length >= MINTS_PER_HOUR) { recentMints.set(address, recent); return false; }
+  recent.push(now);
+  recentMints.set(address, recent);
+  for (const [a, times] of recentMints) if (times.every(t => t <= hourAgo)) recentMints.delete(a);
+  return true;
 }
 
 export async function gatewayFetch(req: Request): Promise<Response> {
@@ -50,6 +61,7 @@ export async function gatewayFetch(req: Request): Promise<Response> {
   const prefix = scope ? `/s/${scope}` : "";
   if (INTERNAL.test(rest)) return new Response(null, { status: 404 });
   if (PUBLIC_DEMO && !scope) { const gated = publicRootGate(req.method, rest); if (gated) return gated; }
+  if (PUBLIC_DEMO && !scope && req.method === "POST" && rest === "/api/scopes" && !allowMint(req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "direct")) return Response.json({ error: "too many sandboxes from this address: try again in a while" }, { status: 429 });
   // The trace's pages use relative links, so its root needs the slash.
   if (rest === "/trace") return new Response(null, { status: 308, headers: { location: `${prefix}/trace/${url.search}` } });
   const to = target(rest, prefix);

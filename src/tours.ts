@@ -22,6 +22,8 @@ import type { Stack } from "./stack";
 const APP = "portal-app";
 const JOSH = "josh", SAM = "sam-caregiver", JOSH_PATIENT = "josh-example", RILEY = "riley-example";
 const SERVICE = "hand-referral-service";
+/** The clients the stories act as. */
+const TOUR_CLIENTS = [APP, SERVICE];
 
 /** A world's policy document now, with every row's id and basis. */
 const documentOf = (world: World): PolicyDocument => { const { revision: _r, ...doc } = world.store.snapshot(); return doc; };
@@ -461,6 +463,19 @@ function changePanels(tour: Tour, before: Chain, after: Chain, linked?: string[]
 }
 
 /** The tours and checks of one world. A tour runs in a scope minted for it, and a reload there comes back to it. */
+/**
+ * Puts a world back to what's on file for a tour, leaving other apps as they were: their tokens, and
+ * their approvals, for as long as the person approving still holds a route to that patient.
+ */
+function startOver(world: World) {
+  const others = world.store.approvals().filter(a => !TOUR_CLIENTS.some(c => a.app === ref("app", c)));
+  world.store.resetPolicy();
+  for (const { by, app, patient, sites } of others) { try { world.store.putApproval({ by, app, patient, ...(sites ? { sites } : {}) }); } catch {} }
+  world.store.deleteTokensOf(TOUR_CLIENTS);
+  world.clock.reset();
+  world.clearRuntime();
+}
+
 export function createTours(world: World, clients: Record<string, BackendClient>, stack: Stack) {
   let run: { tour: Tour; r: Run; results: Record<string, any>; running?: string; session: string } | undefined;
   const json = (b: unknown, status = 200) => Response.json(b, { status });
@@ -598,7 +613,14 @@ export function createTours(world: World, clients: Record<string, BackendClient>
       if (started) {
         const tour = tourById(started[1]!);
         if (!tour) return json({ error: "unknown tour" }, 404);
-        // A tour gets a scope of its own, seeded from what's on file.
+        // In someone's own world, a tour starts that world over from what's on file, and runs there.
+        if (world.scope) {
+          if (run?.running) return json({ error: "a step is still running" }, 409);
+          startOver(world);
+          run = undefined;
+          return json({ scope: { id: world.scope, base: world.prefix }, tour: tour.id }, 201);
+        }
+        // Started from the root, where nobody's world is, a tour gets a temporary one.
         const w = stack.scopes.mint();
         return json({ scope: { id: w.scope, base: w.prefix }, tour: tour.id }, 201);
       }

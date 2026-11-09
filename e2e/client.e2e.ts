@@ -9,7 +9,7 @@ import { registerClients } from "../src/flows";
 import { CONFIG, PORTS } from "../src/config";
 import { startStack, type Stack } from "../src/stack";
 
-setDefaultTimeout(90000);
+setDefaultTimeout(40000);
 const ORIGIN = process.env.BASE_URL ?? CONFIG.demoUrl;
 const SHOTS = process.env.SHOTS;
 let stack: Stack | undefined, servers: ReturnType<typeof Bun.serve>[] = [], browser: Browser;
@@ -38,6 +38,8 @@ async function litPixels(page: Page) {
     return lit / (d.length / 4);
   }, png.toString("base64"));
 }
+/** A missing element fails in seconds, not half a minute. */
+const newContext = async (o: Parameters<Browser["newContext"]>[0]) => { const c = await browser.newContext(o); c.setDefaultTimeout(10000); return c; };
 const shot = async (page: Page, name: string) => { if (SHOTS) await page.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: true }); };
 
 async function signIn(page: Page, user: string) {
@@ -51,7 +53,7 @@ async function signIn(page: Page, user: string) {
 
 describe("the demo client", () => {
   test("from Connect to a picture, with the protocol shown", async () => {
-    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: true });
+    const context = await newContext({ viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     const problems: string[] = [];
     page.on("pageerror", e => problems.push(e.message));
@@ -64,7 +66,7 @@ describe("the demo client", () => {
     await page.locator("#c-AllergyIntolerance li").first().waitFor();
     expect(await page.locator("#c-Condition li", { hasText: "wrist" }).count()).toBe(0); // resolved, so not active
     expect(await page.locator(".study-button").count()).toBe(6);
-    await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 45000 });
+    await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
     expect(await litPixels(page)).toBeGreaterThan(0.01);
     expect(await page.locator("#overlay").textContent()).toMatch(/\d+ × \d+/);
     for (const stage of ["discover", "authorize", "clinical", "imaging", "retrieve"]) await page.locator(`[data-stage=${stage}][data-state=done]`).waitFor();
@@ -72,8 +74,8 @@ describe("the demo client", () => {
     await page.locator("[data-stage=imaging] .fact", { hasText: "Studies" }).locator("dd", { hasText: "6" }).waitFor();
     // A stack: the middle image first, then scrolling, the slider, and another series.
     await page.locator(".study-button", { hasText: "BRAIN" }).click();
-    await page.locator("#slice:enabled").waitFor({ timeout: 45000 });
-    await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 45000 });
+    await page.locator("#slice:enabled").waitFor({ timeout: 15000 });
+    await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
     const before = await page.locator("#slice-out").textContent();
     expect(Number(before!.split("/")[0]!.trim())).toBeGreaterThan(1);
     await page.locator("#stage").focus(); await page.keyboard.press("ArrowDown");
@@ -89,7 +91,7 @@ describe("the demo client", () => {
     const uid = await page.locator('#series button[aria-pressed="false"]').first().getAttribute("data-uid");
     await page.locator(`#series button[data-uid="${uid}"]`).click();
     await page.locator(`#series button[data-uid="${uid}"][aria-pressed="true"]`).waitFor();
-    await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 45000 });
+    await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
     expect(await litPixels(page)).toBeGreaterThan(0.01);
     await page.getByRole("button", { name: "Zoom in" }).click();
     await page.locator("#overlay", { hasText: "Zoom 125%" }).waitFor();
@@ -104,8 +106,8 @@ describe("the demo client", () => {
     await page.getByRole("button", { name: "Reset view" }).click();
     await page.locator("#overlay", { hasText: "Zoom 100%" }).waitFor();
     await page.locator(".study-button", { hasText: "SM" }).click();
-    await page.locator("#overlay", { hasText: "×" }).waitFor({ timeout: 45000 });
-    await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 45000 });
+    await page.locator("#overlay", { hasText: "×" }).waitFor({ timeout: 15000 });
+    await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
     expect(await litPixels(page)).toBeGreaterThan(0.01);
     await shot(page, "desktop-slide");
     // Each storage backend serves the same study list and pictures.
@@ -113,8 +115,8 @@ describe("the demo client", () => {
       await page.locator("#source-select").selectOption(backend);
       await page.locator("#source-health", { hasText: "Working" }).waitFor();
       await page.locator("#source-select:enabled").waitFor();
-      await page.locator("#overlay", { hasText: "×" }).waitFor({ timeout: 45000 });
-      await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 45000 });
+      await page.locator("#overlay", { hasText: "×" }).waitFor({ timeout: 15000 });
+      await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
       expect(await page.locator(".study-button").count()).toBe(6);
       expect(await litPixels(page)).toBeGreaterThan(0.01);
     }
@@ -134,7 +136,7 @@ describe("the demo client", () => {
     await context.close();
   });
   test("a server from the JSON configuration, by its own discovery, with PKCE", async () => {
-    const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
+    const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     await page.goto(`${ORIGIN}/`);
     await page.locator("#configure summary").click();
@@ -144,7 +146,8 @@ describe("the demo client", () => {
     const ext = process.env.EXTERNAL_ISS ? { iss: process.env.EXTERNAL_ISS, clientId: process.env.EXTERNAL_CLIENT } : { iss: `${ORIGIN}/fhir`, clientId: "demo-client" };
     await page.locator("#servers-json").fill(JSON.stringify([{ label: "Another server", ...ext }]));
     await page.getByRole("button", { name: "Save" }).click();
-    await page.getByText("Saved 1 server.").waitFor();
+    await page.getByText("Saved 1 server of your own.").waitFor();
+    expect(await page.getByRole("radio", { name: /SMART Imaging Proxy demo/ }).count()).toBe(1);
     await page.getByRole("radio", { name: /Another server/ }).check();
     await page.getByRole("button", { name: "Connect", exact: true }).click();
     await page.locator("input[name=username][value=josh]").check();
@@ -155,14 +158,32 @@ describe("the demo client", () => {
     await page.getByText("Connected to Another server").waitFor();
     expect(await page.locator("#source").isVisible()).toBe(false);
     await page.locator(".who").waitFor();
-    await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 45000 });
+    await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
     expect(await page.locator(".study-button").count()).toBe(6);
     expect(await litPixels(page)).toBeGreaterThan(0.01);
     await shot(page, process.env.EXTERNAL_ISS ? "external-server" : "configured-server");
     await context.close();
   });
+  test("a browser keeps its sandbox until it starts over", async () => {
+    const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    await signIn(page, "josh");
+    const first = new URL(page.url()).pathname;
+    await page.goto(`${ORIGIN}/`);
+    await page.evaluate(() => sessionStorage.clear());
+    await page.goto(`${ORIGIN}/`);
+    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await page.waitForURL(u => u.pathname === first);
+    await page.goto(`${ORIGIN}/`);
+    await page.getByRole("button", { name: "Start over with a new sandbox" }).click();
+    await page.waitForFunction(() => !localStorage.getItem("smart-imaging-client:world"));
+    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await page.waitForURL(u => /^\/s\//.test(u.pathname) || u.pathname.includes("authorize"));
+    expect(new URL(page.url()).pathname.startsWith(first)).toBe(false);
+    await context.close();
+  });
   test("a patient with no studies gets a real empty result", async () => {
-    const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
+    const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     await signIn(page, "robin");
     await page.getByText("This patient has no studies this app can see.").waitFor();
@@ -170,10 +191,10 @@ describe("the demo client", () => {
     await context.close();
   });
   test("on a phone, the picture is on the first screen", async () => {
-    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
+    const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
     const page = await context.newPage();
     await signIn(page, "sam-caregiver");
-    await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 45000 });
+    await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
     const stage = (await page.locator("#stage").boundingBox())!;
     expect(stage.y).toBeLessThan(160);
@@ -182,7 +203,7 @@ describe("the demo client", () => {
     await context.close();
   });
   test("fits a narrow phone with large text", async () => {
-    const context = await browser.newContext({ viewport: { width: 320, height: 640 }, ignoreHTTPSErrors: true });
+    const context = await newContext({ viewport: { width: 320, height: 640 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     await page.goto(`${ORIGIN}/`);
     await page.addStyleTag({ content: "html{font-size:150%}" });
@@ -190,7 +211,7 @@ describe("the demo client", () => {
     await shot(page, "phone-landing");
     await signIn(page, "sam-caregiver");
     await page.addStyleTag({ content: "html{font-size:150%}" });
-    await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 45000 });
+    await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
     await shot(page, "phone-app");
     await context.close();

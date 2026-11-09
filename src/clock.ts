@@ -8,14 +8,15 @@ export interface DemoClock extends Clock {
   setOffset(seconds: number): void;
   reset(): void;
 }
-export function createDemoClock(): DemoClock {
-  let offset = 0;
+export function createDemoClock(initial = 0, onChange?: (offset: number) => void): DemoClock {
+  let offset = initial;
+  const set = (value: number) => { offset = value; onChange?.(offset); };
   return {
     now: () => Math.floor(Date.now() / 1000) + offset,
-    advance: seconds => { offset += seconds; },
+    advance: seconds => set(offset + seconds),
     offset: () => offset,
-    setOffset: seconds => { offset = seconds; },
-    reset: () => { offset = 0; },
+    setOffset: set,
+    reset: () => set(0),
   };
 }
 

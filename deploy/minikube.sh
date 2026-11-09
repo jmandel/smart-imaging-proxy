@@ -71,7 +71,7 @@ if [ "${INGRESS_FORWARD:-}" ]; then
   for _ in $(seq 1 30); do curl -sk -o /dev/null --connect-to "$HOST:443:127.0.0.1:18443" "https://$HOST/" && break; read -rt 1 <> <(:) || true; done
   RULES="MAP $HOST:* 127.0.0.1:18443"
 fi
-[ "${SKIP_TEST:-}" ] || BASE_URL="$ORIGIN" HOST_RULES="$RULES" timeout 180 bun test ./e2e/client.e2e.ts
+[ "${SKIP_TEST:-}" ] || BASE_URL="$ORIGIN" HOST_RULES="$RULES" timeout -k 5 90 bun test --timeout 40000 ./e2e/client.e2e.ts
 
 [ "${INGRESS_FORWARD:-}" ] || grep -q "$IP.*$HOST" /etc/hosts 2>/dev/null || echo "Add to /etc/hosts: $IP $HOST"
 echo "Running at $ORIGIN/"

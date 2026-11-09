@@ -201,8 +201,15 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       if (p === "/api/scopes" && req.method === "POST") {
         const unwanted = (await req.text()).trim();
         if (unwanted && unwanted !== "{}") return json({ error: "this action takes no input" }, 400);
-        const w = stack.scopes.mint();
+        const w = stack.scopes.mint({ saved: true });
         return json({ scope: w.scope, base: w.prefix, urls: w.urls }, 201);
+      }
+      if (p === "/api/scopes/current" && req.method === "DELETE") {
+        if (!world.scope) return json({ error: "only a scope can be ended" }, 409);
+        const refused = refuseWrite(req, url);
+        if (refused) return refused;
+        stack.scopes.remove(world.scope);
+        return json({ deleted: true });
       }
       if (p === "/api/policy" && req.method === "GET") return json(panelOf(world.store));
       const started = p.match(/^\/api\/flows\/([^/]+)\/start$/);

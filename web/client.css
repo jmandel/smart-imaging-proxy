@@ -6,6 +6,7 @@
 .landing .lead { font-size:1.15rem; color:var(--muted); margin:0 0 1.4rem; }
 .landing .note { color:var(--muted); }
 .landing .error { color:var(--bad); }
+.connect-actions { display:flex; flex-wrap:wrap; gap:.5rem; }
 .server-choice { border:0; padding:0; margin:0 0 .9rem; min-width:0; }
 .server-choice legend { font-weight:700; padding:0; margin-bottom:.35rem; }
 #servers { display:grid; gap:.4rem; }
