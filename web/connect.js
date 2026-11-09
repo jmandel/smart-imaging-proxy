@@ -1,5 +1,4 @@
 // Registering an app in this browser's own sandbox. Everything here happens in that sandbox.
-const copyButton = (label, value) => `<button type="button" class="tool" data-copy="${esc(value)}" data-label="${esc(label)}">${esc(label)}</button>`;
 const KEYS_KEY = "smart-imaging-client:keys";
 const savedKeys = () => { try { return JSON.parse(localStorage.getItem(KEYS_KEY) ?? "{}"); } catch { return {}; } };
 const keepKey = (id, jwk) => { try { localStorage.setItem(KEYS_KEY, JSON.stringify({ ...savedKeys(), [id]: jwk })); } catch {} };
@@ -7,12 +6,6 @@ const TYPE_LABEL = { public: "Public app", confidential: "Confidential app", bac
 const typeNow = () => $("input[name=type]:checked").value;
 function showFields() { const t = typeNow(); $("#redirect-field").hidden = t === "backend"; $("#key-field").hidden = t === "public"; $("#patients-field").hidden = t !== "backend"; }
 $$("input[name=type]").forEach(r => r.addEventListener("change", showFields));
-/** A fresh ES256 pair, made here, so the server only ever sees the public half. */
-async function generateKey() {
-  const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
-  const kid = crypto.randomUUID(), [priv, pub] = await Promise.all([crypto.subtle.exportKey("jwk", pair.privateKey), crypto.subtle.exportKey("jwk", pair.publicKey)]);
-  return { priv: { ...priv, kid }, pub: { kty: pub.kty, crv: pub.crv, x: pub.x, y: pub.y, kid } };
-}
 /** Whether the viewer on this site can act as this client: it holds the key, and for sign-in, its address is registered. */
 const canTry = c => (c.type === "public" || savedKeys()[c.id]) && (c.type === "backend" || c.redirectUris.includes(`${location.origin}${BASE}/`));
 function tryInViewer(c) {
@@ -70,12 +63,8 @@ $("#register").addEventListener("submit", async e => {
   } catch (x) { err.hidden = false; err.textContent = x.message; }
 });
 $("#clients").addEventListener("click", async e => {
-  const copy = e.target.closest("[data-copy]"), remove = e.target.closest("[data-remove]"), attempt = e.target.closest("[data-try]");
+  const remove = e.target.closest("[data-remove]"), attempt = e.target.closest("[data-try]");
   if (attempt) tryInViewer(knownClients.find(c => c.id === attempt.dataset.try));
-  if (copy) {
-    try { await navigator.clipboard.writeText(copy.dataset.copy); copy.textContent = "Copied"; } catch { copy.textContent = "Couldn't copy"; }
-    setTimeout(() => { if (copy.isConnected) copy.textContent = copy.dataset.label; }, 2000);
-  }
   if (remove) { await api("DELETE", `/api/sandbox/clients/${encodeURIComponent(remove.dataset.remove)}`); await refresh(); }
 });
 (async () => {

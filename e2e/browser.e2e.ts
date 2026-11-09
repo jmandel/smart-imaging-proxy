@@ -79,13 +79,14 @@ const contrast = (page: Page, selector: string) => page.locator(selector).first(
 
 describe("every page, on desktop and phone, in light and dark", () => {
   for (const [name, viewport] of [["desktop", DESKTOP], ["phone", PHONE]] as const) for (const colorScheme of ["light", "dark"] as const) {
-    test(`${name} ${colorScheme}: no script or console errors, no sideways scrolling, and the header holds three links and the settings`, async () => {
+    test(`${name} ${colorScheme}: no script or console errors, no sideways scrolling, and the header holds the menu and the settings`, async () => {
       for (const path of ["/", "/explore", "/activity", CONFIG.traceUrl, `${CONFIG.authUrl}/account`]) {
         const page = await open(path, { viewport, colorScheme });
         await page.waitForLoadState("networkidle");
         expect([path, await overflow(page)]).toEqual([path, 0]);
-        if (!path.startsWith("http")) {
-          expect(await page.locator(".pages a").allInnerTexts()).toEqual(["Tours", "Explore", "Activity"]);
+        if (!path.startsWith("http") && path !== "/") {
+          expect(await page.locator(".pages a").allInnerTexts()).toEqual(["Overview", "Build a client", "Test your server", "For agents"]);
+          expect(await page.locator(".subpages a").allInnerTexts()).toEqual(["Start here", "Register an app", "Tours", "Explore", "Activity"]);
           const box = await page.locator("#settings-button").boundingBox();
           expect(box!.y).toBeLessThan(60);
           expect(box!.height).toBeGreaterThanOrEqual(44);
@@ -95,7 +96,7 @@ describe("every page, on desktop and phone, in light and dark", () => {
       expect(problems).toEqual([]);
     });
     test(`${name} ${colorScheme}: the story cards' small diagram text keeps its contrast on the film`, async () => {
-      const page = await open("/", { viewport, colorScheme });
+      const page = await open("/tours", { viewport, colorScheme });
       await page.locator(".story .layers").first().waitFor();
       for (const sel of [".story .ly-site", ".story .ly-count", ".story .ly-box.off", ".story .ly-row.choice .ly-box.on", ".story .ly-row.outcome .ly-box.on", ".story .ly-box.linked", ".key .ly-row.outcome .ly-box", ".key .ly-legend p"]) {
         expect([sel, (await contrast(page, sel)) >= 4.5]).toEqual([sel, true]);

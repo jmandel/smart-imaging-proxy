@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Test your server · SMART Imaging</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Crect width='20' height='20' rx='3' fill='%230f2a3d'/%3E%3Ccircle cx='10' cy='10' r='4' fill='%23e8f1f6'/%3E%3C/svg%3E">
+<link rel="preload" href="/fonts/atkinson-next.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/atkinson-mono.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/client.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="mark" href="/" data-root title="Your sandboxes"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2" y="2" width="16" height="16" rx="3"/><circle cx="10" cy="10" r="3.2"/></svg><span class="name">SMART Imaging</span></a>
+  <nav class="pages" aria-label="Pages"><a href="/">Overview</a><a href="/build">Build a client</a><a href="/servers" aria-current="page">Test your server</a><a href="/llms.txt">For agents</a></nav>
+</header>
+<div id="announce" class="sr-only" role="status" aria-live="polite"></div>
+<main class="landing servers-page">
+  <h1>Test your server</h1>
+  <p class="lead">Point this sandbox's viewer at your own FHIR server. It connects exactly as it does here, so you can see whether your discovery, sign-in and imaging endpoints work for a SMART Imaging app.</p>
+  <ol class="steps-line" aria-label="Steps">
+    <li>Describe your server</li><li>Register the viewer with it</li><li>Connect</li>
+  </ol>
+
+  <form id="server-form" class="panel form" novalidate>
+    <h2 id="form-title">Add a server</h2>
+    <label for="srv-iss">FHIR base URL</label>
+    <div class="inline-field">
+      <input type="url" id="srv-iss" required placeholder="https://ehr.example.org/fhir" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <button type="button" class="secondary" id="check">Check discovery</button>
+    </div>
+    <p class="note">Where an app starts: the server whose <code>/.well-known/smart-configuration</code> names its sign-in and imaging endpoints.</p>
+    <div id="discovery" class="discovery" role="status" hidden></div>
+
+    <label for="srv-label">Name</label>
+    <input type="text" id="srv-label" required maxlength="80" placeholder="My test EHR" autocomplete="off">
+
+    <fieldset class="client-type"><legend>How the viewer connects</legend>
+      <label><input type="radio" name="how" value="public" checked> Sign-in, as a public app <span>A person signs in. Authorization code with PKCE, and no key.</span></label>
+      <label><input type="radio" name="how" value="confidential"> Sign-in, as a confidential app <span>The same, plus a <code>private_key_jwt</code> assertion signed in this browser.</span></label>
+      <label><input type="radio" name="how" value="backend"> Backend service <span>No one signs in. A signed assertion gets a token, and the viewer names the patient.</span></label>
+    </fieldset>
+
+    <section class="register-box" aria-labelledby="register-title">
+      <h3 id="register-title">Register the viewer with your server</h3>
+      <p class="note" id="register-why">Your server needs a client for this viewer. Register it with these details, then enter the client ID it gives you.</p>
+      <dl class="registered-facts" id="register-facts"></dl>
+      <div id="key-field" hidden>
+        <p class="key-state" id="key-state"></p>
+        <div class="configure-actions"><button type="button" class="secondary" id="generate">Generate a key pair</button><button type="button" class="tool" id="paste-toggle" aria-expanded="false">Paste a private key instead</button></div>
+        <div id="paste-field" hidden>
+          <label for="srv-jwk">Private key (JWK)</label>
+          <textarea id="srv-jwk" rows="4" spellcheck="false" autocapitalize="off" placeholder='{"kty":"EC","crv":"P-256","x":"…","y":"…","d":"…","kid":"…"}'></textarea>
+          <p class="note">An ES256 (P-256) key with a <code>kid</code>. It's kept in this browser and used only to sign assertions here, so use a test key.</p>
+        </div>
+      </div>
+    </section>
+
+    <label for="srv-client">Client ID</label>
+    <input type="text" id="srv-client" required autocomplete="off" autocapitalize="off" spellcheck="false">
+    <p class="note">What your server gave you when you registered the viewer.</p>
+
+    <div id="patient-field" hidden>
+      <label for="srv-patient">Patient</label>
+      <input type="text" id="srv-patient" placeholder="example-patient-id" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <p class="note">The FHIR id of the patient whose studies the viewer searches for. No one signs in to choose one.</p>
+    </div>
+
+    <details class="advanced">
+      <summary>Advanced</summary>
+      <label for="srv-scope">Scope</label>
+      <input type="text" id="srv-scope" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <p class="note">Leave empty for the default shown.</p>
+      <label for="srv-imaging">Imaging FHIR server</label>
+      <input type="url" id="srv-imaging" placeholder="https://imaging.example.org/fhir" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <p class="note">Only if discovery doesn't name it. The viewer searches <code>ImagingStudy</code> there.</p>
+    </details>
+
+    <div class="form-actions">
+      <button type="submit" class="primary" id="save-try">Save and connect</button>
+      <button type="button" class="secondary" id="save">Save</button>
+      <button type="button" class="tool" id="cancel-edit" hidden>Cancel</button>
+    </div>
+    <p class="error" id="form-error" role="alert" hidden></p>
+  </form>
+
+  <section aria-labelledby="yours"><h2 id="yours">Your servers</h2><div id="saved"></div></section>
+
+  <details class="configure" id="json">
+    <summary>Import or export as JSON</summary>
+    <p class="note">The same list as JSON, to copy into another browser or edit by hand. Each entry needs <code>label</code>, <code>iss</code> and <code>clientId</code>.</p>
+    <label for="servers-json">Your servers</label>
+    <textarea id="servers-json" rows="8" spellcheck="false" autocapitalize="off"></textarea>
+    <div class="configure-actions"><button type="button" class="secondary" id="servers-save">Replace with this</button></div>
+    <p class="configure-status" id="servers-status" role="status"></p>
+  </details>
+
+  <p class="note agents">Working with an AI agent? Give it <a href="/llms.txt">this sandbox's llms.txt</a>. It describes this page's settings and what the viewer expects from a server, so the agent can work out your server's values, or why discovery fails, with you.</p>
+</main>
+<script src="/page.js"></script>
+<script src="/server-list.js"></script>
+<script src="/servers.js"></script>
+</body>
+</html>

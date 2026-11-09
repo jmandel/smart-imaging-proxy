@@ -17,7 +17,7 @@
 <body>
 <header class="topbar">
   <a class="mark" href="/" data-root title="Your sandboxes"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2" y="2" width="16" height="16" rx="3"/><circle cx="10" cy="10" r="3.2"/></svg><span class="name">SMART Imaging</span></a>
-  <nav class="pages" aria-label="Pages"><a href="/" aria-current="page">Demo</a><a href="/tours">Tours</a><a href="/explore">Explore</a><a href="/activity">Activity</a><a href="/llms.txt">For agents</a></nav>
+  <nav class="pages" aria-label="Pages"><a href="/" aria-current="page">Overview</a><a href="/build">Build a client</a><a href="/servers">Test your server</a><a href="/llms.txt">For agents</a></nav>
 </header>
 <div id="announce" class="sr-only" role="status" aria-live="polite"></div>
 
@@ -30,30 +30,39 @@
   <p class="error" id="create-error" role="alert" hidden></p>
   <p class="note">Someone sent you a link to theirs? Just open it.</p>
 </main>
-<main id="landing" class="landing">
+<main id="landing" class="landing overview">
   <section class="sandbox panel" id="sandbox"></section>
-  <h1>One sign-in, for a patient's chart and their images</h1>
-  <p class="lead">This app connects to a health system the way any SMART app would, using <a href="https://build.fhir.org/ig/argonautproject/smart-imaging/">SMART Imaging Access</a>. Choose a server, sign in, then watch every step of the protocol.</p>
-  <fieldset class="server-choice"><legend>Connect to</legend><div id="servers"><label class="server"><input type="radio" name="server" value="sandbox" checked><strong>SMART Imaging sandbox</strong><span>Your own sandbox of sample patients</span></label></div></fieldset>
-  <div class="connect-actions"><button type="button" class="primary" id="connect">Connect</button></div>
-  <p class="error" id="connect-error" role="alert" hidden></p>
-  <p class="note">Building a SMART app? <a href="/connect">Connect it to this sandbox</a>.</p>
-  <ol class="preview">
-    <li><strong>Discover</strong><span>From one FHIR address, find the sign-in page and the imaging server.</span></li>
-    <li><strong>Authorize</strong><span>Sign in and approve this app for one patient's records.</span></li>
-    <li><strong>Read</strong><span>Use the same token for clinical data and the list of studies.</span></li>
-    <li><strong>View</strong><span>Retrieve DICOM images and decode them here in the browser.</span></li>
-  </ol>
-  <details class="configure" id="configure">
-    <summary>Add or change servers</summary>
-    <p>A server needs a client registered with this sandbox's redirect URI:</p>
-    <p><code id="redirect-uri"></code></p>
-    <label for="servers-json">Your servers, as JSON (added to the built-in list)</label>
-    <textarea id="servers-json" rows="10" spellcheck="false" autocapitalize="off"></textarea>
-    <p class="note">Each needs <code>label</code>, <code>iss</code> and <code>clientId</code>. <code>scope</code> is optional, and <code>imaging</code> names the imaging FHIR server when discovery doesn't. For a confidential app add <code>"auth":"private_key_jwt"</code> and <code>jwk</code>, a private ES256 key. For a backend service add <code>"mode":"backend"</code>, <code>jwk</code> and <code>patient</code>. Keys saved here stay in this browser, so use them only for testing.</p>
-    <div class="configure-actions"><button type="button" class="secondary" id="servers-save">Save</button><button type="button" class="secondary" id="servers-reset">Reset</button></div>
-    <p class="configure-status" id="servers-status" role="status"></p>
-  </details>
+  <h1>What are you here to do?</h1>
+  <p class="lead">This sandbox is a whole SMART Imaging setup: a health system's servers with sample patients and studies, and a viewer app that connects to them. Use whichever side you need.</p>
+  <section class="path panel" id="try" aria-labelledby="try-title">
+    <p class="path-kicker">Our app · our servers</p>
+    <h2 id="try-title">Try the viewer</h2>
+    <p>Sign in as a sample patient and see their chart and images, with every protocol step shown as it happens.</p>
+    <fieldset class="server-choice"><legend>Connect to</legend><div id="servers"><label class="server"><input type="radio" name="server" value="sandbox" checked><strong>SMART Imaging sandbox</strong><span>Your own sandbox of sample patients</span></label></div></fieldset>
+    <div class="connect-actions"><button type="button" class="primary" id="connect">Connect</button></div>
+    <p class="error" id="connect-error" role="alert" hidden></p>
+    <ol class="preview">
+      <li><strong>Discover</strong><span>From one FHIR address, find the sign-in page and the imaging server.</span></li>
+      <li><strong>Authorize</strong><span>Sign in and approve this app for one patient's records.</span></li>
+      <li><strong>Read</strong><span>Use the same token for clinical data and the list of studies.</span></li>
+      <li><strong>View</strong><span>Retrieve DICOM images and decode them here in the browser.</span></li>
+    </ol>
+  </section>
+  <div class="paths">
+    <a class="path panel" href="/build">
+      <p class="path-kicker">Your app · our servers</p>
+      <h2>Build a client</h2>
+      <p>Register your SMART app here and point it at this sandbox. Tours, Explore and Activity show what the servers decide, and why.</p>
+      <span class="path-go">Build a client →</span>
+    </a>
+    <a class="path panel" href="/servers">
+      <p class="path-kicker">Our app · your server</p>
+      <h2>Test your server</h2>
+      <p>Describe your FHIR server and the viewer connects to it the same way: a quick check that your discovery, sign-in and imaging endpoints work.</p>
+      <span class="path-go">Test your server →</span>
+    </a>
+  </div>
+  <p class="note agents">Working with an AI agent? Give it <a href="/llms.txt">this sandbox's llms.txt</a>. It explains the whole sandbox and its API, so the agent can register apps, sign in and check your server with you.</p>
 </main>
 
 <main id="app" class="workspace" hidden>
@@ -92,6 +101,7 @@
   </section>
 </main>
 <script src="/page.js"></script>
+<script src="/server-list.js"></script>
 <script src="/client.js"></script>
 </body>
 </html>

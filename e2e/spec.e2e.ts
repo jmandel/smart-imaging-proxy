@@ -72,11 +72,12 @@ async function connect(kind: string): Promise<Page> {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   context.setDefaultTimeout(10000);
   const page = await context.newPage();
-  await page.goto(`${sandbox.urls.demo}/`);
-  await page.locator("#configure summary").click();
+  await page.goto(`${sandbox.urls.demo}/servers`);
+  await page.locator("#json summary").click();
   await page.locator("#servers-json").fill(JSON.stringify([{ label: kind, iss: `${FIX}/${kind}/fhir`, clientId }]));
-  await page.getByRole("button", { name: "Save" }).click();
+  await page.getByRole("button", { name: "Replace with this" }).click();
   await page.getByText("Saved 1 server of your own.").waitFor();
+  await page.goto(`${sandbox.urls.demo}/`);
   await page.getByRole("radio", { name: new RegExp(`^${kind}`) }).check();
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   return page;

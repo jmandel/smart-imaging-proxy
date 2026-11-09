@@ -41,16 +41,17 @@ const setSaved = (x: { rules?: any[]; shares?: any[]; approvals?: any[] }) => {
 };
 
 describe("pages", () => {
-  test("the demo client is the home page, and Tours, Explore and the activity log are served, each with the header's links, and the old pages are gone", async () => {
+  test("the demo client is the home page, and Tours, Explore and the activity log are served, each with the header's links and the client builder's, and the old pages are gone", async () => {
     expect(await (await call("GET", "/")).text()).toContain("<title>SMART Imaging Demo");
     for (const [path, title] of [["/tours", "Tours"], ["/explore", "Explore"], ["/activity", "Activity"]]) {
       const html = await (await call("GET", path)).text();
       expect(html).toContain(`<title>${title}`);
-      expect(html).toMatch(/<nav class="pages" aria-label="Pages"><a href="\/"[^>]*>Demo<\/a><a href="\/tours"[^>]*>Tours<\/a><a href="\/explore"[^>]*>Explore<\/a><a href="\/activity"[^>]*>Activity<\/a><a href="\/llms.txt"[^>]*>For agents<\/a><\/nav>/);
+      expect(html).toMatch(/<nav class="pages" aria-label="Pages"><a href="\/"[^>]*>Overview<\/a><a href="\/build"[^>]*>Build a client<\/a><a href="\/servers"[^>]*>Test your server<\/a><a href="\/llms.txt"[^>]*>For agents<\/a><\/nav>/);
+      expect(html).toMatch(/<nav class="subpages" aria-label="Build a client"><a href="\/build"[^>]*>Start here<\/a><a href="\/connect"[^>]*>Register an app<\/a><a href="\/tours"[^>]*>Tours<\/a><a href="\/explore"[^>]*>Explore<\/a><a href="\/activity"[^>]*>Activity<\/a><\/nav>/);
       expect(html).toContain('id="settings-button"');
       expect(html).not.toContain("store-badge");
     }
-    for (const path of ["/explore.js", "/tours.js", "/activity.js", "/event-words.js", "/layers.js", "/page.js", "/thumbs.js", "/styles.css"]) expect((await call("GET", path)).status).toBe(200);
+    for (const path of ["/server-list.js", "/servers.js", "/explore.js", "/tours.js", "/activity.js", "/event-words.js", "/layers.js", "/page.js", "/thumbs.js", "/styles.css"]) expect((await call("GET", path)).status).toBe(200);
     for (const path of ["/browse", "/admin", "/app.js", "/admin.js", "/browse.js", "/cards.js", "/api/explore/events", "/api/browse/options", "/api/admin/status"]) expect([path, (await call("GET", path)).status]).toEqual([path, 404]);
   });
 });

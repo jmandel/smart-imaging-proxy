@@ -36,5 +36,8 @@ for (const [label, viewport] of [["desktop", { width: 1440, height: 900 }], ["ph
   await p.evaluate(() => sessionStorage.clear()); await p.goto(`${O}${base}/`); await report(`${label} landing again`, p);
   await p.goto(`${O}${base}/connect`); await report(`${label} connect page`, p);
   await p.evaluate(() => { (window as any).__s = []; }); await p.getByRole("radio", { name: /Backend service/ }).check(); await report(`${label} connect switch type`, p);
+  await p.goto(`${O}${base}/build`); await report(`${label} build page`, p);
+  await p.goto(`${O}${base}/servers`); await report(`${label} servers page`, p);
+  await p.evaluate(() => { (window as any).__s = []; }); await p.getByRole("radio", { name: /Backend service/ }).check(); await report(`${label} servers switch type`, p);
   await ctx.close();
 });

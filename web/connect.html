@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Connect your app · SMART Imaging</title>
+<title>Register an app · SMART Imaging</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Crect width='20' height='20' rx='3' fill='%230f2a3d'/%3E%3Ccircle cx='10' cy='10' r='4' fill='%23e8f1f6'/%3E%3C/svg%3E">
 <link rel="preload" href="/fonts/atkinson-next.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/atkinson-mono.woff2" as="font" type="font/woff2" crossorigin>
@@ -12,11 +12,12 @@
 <body>
 <header class="topbar">
   <a class="mark" href="/" data-root title="Your sandboxes"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2" y="2" width="16" height="16" rx="3"/><circle cx="10" cy="10" r="3.2"/></svg><span class="name">SMART Imaging</span></a>
-  <nav class="pages" aria-label="Pages"><a href="/">Demo</a><a href="/tours">Tours</a><a href="/explore">Explore</a><a href="/activity">Activity</a><a href="/llms.txt">For agents</a></nav>
+  <nav class="pages" aria-label="Pages"><a href="/">Overview</a><a href="/build" aria-current="page">Build a client</a><a href="/servers">Test your server</a><a href="/llms.txt">For agents</a></nav>
 </header>
+<nav class="subpages" aria-label="Build a client"><a href="/build">Start here</a><a href="/connect" aria-current="page">Register an app</a><a href="/tours">Tours</a><a href="/explore">Explore</a><a href="/activity">Activity</a></nav>
 <main class="landing connect-page">
-  <h1>Connect your own app</h1>
-  <p class="lead">Register a SMART app in your sandbox, then point it at the address below. It keeps working until you start over.</p>
+  <h1>Register an app</h1>
+  <p class="lead">Register your SMART app in this sandbox to get a client ID. It stays registered until you remove it. <a href="/build">Build a client</a> has the endpoints to point it at, and who to sign in as.</p>
   <form id="register" class="panel">
     <h2>Register an app</h2>
     <label for="app-name">App name</label>
@@ -47,18 +48,9 @@
     <p class="error" id="register-error" role="alert" hidden></p>
   </form>
   <section aria-labelledby="yours"><h2 id="yours">Your apps</h2><div id="clients"><p class="note">Loading…</p></div></section>
-  <section class="panel">
-    <h2>How to connect</h2>
-    <ul class="how">
-      <li>Apps use PKCE (S256). Confidential apps also send a <code>private_key_jwt</code> assertion signed with ES256.</li>
-      <li>Backend services use <code>client_credentials</code>, a signed assertion, and <code>system/ImagingStudy.rs</code>. They name the patient in each search.</li>
-      <li>Ask for <code>launch/patient patient/*.rs</code>.</li>
-      <li>Sign in as <code>josh</code>, <code>sam-caregiver</code> or <code>robin</code>. No password.</li>
-      <li>Discovery at your FHIR address names the imaging server.</li>
-    </ul>
-  </section>
 </main>
 <script src="/page.js"></script>
+<script src="/server-list.js"></script>
 <script src="/connect.js"></script>
 </body>
 </html>

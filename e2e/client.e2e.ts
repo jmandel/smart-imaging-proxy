@@ -145,20 +145,27 @@ describe("the demo client", () => {
     await context.close();
   });
   // A deployment's root is read-only, so it can't stand in for another server. There, this needs a real one.
-  test.skipIf(!!process.env.BASE_URL && !process.env.EXTERNAL_ISS)("a server from the JSON configuration, by its own discovery, with PKCE", async () => {
+  test.skipIf(!!process.env.BASE_URL && !process.env.EXTERNAL_ISS)("a server described on Test your server, checked by its own discovery, then connected with PKCE", async () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     const base = await enterSandbox(page);
-    await page.locator("#configure summary").click();
-    await page.locator("#servers-json").fill("[{}]");
-    await page.getByRole("button", { name: "Save" }).click();
-    await page.getByText('Not saved. Server 1 needs a "label".').waitFor();
-    const ext = process.env.EXTERNAL_ISS ? { iss: process.env.EXTERNAL_ISS, clientId: process.env.EXTERNAL_CLIENT } : { iss: `${ORIGIN}${base}/fhir`, clientId: "demo-client" };
-    await page.locator("#servers-json").fill(JSON.stringify([{ label: "Another server", ...ext }]));
-    await page.getByRole("button", { name: "Save" }).click();
-    await page.getByText("Saved 1 server of your own.").waitFor();
-    await page.getByRole("radio", { name: /Another server/ }).check();
-    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await page.getByRole("link", { name: /Test your server/ }).first().click();
+    await page.waitForURL(u => u.pathname === `${base}/servers`);
+    await page.getByText("None yet.").waitFor();
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await page.getByText('This server needs a name ("label").').waitFor();
+    const ext = process.env.EXTERNAL_ISS ? { iss: process.env.EXTERNAL_ISS, clientId: process.env.EXTERNAL_CLIENT! } : { iss: `${ORIGIN}${base}/fhir`, clientId: "demo-client" };
+    await page.getByLabel("FHIR base URL").fill(ext.iss);
+    await page.getByLabel("FHIR base URL").blur();
+    expect(await page.getByLabel("Name", { exact: true }).inputValue()).toBe(new URL(ext.iss).host);
+    await page.getByRole("button", { name: "Check discovery" }).click();
+    await page.locator("#discovery li", { hasText: "SMART Imaging" }).waitFor();
+    if (!process.env.EXTERNAL_ISS) expect(await page.locator("#discovery li[data-state=bad]").count()).toBe(0);
+    await page.locator("#register-facts").getByText(`${ORIGIN}${base}/`, { exact: true }).waitFor();
+    await page.getByLabel("Name", { exact: true }).fill("Another server");
+    await page.getByLabel("Client ID").fill(ext.clientId);
+    await shot(page, "server-builder");
+    await page.getByRole("button", { name: "Save and connect" }).click();
     await page.locator("input[name=username][value=josh]").check();
     await page.getByRole("button", { name: "Continue" }).click();
     await page.getByRole("button", { name: "Approve" }).click();
@@ -171,6 +178,44 @@ describe("the demo client", () => {
     expect(await page.locator(".study-button").count()).toBe(6);
     expect(await litPixels(page)).toBeGreaterThan(0.01);
     await shot(page, process.env.EXTERNAL_ISS ? "external-server" : "configured-server");
+    // Saved: offered again, editable, and removable.
+    await page.goto(`${ORIGIN}${base}/servers`);
+    await page.getByRole("heading", { name: "Another server" }).waitFor();
+    await page.getByRole("button", { name: "Edit" }).click();
+    await page.getByRole("heading", { name: "Edit Another server" }).waitFor();
+    expect(await page.getByLabel("Client ID").inputValue()).toBe(ext.clientId);
+    await page.getByRole("button", { name: "Remove Another server" }).click();
+    await page.getByText("None yet.").waitFor();
+    expect(await page.getByRole("heading", { name: "Add a server" }).count()).toBe(1);
+    await context.close();
+  });
+  test("a confidential client made on Test your server signs with the key it generated", async () => {
+    const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    const base = await enterSandbox(page);
+    await page.goto(`${ORIGIN}${base}/servers`);
+    await page.getByLabel("FHIR base URL").fill(`${ORIGIN}${base}/fhir`);
+    await page.getByRole("radio", { name: /confidential app/ }).check();
+    await page.getByRole("button", { name: "Save and connect" }).click();
+    await page.getByText("Generate a key pair, or paste a private key").waitFor();
+    await page.getByRole("button", { name: "Generate a key pair" }).click();
+    const jwk = JSON.parse((await page.getByRole("button", { name: "Copy JWK" }).getAttribute("data-copy"))!);
+    expect(jwk.d).toBeUndefined();
+    await page.getByRole("button", { name: "Check discovery" }).click();
+    await page.locator("#discovery li", { hasText: "Signed assertions" }).waitFor();
+    expect(await page.locator("#discovery li[data-state=bad]").count()).toBe(0);
+    // Registered in this sandbox as a developer would at their own server: the redirect URI and public key shown.
+    const made = await (await page.request.post(`${ORIGIN}${base}/api/sandbox/clients`, { data: { name: "Builder test", type: "confidential", redirectUris: [`${ORIGIN}${base}/`], jwk } })).json();
+    await page.getByLabel("Name", { exact: true }).fill("Signed in");
+    await page.getByLabel("Client ID").fill(made.id);
+    await shot(page, "server-builder-confidential");
+    await page.getByRole("button", { name: "Save and connect" }).click();
+    await page.locator("input[name=username][value=josh]").check();
+    await page.getByRole("button", { name: "Continue" }).click();
+    await page.getByRole("button", { name: "Approve" }).click();
+    await page.locator("#app").waitFor({ state: "visible" });
+    await page.locator(".study-button").nth(5).waitFor();
+    expect(await page.locator("#connected").textContent()).toBe("Connected to Signed in");
     await context.close();
   });
   test("home lists this browser's sandboxes, and deleting one removes it", async () => {
@@ -216,13 +261,15 @@ describe("the demo client", () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     const base = await enterSandbox(page);
-    for (const path of [`${base}/`, `${base}/tours`, `${base}/explore`, `${base}/activity`, `${base}/connect`]) {
+    for (const path of [`${base}/`, `${base}/build`, `${base}/servers`, `${base}/tours`, `${base}/explore`, `${base}/activity`, `${base}/connect`]) {
       await page.goto(`${ORIGIN}${path}`);
-      const hrefs = await page.locator("nav.pages a").evaluateAll(as => as.map(a => a.getAttribute("href")));
+      const hrefs = await page.locator("nav.pages a, nav.subpages a, a.path").evaluateAll(as => as.map(a => a.getAttribute("href")));
       expect(hrefs.every(h => h!.startsWith(`${base}/`))).toBe(true);
       expect(hrefs).toContain(`${base}/llms.txt`);
       expect(await page.locator("a.mark").getAttribute("href")).toBe("/");
     }
+    await page.goto(`${ORIGIN}${base}/build`);
+    await page.locator("#endpoints").getByText(`${ORIGIN}${base}/fhir`, { exact: true }).waitFor();
     await page.goto(`${ORIGIN}/`);
     expect(await page.locator("a", { hasText: "For agents" }).getAttribute("href")).toBe("/llms.txt");
     await context.close();

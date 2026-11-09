@@ -143,6 +143,8 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       if (p === "/explore") return file("index.html");
       if (p === "/activity") return file("activity.html");
       if (p === "/connect") return file("connect.html");
+      if (p === "/build") return new Response((await Bun.file(join(root, "web", "build.html")).text()).replaceAll("{{SITE}}", sandbox.urls.demo), { headers: { "content-type": "text/html; charset=utf-8" } });
+      if (p === "/servers") return file("servers.html");
       if (p === "/llms.txt") return llmsTxt(sandbox);
       if (p.startsWith("/api/explore/")) return explore.fetch(req, url);
       if (p === "/api/tours" || p.startsWith("/api/tours/") || p.startsWith("/api/checks/")) {
@@ -268,7 +270,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
   }
 
   // The same files in every sandbox: the pages work out their sandbox from their own URL.
-  const STATIC: Record<string, string> = Object.fromEntries(["styles.css", "page.js", "event-words.js", "layers.js", "explore.js", "tours.js", "activity.js", "thumbs.js", "client.js", "client.css", "connect.js", "fonts/atkinson-next.woff2", "fonts/atkinson-mono.woff2"].map(f => [`/${f}`, f]));
+  const STATIC: Record<string, string> = Object.fromEntries(["styles.css", "page.js", "event-words.js", "layers.js", "explore.js", "tours.js", "activity.js", "thumbs.js", "client.js", "server-list.js", "servers.js", "client.css", "connect.js", "fonts/atkinson-next.woff2", "fonts/atkinson-mono.woff2"].map(f => [`/${f}`, f]));
   /**
    * viewer-kit's files, from the pinned download, never from the repository: checked once, here at
    * startup, and served only as the bytes that were checked. With none that check out, every one is a

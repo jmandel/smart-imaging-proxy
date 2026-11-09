@@ -4,6 +4,13 @@
 
 {{SANDBOX_SECTION}}
 
+## Two ways to use it
+
+A sandbox has both sides of SMART Imaging: the health system's servers, and a viewer app. Most people need one side.
+
+- **Building a client?** Point your app at this sandbox's servers. Read "The parts", "Connect an app" and "Sign in without a browser". The page for people is `{{SITE}}/build`.
+- **Testing your own server?** Point this sandbox's viewer at it. Read "Test your server with the viewer". The page for people is `{{SITE}}/servers`.
+
 ## The parts
 
 A real deployment has separate systems, and here they share one origin.
@@ -126,22 +133,33 @@ Starting a guided tour resets a sandbox's policy, but keeps its registered apps,
 
 ## Pages
 
-- [Demo client]({{SITE}}/): sign in and view images, with each protocol step shown.
-- [Connect your app]({{SITE}}/connect): register a client.
-- [Tours]({{SITE}}/tours): guided stories about sharing, guardians and policy.
-- [Explore]({{SITE}}/explore): see what each person and service can reach.
-- [Activity]({{SITE}}/activity): what happened, and why.
+- [Overview]({{SITE}}/): the sandbox, its viewer, and the two ways in.
+- [Build a client]({{SITE}}/build): endpoints and sample accounts for your app. Under it:
+  - [Register an app]({{SITE}}/connect): register a client.
+  - [Tours]({{SITE}}/tours): guided stories about sharing, guardians and policy.
+  - [Explore]({{SITE}}/explore): what each person and service can reach.
+  - [Activity]({{SITE}}/activity): what happened, and why.
+- [Test your server]({{SITE}}/servers): point the viewer at your own FHIR server.
 - [Live trace]({{SITE}}/trace/): every request between the services.
 
-## Viewer configuration
+## Test your server with the viewer
 
-The demo client can connect to any SMART server with a public PKCE client. Under "Add or change servers", paste:
+The viewer at `{{SITE}}/` can connect to any SMART server, in the browser, exactly as it connects here. What your server needs:
+
+1. **CORS** for the origin `{{ORIGIN}}`, on discovery, the token endpoint, FHIR searches and image retrieval. The browser makes every request.
+2. **Discovery** at `{FHIR base}/.well-known/smart-configuration`, with `authorization_endpoint` and `token_endpoint`. SMART Imaging is found by capability: `smart-imaging-access` together with `http://fhir.org/argonaut/smart-imaging/capabilities/app-launch` (or `.../backend-services`), either in top-level `capabilities` or on an entry in `associated_endpoints`, whose `url` is the imaging FHIR server.
+3. **A client for the viewer.** For sign-in, register the redirect URI `{{SITE}}/` exactly, with PKCE S256, and scope `launch/patient patient/*.rs`. A confidential client uses `private_key_jwt` with ES256. A backend service uses `client_credentials` with `system/ImagingStudy.rs`.
+4. **Searches the viewer makes:** `Patient/{id}`, `AllergyIntolerance`, `Condition`, `MedicationRequest` and `DiagnosticReport` by `patient`, then `{imaging}/ImagingStudy?patient={id}&_include=ImagingStudy:endpoint`, following `next` links. It retrieves instances from each study's `dicom-wado-rs` `Endpoint.address`, sending the token only there, and honours `503` with `Retry-After`.
+
+The test-your-server page has a form for these settings, a button that checks discovery as the viewer reads it, and generates a key pair in the browser for clients that sign. Saved servers live in the browser's storage, which an agent can't write, so give the person the values for the form, or a JSON entry to paste under "Import or export as JSON":
 
 ```json
 [{ "label": "My server", "iss": "https://example.org/fhir", "clientId": "my-client", "scope": "launch/patient patient/*.rs", "imaging": "https://example.org/imaging/fhir" }]
 ```
 
-`scope` and `imaging` are optional. `imaging` is needed only if the server's discovery doesn't name its imaging endpoint. A confidential app adds `"auth":"private_key_jwt"` and `"jwk"`, a private ES256 JWK with a `kid`. A backend service adds `"mode":"backend"`, `"jwk"` and `"patient"`.
+`scope` and `imaging` are optional. `imaging` is needed only if discovery doesn't name the imaging server. A confidential app adds `"auth":"private_key_jwt"` and `"jwk"`, a private ES256 JWK with a `kid`. A backend service adds `"mode":"backend"`, `"jwk"` and `"patient"`, the FHIR id it searches for. Keys are easier to make on the page: it shows the public half to register.
+
+If discovery can't be read from the page, it's usually CORS or a wrong base: check `curl -i "$ISS/.well-known/smart-configuration" -H "origin: {{ORIGIN}}"` for a 200 with `access-control-allow-origin`.
 
 ## Specifications
 

@@ -17,6 +17,15 @@ const studyList = (items, lead = plural(items.length, "study", "studies") + ":")
 const studyDate = d => d ? String(d).slice(0, 10) : "";
 const announce = text => { const el = $("#announce"); if (el) { el.textContent = ""; setTimeout(() => { el.textContent = text; }, 30); } };
 
+/** A button that copies `value`, and says so. One listener below serves every page's. */
+const copyButton = (label, value, aria = label) => `<button type="button" class="tool" data-copy="${esc(value)}" data-label="${esc(label)}"${aria === label ? "" : ` aria-label="${esc(aria)}"`}>${esc(label)}</button>`;
+document.addEventListener("click", async e => {
+  const copy = e.target.closest?.("[data-copy]");
+  if (!copy) return;
+  try { await navigator.clipboard.writeText(copy.dataset.copy); copy.textContent = "Copied"; } catch { copy.textContent = "Couldn't copy"; }
+  setTimeout(() => { if (copy.isConnected) copy.textContent = copy.dataset.label; }, 2000);
+});
+
 /** How people sign in: done for them, or by themselves in a window that a Sign in button opens. Kept in this browser. */
 const SIGNIN_KEY = "smart-imaging-signin";
 function signInMode() { try { return localStorage.getItem(SIGNIN_KEY) === "window" ? "window" : "auto"; } catch { return "auto"; } }
