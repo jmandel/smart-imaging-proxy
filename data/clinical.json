@@ -1,0 +1,41 @@
+{
+  "_note": "Invented for the demo. Nothing here describes a real person, including Josh Example, whose images are real and de-identified.",
+  "josh-example": {
+    "AllergyIntolerance": [
+      { "id": "josh-allergy-penicillin", "text": "Penicillin", "status": "active" },
+      { "id": "josh-allergy-latex", "text": "Latex", "status": "resolved" }
+    ],
+    "Condition": [
+      { "id": "josh-condition-migraine", "text": "Migraine without aura", "status": "active" },
+      { "id": "josh-condition-wrist-fracture", "text": "Fracture of left wrist", "status": "resolved" }
+    ],
+    "MedicationRequest": [
+      { "id": "josh-med-sumatriptan", "text": "Sumatriptan 50 mg tablet, as needed", "status": "active" }
+    ]
+  },
+  "robin-example": {
+    "AllergyIntolerance": [],
+    "Condition": [],
+    "MedicationRequest": []
+  },
+  "sam-example": {
+    "AllergyIntolerance": [
+      { "id": "sam-allergy-sulfa", "text": "Sulfonamide antibiotics", "status": "active" }
+    ],
+    "Condition": [
+      { "id": "sam-condition-sinusitis", "text": "Chronic sinusitis", "status": "active" },
+      { "id": "sam-condition-asthma", "text": "Mild intermittent asthma", "status": "active" }
+    ],
+    "MedicationRequest": [
+      { "id": "sam-med-fluticasone", "text": "Fluticasone nasal spray, daily", "status": "active" },
+      { "id": "sam-med-albuterol", "text": "Albuterol inhaler, as needed", "status": "active" }
+    ]
+  },
+  "riley-example": {
+    "AllergyIntolerance": [],
+    "Condition": [
+      { "id": "riley-condition-knee", "text": "Left knee sprain", "status": "resolved" }
+    ],
+    "MedicationRequest": []
+  }
+}

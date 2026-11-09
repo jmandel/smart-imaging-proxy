@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMART Imaging Demo</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Crect width='20' height='20' rx='3' fill='%230f2a3d'/%3E%3Ccircle cx='10' cy='10' r='4' fill='%23e8f1f6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/client.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="mark" href="/"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2" y="2" width="16" height="16" rx="3"/><circle cx="10" cy="10" r="3.2"/></svg><span class="name">SMART Imaging</span></a>
+  <nav class="pages" aria-label="Pages"><a href="/" aria-current="page">Demo</a><a href="/tours">Tours</a><a href="/explore">Explore</a><a href="/activity">Activity</a></nav>
+  <div class="bar-end"><button type="button" class="secondary" id="disconnect" hidden>Disconnect</button></div>
+</header>
+<div id="announce" class="sr-only" role="status" aria-live="polite"></div>
+
+<main id="landing" class="landing">
+  <h1>One sign-in, for a patient's chart and their images</h1>
+  <p class="lead">This app connects to a sandbox health system the way a real one would, using <a href="https://build.fhir.org/ig/argonautproject/smart-imaging/">SMART Imaging Access</a>. Sign in as a sample patient, then watch every request it makes.</p>
+  <button type="button" class="primary" id="connect">Connect to the sandbox</button>
+  <p class="error" id="connect-error" role="alert" hidden></p>
+  <ol class="preview">
+    <li><strong>Discover</strong><span>From one FHIR address, find the sign-in page and the imaging server.</span></li>
+    <li><strong>Authorize</strong><span>Sign in and approve this app for one patient's records.</span></li>
+    <li><strong>Read</strong><span>Use the same token for clinical data and the list of studies.</span></li>
+    <li><strong>View</strong><span>Retrieve DICOM images and decode them here in the browser.</span></li>
+  </ol>
+  <p class="note">The sandbox is yours alone and resets when idle. Its people are samples: the clinical entries are invented, and the images are synthetic or de-identified.</p>
+</main>
+
+<main id="app" class="workspace" hidden>
+  <section class="chart" aria-label="Patient">
+    <div id="patient" class="panel"></div>
+    <div id="clinical" class="panel"></div>
+    <div class="panel"><h2>Imaging studies</h2><div id="studies"><p class="note">Loading…</p></div></div>
+  </section>
+  <section class="viewer" aria-label="Image viewer">
+    <div class="stage" id="stage" tabindex="0" aria-label="Image. Arrow keys change the image.">
+      <canvas id="canvas"></canvas>
+      <p class="overlay" id="overlay"></p>
+      <p class="stage-note" id="stage-note">Choose a study.</p>
+    </div>
+    <div class="controls">
+      <label for="slice">Image</label>
+      <input type="range" id="slice" min="0" max="0" value="0" disabled>
+      <output id="slice-out" for="slice"></output>
+    </div>
+    <div class="controls tools" role="group" aria-label="Image tools">
+      <button type="button" class="tool" id="tool-window" aria-pressed="true">Window</button>
+      <button type="button" class="tool" id="tool-pan" aria-pressed="false">Pan</button>
+      <button type="button" class="tool" id="zoom-out" aria-label="Zoom out">−</button>
+      <button type="button" class="tool" id="zoom-in" aria-label="Zoom in">+</button>
+      <button type="button" class="tool" id="invert" aria-pressed="false">Invert</button>
+      <button type="button" class="tool" id="reset-view" disabled>Reset view</button>
+    </div>
+    <p class="note hint">Scroll or use arrow keys to change images. Drag to adjust brightness and contrast, or to pan. Ctrl-scroll zooms.</p>
+    <div class="series" id="series" role="group" aria-label="Series"></div>
+  </section>
+  <section class="protocol panel" aria-labelledby="protocol-title">
+    <h2 id="protocol-title">How this app connected</h2>
+    <ol id="trail"></ol>
+  </section>
+</main>
+<dialog id="call-detail" aria-label="Request details"><button type="button" class="secondary" id="call-close">Close</button><div id="call-body"></div></dialog>
+<script src="/page.js"></script>
+<script src="/client.js"></script>
+</body>
+</html>

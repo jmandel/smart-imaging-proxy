@@ -18,7 +18,10 @@
     "viewer-kit": "bun scripts/viewer-kit.ts",
     "start": "bun src/main.ts",
     "test": "bun test",
-    "test:ui": "DEMO_PORT_OFFSET=${DEMO_PORT_OFFSET:-3000} bun test ./e2e/browser.e2e.ts"
+    "test:ui": "DEMO_PORT_OFFSET=${DEMO_PORT_OFFSET:-3000} bun test ./e2e/browser.e2e.ts",
+    "dev": "DEMO_TAILNET=0 bun --watch src/main.ts",
+    "test:client": "DEMO_PORT_OFFSET=${DEMO_PORT_OFFSET:-3000} bun test ./e2e/client.e2e.ts",
+    "minikube": "deploy/minikube.sh"
   },
   "devDependencies": {
     "playwright-core": "^1.65.0"

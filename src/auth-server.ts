@@ -7,6 +7,7 @@ import { demoClock } from "./clock";
 import { refuseWrite } from "./settings-api";
 import { PORTS } from "./config";
 import { check, recordEvent, traced } from "./trace";
+import { clinicalSearch, demographics, isClinicalType } from "./clinical";
 
 export interface Grant { client_id: string; scope: string; patient?: string; sub?: string; fhirUser?: string; family?: string; }
 
@@ -40,7 +41,7 @@ export const USERS = table<DemoUser>({
 });
 const userOf = (name: string): DemoUser | undefined => Object.hasOwn(USERS, name) ? USERS[name] : undefined;
 export const PATIENT_NAMES = table<string>({ "josh-example": "Josh Example", "robin-example": "Robin Example", "sam-example": "Sam Example", "riley-example": "Riley Example" });
-export const APP_NAMES = table<string>({ "portal-app": "Health Records App", "separate-viewer": "Separate Image Viewer" });
+export const APP_NAMES = table<string>({ "portal-app": "Health Records App", "separate-viewer": "Separate Image Viewer", "demo-client": "SMART Imaging Demo" });
 
 /**
  * Public clients beyond the demo's own, from DEMO_APP_CLIENTS: comma-separated
@@ -145,7 +146,7 @@ form.inline{display:inline}
  * Every URL it issues starts at `issuer`, including the paths in its own pages and redirects, so it can
  * be served under a prefix. It answers requests with the prefix already taken off.
  */
-export function createAuthServer(opts: { issuer: string; imagingFhirBase: string; serviceSecret: string; redirectUri: string; directory: Directory; store: () => PolicyStore; clock?: Clock }) {
+export function createAuthServer(opts: { issuer: string; imagingFhirBase: string; serviceSecret: string; redirectUri: string; demoClientRedirectUri: string; directory: Directory; store: () => PolicyStore; clock?: Clock }) {
   const clock = opts.clock ?? demoClock;
   const now = () => clock.now();
   /** The path the issuer adds, which every path this server writes into a page or a redirect starts with. */
@@ -153,6 +154,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
   const PUBLIC_CLIENTS = table<{ name: string; redirectUris: string[] }>({
     "portal-app": { name: APP_NAMES["portal-app"]!, redirectUris: [opts.redirectUri] },
     "separate-viewer": { name: APP_NAMES["separate-viewer"]!, redirectUris: [opts.redirectUri] },
+    "demo-client": { name: APP_NAMES["demo-client"]!, redirectUris: [opts.demoClientRedirectUri] },
     ...Object.fromEntries([...appClientsFromEnv()].map(([id, redirectUris]) => [id, { name: id, redirectUris }])),
   });
   const txns = new Map<string, { client_id: string; redirect_uri: string; state: string; scope: string; code_challenge: string; exp: number; user?: string; login_hint?: string; patient_hint?: string }>();
@@ -425,7 +427,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
         grant_types_supported: ["authorization_code", "client_credentials", "refresh_token"],
         response_types_supported: ["code"], code_challenge_methods_supported: ["S256"],
         token_endpoint_auth_methods_supported: ["private_key_jwt"], token_endpoint_auth_signing_alg_values_supported: ["ES256"],
-        scopes_supported: ["patient/ImagingStudy.rs", "system/ImagingStudy.rs", "launch/patient", "online_access"],
+        scopes_supported: ["patient/ImagingStudy.rs", "patient/Patient.rs", "patient/AllergyIntolerance.rs", "patient/Condition.rs", "patient/MedicationRequest.rs", "patient/*.rs", "system/ImagingStudy.rs", "launch/patient", "online_access"],
         capabilities: ["launch-standalone", "client-public", "client-confidential-asymmetric", "permission-v2", "context-standalone-patient"],
         associated_endpoints: [{ url: opts.imagingFhirBase, capabilities: ["smart-imaging-access", "http://fhir.org/argonaut/smart-imaging/capabilities/app-launch", "http://fhir.org/argonaut/smart-imaging/capabilities/backend-services"] }],
       });
@@ -500,7 +502,15 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
       if (!check("authorization-server", "patient read has a live access token", !!t && !t.revoked && t.exp! > now(), { token_hash: bearer && ath(bearer).slice(0, 10) })) return new Response(null, { status: 401, headers: { "WWW-Authenticate": bearer ? 'Bearer error="invalid_token"' : "Bearer" } });
       if (!check("authorization-server", "the token's patient context is this patient", t!.patient === id, { patient: id, patient_context: t!.patient })) return new Response(null, { status: 403, headers: { "WWW-Authenticate": 'Bearer error="insufficient_scope"' } });
       if (!Object.hasOwn(PATIENT_NAMES, id)) return new Response(null, { status: 404 });
-      return Response.json({ resourceType: "Patient", id, name: [{ family: "Example", given: [PATIENT_NAMES[id]!.split(" ")[0]] }] });
+      return Response.json({ resourceType: "Patient", id, name: [{ family: "Example", given: [PATIENT_NAMES[id]!.split(" ")[0]] }], ...demographics(id) });
+    }
+    const clinicalType = url.pathname.match(/^\/fhir\/([A-Za-z]+)$/)?.[1];
+    if (clinicalType && isClinicalType(clinicalType) && req.method === "GET") {
+      const bearer = req.headers.get("authorization")?.match(/^Bearer (.+)$/i)?.[1];
+      const t = bearer ? opts.store().getToken(bearer, "access") : undefined;
+      if (!check("authorization-server", "clinical search has a live access token", !!t && !t.revoked && t.exp! > now(), { type: clinicalType })) return new Response(null, { status: 401, headers: { "WWW-Authenticate": bearer ? 'Bearer error="invalid_token"' : "Bearer" } });
+      const found = clinicalSearch(clinicalType, url.searchParams, t!, `${opts.issuer}/fhir`);
+      return Response.json(found.body, { status: found.status, headers: { "content-type": "application/fhir+json" } });
     }
     return new Response("not found", { status: 404 });
   });

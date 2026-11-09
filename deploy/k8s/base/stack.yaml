@@ -1,0 +1,104 @@
+# The whole deployment in one pod, since the app reaches RustFS and Orthanc on loopback. An init container
+# puts the data on the volume, skipping finished work, so only a new volume waits for the download.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: smart-imaging-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 8Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: smart-imaging
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: smart-imaging }
+  template:
+    metadata:
+      labels: { app: smart-imaging }
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: smart-imaging-data
+      initContainers:
+        - name: prepare
+          image: smart-imaging-proxy
+          command: [sh, -ec, "bun scripts/fetch-data.ts; bun scripts/ingest.ts; bun scripts/backends.ts fetch; bun scripts/viewer-kit.ts"]
+          envFrom: [{ configMapRef: { name: smart-imaging-config } }]
+          volumeMounts: [{ name: data, mountPath: /data }]
+      containers:
+        - name: s3
+          image: smart-imaging-proxy
+          command: [bun, scripts/backends.ts, run, s3]
+          envFrom: [{ configMapRef: { name: smart-imaging-config } }]
+          volumeMounts: [{ name: data, mountPath: /data }]
+          resources: { requests: { cpu: 50m, memory: 128Mi } }
+        - name: orthanc
+          image: smart-imaging-proxy
+          command: [bun, scripts/backends.ts, run, orthanc]
+          envFrom: [{ configMapRef: { name: smart-imaging-config } }]
+          volumeMounts: [{ name: data, mountPath: /data }]
+          resources: { requests: { cpu: 50m, memory: 128Mi } }
+        - name: app
+          image: smart-imaging-proxy
+          command: [sh, -ec, "bun scripts/load-backends.ts; exec bun src/main.ts"]
+          ports: [{ name: http, containerPort: 4605 }]
+          envFrom: [{ configMapRef: { name: smart-imaging-config } }]
+          volumeMounts: [{ name: data, mountPath: /data }]
+          resources: { requests: { cpu: 100m, memory: 256Mi } }
+          startupProbe: &probe
+            httpGet:
+              path: /fhir/.well-known/smart-configuration
+              port: http
+              httpHeaders: [{ name: Host, value: "localhost:4605" }]
+            periodSeconds: 5
+            failureThreshold: 120
+          readinessProbe:
+            <<: *probe
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: smart-imaging
+spec:
+  selector: { app: smart-imaging }
+  ports:
+    - { name: http, port: 80, targetPort: http }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: smart-imaging
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [HOSTNAME]
+      secretName: smart-imaging-tls
+  rules:
+    - host: HOSTNAME
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: smart-imaging
+                port: { name: http }

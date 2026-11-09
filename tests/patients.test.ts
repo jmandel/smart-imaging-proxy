@@ -366,7 +366,7 @@ describe("choosing on the Authorization Server's pages", () => {
   test("every patient has a Patient resource, for a token for that patient", async () => {
     const t = await launchFor("riley-example");
     const r = await fetch(`${CLINICAL_FHIR}/Patient/riley-example`, { headers: { Authorization: `Bearer ${t.access_token}` } });
-    expect(await r.json()).toEqual({ resourceType: "Patient", id: "riley-example", name: [{ family: "Example", given: ["Riley"] }] });
+    expect(await r.json()).toMatchObject({ resourceType: "Patient", id: "riley-example", name: [{ family: "Example", given: ["Riley"] }], birthDate: "2011-01-01" });
     expect((await fetch(`${CLINICAL_FHIR}/Patient/sam-example`, { headers: { Authorization: `Bearer ${t.access_token}` } })).status).toBe(403);
   });
 });

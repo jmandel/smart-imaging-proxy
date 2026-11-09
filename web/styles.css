@@ -513,7 +513,8 @@ tr.detail > td { background:var(--box); max-width:none; padding:.6rem .8rem .8re
   .fl-cell.in::before, .fl-cell.out::after { top:calc(.35rem + 8px - 1px); }
 }
 @media (max-width:720px) {
-  .topbar { padding:.4rem 1rem; gap:.25rem; flex-wrap:nowrap; }
+  .topbar { padding:.4rem 1rem; gap:.25rem; }
+  .pages { flex-wrap:wrap; }
   .mark { font-size:.95rem; gap:.4rem; }
   .pages a { padding:0 .5rem; }
   .where { display:none; }

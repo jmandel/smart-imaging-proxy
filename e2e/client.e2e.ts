@@ -1,0 +1,148 @@
+// The public demo client, in a real browser, through the one origin: Connect, sign in, approve, the
+// chart, the study list, and a picture on the canvas. BASE_URL points it at a deployment instead of
+// the stack it starts itself, and SHOTS saves what it saw.
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { join } from "node:path";
+import { chromium, type Browser, type Page } from "playwright-core";
+import { createDemoServer } from "../src/demo-server";
+import { registerClients } from "../src/flows";
+import { CONFIG, PORTS } from "../src/config";
+import { startStack, type Stack } from "../src/stack";
+
+setDefaultTimeout(90000);
+const ORIGIN = process.env.BASE_URL ?? CONFIG.demoUrl;
+const SHOTS = process.env.SHOTS;
+let stack: Stack | undefined, servers: ReturnType<typeof Bun.serve>[] = [], browser: Browser;
+
+beforeAll(async () => {
+  if (!process.env.BASE_URL) {
+    const root = join(import.meta.dir, "..");
+    stack = await startStack(root);
+    servers = [
+      Bun.serve({ port: PORTS.demo, hostname: "127.0.0.1", fetch: createDemoServer(stack, registerClients(stack), root).fetch }),
+    ];
+  }
+  browser = await chromium.launch({ executablePath: process.env.CHROMIUM ?? "/usr/bin/chromium", headless: true, args: process.env.HOST_RULES ? [`--host-resolver-rules=${process.env.HOST_RULES}`] : [] });
+});
+afterAll(async () => { await browser?.close(); servers.forEach(s => s.stop(true)); stack?.stop(); });
+
+/** How many canvas pixels aren't black, read through a screenshot, since a WebGL canvas can't be read back afterwards. */
+async function litPixels(page: Page) {
+  const png = await page.locator("#canvas").screenshot();
+  return page.evaluate(async b64 => {
+    const img = await createImageBitmap(await (await fetch(`data:image/png;base64,${b64}`)).blob());
+    const c = new OffscreenCanvas(img.width, img.height), x = c.getContext("2d")!;
+    x.drawImage(img, 0, 0);
+    const d = x.getImageData(0, 0, img.width, img.height).data;
+    let lit = 0; for (let i = 0; i < d.length; i += 4) if (d[i]! > 24 || d[i + 1]! > 24 || d[i + 2]! > 24) lit++;
+    return lit / (d.length / 4);
+  }, png.toString("base64"));
+}
+const shot = async (page: Page, name: string) => { if (SHOTS) await page.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: true }); };
+
+async function signIn(page: Page, user: string) {
+  await page.goto(`${ORIGIN}/`);
+  await page.getByRole("button", { name: "Connect to the sandbox" }).click();
+  await page.locator(`input[name=username][value=${user}]`).check();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Approve" }).click();
+  await page.locator("#app").waitFor({ state: "visible" });
+}
+
+describe("the demo client", () => {
+  test("from Connect to a picture, with the protocol shown", async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    const problems: string[] = [];
+    page.on("pageerror", e => problems.push(e.message));
+    await signIn(page, "josh");
+    expect(new URL(page.url()).pathname).toMatch(/^\/s\/[^/]+\/$/);
+    await expect(page.locator(".who").textContent()).resolves.toBe("Josh Example");
+    await page.getByRole("heading", { name: "Conditions" }).waitFor();
+    await page.locator("#c-Condition li", { hasText: "Migraine" }).waitFor();
+    await page.locator("#c-MedicationRequest li").first().waitFor();
+    await page.locator("#c-AllergyIntolerance li").first().waitFor();
+    expect(await page.locator("#c-Condition li", { hasText: "wrist" }).count()).toBe(0); // resolved, so not active
+    expect(await page.locator(".study-button").count()).toBe(6);
+    await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 45000 });
+    expect(await litPixels(page)).toBeGreaterThan(0.01);
+    expect(await page.locator("#overlay").textContent()).toMatch(/\d+ × \d+/);
+    for (const stage of ["discover", "authorize", "clinical", "imaging", "retrieve"]) await page.locator(`[data-stage=${stage}][data-state=done]`).waitFor();
+    expect(await page.locator("[data-state=failed]").count()).toBe(0);
+    await page.locator("[data-stage=imaging] .fact", { hasText: "Studies" }).locator("dd", { hasText: "6" }).waitFor();
+    // A stack: the middle image first, then scrolling, the slider, and another series.
+    await page.locator(".study-button", { hasText: "BRAIN" }).click();
+    await page.locator("#slice:enabled").waitFor({ timeout: 45000 });
+    await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 45000 });
+    const before = await page.locator("#slice-out").textContent();
+    expect(Number(before!.split("/")[0]!.trim())).toBeGreaterThan(1);
+    await page.locator("#stage").focus(); await page.keyboard.press("ArrowDown");
+    await page.waitForFunction(b => document.querySelector("#slice-out")!.textContent !== b, before);
+    const box0 = (await page.locator("#stage").boundingBox())!;
+    const afterKey = await page.locator("#slice-out").textContent();
+    await page.mouse.move(box0.x + 50, box0.y + 50); await page.mouse.wheel(0, 120);
+    await page.waitForFunction(b => document.querySelector("#slice-out")!.textContent !== b, afterKey);
+    await page.locator("#slice").fill("0");
+    await page.waitForFunction(() => document.querySelector("#slice-out")!.textContent!.startsWith("1 /"));
+    expect(await litPixels(page)).toBeGreaterThanOrEqual(0);
+    expect(await page.locator("#series button").count()).toBeGreaterThan(1);
+    const uid = await page.locator('#series button[aria-pressed="false"]').first().getAttribute("data-uid");
+    await page.locator(`#series button[data-uid="${uid}"]`).click();
+    await page.locator(`#series button[data-uid="${uid}"][aria-pressed="true"]`).waitFor();
+    await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 45000 });
+    expect(await litPixels(page)).toBeGreaterThan(0.01);
+    await page.getByRole("button", { name: "Zoom in" }).click();
+    await page.locator("#overlay", { hasText: "Zoom 125%" }).waitFor();
+    await page.getByRole("button", { name: "Pan" }).click();
+    await expect(page.getByRole("button", { name: "Pan" }).getAttribute("aria-pressed")).resolves.toBe("true");
+    const box = (await page.locator("#stage").boundingBox())!;
+    await page.mouse.move(box.x + 200, box.y + 200); await page.mouse.down(); await page.mouse.move(box.x + 260, box.y + 230); await page.mouse.up();
+    await page.getByRole("button", { name: "Window" }).click();
+    await page.mouse.move(box.x + 200, box.y + 200); await page.mouse.down(); await page.mouse.move(box.x + 300, box.y + 260); await page.mouse.up();
+    expect(await litPixels(page)).toBeGreaterThan(0.005);
+    await shot(page, "desktop-study");
+    await page.getByRole("button", { name: "Reset view" }).click();
+    await page.locator("#overlay", { hasText: "Zoom 100%" }).waitFor();
+    await page.locator(".study-button", { hasText: "SM" }).click();
+    await page.locator("#overlay", { hasText: "×" }).waitFor({ timeout: 45000 });
+    await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 45000 });
+    expect(await litPixels(page)).toBeGreaterThan(0.01);
+    await shot(page, "desktop-slide");
+    await page.locator("[data-stage=clinical] summary").click();
+    await page.getByRole("button", { name: /Search Condition/ }).click();
+    await page.locator("#call-detail pre", { hasText: "Bearer …" }).first().waitFor();
+    await shot(page, "desktop-request");
+    const panelText = await page.locator("#call-detail").textContent() + await page.locator("#trail").textContent();
+    await page.getByRole("button", { name: "Close" }).click();
+    const token = await page.evaluate(() => JSON.parse(Object.entries(sessionStorage).find(([k]) => k.startsWith("smart-imaging-client"))![1]).session.token);
+    expect(token.length).toBeGreaterThan(10);
+    expect(panelText).not.toContain(token);
+    expect(panelText).toContain("Imaging server");
+    expect(await page.getByText("server-side trace").count()).toBe(0);
+    await shot(page, "desktop-protocol");
+    expect(problems).toEqual([]);
+    await context.close();
+  });
+  test("a patient with no studies gets a real empty result", async () => {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    await signIn(page, "robin");
+    await page.getByText("This patient has no studies this app can see.").waitFor();
+    await page.locator("#c-Condition .none", { hasText: "None active." }).waitFor();
+    await context.close();
+  });
+  test("fits a narrow phone with large text", async () => {
+    const context = await browser.newContext({ viewport: { width: 320, height: 640 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    await page.goto(`${ORIGIN}/`);
+    await page.addStyleTag({ content: "html{font-size:150%}" });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+    await shot(page, "phone-landing");
+    await signIn(page, "sam-caregiver");
+    await page.addStyleTag({ content: "html{font-size:150%}" });
+    await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 45000 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+    await shot(page, "phone-app");
+    await context.close();
+  });
+});

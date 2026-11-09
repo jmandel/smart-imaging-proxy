@@ -278,7 +278,7 @@ describe("Explore", () => {
 
 describe("Tours", () => {
   test("the home page is the stories, each a card with the chain it ends on, the guardian's shows the locked study, and the revoke's shows before and after", async () => {
-    const page = await open("/");
+    const page = await open("/tours");
     expect(await page.locator(".story").count()).toBe(6);
     expect(await page.locator(".story .layers").count()).toBe(8);
     expect(await page.locator(".story", { hasText: "Sam, guardian of 15-year-old Riley" }).locator(".ly-box.locked").count()).toBeGreaterThan(0);
@@ -289,7 +289,7 @@ describe("Tours", () => {
   });
   for (const tour of ["own", "guardian", "caregiver", "revoke", "backend", "turns-18"]) {
     test(`${tour}: its card starts it in its own scope, it runs end to end, and every step matches the model`, async () => {
-      const page = await open("/");
+      const page = await open("/tours");
       await page.locator(`[data-start="${tour}"]`).first().click();
       await page.waitForURL(/\/s\/[^/]+\/tours\?tour=/);
       await page.locator(".step.next .what span", { hasText: "Expected:" }).waitFor();
@@ -306,7 +306,7 @@ describe("Tours", () => {
     });
   }
   test("in window mode, a sign-in step's button says Sign in, and opens the window the person signs in in", async () => {
-    const page = await open("/");
+    const page = await open("/tours");
     await page.evaluate(() => localStorage.setItem("smart-imaging-signin", "window"));
     await page.locator('[data-start="own"]').first().click();
     await page.waitForURL(/\/s\/[^/]+\/tours/);
@@ -321,7 +321,7 @@ describe("Tours", () => {
     expect(problems).toEqual([]);
   });
   test("automated runs open no window", async () => {
-    const page = await open("/");
+    const page = await open("/tours");
     let opened = 0;
     context!.on("page", () => { opened++; });
     await page.locator('[data-start="caregiver"]').first().click();
@@ -331,7 +331,7 @@ describe("Tours", () => {
     expect(opened).toBe(0);
   });
   test("Run checks runs the protocol flows as one pass or fail list, each opening its activity", async () => {
-    const page = await open("/");
+    const page = await open("/tours");
     await page.getByRole("button", { name: "Run all checks" }).click();
     await page.locator(".checks-panel .row .verdict", { hasText: "passed" }).waitFor({ timeout: 110000 });
     expect(await page.locator(".checks-panel .row .verdict").innerText()).toBe("8 of 8 passed");

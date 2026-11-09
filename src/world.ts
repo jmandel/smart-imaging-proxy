@@ -82,7 +82,7 @@ export function createWorld(o: { scope?: string; store: PolicyStore; clock: Demo
   const directoryPolicy = policyClient(local(PORTS.imaging), policySecret, "authorization-server");
 
   const auth = createAuthServer({
-    issuer: urls.auth, imagingFhirBase: `${urls.imaging}/fhir`, serviceSecret, redirectUri: urls.callback, store: () => store, clock,
+    issuer: urls.auth, imagingFhirBase: `${urls.imaging}/fhir`, serviceSecret, redirectUri: urls.callback, demoClientRedirectUri: `${urls.demo}/`, store: () => store, clock,
     // The Authorization Server's pages, in their own terms, over the policy API's three levels.
     directory: {
       relationships: async () => [

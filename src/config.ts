@@ -34,6 +34,8 @@ const PUBLIC = process.env.DEMO_PUBLIC_URL ? new URL(process.env.DEMO_PUBLIC_URL
 if (PUBLIC && (PUBLIC.pathname !== "/" || PUBLIC.search)) throw new Error("DEMO_PUBLIC_URL is an origin, such as https://imaging.example.org, with no path");
 if (PUBLIC && !ONE_ORIGIN) throw new Error("DEMO_PUBLIC_URL names the one origin, which DEMO_ONE_ORIGIN=0 turns off");
 const origin = PUBLIC?.origin ?? `${host}:${PORTS.gateway}`;
+/** A deployment on a public name: each visitor works in a scope of their own, and the root world is read-only. */
+export const PUBLIC_DEMO = !!PUBLIC;
 /** The addresses the one origin listens on. */
 export const GATEWAY_HOSTS = PUBLIC ? ["0.0.0.0"] : undefined;
 /** The address every service listens on. The S3 store and Orthanc stay on loopback: only the proxy reaches them. */

@@ -125,7 +125,8 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     async function fetch(req: Request): Promise<Response> {
       const url = new URL(req.url);
       const p = url.pathname;
-      if (p === "/" || p === "/tours") return file("tours.html");
+      if (p === "/") return file("client.html");
+      if (p === "/tours") return file("tours.html");
       if (p === "/explore") return file("index.html");
       if (p === "/activity") return file("activity.html");
       if (p.startsWith("/api/explore/")) return explore.fetch(req, url);
@@ -238,7 +239,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
   }
 
   // The same files in every world: the pages work out their scope from their own URL.
-  const STATIC: Record<string, string> = Object.fromEntries(["styles.css", "page.js", "event-words.js", "layers.js", "explore.js", "tours.js", "activity.js", "thumbs.js", "fonts/atkinson-next.woff2", "fonts/atkinson-mono.woff2"].map(f => [`/${f}`, f]));
+  const STATIC: Record<string, string> = Object.fromEntries(["styles.css", "page.js", "event-words.js", "layers.js", "explore.js", "tours.js", "activity.js", "thumbs.js", "client.js", "client.css", "fonts/atkinson-next.woff2", "fonts/atkinson-mono.woff2"].map(f => [`/${f}`, f]));
   /**
    * viewer-kit's files, from the pinned download, never from the repository: checked once, here at
    * startup, and served only as the bytes that were checked. With none that check out, every one is a

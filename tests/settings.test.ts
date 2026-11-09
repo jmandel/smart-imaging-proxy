@@ -41,11 +41,12 @@ const setSaved = (x: { rules?: any[]; shares?: any[]; approvals?: any[] }) => {
 };
 
 describe("pages", () => {
-  test("Tours, the home page, Explore and the activity log are served, each with the header's three links, and the old pages are gone", async () => {
-    for (const [path, title] of [["/", "Tours"], ["/tours", "Tours"], ["/explore", "Explore"], ["/activity", "Activity"]]) {
+  test("the demo client is the home page, and Tours, Explore and the activity log are served, each with the header's links, and the old pages are gone", async () => {
+    expect(await (await call("GET", "/")).text()).toContain("<title>SMART Imaging Demo");
+    for (const [path, title] of [["/tours", "Tours"], ["/explore", "Explore"], ["/activity", "Activity"]]) {
       const html = await (await call("GET", path)).text();
       expect(html).toContain(`<title>${title}`);
-      expect(html).toMatch(/<nav class="pages" aria-label="Pages"><a href="\/"[^>]*>Tours<\/a><a href="\/explore"[^>]*>Explore<\/a><a href="\/activity"[^>]*>Activity<\/a><\/nav>/);
+      expect(html).toMatch(/<nav class="pages" aria-label="Pages"><a href="\/"[^>]*>Demo<\/a><a href="\/tours"[^>]*>Tours<\/a><a href="\/explore"[^>]*>Explore<\/a><a href="\/activity"[^>]*>Activity<\/a><\/nav>/);
       expect(html).toContain('id="settings-button"');
       expect(html).not.toContain("store-badge");
     }
@@ -138,7 +139,7 @@ describe("flows and saved policy, over HTTP", () => {
     expect(Object.keys(state.completed)).toEqual(["consent"]);
     expect((await ok("GET", "/api/flow-state")).flow).toBeNull();
     expect(await (await call("GET", `${scope.base}/explore`)).text()).toContain('src="/explore.js"');
-    expect(await (await call("GET", `${scope.base}/`)).text()).toContain('src="/tours.js"');
+    expect(await (await call("GET", `${scope.base}/tours`)).text()).toContain('src="/tours.js"');
   });
   test("a minted scope, and an unknown one", async () => {
     const r = await call("POST", "/api/scopes", {});
