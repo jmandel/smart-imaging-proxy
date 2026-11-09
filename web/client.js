@@ -71,11 +71,11 @@ const trail = saved().trail ?? [];
 const IG = "https://build.fhir.org/ig/argonautproject/smart-imaging/", SMART = "https://build.fhir.org/ig/HL7/smart-app-launch/";
 /** The protocol as the client meets it. Requests are the detail; these are the story. */
 const STAGES = [
-  { key: "discover", name: "Discover", line: "From one FHIR address, find the sign-in page and the imaging server.", kinds: ["discover"], spec: [`${SMART}conformance.html`, "SMART discovery"] },
-  { key: "authorize", name: "Authorize", line: "Sign in, approve this app, and receive an access token for one patient.", kinds: ["authorize", "token"], spec: [`${SMART}app-launch.html`, "SMART App Launch"] },
-  { key: "clinical", name: "Read the chart", line: "Query the clinical server with that token.", kinds: ["patient", "clinical"], spec: [`${SMART}scopes-and-launch-context.html`, "Scopes and context"] },
-  { key: "imaging", name: "Find studies", line: "Ask the imaging server for studies, and where to retrieve each one.", kinds: ["imaging"], spec: [IG, "SMART Imaging Access"] },
-  { key: "retrieve", name: "Retrieve images", line: "Download DICOM from each study's Endpoint, and decode it in the browser.", kinds: ["wado"], spec: ["https://www.dicomstandard.org/using/dicomweb/retrieve-wado-rs-and-wado-uri", "DICOMweb WADO-RS"] },
+  { key: "discover", from: "This app", to: "Clinical FHIR server", name: "Discover", line: "From one FHIR address, find the sign-in page and the imaging server.", kinds: ["discover"], spec: [`${SMART}conformance.html`, "SMART discovery"] },
+  { key: "authorize", from: "Browser and app", to: "Authorization server", name: "Authorize", line: "Sign in, approve this app, and receive an access token for one patient.", kinds: ["authorize", "token"], spec: [`${SMART}app-launch.html`, "SMART App Launch"] },
+  { key: "clinical", from: "This app", to: "Clinical FHIR server", name: "Read the chart", line: "Query the clinical server with that token.", kinds: ["patient", "clinical"], spec: [`${SMART}scopes-and-launch-context.html`, "Scopes and context"] },
+  { key: "imaging", from: "This app", to: "Imaging FHIR server", name: "Find studies", line: "Ask the imaging server for studies, and where to retrieve each one.", kinds: ["imaging"], spec: [IG, "SMART Imaging Access"] },
+  { key: "retrieve", from: "This app", to: "DICOMweb endpoint", name: "Retrieve images", line: "Download DICOM from each study's Endpoint, and decode it in the browser.", kinds: ["wado"], spec: ["https://www.dicomstandard.org/using/dicomweb/retrieve-wado-rs-and-wado-uri", "DICOMweb WADO-RS"] },
 ];
 const WHY = {
   discover: "The app reads the SMART configuration at its FHIR address. That says where to sign in, and associated_endpoints names the imaging server, chosen by its smart-imaging-access capability.",
@@ -86,6 +86,9 @@ const WHY = {
   imaging: "The same access token, sent to the imaging server found during discovery. Each study comes back with an Endpoint saying where to retrieve its images.",
   wado: "A DICOMweb WADO-RS retrieval from the address in the study's Endpoint, still sending the access token. Each request is one DICOM instance.",
 };
+/** Which system answered each kind of request. */
+const ANSWERED_BY = { discover: "Clinical FHIR server", authorize: "Authorization server", token: "Authorization server", patient: "Clinical FHIR server", clinical: "Clinical FHIR server", imaging: "Imaging FHIR server", wado: "DICOMweb endpoint" };
+const openCalls = new Set();
 const stageOf = kind => STAGES.find(st => st.kinds.includes(kind));
 function stageState(steps, stage) {
   if (steps.some(s => s.failed)) return "failed";
@@ -97,13 +100,14 @@ function stageHtml(stage, index, open = false) {
   const steps = trail.filter(s => stage.kinds.includes(s.kind)), state = stageState(steps, stage);
   const facts = Object.assign({}, ...steps.map(s => s.facts ?? {}));
   const tiles = Object.entries(facts).map(([k, v]) => `<div class="fact${String(v).length > 12 ? " long" : ""}"><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
-  const calls = steps.map(s => `<li><button type="button" class="call" data-call="${esc(s.id)}"><span class="call-title">${esc(s.title)}</span>${s.ms === undefined ? "" : `<span class="call-ms">${s.ms} ms</span>`}</button></li>`).join("");
+  const calls = steps.map(callHtml).join("");
   return `<span class="node" aria-hidden="true">${GLYPH[state] ?? index + 1}</span>
     <div class="stage-body">
       <h3>${esc(stage.name)}<span class="sr-only"> (${STATE_WORD[state]})</span></h3>
+      <p class="parties"><span>${esc(stage.from)}</span><span class="arrow" aria-hidden="true">→</span><span class="sr-only">talks to</span><span>${esc(stage.to)}</span></p>
       <p class="line">${esc(stage.line)}</p>
       ${tiles ? `<dl class="facts-grid">${tiles}</dl>` : ""}
-      ${steps.length ? `<details class="calls" ${open ? "open" : ""}><summary>${plural(steps.length, "request")}</summary><ul>${calls}</ul><p class="spec">Underlying standard: <a href="${stage.spec[0]}" target="_blank" rel="noopener">${esc(stage.spec[1])}</a></p></details>` : ""}
+      ${steps.length ? `<details class="calls" ${open ? "open" : ""}><summary>${plural(steps.length, "request")}</summary><ul class="call-list">${calls}</ul><p class="spec">Underlying standard: <a href="${stage.spec[0]}" target="_blank" rel="noopener">${esc(stage.spec[1])}</a></p></details>` : ""}
     </div>`;
 }
 function paintStage(stage) {
@@ -119,18 +123,31 @@ function renderTrail() {
   list.innerHTML = STAGES.map(st => `<li class="stage-row" data-stage="${st.key}"></li>`).join("");
   STAGES.forEach(paintStage);
 }
-function showCall(id) {
-  const s = trail.find(t => t.id === id), box = $("#call-detail");
-  if (!s) return;
-  $("#call-body").innerHTML = `<h2>${esc(s.title)}</h2><p class="call-why">${esc(WHY[s.kind] ?? "")}</p>
-    ${s.request ? `<h3>Request</h3><pre>${esc(s.request)}</pre>` : ""}
-    ${s.response ? `<h3>Response</h3><pre>${esc(s.response)}</pre>` : ""}
-    ${s.curl ? `<h3>Try it yourself</h3><pre>${esc(s.curl)}</pre>` : ""}`;
-  box.showModal();
+function callHtml(s) {
+  const status = s.failed ? "Failed" : s.status ?? "OK";
+  return `<li><details class="call" data-call="${esc(s.id)}" ${openCalls.has(s.id) ? "open" : ""}>
+    <summary><span class="call-title">${esc(s.title)}</span><span class="call-status${s.failed ? " bad" : ""}">${esc(status)}</span>${s.ms === undefined ? "" : `<span class="call-ms">${s.ms} ms</span>`}<span class="chevron" aria-hidden="true"></span></summary>
+    <div class="call-body">
+      <p class="call-why">${esc(WHY[s.kind] ?? "")}</p>
+      <dl class="call-facts"><dt>Answered by</dt><dd>${esc(ANSWERED_BY[s.kind] ?? "")}</dd></dl>
+      ${s.request ? `<h4>Request</h4><pre>${esc(s.request)}</pre>` : ""}
+      ${s.response ? `<h4>Response</h4><pre>${esc(s.response)}</pre>` : ""}
+      ${s.curl ? `<button type="button" class="tool copy" data-copy="${esc(s.id)}">Copy as curl</button>` : ""}
+    </div>
+  </details></li>`;
 }
-$("#trail").addEventListener("click", e => { const b = e.target.closest("[data-call]"); if (b) showCall(b.dataset.call); });
-$("#call-close").addEventListener("click", () => $("#call-detail").close());
-$("#call-detail").addEventListener("click", e => { if (e.target === e.currentTarget) e.currentTarget.close(); });
+$("#trail").addEventListener("toggle", e => {
+  if (!e.target.matches?.("details.call")) return;
+  if (e.target.open) openCalls.add(e.target.dataset.call); else openCalls.delete(e.target.dataset.call);
+}, true);
+$("#trail").addEventListener("click", async e => {
+  const b = e.target.closest("[data-copy]");
+  if (!b) return;
+  const step = trail.find(t => t.id === b.dataset.copy);
+  try { await navigator.clipboard.writeText(step.curl); b.textContent = "Copied. Set $TOKEN first"; }
+  catch { b.textContent = "Couldn't copy"; }
+  setTimeout(() => { if (b.isConnected) b.textContent = "Copy as curl"; }, 2500);
+});
 function addStep(step) {
   const at = trail.findIndex(s => s.id === step.id);
   if (at >= 0) trail[at] = step; else trail.push(step);
@@ -159,7 +176,7 @@ async function traced(step, url, init = {}, learned = () => ({})) {
   catch (e) { addStep({ ...step, request, failed: true, response: String(e) }); throw e; }
   let found = {};
   if (res.ok) { try { found = learned(JSON.parse(text)); } catch {} }
-  addStep({ ...step, request, facts: found, curl: method === "GET" ? curlOf(url, init.headers) : undefined, ms: Math.round(performance.now() - started), failed: !res.ok, response: `HTTP ${res.status}\n\n${preview(pretty(text))}` });
+  addStep({ ...step, request, facts: found, status: `${res.status}`, curl: method === "GET" ? curlOf(url, init.headers) : undefined, ms: Math.round(performance.now() - started), failed: !res.ok, response: `HTTP ${res.status}\n\n${preview(pretty(text))}` });
   if (!res.ok) throw Object.assign(new Error(`${step.title}: HTTP ${res.status}`), { status: res.status });
   return JSON.parse(text);
 }

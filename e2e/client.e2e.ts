@@ -110,12 +110,16 @@ describe("the demo client", () => {
     await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
     expect(await litPixels(page)).toBeGreaterThan(0.01);
     await shot(page, "desktop-slide");
-    await page.locator("[data-stage=clinical] summary").click();
-    await page.getByRole("button", { name: /Search Condition/ }).click();
-    await page.locator("#call-detail pre", { hasText: "Bearer …" }).first().waitFor();
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]).catch(() => {});
+    await page.locator("[data-stage=clinical] details.calls > summary").click();
+    await page.locator("details.call", { hasText: "Search Condition" }).locator("summary").click();
+    const detail = page.locator("details.call[open]", { hasText: "Search Condition" });
+    await detail.locator("pre", { hasText: "Bearer …" }).waitFor();
+    await detail.getByText("Clinical FHIR server").waitFor();
+    await detail.getByRole("button", { name: "Copy as curl" }).click();
+    await detail.getByRole("button", { name: /Copied|Couldn't copy/ }).waitFor();
     await shot(page, "desktop-request");
-    const panelText = await page.locator("#call-detail").textContent() + await page.locator("#trail").textContent();
-    await page.getByRole("button", { name: "Close" }).click();
+    const panelText = await page.locator("#trail").textContent();
     const token = await page.evaluate(() => JSON.parse(Object.entries(sessionStorage).find(([k]) => k.startsWith("smart-imaging-client"))![1]).session.token);
     expect(token.length).toBeGreaterThan(10);
     expect(panelText).not.toContain(token);
@@ -170,6 +174,25 @@ describe("the demo client", () => {
     await page.getByRole("button", { name: "Connect", exact: true }).click();
     await page.waitForURL(u => /^\/s\//.test(u.pathname) || u.pathname.includes("authorize"));
     expect(new URL(page.url()).pathname.startsWith(first)).toBe(false);
+    await context.close();
+  });
+  test("an app registered on /connect shows what its developer needs", async () => {
+    const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    await signIn(page, "josh");
+    const base = new URL(page.url()).pathname.replace(/\/$/, "");
+    await page.goto(`${ORIGIN}${base}/connect`);
+    await page.getByLabel("App name").fill("My test app");
+    await page.getByLabel("Redirect URI").fill("https://app.example/callback");
+    await page.getByRole("button", { name: "Register" }).click();
+    await page.getByRole("heading", { name: "My test app" }).waitFor();
+    await page.getByText(`${ORIGIN}${base}/fhir`).first().waitFor();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+    await shot(page, "connect");
+    await page.reload();
+    await page.getByRole("heading", { name: "My test app" }).waitFor();
+    await page.getByRole("button", { name: "Remove My test app" }).click();
+    await page.getByText("None yet.").waitFor();
     await context.close();
   });
   test("a patient with no studies gets a real empty result", async () => {

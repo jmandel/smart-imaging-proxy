@@ -2,6 +2,7 @@
 // flow API the checks and tests run flows through. `/s/{scope}/...` is that scope's own: its Explore,
 // its tour, its activity, its settings and its redirects. Starting a tour or a flow mints a scope for it.
 import { join } from "node:path";
+import { addClient, listClients, removeClient } from "./clients";
 import { traced } from "./trace";
 import type { BackendName, Stack } from "./stack";
 import { FLOWS, flowById, runStep, startFlowIn, BadStepInput } from "./flows";
@@ -129,6 +130,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       if (p === "/tours") return file("tours.html");
       if (p === "/explore") return file("index.html");
       if (p === "/activity") return file("activity.html");
+      if (p === "/connect") return file("connect.html");
       if (p.startsWith("/api/explore/")) return explore.fetch(req, url);
       if (p === "/api/tours" || p.startsWith("/api/tours/") || p.startsWith("/api/checks/")) {
         if (req.method === "POST") { const refused = refuseWrite(req, url); if (refused) return refused; }
@@ -204,6 +206,20 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         const w = stack.scopes.mint({ saved: true });
         return json({ scope: w.scope, base: w.prefix, urls: w.urls }, 201);
       }
+      if (p === "/api/clients" || p.startsWith("/api/clients/")) {
+        if (!world.scope) return json({ error: "apps are registered in a sandbox: open /connect" }, 409);
+        if (req.method === "GET" && p === "/api/clients") return json({ clients: listClients(world.store) });
+        const refused = refuseWrite(req, url);
+        if (refused) return refused;
+        if (req.method === "POST" && p === "/api/clients") {
+          const body = await req.json().catch(() => ({}));
+          const made = addClient(world.store, body as any);
+          return "error" in made ? json(made, 400) : json(made, 201);
+        }
+        const id = p.slice("/api/clients/".length);
+        if (req.method === "DELETE" && id) return removeClient(world.store, decodeURIComponent(id)) ? json({ removed: true }) : json({ error: "no such app" }, 404);
+        return new Response("not found", { status: 404 });
+      }
       if (p === "/api/scopes/current" && req.method === "DELETE") {
         if (!world.scope) return json({ error: "only a scope can be ended" }, 409);
         const refused = refuseWrite(req, url);
@@ -246,7 +262,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
   }
 
   // The same files in every world: the pages work out their scope from their own URL.
-  const STATIC: Record<string, string> = Object.fromEntries(["styles.css", "page.js", "event-words.js", "layers.js", "explore.js", "tours.js", "activity.js", "thumbs.js", "client.js", "client.css", "fonts/atkinson-next.woff2", "fonts/atkinson-mono.woff2"].map(f => [`/${f}`, f]));
+  const STATIC: Record<string, string> = Object.fromEntries(["styles.css", "page.js", "event-words.js", "layers.js", "explore.js", "tours.js", "activity.js", "thumbs.js", "client.js", "client.css", "connect.js", "fonts/atkinson-next.woff2", "fonts/atkinson-mono.woff2"].map(f => [`/${f}`, f]));
   /**
    * viewer-kit's files, from the pinned download, never from the repository: checked once, here at
    * startup, and served only as the bytes that were checked. With none that check out, every one is a

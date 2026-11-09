@@ -146,7 +146,7 @@ form.inline{display:inline}
  * Every URL it issues starts at `issuer`, including the paths in its own pages and redirects, so it can
  * be served under a prefix. It answers requests with the prefix already taken off.
  */
-export function createAuthServer(opts: { issuer: string; imagingFhirBase: string; serviceSecret: string; redirectUri: string; demoClientRedirectUri: string; directory: Directory; store: () => PolicyStore; clock?: Clock }) {
+export function createAuthServer(opts: { issuer: string; imagingFhirBase: string; serviceSecret: string; redirectUri: string; demoClientRedirectUri: string; registeredClient?: (id: string) => { name: string; redirectUris: string[] } | undefined; directory: Directory; store: () => PolicyStore; clock?: Clock }) {
   const clock = opts.clock ?? demoClock;
   const now = () => clock.now();
   /** The path the issuer adds, which every path this server writes into a page or a redirect starts with. */
@@ -157,6 +157,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     "demo-client": { name: APP_NAMES["demo-client"]!, redirectUris: [opts.demoClientRedirectUri] },
     ...Object.fromEntries([...appClientsFromEnv()].map(([id, redirectUris]) => [id, { name: id, redirectUris }])),
   });
+  const clientOf = (id: string) => PUBLIC_CLIENTS[id] ?? opts.registeredClient?.(id);
   const txns = new Map<string, { client_id: string; redirect_uri: string; state: string; scope: string; code_challenge: string; exp: number; user?: string; login_hint?: string; patient_hint?: string }>();
   const accountSessions = new Map<string, string>();
   const decidedBy = new Map<string, string>();
@@ -255,7 +256,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
 
   async function authorize(url: URL): Promise<Response> {
     const q = url.searchParams;
-    const client = PUBLIC_CLIENTS[q.get("client_id") ?? ""];
+    const client = clientOf(q.get("client_id") ?? "");
     // Client and redirect URI errors must not redirect, since the target can't be trusted.
     if (!check("authorization-server", "client is registered", !!client, { client: q.get("client_id") })) return page("Authorization error", "<h1>Unknown client</h1>", 400);
     if (!check("authorization-server", "redirect_uri exactly matches registration", client!.redirectUris.includes(q.get("redirect_uri") ?? ""), { redirect_uri: q.get("redirect_uri") })) return page("Authorization error", "<h1>Unregistered redirect URI</h1>", 400);
@@ -283,7 +284,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     const t = txnOf(url);
     if (!t) return expired();
     const user = signIn(new URLSearchParams(await req.text()));
-    const client = PUBLIC_CLIENTS[t.txn.client_id]!;
+    const client = clientOf(t.txn.client_id)!;
     if (!user) return page("Sign in", `<h1>Sign in to continue to ${esc(client.name)}</h1>${await signInForm(`${P}/authorize/signin?txn=${t.id}${demoQuery(url)}`, t.txn.login_hint ?? "", NOT_AN_ACCOUNT)}`, 401);
     t.txn.user = user;
     return redirectTo(`${P}/authorize/consent?txn=${t.id}${demoQuery(url)}`);
@@ -294,7 +295,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     if (!t) return expired();
     if (!check("authorization-server", "user has signed in", !!t.txn.user)) return page("Authorization error", "<h1>Sign in first</h1>", 401);
     const user = USERS[t.txn.user!]!;
-    const client = PUBLIC_CLIENTS[t.txn.client_id]!;
+    const client = clientOf(t.txn.client_id)!;
     const access = await opts.directory.access(t.txn.user!, user.fhirUser);
     const action = `${P}/authorize/decision?txn=${t.id}${demoQuery(url)}`;
     if (!access.records.length) return page("No records", `<h1>No records are shared with you</h1><p>${esc(user.name)} is signed in, but no patient has delegated access to this account, so there's nothing to share with ${esc(client.name)}.</p><form method="post" action="${esc(action)}"><div class="buttons"><button name="decision" value="deny">Return to the app</button></div></form>`, 200);
@@ -303,6 +304,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     const sites = whoseSites(access.records, r => `Sites this app can see in ${esc(nameOf(r.patient))}'s records`, r => grantFor(r)?.sites ?? r.sites, r => `${r.via === "delegation" ? "You can share only what was shared with you. " : ""}SMART scopes can't express this choice. It's kept as Imaging Server policy, and the token's scope doesn't change.`);
     return page("Authorize app", `<h1>Let ${esc(client.name)} access imaging records?</h1>
       <p class="who">Signed in as ${esc(user.name)} (<code>${esc(user.fhirUser)}</code>).</p>
+      ${opts.registeredClient?.(t.txn.client_id) ? `<p class="who">Approving sends you to <strong>${esc(new URL(t.txn.redirect_uri).host)}</strong>. This app was registered by someone using this sandbox.</p>` : ""}
       <form method="post" action="${esc(action)}">
         <fieldset class="accounts"><legend>Whose records</legend>${whoseRadios(access.records, selected)}${access.records.length > 1 ? `<p class="note">This app gets one person's records. Choosing someone else later is a new authorization, with its own approval.</p>` : ""}</fieldset>
         <fieldset><legend>Requested permissions</legend><ul class="scopes">${t.txn.scope.split(" ").map(s => `<li><code>${esc(s)}</code></li>`).join("")}</ul></fieldset>
@@ -343,7 +345,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
   // path, and a stale one from a dropped scope can come first. This world uses the one it knows.
   const sessionIds = (req: Request) => [...(req.headers.get("cookie") ?? "").matchAll(/(?:^|;\s*)account_session=([^;]*)/g)].map(m => m[1]!);
   const accountUser = (req: Request) => sessionIds(req).map(id => accountSessions.get(id)).find(Boolean);
-  const appName = (id: string) => PUBLIC_CLIENTS[id]?.name ?? id;
+  const appName = (id: string) => clientOf(id)?.name ?? id;
 
   async function account(url: URL, req: Request): Promise<Response> {
     const hint = url.searchParams.get("login_hint") ?? "";

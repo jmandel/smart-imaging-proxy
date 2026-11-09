@@ -28,7 +28,7 @@ function target(path: string, prefix: string): string {
 const INTERNAL = /^\/imaging\/policy(\/|$)|^\/internal\/|^\/trace\/v1\//;
 
 /** The pages at the root of a public deployment that go to the browser's own world. The home page does it on Connect. */
-const SCOPED_PAGES = new Set(["/tours", "/explore", "/activity", "/account"]);
+const SCOPED_PAGES = new Set(["/tours", "/explore", "/activity", "/account", "/connect"]);
 /**
  * A page that goes to this browser's world, making one if it has none. Only a browser running it makes one, so a crawler
  * following links can't use up the scopes people are in.

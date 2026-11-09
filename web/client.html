@@ -20,6 +20,7 @@
   <fieldset class="server-choice"><legend>Connect to</legend><div id="servers"></div></fieldset>
   <div class="connect-actions"><button type="button" class="primary" id="connect">Connect</button><button type="button" class="secondary" id="start-over" hidden>Start over with a new sandbox</button></div>
   <p class="error" id="connect-error" role="alert" hidden></p>
+  <p class="note">Building a SMART app? <a href="/connect">Connect it to a sandbox</a>.</p>
   <ol class="preview">
     <li><strong>Discover</strong><span>From one FHIR address, find the sign-in page and the imaging server.</span></li>
     <li><strong>Authorize</strong><span>Sign in and approve this app for one patient's records.</span></li>
@@ -72,7 +73,6 @@
     <ol id="trail"></ol>
   </section>
 </main>
-<dialog id="call-detail" aria-label="Request details"><button type="button" class="secondary" id="call-close">Close</button><div id="call-body"></div></dialog>
 <script src="/page.js"></script>
 <script src="/client.js"></script>
 </body>

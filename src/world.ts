@@ -4,6 +4,7 @@
 // the backends and the trace collector, and reach one another only over HTTP, so nothing one issues
 // works in another.
 import { randomBytes, type KeyObject } from "node:crypto";
+import { listClients } from "./clients";
 import { createImagingServer, createPolicyClient, createProxy, idOf, ref, withTruncation, type Backend, type CatalogStore, type PolicyOperation, type PolicyStore } from "@smart-imaging-proxy/core";
 import { APP_NAMES, createAuthServer, DEMO_BACKEND_SCOPES, PATIENT_NAMES, USERS, type BackendClient } from "./auth-server";
 import { patientAttributes } from "./stores";
@@ -84,7 +85,7 @@ export function createWorld(o: { scope?: string; store: PolicyStore; clock: Demo
   const directoryPolicy = policyClient(local(PORTS.imaging), policySecret, "authorization-server");
 
   const auth = createAuthServer({
-    issuer: urls.auth, imagingFhirBase: `${urls.imaging}/fhir`, serviceSecret, redirectUri: urls.callback, demoClientRedirectUri: `${urls.demo}/`, store: () => store, clock,
+    issuer: urls.auth, imagingFhirBase: `${urls.imaging}/fhir`, serviceSecret, redirectUri: urls.callback, demoClientRedirectUri: `${urls.demo}/`, ...(o.scope ? { registeredClient: (id: string) => listClients(store).find(c => c.id === id) } : {}), store: () => store, clock,
     // The Authorization Server's pages, in their own terms, over the policy API's three levels.
     directory: {
       relationships: async () => [
