@@ -65,6 +65,7 @@ describe("the demo client", () => {
     await page.locator("#c-MedicationRequest li").first().waitFor();
     await page.locator("#c-AllergyIntolerance li").first().waitFor();
     expect(await page.locator("#c-Condition li", { hasText: "wrist" }).count()).toBe(0); // resolved, so not active
+    await page.locator(".study-button").nth(5).waitFor();
     expect(await page.locator(".study-button").count()).toBe(6);
     await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
     expect(await litPixels(page)).toBeGreaterThan(0.01);
@@ -152,6 +153,7 @@ describe("the demo client", () => {
     await page.getByText("Connected to Another server").waitFor();
     await page.locator(".who").waitFor();
     await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
+    await page.locator(".study-button").nth(5).waitFor();
     expect(await page.locator(".study-button").count()).toBe(6);
     expect(await litPixels(page)).toBeGreaterThan(0.01);
     await shot(page, process.env.EXTERNAL_ISS ? "external-server" : "configured-server");
