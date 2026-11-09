@@ -103,7 +103,7 @@ function stageHtml(stage, index, open = false) {
       <h3>${esc(stage.name)}<span class="sr-only"> (${STATE_WORD[state]})</span></h3>
       <p class="line">${esc(stage.line)}</p>
       ${tiles ? `<dl class="facts-grid">${tiles}</dl>` : ""}
-      ${steps.length ? `<details class="calls" ${open ? "open" : ""}><summary>${plural(steps.length, "request")}</summary><ul>${calls}</ul><a href="${stage.spec[0]}" target="_blank" rel="noopener">${esc(stage.spec[1])}</a></details>` : ""}
+      ${steps.length ? `<details class="calls" ${open ? "open" : ""}><summary>${plural(steps.length, "request")}</summary><ul>${calls}</ul><p class="spec">Underlying standard: <a href="${stage.spec[0]}" target="_blank" rel="noopener">${esc(stage.spec[1])}</a></p></details>` : ""}
     </div>`;
 }
 function paintStage(stage) {
