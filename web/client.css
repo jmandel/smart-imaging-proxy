@@ -11,12 +11,16 @@ html.connecting #landing, html.connecting #app { display:none; }
 .landing .error { color:var(--bad); }
 .connect-actions { display:flex; flex-wrap:wrap; gap:.5rem; }
 .sandbox { margin:0 0 1.2rem; min-height:7.2rem; }
-.sandbox-list { list-style:none; margin:1.2rem 0; padding:0; display:grid; gap:.5rem; min-height:4rem; }
+.sandbox-list { list-style:none; margin:1.4rem 0 1rem; padding:0; display:grid; gap:.5rem; }
 .sandbox-list a { display:block; background:var(--plate); border:1px solid var(--line); border-radius:8px; padding:.7rem .9rem; color:inherit; text-decoration:none; }
 .sandbox-list a:hover { border-color:var(--accent); }
 .sandbox-list strong { display:block; font-size:1.1rem; overflow-wrap:anywhere; }
 .sandbox-list span { color:var(--muted); font-size:.9rem; }
 .sandbox-list .none { color:var(--muted); }
+a.tool { display:inline-flex; align-items:center; justify-content:center; color:inherit; text-decoration:none; }
+.tool.quiet-danger { color:var(--bad); margin-left:auto; }
+.sandbox-label { margin:0 0 .1rem; font-size:.78rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); }
+.sandbox-actions { align-items:center; }
 html.at-home nav.pages a:not([href$="llms.txt"]) { display:none; }
 .invite h2, .sandbox h2 { margin:0 0 .3rem; font-size:1.05rem; }
 .sandbox-head { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem .6rem; }

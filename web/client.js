@@ -664,14 +664,18 @@ async function sandboxName(base) {
   return r?.ok ? (await r.json()).name : null;
 }
 /** The home page: the sandboxes this browser has made or joined, and a way to make another. */
+function paintHome(list) {
+  $("#sandbox-list").innerHTML = list.length ? list.map(w => `<li><a href="${esc(w.base)}/" data-root><strong>${esc(w.name ?? "Sandbox")}</strong><span>${w.joined ? "Shared with you" : "Made in this browser"}</span></a></li>`).join("") : `<li class="none">You don't have any yet.</li>`;
+}
 async function renderHome() {
-  const el = $("#sandbox-list");
   let list = knownSandboxes();
+  // What this browser remembers, straight away, then checked against the server.
+  paintHome(list);
   const names = await Promise.all(list.map(w => sandboxName(w.base)));
   // One deleted by whoever made it is gone for everyone.
   list = list.map((w, i) => names[i] ? { ...w, name: names[i] } : null).filter(Boolean);
   saveSandboxes(list);
-  el.innerHTML = list.length ? list.map(w => `<li><a href="${esc(w.base)}/" data-root><strong>${esc(w.name)}</strong><span>${w.joined ? "Shared with you" : "Made in this browser"}</span></a></li>`).join("") : `<li class="none">None yet.</li>`;
+  paintHome(list);
 }
 $("#create").addEventListener("click", async () => {
   const button = $("#create"), err = $("#create-error");
@@ -697,8 +701,8 @@ async function renderSandbox() {
     return;
   }
   saveSandboxes(list.map(w => w.base === BASE ? { ...w, name } : w));
-  box.innerHTML = `<div class="sandbox-head"><p class="sandbox-name" id="sandbox-name">${esc(name)}</p><button type="button" class="tool" id="rename">Rename</button></div>
-    <div class="sandbox-actions"><button type="button" class="tool" id="share">Share</button><button type="button" class="tool" id="end">${mine.joined ? "Leave this sandbox" : "Delete this sandbox"}</button><a class="tool" href="/" data-root>All sandboxes</a></div>
+  box.innerHTML = `<p class="sandbox-label">Sandbox</p><div class="sandbox-head"><p class="sandbox-name" id="sandbox-name">${esc(name)}</p><button type="button" class="tool" id="rename">Rename</button></div>
+    <div class="sandbox-actions"><button type="button" class="tool" id="share">Share</button><a class="tool" href="/" data-root>All sandboxes</a><button type="button" class="tool quiet-danger" id="end">${mine.joined ? "Leave" : "Delete"}</button></div>
     <div id="share-panel" hidden><input type="text" id="share-link" readonly aria-label="Link to this sandbox" value="${esc(shareLink(BASE))}"><p class="note" id="share-note">Anyone with this link can see and change this sandbox.</p></div>`;
   $("#rename").addEventListener("click", async () => {
     const next = prompt("Name this sandbox", name);
@@ -744,6 +748,13 @@ initConfigure();
 $("#connect").addEventListener("click", connect);
 $("#disconnect").addEventListener("click", disconnect);
 
+// A page brought back by Back is as it was left: a disabled button, an old list, or "Connecting…". Bring it up to date.
+addEventListener("pageshow", e => {
+  if (!e.persisted) return;
+  if (!BASE) { $("#create").disabled = false; renderHome(); return; }
+  if (!saved().session) { connecting(false); $("#connect").disabled = false; }
+  renderSandbox();
+});
 (async function start() {
   const params = new URLSearchParams(location.search);
   if (!BASE) { renderHome(); return; }

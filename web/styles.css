@@ -406,6 +406,8 @@ tr.detail > td { background:var(--box); max-width:none; padding:.6rem .8rem .8re
 .layers { --ly-ink:var(--ink); --ly-dim:var(--muted); --ly-ghost:var(--line); --ly-fact:var(--fact); --ly-policy:var(--policy); --ly-choice:var(--choice); --ly-on-ink:var(--plate); --ly-result:var(--result-fill); --ly-choice-fill:var(--choice-fill);
   --box:2.75rem; --gap:4px; --ggap:10px; margin:0; min-width:0; color:var(--ly-ink); container-type:inline-size; }
 .layers.film { --ly-ink:var(--on-film); --ly-dim:var(--on-film-dim); --ly-ghost:var(--film-line); --ly-fact:var(--fact-film); --ly-policy:var(--policy-film); --ly-choice:var(--choice-film); --ly-on-ink:var(--film); --ly-choice-fill:var(--choice-film); }
+/* On the narrowest phones the boxes scroll within the diagram, not the page. */
+.layers { max-width:100%; overflow-x:auto; }
 .ly-sheet { display:grid; grid-template-columns:minmax(0,1fr); }
 .ly-sites, .ly-boxes { display:flex; gap:var(--ggap); }
 /* A site's column is as wide as its boxes, and wide enough for a one-box site's name to wrap in. */
@@ -513,8 +515,10 @@ tr.detail > td { background:var(--box); max-width:none; padding:.6rem .8rem .8re
   .fl-cell.in::before, .fl-cell.out::after { top:calc(.35rem + 8px - 1px); }
 }
 @media (max-width:720px) {
-  .topbar { padding:.4rem 1rem; gap:.25rem; }
-  .pages { flex-wrap:wrap; }
+  .topbar { padding:.4rem 1rem; gap:.25rem; flex-wrap:nowrap; }
+  .pages { flex:1 1 auto; min-width:0; flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; }
+  .pages a { white-space:nowrap; }
+  .bar-end { flex:none; }
   .mark { font-size:.95rem; gap:.4rem; }
   .pages a { padding:0 .5rem; }
   .where { display:none; }

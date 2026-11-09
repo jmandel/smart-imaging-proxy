@@ -178,7 +178,7 @@ describe("the demo client", () => {
     const page = await context.newPage();
     page.on("dialog", d => d.accept());
     await page.goto(`${ORIGIN}/`);
-    await page.getByText("None yet.").waitFor();
+    await page.getByText("You don't have any yet.").waitFor();
     expect(await page.locator("nav.pages a:visible").count()).toBe(1);
     const first = await enterSandbox(page), second = await enterSandbox(page);
     await page.goto(`${ORIGIN}/`);
@@ -187,11 +187,29 @@ describe("the demo client", () => {
     await shot(page, "home");
     await page.locator(`.sandbox-list a[href="${first}/"]`).click();
     await page.waitForURL(u => u.pathname === `${first}/`);
-    await page.getByRole("button", { name: "Delete this sandbox" }).click();
+    await page.getByRole("button", { name: "Delete" }).click();
     await page.waitForURL(u => u.pathname === "/");
     await page.locator(`.sandbox-list a[href="${second}/"]`).waitFor();
     expect(await page.locator(`.sandbox-list a[href="${first}/"]`).count()).toBe(0);
     expect((await page.request.get(`${ORIGIN}${first}/api/sandbox`)).status()).toBe(404);
+    await context.close();
+  });
+  test("a page brought back with Back shows where things are now", async () => {
+    const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    await page.goto(`${ORIGIN}/`);
+    // What Back restores: a button left disabled by the click, and the list from before.
+    await page.evaluate(() => { (document.querySelector("#create") as HTMLButtonElement).disabled = true; });
+    const base = await page.evaluate(async () => (await (await fetch("/api/sandboxes", { method: "POST" })).json()).base);
+    await page.evaluate(b => localStorage.setItem("smart-imaging-client:sandboxes", JSON.stringify([{ base: b, joined: false }])), base);
+    await page.evaluate(() => dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
+    await page.locator(`.sandbox-list a[href="${base}/"]`).waitFor();
+    expect(await page.locator("#create").isEnabled()).toBe(true);
+    // And in a sandbox, a page left saying "Connecting…" on the way to sign-in.
+    await page.goto(`${ORIGIN}${base}/`);
+    await page.evaluate(() => { document.documentElement.classList.add("connecting"); (document.querySelector("#connect") as HTMLButtonElement).disabled = true; dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })); });
+    await page.locator("#landing").waitFor({ state: "visible" });
+    expect(await page.locator("#connect").isEnabled()).toBe(true);
     await context.close();
   });
   test("inside a sandbox every menu link stays in it, and the old pages at the root go home", async () => {
@@ -264,9 +282,9 @@ describe("the demo client", () => {
     await other.goto(link);
     await other.getByText("Join “Team demo”?").waitFor();
     await other.getByRole("button", { name: "Join this sandbox" }).click();
-    await other.getByRole("button", { name: "Leave this sandbox" }).click();
+    await other.getByRole("button", { name: "Leave" }).click();
     await other.waitForURL(u => u.pathname === "/");
-    await other.getByText("None yet.").waitFor();
+    await other.getByText("You don't have any yet.").waitFor();
     await page.reload();
     await page.locator("#sandbox-name", { hasText: "Team demo" }).waitFor();
     await guest.close(); await owner.close();
