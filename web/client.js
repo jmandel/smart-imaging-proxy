@@ -297,7 +297,7 @@ function applyView(kit, v) {
   if (v.shown) writeOverlay(v, v.shown);
 }
 function writeOverlay(v, img) {
-  $("#overlay").textContent = `${v.study.description ?? ""}\n${v.series.description ?? v.series.modality?.code ?? ""}\n${img.columns} × ${img.rows}  W ${Math.round(v.window.width)} C ${Math.round(v.window.center)}  Zoom ${Math.round(v.zoom * 100)}%`;
+  $("#overlay").textContent = `${v.series.description ?? v.series.modality?.code ?? ""}\n${img.columns} × ${img.rows}  W ${Math.round(v.window.width)} C ${Math.round(v.window.center)}  Zoom ${Math.round(v.zoom * 100)}%`;
 }
 /** Everything else in the series, nearest first, a few at a time. The first few wait for the picture on screen. */
 async function prefetch(v, kit) {

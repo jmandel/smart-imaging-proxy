@@ -62,7 +62,7 @@
 .fact { background:var(--box); border-radius:6px; padding:.35rem .5rem; min-width:0; }
 .fact.long { grid-column:1 / -1; }
 .fact dt { font-size:.72rem; color:var(--muted); line-height:1.2; }
-.fact dd { margin:.1rem 0 0; font-size:1.15rem; font-weight:700; font-variant-numeric:tabular-nums; line-height:1.2; overflow-wrap:anywhere; }
+.fact dd { margin:.1rem 0 0; font-size:1.15rem; font-weight:700; font-variant-numeric:tabular-nums; line-height:1.2; overflow-wrap:break-word; }
 .fact.long dd { font:.82rem/1.35 var(--mono); }
 .calls { margin-top:.4rem; font-size:.88rem; }
 .calls summary { cursor:pointer; color:var(--accent); }
@@ -83,8 +83,42 @@
   .workspace { grid-template-columns:minmax(15rem, 20rem) minmax(0, 1fr); }
   .protocol { grid-column:1 / -1; position:static; max-height:none; }
 }
+.patient-panel { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:flex-start; gap:.4rem .6rem; }
+.patient-panel .tool { flex:none; }
+.patient-panel > #patient { min-width:0; }
+
+/* A phone: who, the picture, what else there is to see, then the chart and the protocol, at the full width. */
 @media (max-width:44rem) {
-  .workspace { grid-template-columns:minmax(0, 1fr); padding:.5rem; }
-  .viewer { order:-1; }
-  .stage { height:62vh; }
+  .topbar { flex-wrap:nowrap; padding:.2rem .6rem; gap:.4rem; }
+  .pages { flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; }
+  .pages a { min-height:2.5rem; white-space:nowrap; }
+  .workspace { grid-template-columns:minmax(0, 1fr); padding:.5rem; gap:.5rem; }
+  .chart { display:contents; }
+  .patient-panel { order:1; align-items:center; padding:.5rem .7rem; }
+  .who { font-size:1.05rem; }
+  .facts { font-size:.82rem; }
+  .viewer { order:2; }
+  .studies-panel { order:3; }
+  #clinical { order:4; }
+  .protocol { order:5; }
+  .panel + .panel { margin-top:0; }
+  .stage { height:56vh; min-height:15rem; }
+  .overlay { font-size:11px; left:.45rem; top:.35rem; }
+  .viewer .hint { display:none; }
+  .controls { flex-wrap:nowrap; }
+  .controls label { display:none; }
+  .tools { display:grid; grid-template-columns:repeat(6, minmax(0, 1fr)); gap:.25rem; }
+  .tools .tool { padding:.25rem .1rem; font-size:.78rem; min-width:0; overflow-wrap:anywhere; }
+  .series { flex-wrap:nowrap; overflow-x:auto; margin-top:.4rem; padding-bottom:.2rem; }
+  .series button { flex:none; max-width:70vw; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .stage-row { padding-bottom:.9rem; column-gap:.5rem; align-items:center; }
+  .stage-row::before { display:none; }
+  .stage-body { display:contents; }
+  .stage-body h3 { margin:0; }
+  .stage-body > :not(h3) { grid-column:1 / -1; }
+  .line { margin-top:.2rem; }
+  .facts-grid { grid-template-columns:repeat(auto-fit, minmax(min(100%, 5rem), 1fr)); }
+  .fact.long dd { font-size:.75rem; }
+  .fact dd { font-size:1.05rem; }
 }
+@media (max-width:44rem) and (max-width:22rem) { .tools { grid-template-columns:repeat(3, minmax(0, 1fr)); } }

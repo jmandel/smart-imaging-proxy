@@ -131,6 +131,18 @@ describe("the demo client", () => {
     await page.locator("#c-Condition .none", { hasText: "None active." }).waitFor();
     await context.close();
   });
+  test("on a phone, the picture is on the first screen", async () => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
+    const page = await context.newPage();
+    await signIn(page, "sam-caregiver");
+    await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 45000 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+    const stage = (await page.locator("#stage").boundingBox())!;
+    expect(stage.y).toBeLessThan(160);
+    expect(stage.y + stage.height).toBeLessThan(844);
+    await shot(page, "phone-390");
+    await context.close();
+  });
   test("fits a narrow phone with large text", async () => {
     const context = await browser.newContext({ viewport: { width: 320, height: 640 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
