@@ -105,7 +105,7 @@ export function RegisterForm({ base, registered, title = "Register an app" }: { 
       {type !== "backend" && <div id="redirect-field">
         <label htmlFor="app-redirect">Redirect URI</label>
         <input type="url" id="app-redirect" placeholder="https://example.org/callback" autoComplete="off" autoCapitalize="off" spellCheck={false} value={redirect} onChange={e => setRedirect(e.target.value)} />
-        <p className="note">Your app's, matched exactly at sign-in. Use https, or http on localhost.</p>
+        <p className="note">Your app's, matched exactly at sign-in. Use https, or http on localhost, 127.0.0.1 or [::1].</p>
         <label className="check"><input type="checkbox" checked={viewerToo} onChange={e => setViewerToo(e.target.checked)} /> Also let our viewer sign in as this app, at <code>{VIEWER_URL}</code></label>
       </div>}
       {type !== "public" && <div id="key-field">

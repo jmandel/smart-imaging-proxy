@@ -30,7 +30,7 @@ function redirectProblem(uri: unknown): string | undefined {
   if (u.hash) return "a redirect URI can't have a fragment";
   if (u.protocol === "https:") return undefined;
   if (u.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname)) return undefined;
-  return "a redirect URI must use https, or http on localhost";
+  return "a redirect URI must use https, or http on loopback: localhost, 127.0.0.1 or [::1]";
 }
 /** A public key for ES256, ES384 or RS384, as one JWK or a JWKS of one, or why not. A private key is refused rather than stored. */
 export function publicKeyOf(input: any): (JsonWebKey & { kid: string }) | { error: string } {

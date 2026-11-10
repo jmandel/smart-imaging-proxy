@@ -49,3 +49,15 @@ test("and with every condition an app check stages: small pages, 503s, and Endpo
   expect({ code: r.code, err: r.err }).toEqual({ code: 0, err: "" });
   expect(r.out).toMatch(/^OK: 6 studies, an image from each/);
 });
+test("and in a sandbox switched to unified topology, where imaging is advertised at the top level", async () => {
+  let advertised: any;
+  const r = await smoke(async base => {
+    const res = await fetch(`${CONFIG.demoUrl}${base}/api/sandbox`, { method: "PATCH", headers: { ...await adminHeaders({ fetch: q => fetch(q) }, base), "content-type": "application/json" }, body: JSON.stringify({ topology: "unified" }) });
+    expect(res.status).toBe(200);
+    advertised = await (await fetch(`${CONFIG.demoUrl}${base}/fhir/.well-known/smart-configuration`)).json();
+  });
+  // The script found imaging on the FHIR server itself: nothing else advertises it.
+  expect([advertised.capabilities.includes("smart-imaging-access"), (advertised.associated_endpoints ?? []).some((e: any) => e.capabilities?.includes("smart-imaging-access"))]).toEqual([true, false]);
+  expect({ code: r.code, err: r.err }).toEqual({ code: 0, err: "" });
+  expect(r.out).toMatch(/^OK: 6 studies, an image from each/);
+});
