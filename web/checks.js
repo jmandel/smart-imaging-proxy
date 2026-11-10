@@ -271,3 +271,32 @@ async function runPageCheck(id, title) {
   await c.client.manage("POST", "/api/sandbox/faults", { decisionOutage: false, truncateAfter: null }).catch(() => {});
   return { id, title, ok: failures.length === 0, passed, failures, sandbox: sandboxId, activityUrl: `${made.base}/activity?session=${encodeURIComponent(session)}` };
 }
+
+// The Checks page: every check, run one after another, each a line that opens its activity.
+let checkList = [];
+const results = {};
+function renderChecks() {
+  const done = Object.values(results).filter(c => c.ok !== undefined), busy = Object.values(results).some(c => c.running);
+  $("#check-run").innerHTML = `<div class="row"><button type="button" class="primary" id="run-checks" ${busy ? "disabled" : ""}>Run all checks</button>
+      ${busy ? `<span class="note" role="status">${done.length} of ${checkList.length} run</span>` : done.length ? `<span class="${done.every(c => c.ok) ? "verdict ok" : "verdict bad"}" role="status">${done.filter(c => c.ok).length} of ${done.length} passed</span>` : ""}</div>
+    <ul class="check-list">${checkList.map(c => { const r = results[c.id]; return `<li><span class="verdict ${r?.ok ? "ok" : r?.ok === false ? "bad" : ""}">${r?.running ? '<span class="spinner" aria-hidden="true"></span>' : r ? (r.ok ? "Pass" : "Fail") : ""}</span><span class="check-what"><b>${esc(c.title)}</b><span>${esc(c.summary)}</span></span>${r?.activityUrl ? `<a href="${esc(r.activityUrl)}">Activity log</a>` : ""}${r?.failures?.length ? `<span class="fail-detail">${r.failures.map(f => esc(`${f.step}: ${f.label}${f.detail ? ` (${f.detail})` : ""}`)).join("<br>")}</span>` : ""}</li>`; }).join("")}</ul>`;
+}
+async function runAllChecks() {
+  for (const c of checkList) results[c.id] = { running: true };
+  renderChecks();
+  for (const c of checkList) {
+    try { results[c.id] = await runPageCheck(c.id, c.title); }
+    catch (e) { results[c.id] = { ok: false, failures: [{ step: c.title, label: e.message }] }; }
+    renderChecks();
+  }
+  const done = Object.values(results);
+  announce(`${done.filter(c => c.ok).length} of ${done.length} checks passed`);
+  $("#run-checks")?.focus();
+}
+if (document.getElementById("check-run")) {
+  document.addEventListener("click", e => { if (e.target.closest("#run-checks")) runAllChecks(); });
+  (async () => {
+    try { checkList = (await fetch("/api/tours").then(r => r.json())).checks; renderChecks(); }
+    catch (e) { $("#check-run").innerHTML = `<p class="error" role="alert">${esc(e.message)}</p>`; }
+  })();
+}

@@ -183,7 +183,7 @@ Everything the Tours page does, you can do with these calls. `begin` returns `{p
 | `referral-check` | Whether `plan.patientRef` is under `plan.clinicalFhir/Patient/` | `{"ok":true}` |
 | `none` | Nothing: the sandbox did it, such as moving its clock | `{}` |
 
-The protocol checks on the Tours page have no step API. Each is a scenario a client runs against a fresh sandbox, using the calls above, `POST /api/sandbox/faults`, and `GET /api/sandbox/catalog`. The page's source, `{{ORIGIN}}/checks.js`, is the reference for each one.
+The conformance checks on the Checks page have no step API. Each is a scenario a client runs against a fresh sandbox, using the calls above, `POST /api/sandbox/faults`, and `GET /api/sandbox/catalog`. The page's source, `{{ORIGIN}}/checks.js`, is the reference for each one.
 
 ## API types
 
@@ -270,6 +270,7 @@ interface ClientRequest { name: string; type?: "public" | "confidential" | "back
   - [Tours]({{SITE}}/tours): guided stories about sharing, guardians and policy.
   - [Explore]({{SITE}}/explore): what each person and service can reach.
   - [Activity]({{SITE}}/activity): what happened, and why.
+  - [Checks]({{SITE}}/checks): conformance checks of this sandbox's servers against the guide, run in the page.
 - [Test your server]({{SITE}}/servers): point the viewer at your own FHIR server.
 - [Live trace]({{SITE}}/trace/): every request between the services.
 

@@ -45,11 +45,11 @@ const setSaved = (x: { rules?: any[]; shares?: any[]; approvals?: any[] }) => {
 describe("pages", () => {
   test("the demo client is the home page, and Tours, Explore and the activity log are served, each with the header's links and the client builder's, and the old pages are gone", async () => {
     expect(await (await call("GET", "/")).text()).toContain("<title>SMART Imaging Demo");
-    for (const [path, title] of [["/tours", "Tours"], ["/explore", "Explore"], ["/activity", "Activity"]]) {
+    for (const [path, title] of [["/tours", "Tours"], ["/explore", "Explore"], ["/activity", "Activity"], ["/checks", "Checks"]]) {
       const html = await (await call("GET", path)).text();
       expect(html).toContain(`<title>${title}`);
       expect(html).toMatch(/<nav class="pages" aria-label="Pages"><a href="\/"[^>]*>Overview<\/a><a href="\/build"[^>]*>Build a client<\/a><a href="\/servers"[^>]*>Test your server<\/a><a href="\/llms.txt"[^>]*>For agents<\/a><\/nav>/);
-      expect(html).toMatch(/<nav class="subpages" aria-label="Build a client"><a href="\/build"[^>]*>Start here<\/a><a href="\/connect"[^>]*>Register an app<\/a><a href="\/tours"[^>]*>Tours<\/a><a href="\/explore"[^>]*>Explore<\/a><a href="\/activity"[^>]*>Activity<\/a><\/nav>/);
+      expect(html).toMatch(/<nav class="subpages" aria-label="Build a client"><a href="\/build"[^>]*>Start here<\/a><a href="\/connect"[^>]*>Register an app<\/a><a href="\/tours"[^>]*>Tours<\/a><a href="\/explore"[^>]*>Explore<\/a><a href="\/activity"[^>]*>Activity<\/a><a href="\/checks"[^>]*>Checks<\/a><\/nav>/);
       expect(html).toContain('id="settings-button"');
       expect(html).not.toContain("store-badge");
     }

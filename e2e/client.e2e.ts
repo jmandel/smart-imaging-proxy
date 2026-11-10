@@ -283,7 +283,7 @@ describe("the demo client", () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     const base = await enterSandbox(page);
-    for (const path of [`${base}/`, `${base}/build`, `${base}/servers`, `${base}/tours`, `${base}/explore`, `${base}/activity`, `${base}/connect`]) {
+    for (const path of [`${base}/`, `${base}/build`, `${base}/servers`, `${base}/checks`, `${base}/tours`, `${base}/explore`, `${base}/activity`, `${base}/connect`]) {
       await page.goto(`${ORIGIN}${path}`);
       const hrefs = await page.locator("nav.pages a, nav.subpages a, a.path").evaluateAll(as => as.map(a => a.getAttribute("href")));
       expect(hrefs.every(h => h!.startsWith(`${base}/`))).toBe(true);

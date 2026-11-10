@@ -538,3 +538,8 @@ tr.detail > td { background:var(--box); max-width:none; padding:.6rem .8rem .8re
   .who-select { display:block; }
   .sheets { grid-template-columns:repeat(auto-fill, minmax(10rem, 1fr)); }
 }
+/* The Checks page. */
+.checks-page .checks-panel { margin-top:1rem; }
+.checks-page .planned { margin-top:1.4rem; }
+.checks-page .planned h2 { font-size:1.05rem; }
+.checks-page .planned ul { margin:.3rem 0 .6rem; padding-left:1.2rem; }

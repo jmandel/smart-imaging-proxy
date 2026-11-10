@@ -137,6 +137,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       if (p === "/connect") return file("connect.html");
       if (p === "/build") return new Response((await Bun.file(join(root, "web", "build.html")).text()).replaceAll("{{SITE}}", sandbox.urls.demo), { headers: { "content-type": "text/html; charset=utf-8" } });
       if (p === "/servers") return file("servers.html");
+      if (p === "/checks") return file("checks.html");
       if (p === "/llms.txt") return llmsTxt(sandbox);
       // The management API takes this sandbox's admin token. Its keys are the one thing open: the URL is the access.
       if (p === "/api/sandbox/keys" && req.method === "GET") return PUBLIC_DEMO && !sandbox.id ? json({ error: "the shared sandbox gives out no keys: make a sandbox of your own with POST /api/sandboxes" }, 403) : json(sampleKeys(sandbox));

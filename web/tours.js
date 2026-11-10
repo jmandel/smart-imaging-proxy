@@ -2,22 +2,11 @@
 // starts it in a sandbox of its own and opens its step runner there. Each step is an action this page
 // takes, as an app or a person would: a real sign-in, a search, a retrieval with its own token, or a
 // change through the sandbox's management API. The sandbox plans each step and says beforehand what the
-// reference model expects, and the step passes when what this page saw matches. The protocol checks sit below.
+// reference model expects, and the step passes when what this page saw matches.
 let list, state = null, running = false, wantFocus = false, pageError = "";
-const checks = {};
 const params = () => new URLSearchParams(location.search);
 const chosen = () => params().get("tour") ?? list?.current;
 const windowMode = () => signInMode() === "window";
-
-function checksHtml() {
-  const done = Object.values(checks).filter(c => c.ok !== undefined), busy = Object.values(checks).some(c => c.running);
-  return `<section class="checks-panel" aria-labelledby="h-checks"><h2 id="h-checks">Checks against the guide</h2>
-      <p class="note">This demo follows the SMART Imaging Access guide, a published standard for how apps and services get medical images. Each check below acts out one situation the guide covers and says whether the demo did what the guide asks.</p>
-      <div class="row"><button type="button" class="secondary" id="run-checks" ${busy ? "disabled" : ""}>Run all checks</button>
-        ${busy ? `<span class="note" role="status">${done.length} of ${list.checks.length} run</span>` : done.length ? `<span class="${done.every(c => c.ok) ? "verdict ok" : "verdict bad"}" role="status">${done.filter(c => c.ok).length} of ${done.length} passed</span>` : ""}</div>
-      <ul class="check-list">${list.checks.map(c => { const r = checks[c.id]; return `<li><span class="verdict ${r?.ok ? "ok" : r?.ok === false ? "bad" : ""}">${r?.running ? '<span class="spinner" aria-hidden="true"></span>' : r ? (r.ok ? "Pass" : "Fail") : ""}</span><span class="check-what"><b>${esc(c.title)}</b><span>${esc(c.summary)}</span></span>${r?.activityUrl ? `<a href="${esc(r.activityUrl)}">Activity log</a>` : ""}${r?.failures?.length ? `<span class="fail-detail">${r.failures.map(f => esc(`${f.step}: ${f.label}${f.detail ? ` (${f.detail})` : ""}`)).join("<br>")}</span>` : ""}</li>`; }).join("")}</ul>
-    </section>`;
-}
 
 // The home page: who's who, then a card per story, on film, with the chain it ends on.
 function homeHtml() {
@@ -32,8 +21,7 @@ function homeHtml() {
       <h2><button type="button" class="story-go" data-start="${esc(t.id)}">${esc(t.title)}</button></h2>
       <p>${esc(t.premise)}</p>
       ${Layers.chains(t.chains, { film: true, label: `${t.title}: why the app sees what it sees` })}
-</li>`).join("")}</ul>
-    ${checksHtml()}`;
+</li>`).join("")}</ul>`;
 }
 
 function stepHtml(s, i, steps) {
@@ -147,17 +135,6 @@ async function start(id) {
     location.href = `${r.sandbox.base}/tours?tour=${encodeURIComponent(id)}`;
   } catch (e) { pageError = e.message; render(); }
 }
-async function runChecks() {
-  for (const c of list.checks) checks[c.id] = { running: true };
-  render();
-  for (const c of list.checks) {
-    try { checks[c.id] = await runPageCheck(c.id, c.title); }
-    catch (e) { checks[c.id] = { ok: false, failures: [{ step: c.title, label: e.message }] }; }
-    render();
-  }
-  const done = Object.values(checks);
-  announce(`${done.filter(c => c.ok).length} of ${done.length} checks passed`);
-}
 /** Runs every step left, stopping before one a person signs in to themselves. */
 async function runRest() {
   for (let s = state.steps.find(x => !x.result); s && !pageError; s = state.steps.find(x => !x.result)) {
@@ -172,7 +149,6 @@ document.addEventListener("click", e => {
   if (!t) return;
   if (t.dataset.start) start(t.dataset.start);
   else if (t.id === "start") start(state.tour.id);
-  else if (t.id === "run-checks") runChecks();
   else if (t.dataset.step) runStep(t.dataset.step);
   else if (t.id === "run-rest") runRest();
 });
