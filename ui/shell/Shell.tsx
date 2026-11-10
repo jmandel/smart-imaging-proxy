@@ -3,6 +3,7 @@
 // in all three at once, in every tab.
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
+import { useOneRow } from "./fit";
 import { api, BASE } from "../lib/api";
 import { enterSandbox, rememberName, useLinkedSandbox, useSandboxes, type KnownSandbox } from "../lib/store";
 import { openViewer, sandboxServer } from "../lib/servers";
@@ -22,14 +23,15 @@ export function PageLink({ id, base = BASE, current, children, className }: { id
 const sandboxTitle = (w: KnownSandbox | undefined) => w?.name ? `Sandbox “${w.name}”` : "Sandbox";
 
 function Header({ page }: { page: PageId }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(false), bar = useRef<HTMLElement>(null);
+  useOneRow(bar);
   useEffect(() => {
     const close = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
     addEventListener("keydown", close);
     return () => removeEventListener("keydown", close);
   }, []);
   return (
-    <header className={`topbar${open ? " menu-open" : ""}`}>
+    <header ref={bar} className={`topbar${open ? " menu-open" : ""}`}>
       <a className="mark" href="/" title="Home">
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><rect x="2" y="2" width="16" height="16" rx="3" /><circle cx="10" cy="10" r="3.2" /></svg>
         <span className="name">SMART Imaging</span>
@@ -43,11 +45,12 @@ function Header({ page }: { page: PageId }) {
   );
 }
 
-/** Inside a sandbox: its name, and its pages by what they're for. On a phone, the pages open from a button. */
+/** Inside a sandbox: its name, and its pages by what they're for. When they don't fit on one row, they open from a button. */
 function SandboxBar({ page, sandbox }: { page: PageId; sandbox: KnownSandbox | undefined }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(false), bar = useRef<HTMLElement>(null);
+  useOneRow(bar, [sandbox?.name]);
   return (
-    <nav className={`sandbox-bar${open ? " open" : ""}`} aria-label="This sandbox">
+    <nav ref={bar} className={`sandbox-bar${open ? " open" : ""}`} aria-label="This sandbox">
       <div className="sandbox-bar-head">
         <PageLink id="sandbox" current={page} className="sandbox-bar-name">{sandboxTitle(sandbox)}</PageLink>
         {page !== "sandbox" && <span className="sandbox-bar-here">{PAGES[page].name}</span>}
