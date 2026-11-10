@@ -115,7 +115,7 @@ A guide's links go to the sandbox you were last in. With none, the first link ma
 ### Inside a sandbox
 
 A sandbox's pages show a trail, "Sandbox “name” › page", instead of sub-menus. The sandbox's home lists its
-pages by what they're for: **Your app** (Start here, Register an app, Logs), **Try it** (Viewer, Tour, Explore),
+pages by what they're for: **Try it** (Viewer, Tour, Explore), **Your app** (Start here, Register an app, Logs),
 **Your server** (Your servers, Conformance). Activity is called **Logs**.
 
 **Sandbox Config** holds what makes the sandbox realistic, for the curious: the full policy editor, and the
