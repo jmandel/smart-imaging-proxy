@@ -163,7 +163,7 @@ function paintSaved() {
       ${s.imaging ? `<dt>Imaging</dt><dd><code>${esc(s.imaging)}</code></dd>` : ""}
     </dl>
     <div class="configure-actions"><button type="button" class="primary" data-connect="${i}">Connect</button><button type="button" class="secondary" data-edit="${i}">Edit</button><button type="button" class="tool quiet-danger" data-remove="${i}" aria-label="Remove ${esc(s.label)}">Remove</button></div>
-  </article>`).join("") : `<p class="note">None yet. Servers you save here are also offered on the Overview, beside this sandbox's own.</p>`;
+  </article>`).join("") : `<p class="note">None yet. Servers you save here are also offered in the viewer, beside this sandbox's own.</p>`;
   $("#servers-json").value = JSON.stringify(list, null, 2);
 }
 $("#saved").addEventListener("click", e => {

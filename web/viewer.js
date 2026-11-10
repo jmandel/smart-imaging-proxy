@@ -1,9 +1,9 @@
-// The public demo client: a standalone SMART App Launch against this deployment, then its clinical and
+// The viewer: our general SMART app. A standalone SMART App Launch against this sandbox or a server you added, then its clinical and
 // imaging data with one token. Every request goes through `traced`, which keeps what the protocol panel
 // shows. Images come one instance at a time, the search result already naming them: the middle one
 // first, then outward, so the first picture doesn't wait for the rest of the study.
 const CLIENT_ID = "demo-client", SCOPE = "launch/patient patient/*.rs";
-const REDIRECT = `${location.origin}${BASE}/`;
+const REDIRECT = `${location.origin}${BASE}/`, VIEWER = `${BASE}/viewer`;
 const SANDBOX = { id: "sandbox", label: "SMART Imaging sandbox", detail: "Your own sandbox of sample patients", own: true };
 const allServers = () => [SANDBOX, ...savedServers().map(s => ({ ...s, id: serverKey(s), detail: new URL(s.iss).host }))];
 function chosenServer() { const all = allServers(); return all.find(s => s.id === stored(CHOICE_KEY)) ?? all[0]; }
@@ -148,29 +148,51 @@ async function discover(iss) {
   });
 }
 const connecting = on => document.documentElement.classList.toggle("connecting", on);
+/**
+ * Where the sign-in comes back: the redirect page posts its address to this tab, which opened it. Only the
+ * address carrying this sign-in's state ends the wait.
+ */
+function signInReturn(tab, state) {
+  return new Promise((done, fail) => {
+    const closed = setInterval(() => { if (tab.closed) { clearInterval(closed); removeEventListener("message", heard); fail(new Error("The sign-in tab closed before it finished. Connect again.")); } }, 500);
+    function heard(e) {
+      const back = e.origin === location.origin && typeof e.data?.signedIn === "string" && e.data.signedIn.startsWith(REDIRECT) ? new URL(e.data.signedIn) : undefined;
+      if (!back || back.searchParams.get("state") !== state) return;
+      clearInterval(closed); removeEventListener("message", heard); done(back.searchParams);
+    }
+    addEventListener("message", heard);
+  });
+}
 async function connect() {
-  const button = $("#connect");
+  const button = $("#connect"), server = chosenServer();
+  // A person signs in in a tab of its own, so this one never leaves the viewer. It opens from the click itself.
+  const tab = server.mode === "backend" ? undefined : open("about:blank", "smart-imaging-sign-in");
   button.disabled = true;
   connecting(true);
   try {
-    const server = chosenServer();
     if (server.mode === "backend") { await connectBackend(server); return; }
     trail.length = 0;
     const iss = server.own ? `${location.origin}${BASE}/fhir` : server.iss, clientId = server.own ? CLIENT_ID : server.clientId, scope = server.scope ?? SCOPE;
     const config = await discover(iss);
     if (config.code_challenge_methods_supported && !config.code_challenge_methods_supported.includes("S256")) throw new Error("This server doesn't offer PKCE with S256.");
     // Nobody signs in to a server this app can't use.
-    if (!imagingOf(config, iss) && !server.imaging) throw new Error("This server doesn't advertise SMART Imaging with App Launch. If you know where its imaging FHIR server is, add it under Advanced on Test your server.");
+    if (!imagingOf(config, iss) && !server.imaging) throw new Error("This server doesn't advertise SMART Imaging with App Launch. If you know where its imaging FHIR server is, add it under Advanced in Your servers.");
     const verifier = random(), state = random();
     const challenge = b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
     save({ pending: { verifier, state, config, iss, clientId, imaging: server.imaging, own: !!server.own, label: server.label, jwk: server.jwk } });
     const url = new URL(config.authorization_endpoint);
     Object.entries({ response_type: "code", client_id: clientId, redirect_uri: REDIRECT, scope, aud: iss, state, code_challenge: challenge, code_challenge_method: "S256" }).forEach(([k, v]) => url.searchParams.set(k, v));
-    addStep({ id: "authorize", kind: "authorize", title: "Sign in and approve the app", request: requestLine("GET", url.toString().replace(/([?&](state|code_challenge)=)[^&]+/g, "$1…")), response: "The browser returned with a one-time code." });
-    location.assign(url);
+    addStep({ id: "authorize", kind: "authorize", title: "Sign in and approve the app", request: requestLine("GET", url.toString().replace(/([?&](state|code_challenge)=)[^&]+/g, "$1…")), response: "The sign-in tab returned with a one-time code." });
+    // A browser that blocks the tab: the sign-in happens here instead, and comes back to the viewer.
+    if (!tab) { location.assign(url); return; }
+    tab.location = url.toString();
+    const params = await signInReturn(tab, state);
+    await run(await finishSignIn(params));
   } catch (e) {
+    tab?.close();
     connecting(false);
     button.disabled = false;
+    $("#landing").hidden = false; $("#app").hidden = true;
     const el = $("#connect-error"); el.hidden = false; el.textContent = e.message;
   }
 }
@@ -189,14 +211,15 @@ async function connectBackend(server) {
 }
 async function finishSignIn(params) {
   const { pending } = saved();
-  history.replaceState(null, "", REDIRECT);
+  // A sign-in that came back to this tab leaves the viewer's address clean.
+  if (location.search) history.replaceState(null, "", VIEWER);
   if (!pending || pending.state !== params.get("state")) throw new Error("This sign-in didn't start here. Connect again.");
   save({ pending: undefined });
   if (params.get("error")) { addStep({ id: "authorize", kind: "authorize", title: "Sign in and approve the app", failed: true, response: params.get("error") }); throw new Error(`The sign-in ended with: ${params.get("error")}`); }
   const body = new URLSearchParams({ grant_type: "authorization_code", code: params.get("code"), redirect_uri: REDIRECT, client_id: pending.clientId, code_verifier: pending.verifier, ...(pending.jwk ? { client_assertion_type: ASSERTION_TYPE, client_assertion: await signAssertion(pending.jwk, pending.clientId, pending.config.token_endpoint) } : {}) }).toString();
   const token = await traced({ id: "token", kind: "token", title: "Exchange the code for a token" }, pending.config.token_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body }, t => ({ Granted: t.scope, "Token lasts": `${Math.round(t.expires_in / 60)} min` }));
   const imaging = imagingOf(pending.config, pending.iss)?.url ?? pending.imaging;
-  if (!imaging) throw new Error("This server doesn't advertise SMART Imaging with App Launch. If you know where its imaging FHIR server is, add it under Advanced on Test your server.");
+  if (!imaging) throw new Error("This server doesn't advertise SMART Imaging with App Launch. If you know where its imaging FHIR server is, add it under Advanced on Your servers.");
   if (!token.patient) throw new Error("The token response didn't name a patient.");
   const session = { token: token.access_token, patient: token.patient, imaging, iss: pending.iss, own: pending.own, label: pending.label };
   save({ session });
@@ -204,7 +227,7 @@ async function finishSignIn(params) {
 }
 function disconnect() {
   try { sessionStorage.removeItem(STORE); } catch {}
-  location.assign(`${BASE}/`);
+  location.reload();
 }
 
 // The chart.
@@ -301,81 +324,6 @@ function openStudy(session, study, button) {
   viewer.openStudy(viewerSeries(study), recordedSource(session, study));
 }
 
-// The sandboxes this browser knows. The list is the only thing kept: the URL says which one a page is in.
-const SANDBOXES_KEY = "smart-imaging-client:sandboxes";
-function knownSandboxes() {
-  try { return JSON.parse(stored(SANDBOXES_KEY) ?? "[]"); } catch { return []; }
-}
-const saveSandboxes = list => store(SANDBOXES_KEY, JSON.stringify(list));
-const shareLink = base => `${location.origin}${base}/`;
-/** A sandbox's name: `null` when the server says it's gone, and `undefined` when it couldn't be asked. */
-async function sandboxName(base) {
-  try { return (await api("GET", "/api/sandbox", undefined, base)).name; } catch (e) { return e.status === 404 ? null : undefined; }
-}
-/** The home page: the sandboxes this browser has made or joined, and a way to make another. */
-function paintHome(list) {
-  $("#sandbox-list").innerHTML = list.length ? list.map(w => `<li><a href="${esc(w.base)}/" data-root><strong>${esc(w.name ?? "Sandbox")}</strong><span>${w.joined ? "Shared with you" : "Made in this browser"}</span></a></li>`).join("") : `<li class="none">You don't have any yet.</li>`;
-}
-async function renderHome() {
-  let list = knownSandboxes();
-  // What this browser remembers, straight away, then checked against the server.
-  paintHome(list);
-  const names = new Map(await Promise.all(list.map(async w => [w.base, await sandboxName(w.base)])));
-  // The list as it is now, since one made or joined meanwhile belongs on it. One deleted by whoever made it is
-  // gone for everyone; one that couldn't be asked stays, as it was.
-  list = knownSandboxes().flatMap(w => { const n = names.get(w.base); return n === null ? [] : [n ? { ...w, name: n } : w]; });
-  saveSandboxes(list);
-  paintHome(list);
-}
-$("#create").addEventListener("click", async () => {
-  const button = $("#create"), err = $("#create-error");
-  button.disabled = true;
-  try {
-    const r = await fetch("/api/sandboxes", { method: "POST" });
-    if (!r.ok) throw new Error(r.status === 429 ? "Too many sandboxes from this address. Try again in a while." : `The sandbox couldn't be created (HTTP ${r.status})`);
-    const { base } = await r.json();
-    saveSandboxes([...knownSandboxes(), { base, joined: false }]);
-    location.assign(`${base}/`);
-  } catch (e) { err.hidden = false; err.textContent = e.message; button.disabled = false; }
-});
-/** Inside a sandbox: its name, and what can be done with it. A browser that hasn't joined it is asked first. */
-async function renderSandbox() {
-  const box = $("#sandbox");
-  const list = knownSandboxes();
-  const name = await sandboxName(BASE);
-  if (name === null) { box.innerHTML = `<p class="error">This sandbox doesn't exist any more.</p><p><a href="/" data-root>Your sandboxes</a></p>`; return; }
-  if (!name) { box.innerHTML = `<p class="error">This sandbox couldn't be reached. Reload to try again.</p><p><a href="/" data-root>Your sandboxes</a></p>`; return; }
-  const mine = list.find(w => w.base === BASE);
-  if (!mine) {
-    box.innerHTML = `<h2>Join “${esc(name)}”?</h2><p class="note">Someone shared this sandbox with you. Anyone with its link can see and change it. It holds sample data only.</p><div class="sandbox-actions"><button type="button" class="primary" id="join">Join this sandbox</button></div>`;
-    $("#join").addEventListener("click", () => { saveSandboxes([...knownSandboxes(), { base: BASE, joined: true, name }]); renderSandbox(); });
-    return;
-  }
-  saveSandboxes(list.map(w => w.base === BASE ? { ...w, name } : w));
-  box.innerHTML = `<p class="sandbox-label">Sandbox</p><div class="sandbox-head"><p class="sandbox-name" id="sandbox-name">${esc(name)}</p><button type="button" class="tool" id="rename">Rename</button></div>
-    <div class="sandbox-actions"><button type="button" class="tool" id="share">Share</button><a class="tool" href="/" data-root>All sandboxes</a><button type="button" class="tool quiet-danger" id="end">${mine.joined ? "Leave" : "Delete"}</button></div>
-    <div id="share-panel" hidden><input type="text" id="share-link" readonly aria-label="Link to this sandbox" value="${esc(shareLink(BASE))}"><p class="note" id="share-note">Anyone with this link can see and change this sandbox.</p></div>`;
-  $("#rename").addEventListener("click", async () => {
-    const next = prompt("Name this sandbox", name);
-    if (next === null || !next.trim()) return;
-    await api("PATCH", "/api/sandbox", { name: next });
-    renderSandbox();
-  });
-  $("#share").addEventListener("click", async () => {
-    const url = shareLink(BASE), panel = $("#share-panel"), note = $("#share-note");
-    panel.hidden = false;
-    $("#share-link").select();
-    if (navigator.share) { try { await navigator.share({ title: `SMART Imaging sandbox: ${name}`, url }); return; } catch (e) { if (e.name === "AbortError") return; } }
-    try { await navigator.clipboard.writeText(url); note.textContent = "Link copied. Anyone with it can see and change this sandbox."; } catch {}
-  });
-  $("#end").addEventListener("click", async () => {
-    if (!mine.joined && !confirm(`Delete “${name}” and everything in it? Anyone you shared it with loses it too.`)) return;
-    if (!mine.joined) try { await api("DELETE", "/api/sandbox"); } catch {}
-    saveSandboxes(knownSandboxes().filter(w => w.base !== BASE));
-    try { sessionStorage.removeItem(STORE); } catch {}
-    location.assign("/");
-  });
-}
 function showApp() {
   connecting(false);
   $("#landing").hidden = true; $("#app").hidden = false; $("#disconnect").hidden = false;
@@ -398,21 +346,14 @@ renderServers();
 $("#connect").addEventListener("click", connect);
 $("#disconnect").addEventListener("click", disconnect);
 
-// A page brought back by Back is as it was left: a disabled button, an old list, or "Connecting…". Bring it up to date.
-addEventListener("pageshow", e => {
-  if (!e.persisted) return;
-  if (!BASE) { $("#create").disabled = false; renderHome(); return; }
-  if (!saved().session) { connecting(false); $("#connect").disabled = false; }
-  renderSandbox();
-});
+// A page brought back by Back is as it was left: a disabled button, or "Connecting…". Bring it up to date.
+addEventListener("pageshow", e => { if (e.persisted && !saved().session) { connecting(false); $("#connect").disabled = false; } });
 (async function start() {
   const params = new URLSearchParams(location.search);
-  if (!BASE) { renderHome(); return; }
-  renderSandbox();
   try {
-    if (params.has("code") || params.has("error")) { const s = await finishSignIn(params); await run(s); return; }
+    // A sign-in that had to happen in this tab, handed back by the redirect page.
+    if (params.has("code") || params.has("error")) { await run(await finishSignIn(params)); return; }
     if (saved().session) { await run(saved().session); return; }
-    if (params.get("connect") === "1") { history.replaceState(null, "", REDIRECT); await connect(); return; }
     connecting(false);
   } catch (e) {
     connecting(false);

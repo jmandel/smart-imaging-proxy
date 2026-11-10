@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Test your server · SMART Imaging</title>
+<title>Your servers · SMART Imaging</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Crect width='20' height='20' rx='3' fill='%230f2a3d'/%3E%3Ccircle cx='10' cy='10' r='4' fill='%23e8f1f6'/%3E%3C/svg%3E">
 <link rel="preload" href="/fonts/atkinson-next.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/atkinson-mono.woff2" as="font" type="font/woff2" crossorigin>
@@ -12,11 +12,12 @@
 <body>
 <header class="topbar">
   <a class="mark" href="/" data-root title="Your sandboxes"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2" y="2" width="16" height="16" rx="3"/><circle cx="10" cy="10" r="3.2"/></svg><span class="name">SMART Imaging</span></a>
-  <nav class="pages" aria-label="Pages"><a href="/">Overview</a><a href="/build">Build a client</a><a href="/servers" aria-current="page">Test your server</a><a href="/llms.txt">For agents</a></nav>
+  <nav class="pages" aria-label="Pages"><a href="/">Sandbox</a><a href="/build">Build an App</a><a href="/viewer" aria-current="page">Test a Server</a><a href="/llms.txt">For Agents</a></nav>
 </header>
+<nav class="subpages" aria-label="Test a Server"><a href="/viewer">Viewer</a><a href="/servers" aria-current="page">Your servers</a><a href="/checks">Conformance</a></nav>
 <div id="announce" class="sr-only" role="status" aria-live="polite"></div>
 <main class="landing servers-page">
-  <h1>Test your server</h1>
+  <h1>Your servers</h1>
   <p class="lead">Point this sandbox's viewer at your own FHIR server. It connects exactly as it does here, so you can see whether your discovery, sign-in and imaging endpoints work for a SMART Imaging app.</p>
   <ol class="steps-line" aria-label="Steps">
     <li>Describe your server</li><li>Register the viewer with it</li><li>Connect</li>
@@ -77,7 +78,7 @@
     </details>
 
     <div class="form-actions">
-      <button type="submit" class="primary" id="save-try">Save and connect</button>
+      <button type="submit" class="primary" id="save-try">Save and open the viewer</button>
       <button type="button" class="secondary" id="save">Save</button>
       <button type="button" class="tool" id="cancel-edit" hidden>Cancel</button>
     </div>

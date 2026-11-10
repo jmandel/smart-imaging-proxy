@@ -67,6 +67,10 @@ document.addEventListener("click", async e => {
   setTimeout(() => { if (copy.isConnected) copy.textContent = copy.dataset.label; }, 2000);
 });
 
+/** A sandbox's name: `null` when the server says it's gone, and `undefined` when it couldn't be asked. */
+async function sandboxName(base) {
+  try { return (await api("GET", "/api/sandbox", undefined, base)).name; } catch (e) { return e.status === 404 ? null : undefined; }
+}
 /** How people sign in: done for them, or by themselves in a window that a Sign in button opens. Kept in this browser. */
 const SIGNIN_KEY = "smart-imaging-signin";
 function signInMode() { try { return localStorage.getItem(SIGNIN_KEY) === "window" ? "window" : "auto"; } catch { return "auto"; } }

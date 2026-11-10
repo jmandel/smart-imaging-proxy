@@ -70,33 +70,41 @@ A setting chooses automatic or window sign-in, and it affects only Tours.
 
 ## Decided: the simpler site
 
-Settled with Josh, November 2026.
+Settled with Josh, November 2026. This replaces earlier plans.
 
-### Menu inside a sandbox: Sandbox · Test Your Server · Test Your Client · For Agents
+### Menu inside a sandbox: Sandbox · Build an App · Test a Server · For Agents
 
-- **Sandbox:**
-  - **Overview** is the landing page, and where Back lands. It needs no sign-in. It browses every patient, study and image as the operator sees them, with the policy shown alongside. The admin token can search and retrieve every study: a built-in rule for the admin client only.
-  - **Policy** shows the whole policy in plain words, edits each part through the policy API, and starts from named scenarios that set the whole document.
-  - **Tour** is the guided stories, which always walk the sign-in forms themselves. The automatic or window setting is gone.
-  - **Explore** and **Activity**.
-- **Test Your Server:**
-  - **Viewer** is our general SMART app, against this sandbox or a server you've added. Sign-in opens in a new tab. The redirect page posts the redirect's address back, and the viewer, which holds the PKCE verifier, redeems the code, so the viewer's tab never navigates.
-  - **Your servers** is adding and editing servers.
-  - **Checks** is the conformance checks.
-- **Test Your Client:** Start here (endpoints and logins), and Register an app.
+The two sides are named by what the visitor is doing, so neither reads backwards.
+
+**Sandbox** is what the sandbox is, and its first page is the landing page, where Back lands.
+
+- **Data:** every patient, study and image, with no sign-in, as the operator sees them. The admin token can search and retrieve every study: a built-in rule for the admin client only.
+- **Policy:** the rules, relationships, shares and app approvals, in plain words. Each part is editable through the policy API, and named scenarios set the whole document.
+- **Settings:** the demo clock, image storage, topology, resets, ending access, and key rotation. There's no Settings button in the header.
+- **Explore:** see what a person's app or a service sees, and why. Kept apart from Data: Data is what exists, Explore is one viewpoint on it. Revisit once Data is built.
+- **Tour:** the guided stories. They always walk the sign-in forms themselves.
+- **Activity:** everything that happened in the sandbox.
+
+**Build an App** is for people building a client, against our servers: **Start here** (endpoints, sample logins) and **Register an app**.
+
+**Test a Server** is for people with a server, using our client:
+
+- **Viewer:** our general SMART app, against this sandbox or any server. Sign-in opens in a new tab. The redirect page posts its address back, and the viewer redeems the code, so its tab never navigates.
+- **Your servers:** adding and editing servers for the viewer.
+- **Conformance:** the checks, run by our client against a server. This sandbox now; yours later (issue #1).
 
 ### Cuts
 
 - The Tours sign-in setting.
 - `src/flows` moves into the tests.
 - URL-seeded sandboxes.
-- The undeployed history patch, `d805925`, is replaced by the design above.
+- Sub-menus stay, one per area.
 
 ### Order
 
-1. Menu, and the viewer page with its sign-in in a new tab.
-2. The Overview browser, and the admin client's built-in rule.
-3. Policy, with scenarios.
-4. Tour, Explore and Activity under Sandbox. Checks under Test Your Server.
+1. Menu, the viewer page and its sign-in tab, and Test a Server. Done.
+2. Data, with the admin client's rule.
+3. Settings, out of the header.
+4. Policy, with scenarios.
 5. Cuts.
-6. llms.txt, tests, a screenshot review, then a deploy once Josh says so.
+6. llms.txt, tests updated to the design, a screenshot review, then a deploy when Josh says so.

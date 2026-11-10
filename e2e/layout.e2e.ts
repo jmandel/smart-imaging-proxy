@@ -18,21 +18,24 @@ for (const [label, viewport] of [["desktop", { width: 1440, height: 900 }], ["ph
   const p = await ctx.newPage();
   await p.goto(`${O}/`); await report(`${label} home`, p);
   await p.getByRole("button", { name: "Create a sandbox" }).click(); await p.waitForURL(u => u.pathname.startsWith("/s/")); await p.locator("#sandbox-name").waitFor(); await report(`${label} landing in a sandbox`, p);
-  await p.getByRole("button", { name: "Connect", exact: true }).click();
-  await p.locator("input[name=username][value=josh]").check(); await p.getByRole("button", { name: "Continue" }).click();
-  await p.locator(".site-row summary").first().waitFor();
-  await p.locator(".site-row", { hasText: "Riverside" }).locator("summary").click();
-  await p.waitForTimeout(400); // Opening the list moves what's below it, as asked. That report arrives late.
-  await p.evaluate(() => { (window as any).__s = []; });
-  await p.locator(".site-row", { hasText: "Riverside" }).locator("> label input").uncheck(); await report(`${label} consent untick site`, p);
-  await p.locator(".site-row", { hasText: "Riverside" }).locator("> label input").check();
-  await p.getByRole("button", { name: "Approve" }).click();
+  const sandboxBase = new URL(p.url()).pathname.match(/^\/s\/[^/]+/)![0];
+  await p.goto(`${O}${sandboxBase}/viewer`); await report(`${label} viewer before connecting`, p);
+  // The sign-in happens in a tab of its own.
+  const [t] = await Promise.all([ctx.waitForEvent("page"), p.getByRole("button", { name: "Connect", exact: true }).click()]);
+  await t.locator("input[name=username][value=josh]").check(); await t.getByRole("button", { name: "Continue" }).click();
+  await t.locator(".site-row summary").first().waitFor();
+  await t.locator(".site-row", { hasText: "Riverside" }).locator("summary").click();
+  await t.waitForTimeout(400); // Opening the list moves what's below it, as asked. That report arrives late.
+  await t.evaluate(() => { (window as any).__s = []; });
+  await t.locator(".site-row", { hasText: "Riverside" }).locator("> label input").uncheck(); await report(`${label} consent untick site`, t);
+  await t.locator(".site-row", { hasText: "Riverside" }).locator("> label input").check();
+  await t.getByRole("button", { name: "Approve" }).click();
   await p.locator(".study-button").nth(5).waitFor(); await p.locator("#stage-note:empty").waitFor({ state: "attached" }); await report(`${label} viewer load`, p);
   await p.evaluate(() => { (window as any).__s = []; });
   await p.locator(".study-button", { hasText: "BRAIN" }).click(); await p.locator("#slice:enabled").waitFor(); await p.locator("#stage-note:empty").waitFor({ state: "attached" }); await report(`${label} open study with series`, p);
   await p.evaluate(() => { (window as any).__s = []; });
   await p.locator(".study-button", { hasText: "Histopath" }).click(); await p.waitForTimeout(600); await report(`${label} back to one-series study`, p);
-  const base = new URL(p.url()).pathname.replace(/\/$/, "");
+  const base = new URL(p.url()).pathname.replace(/\/(viewer)?\/?$/, "");
   await p.evaluate(() => sessionStorage.clear()); await p.goto(`${O}${base}/`); await report(`${label} landing again`, p);
   await p.goto(`${O}${base}/connect`); await report(`${label} connect page`, p);
   await p.evaluate(() => { (window as any).__s = []; }); await p.getByRole("radio", { name: /Backend service/ }).check(); await report(`${label} connect switch type`, p);

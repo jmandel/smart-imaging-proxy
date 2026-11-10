@@ -43,11 +43,11 @@ function putServer(entry, replacing = serverKey(entry)) {
   if (at >= 0) list[at] = entry; else list.push(entry);
   saveServers(list);
 }
-/** Makes a server the viewer's choice, then opens the viewer connecting to it, ending any session it had. */
+/** Makes a server the viewer's choice, and opens the viewer, ending any session it had there. */
 function tryServer(entry) {
   store(CHOICE_KEY, serverKey(entry));
   try { sessionStorage.removeItem(`smart-imaging-client:${BASE}`); } catch {}
-  location.assign(`${BASE}/?connect=1`);
+  location.assign(`${BASE}/viewer`);
 }
 
 const IMAGING = "smart-imaging-access", APP_LAUNCH = "http://fhir.org/argonaut/smart-imaging/capabilities/app-launch";

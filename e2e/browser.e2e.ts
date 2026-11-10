@@ -86,8 +86,8 @@ describe("every page, on desktop and phone, in light and dark", () => {
         await page.waitForLoadState("networkidle");
         expect([path, await overflow(page)]).toEqual([path, 0]);
         if (!path.startsWith("http") && path !== "/") {
-          expect(await page.locator(".pages a").allInnerTexts()).toEqual(["Overview", "Build a client", "Test your server", "For agents"]);
-          expect(await page.locator(".subpages a").allInnerTexts()).toEqual(["Start here", "Register an app", "Tours", "Explore", "Activity", "Checks"]);
+          expect(await page.locator(".pages a").allInnerTexts()).toEqual(["Sandbox", "Build an App", "Test a Server", "For Agents"]);
+          expect(await page.locator(".subpages a").allInnerTexts()).toEqual(["Data", "Explore", "Tour", "Activity"]);
           const box = await page.locator("#settings-button").boundingBox();
           expect(box!.y).toBeLessThan(60);
           expect(box!.height).toBeGreaterThanOrEqual(44);
@@ -360,7 +360,7 @@ describe("Tours", () => {
     await page.locator(".tour-buttons .verdict").waitFor({ timeout: 90000 });
     expect(opened).toBe(0);
   });
-  test("the Checks page runs every protocol check in the page, as one pass or fail list, each opening its activity", async () => {
+  test("the Conformance page runs every protocol check in the page, as one pass or fail list, each opening its activity", async () => {
     const page = await open("/checks");
     await page.getByRole("button", { name: "Run all checks" }).click();
     await page.locator(".checks-panel .row .verdict", { hasText: "passed" }).waitFor({ timeout: 110000 });

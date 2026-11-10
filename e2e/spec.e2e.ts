@@ -77,15 +77,19 @@ async function connect(kind: string): Promise<Page> {
   await page.locator("#servers-json").fill(JSON.stringify([{ label: kind, iss: `${FIX}/${kind}/fhir`, clientId }]));
   await page.getByRole("button", { name: "Replace with this" }).click();
   await page.getByText("Saved 1 server of your own.").waitFor();
-  await page.goto(`${sandbox.urls.demo}/`);
+  await page.goto(`${sandbox.urls.demo}/viewer`);
   await page.getByRole("radio", { name: new RegExp(`^${kind}`) }).check();
-  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  // Connect opens the sign-in in a tab of its own, from the click.
+  const [tab] = await Promise.all([context.waitForEvent("page"), page.getByRole("button", { name: "Connect", exact: true }).click()]);
+  signInTabs.set(page, tab);
   return page;
 }
+const signInTabs = new Map<Page, Page>();
 async function signIn(page: Page) {
-  await page.locator("input[name=username][value=josh]").check();
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("button", { name: "Approve" }).click();
+  const tab = signInTabs.get(page)!;
+  await tab.locator("input[name=username][value=josh]").check();
+  await tab.getByRole("button", { name: "Continue" }).click();
+  await tab.getByRole("button", { name: "Approve" }).click();
   await page.locator("#app").waitFor({ state: "visible" });
 }
 const showsImages = async (page: Page) => {

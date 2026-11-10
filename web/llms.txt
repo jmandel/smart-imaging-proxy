@@ -183,7 +183,7 @@ Everything the Tours page does, you can do with these calls. `begin` returns `{p
 | `referral-check` | Whether `plan.patientRef` is under `plan.clinicalFhir/Patient/` | `{"ok":true}` |
 | `none` | Nothing: the sandbox did it, such as moving its clock | `{}` |
 
-The conformance checks on the Checks page have no step API. Each is a scenario a client runs against a fresh sandbox, using the calls above, `POST /api/sandbox/faults`, and `GET /api/sandbox/catalog`. The page's source, `{{ORIGIN}}/checks.js`, is the reference for each one.
+The conformance checks on the Conformance page ({{SITE}}/checks) have no step API. Each is a scenario a client runs against a fresh sandbox, using the calls above, `POST /api/sandbox/faults`, and `GET /api/sandbox/catalog`. The page's source, `{{ORIGIN}}/checks.js`, is the reference for each one.
 
 ## API types
 
@@ -264,19 +264,24 @@ interface ClientRequest { name: string; type?: "public" | "confidential" | "back
 
 ## Pages
 
-- [Overview]({{SITE}}/): the sandbox, its viewer, and the two ways in.
-- [Build a client]({{SITE}}/build): endpoints and sample accounts for your app. Under it:
+The menu has the sandbox itself, then one area for each side.
+
+- **Sandbox:**
+  - [Data]({{SITE}}/): the landing page: the sandbox's name, sharing, and the two ways in.
+  - [Explore]({{SITE}}/explore): what each person and service can reach, and why.
+  - [Tour]({{SITE}}/tours): guided stories about sharing, guardians and policy.
+  - [Activity]({{SITE}}/activity): what happened, and why. Its [live trace]({{SITE}}/trace/) shows every request between the services.
+- **Build an App:**
+  - [Start here]({{SITE}}/build): endpoints and sample accounts for your app.
   - [Register an app]({{SITE}}/connect): register a client.
-  - [Tours]({{SITE}}/tours): guided stories about sharing, guardians and policy.
-  - [Explore]({{SITE}}/explore): what each person and service can reach.
-  - [Activity]({{SITE}}/activity): what happened, and why.
-  - [Checks]({{SITE}}/checks): conformance checks of this sandbox's servers against the guide, run in the page.
-- [Test your server]({{SITE}}/servers): point the viewer at your own FHIR server.
-- [Live trace]({{SITE}}/trace/): every request between the services.
+- **Test a Server:**
+  - [Viewer]({{SITE}}/viewer): our SMART app, against this sandbox or your server.
+  - [Your servers]({{SITE}}/servers): describe your own FHIR server for the viewer.
+  - [Conformance]({{SITE}}/checks): checks of this sandbox's servers against the guide, run in the page.
 
 ## Test your server with the viewer
 
-The viewer at `{{SITE}}/` can connect to any SMART server, in the browser, exactly as it connects here. What your server needs:
+The viewer at `{{SITE}}/viewer` can connect to any SMART server, in the browser, exactly as it connects here. What your server needs:
 
 1. **CORS** for the origin `{{ORIGIN}}`, on discovery, the token endpoint, FHIR searches and image retrieval. The browser makes every request.
 2. **Discovery** at `{FHIR base}/.well-known/smart-configuration`, with `authorization_endpoint` and `token_endpoint`. SMART Imaging is found by capability: `smart-imaging-access` together with `http://fhir.org/argonaut/smart-imaging/capabilities/app-launch` (or `.../backend-services`), either in top-level `capabilities` or on an entry in `associated_endpoints`, whose `url` is the imaging FHIR server.

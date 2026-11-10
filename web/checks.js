@@ -272,7 +272,7 @@ async function runPageCheck(id, title) {
   return { id, title, ok: failures.length === 0, passed, failures, sandbox: sandboxId, activityUrl: `${made.base}/activity?session=${encodeURIComponent(session)}` };
 }
 
-// The Checks page: every check, run one after another, each a line that opens its activity.
+// The Conformance page: every check, run one after another, each a line that opens its activity.
 let checkList = [];
 const results = {};
 function renderChecks() {

@@ -21,7 +21,7 @@ a.tool { display:inline-flex; align-items:center; justify-content:center; color:
 .tool.quiet-danger { color:var(--bad); margin-left:auto; }
 .sandbox-label { margin:0 0 .1rem; font-size:.78rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); }
 .sandbox-actions { align-items:center; }
-html.at-home nav.pages a:not([href$="llms.txt"]) { display:none; }
+html.at-home nav.pages a:not([href$="llms.txt"]), html.at-home .subpages, html.at-home .bar-end { display:none; }
 .invite h2, .sandbox h2 { margin:0 0 .3rem; font-size:1.05rem; }
 .sandbox-head { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem .6rem; }
 .sandbox-name { font-size:1.2rem; font-weight:700; margin:0; flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
@@ -223,7 +223,7 @@ a.path p:not(.path-kicker) { color:var(--muted); }
 .build-page .paths h3 { font-size:1.05rem; }
 .build-page .registered-facts dd .tool { margin-left:.3rem; min-height:1.9rem; padding:.1rem .5rem; font-size:.85rem; }
 
-/* Test your server. */
+/* Your servers. */
 .steps-line { list-style:none; counter-reset:n; display:flex; flex-wrap:wrap; gap:.4rem 1.2rem; margin:0 0 1.1rem; padding:0; color:var(--muted); }
 .steps-line li { counter-increment:n; }
 .steps-line li::before { content:counter(n); display:inline-grid; place-items:center; width:1.4rem; height:1.4rem; margin-right:.4rem; border-radius:50%; border:1px solid var(--accent); color:var(--accent); font-size:.8rem; font-weight:700; }

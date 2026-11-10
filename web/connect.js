@@ -14,7 +14,7 @@ function tryInViewer(c) {
   try { list = JSON.parse(localStorage.getItem("smart-imaging-client:servers") ?? "[]").filter(s => s.clientId !== c.id); } catch {}
   list.push(entry);
   try { localStorage.setItem("smart-imaging-client:servers", JSON.stringify(list)); localStorage.setItem("smart-imaging-client:choice", `${entry.iss}|${entry.clientId}`); sessionStorage.clear(); } catch {}
-  location.assign(`${BASE}/?connect=1`);
+  location.assign(`${BASE}/viewer`);
 }
 const fhirBase = () => `${location.origin}${BASE}/fhir`;
 function clientHtml(c) {
