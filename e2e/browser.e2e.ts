@@ -156,6 +156,8 @@ describe("Explore", () => {
     await settle(page, () => page.locator("[data-whose=josh-example]").click());
     await page.getByRole("button", { name: "Change what Health Records App can see" }).click();
     await page.locator("#action-form input[value='Riverside Hospital']").uncheck();
+    // The previous view's thumbnails finish first: one still queued would be fetched after this, and counted here.
+    await page.waitForFunction(() => !document.querySelector(".thumb[data-state=loading]"));
     asked.length = 0;
     await settle(page, () => page.getByRole("button", { name: "Sign in and approve" }).click());
     await page.locator(".sheet.withheld").first().waitFor();
