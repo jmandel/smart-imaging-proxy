@@ -117,9 +117,9 @@ kept in step or second-guessed. There are three, each for a different job:
    once a page's data has loaded. Anything else a driver needs to read, such as a tab's session, is a plain
    attribute on the page, not a JavaScript object.
 
-So there's no documented in-browser API: `window.sandboxApi` is a helper for this site's own tests. A step a
-person takes is recorded once, on the server, by tagging the requests it makes; an agent driving a page reads
-the tab's session from the page and asks the API, as any agent would. `contract.json`'s `state` stays a small
+So there's no documented in-browser API: `window.sandboxApi` is a helper for this site's own tests. What a
+person does is recorded once, on the server: the activity log holds the API calls each action makes, which is
+enough to see what they did. Actions aren't named or tagged on top of that. `contract.json`'s `state` stays a small
 read-only summary of what the management API owns, so "is this sandbox clean?" needs no token, and doesn't
 grow into a second management API.
 
