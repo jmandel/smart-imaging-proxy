@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaul
 import { join } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import { BackendError } from "@smart-imaging-proxy/core";
+import { PAGES } from "../ui/sitemap";
 import { createDemoServer } from "../src/demo-server";
 import { registerClients } from "../src/flows";
 import { CONFIG, PORTS } from "../src/config";
@@ -42,7 +43,16 @@ function watch(page: Page) {
   // A 404, or a 401 or 403 the protocol calls for, such as an expired link or a service's refused search, is the browser logging an answer the page expects.
   page.on("console", m => { if (m.type() === "error" && !/status of 40[134]/.test(m.text())) problems.push(`${page.url()}: ${m.text()}`); });
 }
-const overflow = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+/** How far the page scrolls sideways. When it does, the elements that stick out are printed, to say why. */
+const overflow = async (page: Page) => {
+  const { over, out } = await page.evaluate(() => ({
+    over: document.documentElement.scrollWidth - innerWidth,
+    out: [...document.querySelectorAll("body *")].filter(el => el.getBoundingClientRect().right > innerWidth + 1 && !el.closest("[hidden]")).slice(0, 8)
+      .map(el => `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ""}.${String(el.getAttribute("class") ?? "").split(" ").join(".")} ${Math.round(el.getBoundingClientRect().width)}px: ${(el.textContent ?? "").slice(0, 60)}`),
+  }));
+  if (over > 0) console.log(`${page.url()} scrolls sideways by ${over}px:\n  ${out.join("\n  ")}`);
+  return over;
+};
 const signIn = async (popup: Page, user: string, decision: "Approve" | "Deny" = "Approve") => {
   await popup.locator(`input[name=username][value=${user}]`).check();
   await popup.getByRole("button", { name: "Continue" }).click();
@@ -80,6 +90,22 @@ const contrast = (page: Page, selector: string) => page.locator(selector).first(
   return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
 });
 
+describe("opening a page", () => {
+  test("changes nothing in the sandbox: every page only reads until someone acts", async () => {
+    const { base } = await (await fetch(`${DEMO}/api/sandboxes`, { method: "POST" })).json() as { base: string };
+    const sandbox = (stack.sandboxes.resolve(base.slice(3)) as any).sandbox;
+    const policy = () => JSON.stringify([sandbox.store.snapshot(), sandbox.store.getSettings()]);
+    const before = policy();
+    for (const p of Object.values(PAGES).filter(p => p.level === "sandbox")) {
+      const page = await open(`${base}${p.path}`);
+      await page.waitForLoadState("networkidle");
+      expect([p.path, policy()]).toEqual([p.path, before]);
+      await context!.close(); context = undefined;
+    }
+    expect(problems).toEqual([]);
+  });
+});
+
 describe("every page, on desktop and phone, in light and dark", () => {
   for (const [name, viewport] of [["desktop", DESKTOP], ["phone", PHONE]] as const) for (const colorScheme of ["light", "dark"] as const) {
     test(`${name} ${colorScheme}: no script or console errors, no sideways scrolling, and the header holds the menu`, async () => {
@@ -91,8 +117,6 @@ describe("every page, on desktop and phone, in light and dark", () => {
         if (!path.startsWith(CONFIG.authUrl)) expect([path, await page.locator(".site-footer a[href='https://github.com/jmandel/smart-imaging-proxy']").count()]).toEqual([path, 2]);
         if (!path.startsWith("http") && path !== "/") {
           expect(await page.locator(".pages a").allInnerTexts()).toEqual(["Build an App", "Run a Server", "How It Works", "Why It Matters", "For Agents"]);
-          // The old pages' trail names the sandbox; the app's pages name it in the sandbox's bar, inside one.
-          if (await page.locator(".crumbs").count()) expect(await page.locator(".crumbs a").innerText()).toMatch(/^Sandbox/);
         }
         await context!.close(); context = undefined;
       }

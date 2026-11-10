@@ -3,7 +3,6 @@
 // in all three at once, in every tab.
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import { PORTED } from "../ported";
 import { BASE, sandboxName } from "../lib/api";
 import { enterSandbox, rememberName, useSandboxes, linkedSandbox, type KnownSandbox } from "../lib/store";
 import { openViewer, sandboxServer } from "../lib/servers";
@@ -15,9 +14,7 @@ export function PageLink({ id, base = BASE, current, children, className }: { id
   if (id === "viewer" && base) {
     return <a href="/viewer" className={className} {...here} onClick={e => { e.preventDefault(); openViewer(sandboxServer(base)); }}>{children ?? PAGES.viewer.name}</a>;
   }
-  // A page the app draws opens in place; the rest, until each is ported, load as their own pages.
-  if (PORTED.includes(id)) return <Link to={hrefOf(id, base)} className={className} {...here}>{children ?? PAGES[id].name}</Link>;
-  return <a href={hrefOf(id, base)} className={className} {...here}>{children ?? PAGES[id].name}</a>;
+  return <Link to={hrefOf(id, base)} className={className} {...here}>{children ?? PAGES[id].name}</Link>;
 }
 
 const sandboxTitle = (w: KnownSandbox | undefined) => w?.name ? `Sandbox “${w.name}”` : "Sandbox";

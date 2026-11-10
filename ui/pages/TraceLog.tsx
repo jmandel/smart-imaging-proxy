@@ -11,7 +11,7 @@ function Entry({ s, open, hidden, toggled }: { s: Span; open: boolean; hidden: b
   return (
     <details className="exchange" open={open} hidden={hidden} onToggle={e => { if (e.currentTarget.open !== open) toggled(e.currentTarget.open); }}>
       <summary>
-        <b>{h.method}</b> {shortUids(s.name)} → <b>{h.status ?? (s.end ? "no response" : "…")}</b>{" "}
+        <b>{h.method}</b> {shortUids(s.name.startsWith(`${h.method} `) ? s.name.slice(h.method.length + 1) : s.name)} → <b>{h.status ?? (s.end ? "no response" : "…")}</b>{" "}
         <span className="side">{SIDES[s.kind] ?? s.kind} {s.service}{h.response?.bytes ? `, ${fmtBytes(h.response.bytes)}` : ""}</span>
       </summary>
       {/* A body can be hundreds of KB, so an entry's detail is only drawn while it's open. */}

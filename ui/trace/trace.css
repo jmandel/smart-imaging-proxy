@@ -107,6 +107,8 @@
   .trace-page .hint { flex-basis:100%; margin-left:1.2rem; white-space:normal; overflow-wrap:anywhere; }
   .trace-page .span-preview { padding:.45rem .6rem .7rem; }
   .trace-page .kv { grid-template-columns:minmax(0,1fr); gap:0; } .trace-page .kv dd { margin-bottom:.3rem; }
-  .trace-page .trace-controls select { max-width:100%; min-width:0; }
-  .trace-page .trace-controls label:first-child { max-width:100%; min-width:0; }
+  /* The session picker takes its own row, and its select the rest of it: a select is as wide as its longest
+     session's name otherwise, and can't wrap. */
+  .trace-page .trace-controls label:first-child { flex:1 1 100%; min-width:0; }
+  .trace-page .trace-controls label:first-child select { flex:1 1 0; width:0; min-width:0; max-width:none; }
 }

@@ -25,7 +25,6 @@ import { ADMIN_SCOPE, SANDBOX_ADMIN } from "./sandbox-keys";
 import app from "../ui/index.html";
 import { pageAt, PAGES } from "../ui/sitemap";
 import { pagesSection } from "./llms-pages";
-import { PORTED } from "../ui/ported";
 
 const json = (b: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(b, { status, headers });
 
@@ -33,7 +32,6 @@ const json = (b: unknown, status = 200, headers: Record<string, string> = {}) =>
 export function createDemoServer(stack: Stack, clients: Record<string, BackendClient>, root: string, options: { viewerKitDir?: string } = {}) {
   const perSandbox = new WeakMap<Sandbox, ReturnType<typeof sandboxServer>>();
   const serverOf = (w: Sandbox) => { let s = perSandbox.get(w); if (!s) perSandbox.set(w, s = sandboxServer(w)); return s; };
-  const file = (name: string) => new Response(Bun.file(join(root, "web", name)));
   /** A sandbox's keys, given out as sample credentials: its admin client's, and each demo service's. */
   const sampleKeys = (sandbox: Sandbox) => {
     const jwkOf = (c: BackendClient) => ({ client_id: c.client_id, jwk: { ...c.privateKey.export({ format: "jwk" }), kid: c.kid, alg: "ES256", use: "sig" } });
@@ -60,7 +58,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     const section = sandbox.id
       ? `## This sandbox\n\n${name ? `This is "${name}". ` : ""}Everything below works here now. This link is its access, so share it only with those who should use it.\n\n\`\`\`sh\nSANDBOX=${site}\n\`\`\``
       : `## Start here\n\nCreate a sandbox, and use it for everything below:\n\n\`\`\`sh\nSANDBOX=${origin}$(curl -sX POST ${origin}/api/sandboxes | jq -r .base)\n\`\`\`\n\nOr open the site in a browser and choose Create a sandbox. Each sandbox has its own copy of this file at \`$SANDBOX/llms.txt\`, which names it.`;
-    const text = (await Bun.file(join(root, "web", "llms.txt")).text()).replaceAll("{{SANDBOX_SECTION}}", section).replaceAll("{{PAGES_SECTION}}", pagesSection(origin, site)).replaceAll("{{ORIGIN}}", origin).replaceAll("{{SITE}}", site);
+    const text = (await Bun.file(join(root, "src", "llms.txt")).text()).replaceAll("{{SANDBOX_SECTION}}", section).replaceAll("{{PAGES_SECTION}}", pagesSection(origin, site)).replaceAll("{{ORIGIN}}", origin).replaceAll("{{SITE}}", site);
     return new Response(text, { headers: { "content-type": "text/plain; charset=utf-8", ...(sandbox.id ? { "x-robots-tag": "noindex", "cache-control": "no-store" } : {}) } });
   }
   const sandboxOf = (w: Sandbox) => w.id ? { id: w.id, base: w.prefix } : null;
@@ -127,24 +125,13 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         return { ...e, ...(study ? { study } : {}), ...(took !== undefined ? { ms: took } : {}) };
       });
     };
-    // The redirect URI the demo's apps registered. A page that signed someone in in a window of its own gets
-    // this page's address back, and checks its state. A sign-in a page walks itself reads the address it ended at.
-    const callback = traced("app", async () => new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Back in the app</title></head><body style="font:15px system-ui;padding:2rem"><p>Back in the app. You can close this window.</p><script>if (window.opener) { window.opener.postMessage({ signedIn: location.href }, location.origin); window.close(); }</script></body></html>`, { headers: { "content-type": "text/html" } }), (_req, url) => `Redirect back to the app: ${url.pathname}`);
+    // The redirect URI the demo's own apps registered. A sign-in the page walks itself reads the address it
+    // ended at, so this page only says where the browser is.
+    const callback = traced("app", async () => new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Back in the app</title></head><body style="font:15px system-ui;padding:2rem"><p>Back in the app.</p></body></html>`, { headers: { "content-type": "text/html" } }), (_req, url) => `Redirect back to the app: ${url.pathname}`);
 
-    const SITE_PAGES: Record<string, string> = { "/viewer": "viewer.html", "/servers": "servers.html", "/build-an-app": "guide-app.html", "/run-a-server": "guide-server.html", "/how-it-works": "guide-how.html", "/why-it-matters": "guide-why.html" };
     async function fetch(req: Request): Promise<Response> {
       const url = new URL(req.url);
       const p = url.pathname;
-      if (p === "/") return file("client.html");
-      // The site's own pages, at its root only: the guides, the viewer, and the servers it knows.
-      const sitePage = !sandbox.id && SITE_PAGES[p];
-      if (sitePage) return file(sitePage);
-      if (p === "/tours") return file("tours.html");
-      if (p === "/explore") return file("index.html");
-      if (p === "/activity") return file("activity.html");
-      if (p === "/connect") return file("connect.html");
-      if (p === "/build") return new Response((await Bun.file(join(root, "web", "build.html")).text()).replaceAll("{{SITE}}", sandbox.urls.demo), { headers: { "content-type": "text/html; charset=utf-8" } });
-      if (p === "/checks") return file("checks.html");
       if (p === "/llms.txt") return llmsTxt(sandbox);
       // The management API takes this sandbox's admin token. Its keys are the one thing open: the URL is the access.
       if (p === "/api/sandbox/keys" && req.method === "GET") return PUBLIC_DEMO && !sandbox.id ? json({ error: "the shared sandbox gives out no keys: make a sandbox of your own with POST /api/sandboxes" }, 403) : json(sampleKeys(sandbox));
@@ -246,8 +233,6 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     return { fetch };
   }
 
-  // The same files in every sandbox: the pages work out their sandbox from their own URL.
-  const STATIC: Record<string, string> = Object.fromEntries(["styles.css", "page.js", "event-words.js", "layers.js", "explore.js", "tours.js", "activity.js", "thumbs.js", "viewer.js", "sandbox.js", "guides.js", "footer.js", "server-list.js", "servers.js", "image-viewer.js", "image-viewer.css", "smart-imaging.js", "sandbox-client.js", "checks.js", "client.css", "connect.js", "fonts/atkinson-next.woff2", "fonts/atkinson-mono.woff2"].map(f => [`/${f}`, f]));
   /**
    * viewer-kit's files, from the pinned download, never from the repository: checked once, here at
    * startup, and served only as the bytes that were checked. With none that check out, every one is a
@@ -265,7 +250,6 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     const foreign = refuseHost(req);
     if (foreign) return foreign;
     const url = new URL(req.url), p = url.pathname;
-    if (STATIC[p]) return file(STATIC[p]!);
     const vendored = p.match(/^\/vendor\/viewer-kit\/([^/]+)$/);
     if (vendored) return vendor(vendored[1]!);
     const trace = p.match(TRACE_DATA);
@@ -304,7 +288,7 @@ async function traceThrough(req: Request, url: URL, path: string): Promise<Respo
  */
 export function uiRoutes(): Record<string, typeof app> {
   const routes: Record<string, typeof app> = {};
-  for (const p of PORTED.map(id => PAGES[id])) {
+  for (const p of Object.values(PAGES)) {
     if (p.level === "site") { routes[p.path] = app; continue; }
     if (p.path === "/") { routes["/s/:sandbox"] = app; routes["/s/:sandbox/"] = app; continue; }
     routes[`/s/:sandbox${p.path}`] = app;

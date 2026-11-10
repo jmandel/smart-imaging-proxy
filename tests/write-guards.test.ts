@@ -160,11 +160,18 @@ test("the demo's pages and read APIs answer only at its own addresses", async ()
   }
 });
 
-test("the pages' fonts are served locally, by the demo", async () => {
-  for (const base of [`http://127.0.0.1:${PORTS.demo}`]) for (const font of ["atkinson-next", "atkinson-mono"]) {
-    const r = await fetch(`${base}/fonts/${font}.woff2`);
-    expect(r.status).toBe(200);
-    expect(new Uint8Array(await r.arrayBuffer()).slice(0, 4)).toEqual(new Uint8Array([0x77, 0x4f, 0x46, 0x32]));
+test("the pages' fonts come with the page, never from another site: the stylesheet carries them, or names them on this origin", async () => {
+  const base = `http://127.0.0.1:${PORTS.demo}`;
+  const html = await (await fetch(`${base}/`)).text();
+  const css = (await Promise.all([...html.matchAll(/<link rel="stylesheet"[^>]*href="([^"]+)"/g)].map(async m => (await fetch(new URL(m[1]!, base))).text()))).join("\n");
+  const fonts = [...css.matchAll(/@font-face\s*\{[^}]*?url\(["']?([^)"']+)["']?\)/g)].map(m => m[1]!);
+  expect(fonts.length).toBe(2);
+  for (const font of fonts) {
+    // Bun may carry a font in the stylesheet itself, as a data address, or serve it as a file of its own.
+    const data = font.startsWith("data:");
+    if (!data) expect(new URL(font, base).origin).toBe(base);
+    const bytes = data ? Uint8Array.from(atob(font.split(",")[1]!), c => c.charCodeAt(0)) : new Uint8Array(await (await fetch(new URL(font, base))).arrayBuffer());
+    expect(bytes.slice(0, 4)).toEqual(new Uint8Array([0x77, 0x4f, 0x46, 0x32]));
   }
 });
 

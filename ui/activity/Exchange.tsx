@@ -4,9 +4,8 @@ import { useState } from "react";
 import { api, ApiError } from "../lib/api";
 import { jwt, multipartHeaders, type LogEvent } from "../lib/event-words";
 import { bytes, plural } from "../lib/format";
+import type { Message, Span } from "../trace/model";
 
-interface Message { headers?: Record<string, string>; body?: string; encoding?: string; bytes?: number; truncated?: boolean }
-interface Span { session: string; span: string; attrs?: Record<string, unknown>; http?: { method: string; url: string; status?: number; request?: Message; response?: Message } }
 
 const Pretty = ({ value }: { value: unknown }) => <pre>{JSON.stringify(value, null, 2)}</pre>;
 const Headers = ({ h }: { h?: Record<string, string> }) => <pre>{Object.entries(h ?? {}).map(([k, v]) => `${k}: ${v}`).join("\n")}</pre>;

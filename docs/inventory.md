@@ -1,72 +1,31 @@
-# What the site is now, and what could be simpler
+# The site: who it's for, how it's built, and what's next
 
-November 2026, after the sandbox moved into the browser. Written to decide what to cut or merge, before more
-changes.
+November 2026. The design settled with Josh, and the app as built.
 
-## Pages
+## How it's built
 
-| Address | What it is | Notes |
-|---|---|---|
-| `/` | Your sandboxes: list, create | Only page at the root |
-| `/s/{id}/` | Overview: the sandbox panel (name, share, delete), three paths, **and the viewer** | The viewer shares this address and the "Overview" menu item. Back from the viewer is confusing because of this |
-| `/s/{id}/viewer` | The viewer's own address | Local commit `d805925`, not deployed |
-| `/s/{id}/build` | Build a client: endpoints, sample logins | |
-| `/s/{id}/connect` | Register an app | |
-| `/s/{id}/tours` | Six policy stories, run step by step | |
-| `/s/{id}/explore` | Pick a person or service, see what their app can see | |
-| `/s/{id}/activity` | The activity log | |
-| `/s/{id}/checks` | Eight protocol conformance checks | |
-| `/s/{id}/servers` | Test your server: describe a server for the viewer | |
-| `/s/{id}/trace/` | Live trace, span pages, log | Operator view, linked from Activity |
-| `/llms.txt` | The guide for agents | |
+- **One React and TypeScript app**, in `ui/`. `ui/sitemap.ts` lists every page: its address, level (the site's
+  own, at the root, or every sandbox's, under `/s/{id}`), name and one-line purpose. Everything that lists pages
+  reads it: the server's routes, React Router's routes, the header, a sandbox's bar and home page, the footer,
+  and llms.txt (`src/llms-pages.ts`).
+- **Served by Bun's HTML import.** `ui/index.html` is the entry; `uiRoutes()` in `src/demo-server.ts` serves it
+  at every page's address, and Bun bundles it and serves its scripts and styles. A reload anywhere draws the same
+  page, and React Router moves between pages in place.
+- **Shared code** in `ui/lib/`: the management API with the sandbox's admin token (`api.ts`), what the browser
+  remembers (`store.ts`, whose sandbox list every open tab sees change), the viewer's servers (`servers.ts`), the
+  SMART Imaging client (`smart-imaging.ts`), and the client Tours and Conformance act with (`sandbox-client.ts`).
+  Components shared by pages are in `ui/components/` (the layer chain, the image viewer, thumbnails).
+- **Styles** in `ui/styles/`, and the trace's own in `ui/trace/trace.css`, scoped to its pages.
+- **The trace service keeps only data:** its API, stream and span intake. Its pages are the app's, at `/trace/`,
+  `/trace/span` and `/trace/log`.
 
 ## Ways a sign-in happens
 
-1. **The viewer**, against this sandbox or your server: a real authorization code flow. The tab goes to the
-   Authorization Server's picker and consent pages and back, so they're in the tab's history.
-2. **Tours**: a real flow too. In automatic mode, the page walks the forms with `fetch`. In window mode, a
-   popup.
+1. **The viewer**, against a sandbox or your server: a real authorization code flow, in a tab of its own, which
+   hands the code back to the viewer.
+2. **Tours and Conformance**: a real flow, whose forms the page walks itself with `fetch`.
 3. **Explore**: no sign-in. The admin key mints the person's token.
 4. **Agents and tests**: post the forms over HTTP.
-
-A setting chooses automatic or window sign-in, and it affects only Tours.
-
-## Server calls
-
-- **Open:**
-  - `POST /api/sandboxes`
-  - `GET /api/sandbox/keys`
-  - `GET /api/tours`
-  - `POST /api/tours/{id}/start` at the root
-  - `/api/activity*`
-- **Admin token:** everything else under `/api/sandbox`:
-  - settings: name, topology, storage, clock, reset, revoke, flush, rotate, faults
-  - the policy API
-  - clients
-  - catalog
-  - Explore's reads: cast, referrals, view, happened, rule-sets
-  - tour steps: start, state, begin, finish
-- **The SMART services:** discovery, authorize, token, FHIR, imaging FHIR, WADO-RS proxy.
-
-## Things that exist mostly for history, or for tests
-
-- **`src/flows`:** 16 server-side flows, 8 policy and 8 protocol, about 1,100 lines. No page runs them. Tests do, and the checks' titles come from them. The checks themselves were rewritten in `web/checks.js`.
-- **Two policy models:** core's, which decides, and `src/reference-model.ts`, written apart from it for Tours' expectations and tests to check core against.
-- **Seeded sandboxes:** `/s/~{encoded policy}`. Nothing in the pages or llms.txt uses them.
-- **Three image stores:** static files, S3 and Orthanc, chosen in Settings. Proves the proxy works over each; most visitors won't care.
-- **Topology:** separate or unified imaging server, in Settings.
-- **The sign-in pages as plain forms:** needed so agents and tests can post them, not for browsers without script.
-
-## Proposals
-
-1. **The viewer is its own page,** at `/s/{id}/viewer`. The Overview is only the landing page: name, share, the three paths. "Try the viewer" goes to the viewer page, which has its own Connect, and its own place in the menu.
-2. **Sign-in leaves no history.** Once the viewer has its own page, the viewer signs in in place, and finishes by replacing the sign-in steps in history (`location.replace` on return). The Authorization Server's pages stay plain forms, with no special script.
-   - Or the viewer always signs in in a popup.
-   - Either way, Back from the viewer lands on the landing page.
-3. **One way to sign in, in Tours.** Drop the automatic or window setting. Tours walks the forms itself, and a person who wants to see the real pages can open them from the step.
-4. **Move `src/flows` into the tests,** or replace them: the checks and stories now run from the pages, so the server needn't carry 16 flows.
-5. **Drop seeded sandboxes,** unless you want shareable policy-in-a-URL.
-6. **Hide or drop the Settings for image store and topology.** Keep them as management API calls for agents, but off the menu.
 
 ## Purpose: who it's for, and what each part is for
 
@@ -114,12 +73,13 @@ A guide's links go to the sandbox you were last in. With none, the first link ma
 
 ### Inside a sandbox
 
-A sandbox's pages show a trail, "Sandbox “name” › page", instead of sub-menus. The sandbox's home lists its
-pages by what they're for: **Try it** (Viewer, Tour, Explore), **Your app** (Start here, Register an app, Logs),
-**Your server** (Your servers, Conformance). Activity is called **Logs**.
+A sandbox's pages have its bar under the header: its name, and its pages by what they're for, the same groups
+its home page and the footer list: **Try it** (Viewer, Tour, Explore), **Your app** (Start here, Register an app,
+Logs, Live trace), **Under the hood** (Sandbox Config, Conformance). On a phone, the pages open from a button.
+Activity is called **Logs**.
 
-**Sandbox Config** holds what makes the sandbox realistic, for the curious: the full policy editor, and the
-settings (clock, storage, topology, resets, keys), out of the header.
+**Sandbox Config** holds what makes the sandbox realistic, for the curious: the settings (clock, storage,
+topology, resets, ending access), with room for the full policy editor still to come. Nothing is in the header.
 
 ### The viewer
 
@@ -133,17 +93,17 @@ it. A sandbox is one more server in its list, signed in to with the sandbox's bu
 chosen. It signs in all three ways, to a sandbox or to your server: a public app with PKCE, a confidential
 app with `private_key_jwt`, and a backend service.
 
-### Cuts
+### Done
 
-- The Tours sign-in setting.
-- `src/flows` moves into the tests.
-- URL-seeded sandboxes.
+- The guides, the home page, the menu, the sandbox bar and the footer, from one site map.
+- The viewer at the root, with one redirect URI.
+- The whole UI rewritten as a React and TypeScript app.
+- Sandbox Config, with the settings out of the header.
+- The Tours sign-in setting is gone: Tours always walks its forms.
 
-### Order
+### Still to do
 
-1. The guides, the home page, the menu and the trail. Done, for Josh to look at.
-2. Sandbox Config: the policy editor and settings, out of the header.
-3. The sample-logins table shows each login's patients and studies.
-4. The viewer at the root, with one redirect URI. Done.
-5. Cuts.
-6. llms.txt, tests updated to the design, a screenshot review, then a deploy when Josh says so.
+1. Sandbox Config's policy editor: see, edit, and named scenarios.
+2. The sample-logins table shows each login's patients and studies.
+3. Cuts: `src/flows` moves into the tests; URL-seeded sandboxes go.
+4. Conformance checks against your own server (issue #1).

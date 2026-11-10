@@ -55,5 +55,5 @@ Stores saved before app approvals were on file get them once, the first time the
 What changed for people using the site:
 
 - Explore no longer shows a sign-in. Its tokens come from the admin key. Tours and the demo app still sign in for real.
-- In a window sign-in, the redirect page hands its address back to the page that opened it. That page checks the state, so a forged redirect is ignored.
+- The viewer's sign-in tab hands its address back to the viewer, which checks the state, so a forged redirect is ignored. Tours and Conformance walk the sign-in forms themselves.
 - The redirect's own request isn't tied to a trace session, because no server flow is waiting for it any more.

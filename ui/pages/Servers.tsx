@@ -108,7 +108,7 @@ function RegisterFacts({ how, keyPair }: { how: How; keyPair: PrivateJwk | null 
 }
 
 function Saved({ list, onEdit, onRemove }: { list: ServerEntry[]; onEdit: (s: ServerEntry) => void; onRemove: (s: ServerEntry) => void }) {
-  if (!list.length) return <p className="note">None yet. Servers you save here are also offered in the viewer, beside this sandbox's own.</p>;
+  if (!list.length) return <p className="note">None yet. Servers you save here are offered in the viewer, beside your sandboxes.</p>;
   return <>{list.map(s => (
     <article className="panel registered" key={serverKey(s)}>
       <div className="registered-head"><h3>{s.label}</h3></div>
@@ -244,7 +244,7 @@ export default function Servers() {
   return (
     <main className="landing servers-page">
       <h1>Your servers</h1>
-      <p className="lead">Point this sandbox's viewer at your own FHIR server. It connects exactly as it does here, so you can see whether your discovery, sign-in and imaging endpoints work for a SMART Imaging app.</p>
+      <p className="lead">Point our viewer at your own FHIR server. It connects exactly as it does to a sandbox, so you can see whether your discovery, sign-in and imaging endpoints work for a SMART Imaging app.</p>
       <ol className="steps-line" aria-label="Steps">
         <li>Describe your server</li><li>Register the viewer with it</li><li>Connect</li>
       </ol>
@@ -319,7 +319,7 @@ export default function Servers() {
 
       <p className="note">Planned: conformance checks run against your server. <a href={CONFORMANCE_PLAN}>Vote or comment on GitHub</a>.</p>
 
-      <p className="note agents">Working with an AI agent? Give it <a href="/llms.txt">this sandbox's llms.txt</a>. It describes this page's settings and what the viewer expects from a server, so the agent can work out your server's values, or why discovery fails, with you.</p>
+      <p className="note agents">Working with an AI agent? Give it <a href="/llms.txt">llms.txt</a>. It describes this page's settings and what the viewer expects from a server, so the agent can work out your server's values, or why discovery fails, with you.</p>
     </main>
   );
 }

@@ -7,7 +7,6 @@ import { api, setBase } from "./lib/api";
 import { pageAt, PAGES, type PageId } from "./sitemap";
 import { Shell } from "./shell/Shell";
 import { UI_PAGES } from "./pages";
-import { PORTED } from "./ported";
 
 /** A page of the map, in its sandbox when the route names one. A new address starts the page afresh. */
 function PageAt({ id }: { id: PageId }) {
@@ -17,14 +16,14 @@ function PageAt({ id }: { id: PageId }) {
   return <Shell key={sandbox ?? ""} page={id}><Page key={`${pathname}${search}`} /></Shell>;
 }
 
-const ported = PORTED.map(id => PAGES[id]);
+const pages = Object.values(PAGES);
 function App() {
   return (
     <Routes>
-      {ported.filter(p => p.level === "site").map(p => <Route key={`site-${p.id}`} path={p.path} element={<PageAt id={p.id} />} />)}
-      {ported.filter(p => p.level === "sandbox").map(p => <Route key={`sandbox-${p.id}`} path={`/s/:sandbox${p.path === "/" ? "" : p.path}`} element={<PageAt id={p.id} />} />)}
+      {pages.filter(p => p.level === "site").map(p => <Route key={`site-${p.id}`} path={p.path} element={<PageAt id={p.id} />} />)}
+      {pages.filter(p => p.level === "sandbox").map(p => <Route key={`sandbox-${p.id}`} path={`/s/:sandbox${p.path === "/" ? "" : p.path}`} element={<PageAt id={p.id} />} />)}
       {/* A local root is a sandbox too, for development: its pages, except where the site has its own. */}
-      {ported.filter(p => p.level === "sandbox" && !pageAt("site", p.path)).map(p => <Route key={`root-${p.id}`} path={p.path} element={<PageAt id={p.id} />} />)}
+      {pages.filter(p => p.level === "sandbox" && !pageAt("site", p.path)).map(p => <Route key={`root-${p.id}`} path={p.path} element={<PageAt id={p.id} />} />)}
     </Routes>
   );
 }

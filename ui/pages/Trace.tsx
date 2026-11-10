@@ -1,6 +1,7 @@
 // The live trace: every span the services record, grouped by trace, nested by cause, with timings, as it happens.
 // A row opens a short preview of that span; the full exchange and a trace's HTTP log open in tabs of their own.
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { BASE } from "../lib/api";
 import { Preview } from "../trace/Preview";
 import { SERVICES, sessionLabel, useLiveTrace, type LiveTrace } from "../trace/live";
 import { fmtBytes, fmtMs, fullHref, logHref, sessionApi, shortUids, traceApi, type Span, type Stats } from "../trace/model";
@@ -187,7 +188,8 @@ export default function Trace() {
           <label><input type="checkbox" checked={parts} onChange={e => setParts(e.target.checked)} /> Per-part lines</label>
           <button type="button" onClick={() => trace.togglePause()}>{trace.paused ? "Resume" : "Pause"}</button>
           {active && <a className="action" download href={sessionApi(active, "/export")} title={`Download ${active} as JSON, with its full exchanges`}>Export session</a>}
-          <button type="button" onClick={clear}>Clear traces</button>
+          {/* Only the site's own trace can be cleared: a sandbox's is kept for everyone using it. */}
+          {!BASE && <button type="button" onClick={clear}>Clear traces</button>}
         </div>
       </div>
       <div className="legend">

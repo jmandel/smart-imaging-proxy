@@ -2,6 +2,7 @@
 // page is a SMART Imaging client, like the demo app (see ../explore/protocol.ts). The sandbox explains the view
 // from its policy, and a change, a share or an approval, is a write to the sandbox's management API. Every
 // request carries this view's trace session, so the activity log shows what it did.
+import { Link } from "react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Chain, Legend } from "../components/Layers";
 import { pictures } from "../components/Thumbnail";
@@ -14,7 +15,6 @@ import { ActionForm, needsForm, type Submitted } from "../explore/ActionForm";
 import { OpenStudy } from "../explore/OpenStudy";
 import { APP, discover, newSession, personToken, retrieveWhole, search, serviceToken, sheetsOf, traceHeaders } from "../explore/protocol";
 import { Sheets } from "../explore/Sheets";
-import { ToPage } from "../explore/ToPage";
 import { WhoList, WhoseChoice } from "../explore/Who";
 import type { Action, Cast, ChainLine, Choice, Explained, Referral, Retrieval, View } from "../explore/types";
 
@@ -198,7 +198,7 @@ export default function Explore() {
       {form && <ActionForm action={form} cast={cast} submit={f => act(form, f)} cancel={() => setForm(undefined)} />}
       <div className="actions">
         {(view.actions ?? []).map((a, i) => <button key={i} type="button" className="secondary" onClick={() => take(a)}>{a.label}</button>)}
-        {view.activityUrl && <ToPage page="activity" href={view.activityUrl} className="log-link">Logs</ToPage>}
+        {view.activityUrl && <Link to={view.activityUrl} className="log-link">Logs</Link>}
       </div>
     </>;
   }

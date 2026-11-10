@@ -4,7 +4,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import { join } from "node:path";
 import { startStack, type Stack } from "../src/stack";
 import { registerClients } from "../src/flows";
-import { PORTED } from "../ui/ported";
 import { PAGES } from "../ui/sitemap";
 import { createDemoServer, uiRoutes } from "../src/demo-server";
 import { scriptedLaunch } from "../src/flows/oauth";
@@ -47,12 +46,12 @@ const setSaved = (x: { rules?: any[]; shares?: any[]; approvals?: any[] }) => {
 describe("pages", () => {
   test("the React app is served at every page's address on the site map, the site's at the root and a sandbox's under /s/{id}, and the old pages are gone", async () => {
     const routes = Object.keys(uiRoutes());
-    for (const p of PORTED.map(id => PAGES[id])) {
+    for (const p of Object.values(PAGES)) {
       if (p.level === "site") { expect(routes).toContain(p.path); continue; }
       expect(routes).toContain(p.path === "/" ? "/s/:sandbox/" : `/s/:sandbox${p.path}`);
     }
     // The site's own pages are the site's alone: no sandbox has a copy.
-    for (const p of PORTED.map(id => PAGES[id]).filter(p => p.level === "site")) expect(routes.some(r => r.startsWith("/s/:sandbox") && r.endsWith(p.path) && p.path !== "/")).toBe(false);
+    for (const p of Object.values(PAGES).filter(p => p.level === "site")) expect(routes.some(r => r.startsWith("/s/:sandbox") && r.endsWith(p.path) && p.path !== "/")).toBe(false);
     const base = await mint();
     for (const path of ["/viewer", "/servers", "/build-an-app", "/run-a-server", "/how-it-works", "/why-it-matters"]) expect([path, (await call("GET", `${base}${path}`)).status]).toEqual([path, 404]);
     for (const path of ["/browse", "/admin", "/app.js", "/admin.js", "/browse.js", "/cards.js", "/api/explore/events", "/api/browse/options", "/api/admin/status"]) expect([path, (await call("GET", path)).status]).toEqual([path, 404]);
@@ -276,23 +275,14 @@ describe("loading pages", () => {
     const base = await mint(), sandbox = (stack.sandboxes.resolve(base.slice(3)) as any).sandbox;
     const policyOf = (store: any) => JSON.stringify([store.snapshot(), store.getSettings()]);
     const saved = policyOf(stack.store), its = policyOf(sandbox.store);
-    // The files are the same for every sandbox, at the root.
-    for (const path of ["/explore.js", "/tours.js", "/styles.css"]) expect([path, (await call("GET", path)).status]).toEqual([path, 200]);
-    for (const path of ["/", "/tours", "/activity", "/api/sandbox", "/api/sandbox/policy", "/api/sandbox/explore/cast", "/api/sandbox/explore/referrals", "/api/tours", "/api/activity"]) {
+    for (const path of ["/api/sandbox", "/api/sandbox/policy", "/api/sandbox/explore/cast", "/api/sandbox/explore/referrals", "/api/tours", "/api/activity"]) {
       expect([path, (await call("GET", path)).status]).toEqual([path, 200]);
       expect([path, (await call("GET", `${base}${path}`)).status]).toEqual([path, 200]);
     }
     expect((await call("GET", `${base}/api/sandbox/tours/state?tour=own`)).status).toBe(200);
     expect([policyOf(stack.store), policyOf(sandbox.store)]).toEqual([saved, its]);
   });
-  test("each page's script sends nothing on load except reads", async () => {
-    for (const file of ["/explore.js", "/tours.js"]) {
-      const js = await (await call("GET", file)).text();
-      // What runs on load is the last block, and it only reads.
-      const onLoad = js.slice(js.lastIndexOf("(async () => {"));
-      expect([file, /"POST"|method: "POST"/.test(onLoad)]).toEqual([file, false]);
-    }
-    // The log only reads, on load or after: every call it and its parts make is a GET.
+  test("the log only reads, on load or after: every call it and its parts make is a GET", async () => {
     for (const file of ["ui/pages/Activity.tsx", "ui/activity/Exchange.tsx"]) {
       const calls = [...(await Bun.file(join(root, file)).text()).matchAll(/\bapi(?:<[^>]*>)?\("([A-Z]+)"/g)].map(m => m[1]);
       expect([file, calls.length > 0 && calls.every(m => m === "GET")]).toEqual([file, true]);
