@@ -24,9 +24,14 @@
     "minikube": "deploy/minikube.sh"
   },
   "devDependencies": {
-    "playwright-core": "^1.65.0"
+    "@types/react": "19",
+    "@types/react-dom": "19",
+    "playwright-core": "^1.65.0",
+    "typescript": "5"
   },
   "dependencies": {
-    "@smart-imaging-proxy/core": "workspace:*"
+    "@smart-imaging-proxy/core": "workspace:*",
+    "react": "19",
+    "react-dom": "19"
   }
 }
