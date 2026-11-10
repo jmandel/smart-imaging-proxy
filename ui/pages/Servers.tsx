@@ -265,7 +265,7 @@ export default function Servers() {
           <p className="note" id="register-why">Your server needs a client for this viewer. Register one with these details, in its admin console or by posting the JSON to its dynamic registration, then enter the client ID it gives you below.</p>
           <ClientMetadata type={how} keyPair={keyPair} scope={fields.scope.trim()} />
           {signs && <div id="key-field">
-            <p className="key-state" id="key-state">{keyPair ? <>Signing with key <code>{keyPair.kid}</code>, kept in this browser. Its public half is the <code>jwks</code> above; if your server only takes a <code>jwks_uri</code>, host that JWKS at an address of your own.</> : "The viewer needs a key to sign with. Generate one here, and its public half joins the metadata above."}</p>
+            <p className="key-state" id="key-state">{keyPair ? <>Signing with key <code>{keyPair.kid}</code>, kept in this browser. This site serves its public half at the <code>jwks_uri</code> above, or register it as the <code>jwks</code> itself.</> : "The viewer needs a key to sign with. Generate one here, and its public half joins the metadata above."}</p>
             <div className="configure-actions">
               <button type="button" className="secondary" id="generate" onClick={generate}>{keyPair ? "Generate a new key pair" : "Generate a key pair"}</button>
               <button type="button" className="tool" id="paste-toggle" aria-expanded={pasteOpen} onClick={() => setPasteOpen(!pasteOpen)}>Paste a private key instead</button>

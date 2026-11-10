@@ -499,3 +499,7 @@ label.check code { font-size:.85em; }
 .meta-lines .meta-key { color:var(--accent); min-width:0; max-width:100%; overflow-x:auto; scrollbar-width:none; }
 .meta-lines .tool { min-height:1.9rem; padding:.1rem .6rem; font-size:.82rem; }
 .meta-waiting { margin:0; padding:.45rem .85rem .6rem; }
+.key-by { display:flex; flex-wrap:wrap; gap:.25rem 1.25rem; margin:0; padding:.5rem .85rem .65rem; border:0; border-top:1px solid var(--line); background:var(--plate); }
+.key-by legend { float:left; width:100%; padding:0; margin-bottom:.15rem; font-size:.9rem; color:var(--muted); }
+.key-by label { display:inline-flex; align-items:center; gap:.4rem; min-height:2.25rem; }
+.key-by label span { color:var(--muted); font-size:.88rem; }

@@ -42,7 +42,7 @@ function RegisterViewer() {
     </fieldset>
     <p>Register a client with these details, in your server's admin console or, if it supports dynamic registration, by posting the JSON. Then note the client ID it gives you.</p>
     <ClientMetadata type={type} keyPair={key} />
-    {type !== "public" && key && <p className="note">The viewer signs its assertions with key <code>{key.kid}</code>, made in this browser just now. Your server checks them against the public half in <code>jwks</code>; the private half stays here. If your server only takes a <code>jwks_uri</code>, host that JWKS at an address of your own.</p>}
+    {type !== "public" && key && <p className="note">The viewer signs its assertions with key <code>{key.kid}</code>, made in this browser just now; the private half stays here. Your server checks them against the public half, which this site serves at the <code>jwks_uri</code>, or which you can register as the <code>jwks</code> itself.</p>}
     <p className="guide-links"><button type="button" className="primary" onClick={() => navigate(`/servers?add&how=${type}`, { state: type !== "public" && key ? { key } : undefined })}>Add this server</button></p>
   </>;
 }

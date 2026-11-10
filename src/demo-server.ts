@@ -1,6 +1,7 @@
 // The demo's own web server: the tours, which are its home page, Explore, and the activity log, backed by the real services, and the
 // flow API the checks and tests run flows through. `/s/{sandbox}/...` is that sandbox's own: its Explore,
 // its tour, its activity, its settings and its redirects. Starting a tour or a flow mints a sandbox for it.
+import { serveJwks } from "./viewer-jwks";
 import { join } from "node:path";
 import { fetchJwks } from "./jwks";
 import { PORTS, PUBLIC_DEMO } from "./config";
@@ -136,6 +137,8 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       const url = new URL(req.url);
       const p = url.pathname;
       if (p === "/llms.txt") return llmsTxt(sandbox);
+      // The viewer's public keys, for servers that only take a jwks_uri: the address holds the key.
+      if (!sandbox.id && p.startsWith("/jwks/") && (req.method === "GET" || req.method === "HEAD")) { const r = serveJwks(p); if (r) return r; }
       if (!sandbox.id && (p === "/api/checks" || p.startsWith("/api/checks/"))) return checkRuns.fetch(req, url, new URL(sandbox.urls.demo).origin);
       // The Conformance page's old address: its checks are part of the server check now.
       if (p === "/checks" && req.method === "GET") return new Response(null, { status: 308, headers: { location: `/check${sandbox.id ? `?sandbox=${encodeURIComponent(sandbox.prefix)}` : ""}` } });

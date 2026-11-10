@@ -251,22 +251,24 @@ describe("the demo client", () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     await page.goto(`${ORIGIN}/run-a-server`);
-    expect(await page.locator("#register-facts [data-field=jwks]").count()).toBe(0);
+    expect(await page.locator("#register-facts [data-field=jwks_uri]").count()).toBe(0);
     await page.getByRole("radio", { name: /Backend service/ }).check();
-    await page.locator("#register-facts [data-field=jwks]").waitFor();
+    await page.locator("#register-facts [data-field=jwks_uri]").waitFor();
     const meta = JSON.parse((await page.getByRole("button", { name: "Copy the client metadata as JSON" }).getAttribute("data-copy"))!);
     expect(meta.grant_types).toEqual(["client_credentials"]);
     expect(meta.redirect_uris).toBeUndefined();
-    expect(meta.jwks.keys[0].d).toBeUndefined();
+    expect(meta.jwks).toBeUndefined();
+    const served = await (await page.request.get(meta.jwks_uri)).json();
+    expect(served.keys[0].d).toBeUndefined();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
     await shot(page, "guide-register");
     await page.getByRole("button", { name: "Add this server" }).click();
     await page.waitForURL(u => u.pathname === "/servers");
     expect(await page.getByRole("radio", { name: /Backend service/ }).isChecked()).toBe(true);
-    expect(JSON.parse((await page.locator("#register-facts [data-field=jwks] button").getAttribute("data-copy"))!).keys[0].kid).toBe(meta.jwks.keys[0].kid);
+    expect(await page.locator("#register-facts [data-field=jwks_uri] button").getAttribute("data-copy")).toBe(meta.jwks_uri);
     await context.close();
   });
-  test("a confidential client made on Your servers signs with the key it generated", async () => {
+  test("a confidential client made on Your servers signs with the key it generated, registered by the jwks_uri this site serves it at", async () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     const base = await enterSandbox(page);
@@ -276,14 +278,21 @@ describe("the demo client", () => {
     // A signing client needs a key before it can be saved.
     await page.locator("#form-missing", { hasText: "Generate a key pair, or paste a private key" }).waitFor();
     await page.getByRole("button", { name: "Generate a key pair" }).click();
-    const jwk = JSON.parse((await page.locator("#register-facts [data-field=jwks] button").getAttribute("data-copy"))!).keys[0];
+    // The public key, at an address this site serves it at: what a server that only takes a jwks_uri registers.
+    const jwksUri = (await page.locator("#register-facts [data-field=jwks_uri] button").getAttribute("data-copy"))!;
+    expect(jwksUri.startsWith(`${ORIGIN}/jwks/`)).toBe(true);
+    const served = await (await page.request.get(jwksUri)).json();
+    expect(served.keys[0].d).toBeUndefined();
     expect(JSON.parse((await page.getByRole("button", { name: "Copy the client metadata as JSON" }).getAttribute("data-copy"))!).token_endpoint_auth_method).toBe("private_key_jwt");
-    expect(jwk.d).toBeUndefined();
+    // Or the key itself, in the metadata: the same key.
+    await page.getByRole("radio", { name: /jwks the key itself/ }).check();
+    expect(JSON.parse((await page.locator("#register-facts [data-field=jwks] button").getAttribute("data-copy"))!).keys[0]).toEqual(served.keys[0]);
     await page.getByRole("button", { name: "Check discovery" }).click();
     await page.locator("#discovery li", { hasText: "Signed assertions" }).waitFor();
     expect(await page.locator("#discovery li[data-state=bad]").count()).toBe(0);
-    // Registered in this sandbox as a developer would at their own server: the redirect URI and public key shown.
-    const made = await page.evaluate(([b, k]) => (window as any).sandboxApi("POST", "/api/sandbox/clients", { name: "Builder test", type: "confidential", redirectUris: [`${location.origin}/viewer`], jwk: k }, b), [base, jwk] as const);
+    // Registered in this sandbox as a developer would at their own server: the redirect URI, and the jwks_uri,
+    // which the sandbox's sign-in fetches to check the viewer's assertion.
+    const made = await page.evaluate(([b, u]) => (window as any).sandboxApi("POST", "/api/sandbox/clients", { name: "Builder test", type: "confidential", redirectUris: [`${location.origin}/viewer`], jwksUrl: u }, b), [base, jwksUri] as const);
     await page.getByLabel("Name", { exact: true }).fill("Signed in");
     await page.getByLabel("Client ID").fill(made.id);
     await shot(page, "server-builder-confidential");
