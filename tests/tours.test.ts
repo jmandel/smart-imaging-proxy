@@ -313,7 +313,8 @@ describe("the reference model", () => {
       ...valid.shares.map(s => [`share ${s.id}`, (d: PolicyDocument) => ({ ...d, shares: d.shares.filter(x => x.id !== s.id) })] as [string, (d: PolicyDocument) => PolicyDocument]),
     ];
     for (const [name, remove] of removals) {
-      const store = new PolicyStore({ mode: "memory", onFile: { ...ON_FILE, relationships: [] }, patientOf: u => USERS[u]?.patient });
+      // The document brings its own choices, with their own ids, so none come from what's on file.
+      const store = new PolicyStore({ mode: "memory", onFile: { ...ON_FILE, relationships: [], approvals: [] }, patientOf: u => USERS[u]?.patient });
       store.setDocument(valid);
       const { revision: _, ...written } = store.snapshot();
       store.setDocument(remove(written as PolicyDocument));

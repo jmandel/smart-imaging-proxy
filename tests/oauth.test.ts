@@ -105,7 +105,7 @@ describe("Consent", () => {
     await stack.resetAll();
     const t = await scriptedLaunch("josh", "portal-app", { sites: ["Lakeside Imaging"] });
     expect(t.scope).toBe("launch/patient patient/ImagingStudy.rs online_access");
-    expect(stack.store.approvals()[0]!.sites).toEqual(["Lakeside Imaging"]);
+    expect(stack.store.approvals().find(a => a.by === "user:josh")!.sites).toEqual(["Lakeside Imaging"]);
     const b: any = await (await fetch(`${conf.associated_endpoints[0].url}/ImagingStudy?patient=josh-example`, { headers: { Authorization: `Bearer ${t.access_token}` } })).json();
     expect(b.total).toBe(1);
     await stack.resetAll();
@@ -381,7 +381,7 @@ describe("Delegation: patient to related person to app", () => {
     await stack.resetAll();
     await share(["Lakeside Imaging"]);
     const t = await scriptedLaunch("sam-caregiver", "portal-app", { sites: ["Lakeside Imaging", "Northside Pathology"], patient: "josh-example" });
-    expect(stack.store.approvals()[0]!.sites).toEqual(["Lakeside Imaging"]);
+    expect(stack.store.approvals().find(a => a.by === "user:sam-caregiver" && a.patient === "patient:josh-example")!.sites).toEqual(["Lakeside Imaging"]);
     expect(sitesOf(await search(t.access_token))).toBe(1);
   });
   test("only a patient or their guardian can delegate", async () => {

@@ -100,9 +100,9 @@ describe("isolation", () => {
     // Sharing on one sandbox's account page reaches only that sandbox's policy.
     const t = await scriptedLaunch("josh", "portal-app", { at: a.urls, sites: ["Lakeside Imaging"] });
     expect(t.access_token).toBeTruthy();
-    expect(a.store.approvals().length).toBe(1);
-    expect(b.store.approvals()).toEqual([]);
-    expect(stack.store.approvals()).toEqual([]);
+    const joshs = (w: { store: { approvals(): any[] } }) => w.store.approvals().find(x => x.by === "user:josh")?.sites;
+    expect(joshs(a)).toEqual(["Lakeside Imaging"]);
+    expect([joshs(b), joshs(stack)]).toEqual([undefined, undefined]);
   });
   test("each sandbox signs with a key of its own, and serves only its own JWKS", async () => {
     const a = stack.sandboxes.mint(), b = stack.sandboxes.mint();

@@ -28,7 +28,7 @@ const SYNCHRONOUS: Record<Durability, number> = { off: 0, normal: 1, full: 2 };
 export const DURABILITIES = Object.keys(SYNCHRONOUS) as Durability[];
 
 /** What's on file: the facts and organization policy a new database starts with, and a reset puts back. No one chose these. */
-export interface OnFile { relationships?: Relationship[]; policies?: OrgPolicy[]; }
+export interface OnFile { relationships?: Relationship[]; policies?: OrgPolicy[]; approvals?: AppApproval[]; }
 /**
  * A file store needs `path`. `patientOf` says which patient a user account is, so a choice made as the
  * patient can rest on that, and `now`, in seconds, stamps relationships when they're recorded.
@@ -89,7 +89,7 @@ export class PolicyStore {
     this.path = config.mode === "file" ? config.path! : ":memory:";
     const errors = validateDocument({ relationships: config.onFile?.relationships ?? [], policies: config.onFile?.policies ?? [] });
     if (errors.length) throw new PolicyValidationError(errors);
-    this.onFile = structuredClone({ relationships: config.onFile?.relationships ?? [], policies: config.onFile?.policies ?? [] });
+    this.onFile = structuredClone({ relationships: config.onFile?.relationships ?? [], policies: config.onFile?.policies ?? [], approvals: config.onFile?.approvals ?? [] });
     this.durability = config.durability ?? "normal";
     this.patientOf = config.patientOf;
     this.now = config.now ?? (() => Date.now() / 1000);
@@ -171,6 +171,8 @@ export class PolicyStore {
     }
     for (const p of this.onFile.policies) this.putPolicyRow(p);
     this.policies.cache = undefined;
+    // Choices on file rest on the routes just recorded, as any approval does: one whose route isn't on file isn't recorded.
+    for (const a of this.onFile.approvals) { try { this.upsertApproval(a); } catch (e) { if (!(e instanceof PolicyValidationError)) throw e; } }
   }
 
   // Level 1
@@ -417,10 +419,15 @@ export class PolicyStore {
         const keep = new Set(rows.flatMap(r => r.id ? [r.id] : []));
         for (const { id } of this.db.query(`SELECT id FROM ${table}`).all() as any[]) if (!keep.has(id)) this.db.run(`DELETE FROM ${table} WHERE id = ?`, [id]);
       };
+      /** A choice on file stays only as the same choice: a row whose id or whose person, patient and app or recipient now belong to another row goes. */
+      const dropChanged = <T extends { id?: string }>(table: string, rows: T[], held: T[], key: (x: T) => string) => {
+        const wanted = new Map(rows.flatMap(r => r.id ? [[r.id, key(r)] as const] : [])), keys = new Map(rows.map(r => [key(r), r.id]));
+        for (const h of held) if ((wanted.has(h.id!) && wanted.get(h.id!) !== key(h)) || (keys.has(key(h)) && keys.get(key(h)) && keys.get(key(h)) !== h.id)) this.db.run(`DELETE FROM ${table} WHERE id = ?`, [h.id!]);
+      };
       if (d.relationships) { drop("relationships", d.relationships); for (const r of d.relationships) this.upsertRelationship(r); }
       if (d.policies) { this.db.run("DELETE FROM policies"); for (const p of d.policies) this.putPolicyRow(p); this.policies.cache = undefined; }
-      if (d.shares) { drop("shares", d.shares); for (const x of d.shares) this.upsertShare(x); }
-      if (d.approvals) { drop("approvals", d.approvals); for (const a of d.approvals) this.upsertApproval(a, true); }
+      if (d.shares) { drop("shares", d.shares); dropChanged("shares", d.shares, this.shareRows(), x => `${x.patient} ${x.from} ${x.with}`); for (const x of d.shares) this.upsertShare(x); }
+      if (d.approvals) { drop("approvals", d.approvals); dropChanged("approvals", d.approvals, this.approvalRows(), x => `${x.patient} ${x.by} ${x.app}`); for (const a of d.approvals) this.upsertApproval(a, true); }
       for (const p of new Set([...before, ...this.patientsWithRows()])) this.prune(p);
     }, () => this.patientsWithRows());
   }

@@ -14,6 +14,7 @@ import { CONFIG } from "../src/config";
 import { GUARDIANS_ON_FILE, ON_FILE } from "../src/stores";
 import { syntheticInstance, syntheticStudies, writeSynthetic } from "../scripts/generate-synthetic";
 import { adminFor } from "./admin-token";
+import { APPROVALS_ON_FILE } from "../src/stores";
 
 const root = join(import.meta.dir, "..");
 const BACKENDS: BackendName[] = (process.env.BACKENDS?.split(",") as BackendName[]) ?? ["static-files", "s3", "orthanc"];
@@ -122,8 +123,9 @@ describe("the guardian", () => {
     expect(after.relationships).toMatchObject([riley]);
     expect(after.policies).toEqual(ON_FILE.policies);
     expect(after.shares).toEqual([]);
-    expect(after.approvals).toEqual([]);
-    expect(status.store.counts).toMatchObject({ relationships: 1, policies: 3, shares: 0, approvals: 0 });
+    // What's on file again: each approval for every site, with no one's choice of sites left.
+    expect(after.approvals.map((a: any) => [a.by, a.patient, a.sites])).toEqual(APPROVALS_ON_FILE.map(a => [a.by, a.patient, undefined]));
+    expect(status.store.counts).toMatchObject({ relationships: 1, policies: 3, shares: 0, approvals: APPROVALS_ON_FILE.length });
     expect((await search((await launchFor("riley-example")).access_token, "riley-example")).ids).toEqual(RILEY);
     await stack.resetSaved();
     await stack.resetAll();
@@ -280,7 +282,7 @@ describe("the guardian", () => {
   });
   test("its chain reads plainly, in the Imaging Server's view", async () => {
     const x = await stack.explain({ client: "portal-app", user: SAM_ACCOUNT, fhirUser: "Patient/sam-example", patient: "riley-example" });
-    expect(x.studies.map((s: any) => s.why).sort()).toEqual(["Sam hasn't approved the Health Records App", "confidential adolescent care: guardians-13-to-17 keeps it from guardians"]);
+    expect(x.studies.map((s: any) => s.why).sort()).toEqual(["Sam is a guardian, and guardians-13-to-17 covers this study", "confidential adolescent care: guardians-13-to-17 keeps it from guardians"]);
   });
 });
 
@@ -291,7 +293,7 @@ describe("each link only narrows", () => {
     expect(stack.store.shares()).toMatchObject([{ from: `user:${SAM_ACCOUNT}`, with: "user:alex-neighbor", patient: "patient:sam-example", sites: ["Lakeside Imaging"], label: "neighbor", basis: "self" }]);
     const wide = await launchFor("sam-example", "alex-neighbor", { sites: ["Lakeside Imaging", "Riverside Hospital"] });
     expect((await search(wide.access_token, "sam-example")).ids).toEqual(["syn-sam-ct-sinus-2024"]);
-    expect(stack.store.approvals()[0]!.sites).toEqual(["Lakeside Imaging"]);
+    expect(stack.store.approvals().find(a => a.by === "user:alex-neighbor")!.sites).toEqual(["Lakeside Imaging"]);
     const none = await launchFor("sam-example", "alex-neighbor", { sites: [] });
     expect((await search(none.access_token, "sam-example")).ids).toEqual([]);
     expect((await drained(await wado(`${CONFIG.proxyUrl}/wado/-`, uidOf("syn-sam-chest-xr-2021"), wide.access_token))).status).toBe(404);
@@ -350,7 +352,7 @@ describe("choosing on the Authorization Server's pages", () => {
     form.append("sites@sam-example", "Lakeside Imaging");
     const r = await fetch(decision, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: form.toString(), redirect: "manual" });
     expect(new URL(r.headers.get("location")!).searchParams.get("code")).toBeTruthy();
-    expect(stack.store.approvals()).toMatchObject([{ by: `user:${SAM_ACCOUNT}`, app: "app:portal-app", patient: "patient:riley-example", sites: ["Lakeside Imaging"], basis: [stack.store.relationships()[0]!.id] }]);
+    expect(stack.store.approvals().filter(a => a.patient === "patient:riley-example")).toMatchObject([{ by: `user:${SAM_ACCOUNT}`, app: "app:portal-app", patient: "patient:riley-example", sites: ["Lakeside Imaging"], basis: [stack.store.relationships()[0]!.id] }]);
   });
   test("a person holding one record sees the plain form", async () => {
     const html = (await accountPage("josh")).html;

@@ -1,7 +1,7 @@
 // The root's policy store, and what's on file that every sandbox starts with: the guardians registration
 // recorded in data/patient.json, the organization's guardian and sharing policies, and patient
 // attributes, such as birth dates, which policy by age reads.
-import { DURABILITIES, PolicyStore, validateDocument, validateSetting, type Durability, type OnFile, type OrgPolicy, type PatientAttributes, type PolicyDocument, type Relationship, type Settings, type StoreConfig } from "@smart-imaging-proxy/core";
+import { DURABILITIES, PolicyStore, type AppApproval, validateDocument, validateSetting, type Durability, type OnFile, type OrgPolicy, type PatientAttributes, type PolicyDocument, type Relationship, type Settings, type StoreConfig } from "@smart-imaging-proxy/core";
 import { DEFAULT_POLICY_DB } from "./config";
 import { USERS } from "./auth-server";
 import people from "../data/patient.json";
@@ -17,7 +17,13 @@ export const POLICIES_ON_FILE: OrgPolicy[] = [
   { id: "guardians-13-to-17", type: "guardian-access", description: "Guardians of 13- to 17-year-olds see all but confidential adolescent care", when: { age: { min: 13, max: 17 } }, allow: "all", except: ["confidential-adolescent"] },
   { id: "patients-and-guardians-share", type: "sharing", description: "Patients and guardians may share what they can see", allowedFrom: ["patient", "guardian"] },
 ];
-export const ON_FILE: OnFile = { relationships: GUARDIANS_ON_FILE, policies: POLICIES_ON_FILE };
+/** The app approvals on file: Josh and Sam have each let the Health Records App see their records, at every site. */
+export const APPROVALS_ON_FILE: AppApproval[] = [
+  { by: "user:josh", app: "app:portal-app", patient: "patient:josh-example" },
+  { by: "user:sam-caregiver", app: "app:portal-app", patient: "patient:sam-example" },
+  { by: "user:sam-caregiver", app: "app:portal-app", patient: "patient:riley-example" },
+];
+export const ON_FILE: OnFile = { relationships: GUARDIANS_ON_FILE, policies: POLICIES_ON_FILE, approvals: APPROVALS_ON_FILE };
 /** A patient's record, as policy reads it. */
 export const patientAttributes = (patient: string): PatientAttributes | undefined => { const p = everyone.find(x => x.id === patient); return p && { birthDate: p.birthDate }; };
 

@@ -11,6 +11,7 @@ import { CONFIG, PORTS } from "../src/config";
 import { SCHEMA_VERSION } from "@smart-imaging-proxy/core";
 import { RULE_SETS } from "../src/rule-presets";
 import { adminFor } from "./admin-token";
+import { APPROVALS_ON_FILE } from "../src/stores";
 
 const root = join(import.meta.dir, "..");
 let stack: Stack; let demo: ReturnType<typeof createDemoServer>;
@@ -98,7 +99,7 @@ describe("resetting saved policy", () => {
     await refused("POST", "/api/sandbox/reset", { confirm: "yes" }, "confirm");
     expect(services(stack.store.snapshot())).toEqual([RULE]);
     const s = await ok("POST", "/api/sandbox/reset", { confirm: true });
-    expect(s.store.counts).toMatchObject({ relationships: 1, policies: 3, shares: 0, approvals: 0, signingKeys: 1 });
+    expect(s.store.counts).toMatchObject({ relationships: 1, policies: 3, shares: 0, approvals: APPROVALS_ON_FILE.length, signingKeys: 1 });
     expect(services(stack.store.snapshot())).toEqual([]);
     expect(stack.auth.grantOf(t.access_token)).toBeDefined();
   });
@@ -126,9 +127,10 @@ describe("flows and saved policy, over HTTP", () => {
     expect((await call("POST", "/api/flows/patient-sites/steps/consent", { inputs: { mode: "scripted" } })).status).toBe(409);
     const r = await ok("POST", `${sandbox.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
     expect(r.sandbox).toEqual(sandbox);
-    expect(r.policy.approvals.length).toBe(1);
+    expect(r.policy.approvals.find((a: any) => a.by === "Josh" || a.by === "user:josh")).toBeTruthy();
     expect(stack.sandboxes.resolve(sandbox.id)).toMatchObject({ sandbox: { id: sandbox.id } });
-    expect(stack.store.approvals()).toEqual([]);
+    // The root's approvals are still those on file, with no one's choice of sites.
+    expect(stack.store.approvals().every(a => !a.sites)).toBe(true);
     expect(services(stack.store.snapshot())).toEqual([RULE]);
     // Another flow's steps don't run in this sandbox.
     expect((await call("POST", `${sandbox.base}/api/flows/caregiver/steps/delegate`, {})).status).toBe(409);
