@@ -126,8 +126,12 @@ settings (clock, storage, topology, resets, keys), out of the header.
 Quiet and clean, with small annotations and details; it does this well already. It's both a reference client
 and a demo.
 
-It stays in a sandbox for now. A root viewer, with one fixed redirect URI to register with your server, needs
-sign-in to work at the public root, which refuses it today.
+It lives at the site's root, `/viewer`, beside **Your servers** (`/servers`), and belongs to no sandbox. Its
+own address is its redirect URI, the same for every server, and the sign-in tab it opens hands the code back to
+it. A sandbox is one more server in its list, signed in to with the sandbox's built-in public client,
+`demo-client`, whose one redirect URI is the viewer. A link from a sandbox opens the viewer with that sandbox
+chosen. It signs in all three ways, to a sandbox or to your server: a public app with PKCE, a confidential
+app with `private_key_jwt`, and a backend service.
 
 ### Cuts
 
@@ -140,6 +144,6 @@ sign-in to work at the public root, which refuses it today.
 1. The guides, the home page, the menu and the trail. Done, for Josh to look at.
 2. Sandbox Config: the policy editor and settings, out of the header.
 3. The sample-logins table shows each login's patients and studies.
-4. The viewer at the root, with one redirect URI.
+4. The viewer at the root, with one redirect URI. Done.
 5. Cuts.
 6. llms.txt, tests updated to the design, a screenshot review, then a deploy when Josh says so.

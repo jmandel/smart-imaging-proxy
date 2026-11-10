@@ -50,8 +50,12 @@ async function enterSandbox(page: Page) {
   await page.locator("#sandbox-name").waitFor();
   return new URL(page.url()).pathname.replace(/\/$/, "");
 }
-/** The sandbox a page is in, from its address. */
-const baseOf = (page: Page) => new URL(page.url()).pathname.match(/^\/s\/[^/]+/)![0];
+/** The viewer, at the site's root, opened on a sandbox from that sandbox's home page. */
+async function viewerOn(page: Page, base: string) {
+  await page.goto(`${ORIGIN}${base}/`);
+  await page.locator("#landing").getByRole("link", { name: "Viewer", exact: true }).click();
+  await page.waitForURL(u => u.pathname === "/viewer");
+}
 /** Presses something that opens the sign-in in a tab of its own, and gives that tab. */
 async function signInTab(page: Page, press: () => Promise<unknown>) {
   const [tab] = await Promise.all([page.context().waitForEvent("page"), press()]);
@@ -65,12 +69,13 @@ async function approveIn(tab: Page, user: string) {
   await tab.getByRole("button", { name: "Approve" }).click();
 }
 const pressConnect = (page: Page) => () => page.getByRole("button", { name: "Connect", exact: true }).click();
-/** A new sandbox, its viewer connected to it as `user`. */
+/** A new sandbox, the viewer connected to it as `user`. Gives the sandbox's path. */
 async function signIn(page: Page, user: string) {
   const base = await enterSandbox(page);
-  await page.goto(`${ORIGIN}${base}/viewer`);
+  await viewerOn(page, base);
   await approveIn(await signInTab(page, pressConnect(page)), user);
   await page.locator("#app").waitFor({ state: "visible" });
+  return base;
 }
 
 describe("the demo client", () => {
@@ -80,7 +85,7 @@ describe("the demo client", () => {
     const problems: string[] = [];
     page.on("pageerror", e => problems.push(e.message));
     await signIn(page, "josh");
-    expect(new URL(page.url()).pathname).toMatch(/^\/s\/[^/]+\/viewer$/);
+    expect(new URL(page.url()).pathname).toBe("/viewer");
     await expect(page.locator(".who").textContent()).resolves.toBe("Josh Example");
     await page.getByRole("heading", { name: "Conditions" }).waitFor();
     await page.locator("#c-Condition li", { hasText: "Migraine" }).waitFor();
@@ -149,7 +154,7 @@ describe("the demo client", () => {
     await detail.getByRole("button", { name: /Copied|Couldn't copy/ }).waitFor();
     await shot(page, "desktop-request");
     const panelText = await page.locator("#trail").textContent();
-    const token = await page.evaluate(() => JSON.parse(Object.entries(sessionStorage).find(([k]) => k.startsWith("smart-imaging-client"))![1]).session.token);
+    const token = await page.evaluate(() => JSON.parse(sessionStorage.getItem("smart-imaging-viewer")!).session.token);
     expect(token.length).toBeGreaterThan(10);
     expect(panelText).not.toContain(token);
     expect(panelText).toContain("Imaging server");
@@ -167,7 +172,7 @@ describe("the demo client", () => {
     await page.locator("nav.pages").getByRole("link", { name: "Run a Server", exact: true }).click();
     await page.waitForURL(u => u.pathname === "/run-a-server");
     await page.getByRole("link", { name: "Your servers" }).click();
-    await page.waitForURL(u => u.pathname === `${base}/servers`);
+    await page.waitForURL(u => u.pathname === "/servers");
     await page.getByText("None yet.").waitFor();
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await page.getByText('This server needs a name ("label").').waitFor();
@@ -178,15 +183,15 @@ describe("the demo client", () => {
     await page.getByRole("button", { name: "Check discovery" }).click();
     await page.locator("#discovery li", { hasText: "SMART Imaging" }).waitFor();
     if (!process.env.EXTERNAL_ISS) expect(await page.locator("#discovery li[data-state=bad]").count()).toBe(0);
-    await page.locator("#register-facts").getByText(`${ORIGIN}${base}/`, { exact: true }).waitFor();
+    await page.locator("#register-facts").getByText(`${ORIGIN}/viewer`, { exact: true }).waitFor();
     await page.getByLabel("Name", { exact: true }).fill("Another server");
     await page.getByLabel("Client ID").fill(ext.clientId);
     await shot(page, "server-builder");
     await page.getByRole("button", { name: "Save and open the viewer" }).click();
-    await page.waitForURL(u => u.pathname === `${base}/viewer`);
+    await page.waitForURL(u => u.pathname === "/viewer");
     await approveIn(await signInTab(page, pressConnect(page)), "josh");
     await page.locator("#app").waitFor({ state: "visible" });
-    expect(new URL(page.url()).pathname).toBe(`${base}/viewer`);
+    expect(new URL(page.url()).pathname).toBe("/viewer");
     await page.getByText("Connected to Another server").waitFor();
     await page.locator(".who").waitFor();
     await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
@@ -195,7 +200,7 @@ describe("the demo client", () => {
     expect(await litPixels(page)).toBeGreaterThan(0.01);
     await shot(page, process.env.EXTERNAL_ISS ? "external-server" : "configured-server");
     // Saved: offered again, editable, and removable.
-    await page.goto(`${ORIGIN}${base}/servers`);
+    await page.goto(`${ORIGIN}/servers`);
     await page.getByRole("heading", { name: "Another server" }).waitFor();
     await page.getByRole("button", { name: "Edit" }).click();
     await page.getByRole("heading", { name: "Edit Another server" }).waitFor();
@@ -209,7 +214,7 @@ describe("the demo client", () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     const base = await enterSandbox(page);
-    await page.goto(`${ORIGIN}${base}/servers`);
+    await page.goto(`${ORIGIN}/servers`);
     await page.getByLabel("FHIR base URL").fill(`${ORIGIN}${base}/fhir`);
     await page.getByRole("radio", { name: /confidential app/ }).check();
     await page.getByRole("button", { name: "Save and open the viewer" }).click();
@@ -221,7 +226,7 @@ describe("the demo client", () => {
     await page.locator("#discovery li", { hasText: "Signed assertions" }).waitFor();
     expect(await page.locator("#discovery li[data-state=bad]").count()).toBe(0);
     // Registered in this sandbox as a developer would at their own server: the redirect URI and public key shown.
-    const made = await page.evaluate(([b, k]) => (window as any).api("POST", "/api/sandbox/clients", { name: "Builder test", type: "confidential", redirectUris: [`${location.origin}${b}/`], jwk: k }), [base, jwk] as const);
+    const made = await page.evaluate(([b, k]) => (window as any).api("POST", "/api/sandbox/clients", { name: "Builder test", type: "confidential", redirectUris: [`${location.origin}/viewer`], jwk: k }, b), [base, jwk] as const);
     await page.getByLabel("Name", { exact: true }).fill("Signed in");
     await page.getByLabel("Client ID").fill(made.id);
     await shot(page, "server-builder-confidential");
@@ -291,7 +296,7 @@ describe("the demo client", () => {
     await page.locator(`.sandbox-list a[href="${base}/"]`).waitFor();
     expect(await page.locator("#create").isEnabled()).toBe(true);
     // And the viewer, left saying "Connecting…" while a sign-in tab was open.
-    await page.goto(`${ORIGIN}${base}/viewer`);
+    await page.goto(`${ORIGIN}/viewer`);
     await page.evaluate(() => { document.documentElement.classList.add("connecting"); (document.querySelector("#connect") as HTMLButtonElement).disabled = true; dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })); });
     await page.locator("#landing").waitFor({ state: "visible" });
     expect(await page.locator("#connect").isEnabled()).toBe(true);
@@ -301,10 +306,10 @@ describe("the demo client", () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     const base = await enterSandbox(page);
-    for (const path of [`${base}/`, `${base}/build`, `${base}/servers`, `${base}/checks`, `${base}/tours`, `${base}/explore`, `${base}/activity`, `${base}/connect`]) {
+    for (const path of [`${base}/`, `${base}/build`, `${base}/checks`, `${base}/tours`, `${base}/explore`, `${base}/activity`, `${base}/connect`]) {
       await page.goto(`${ORIGIN}${path}`);
       expect(await page.locator("nav.pages a[data-root]").evaluateAll(as => as.map(a => a.getAttribute("href")))).toEqual(["/build-an-app", "/run-a-server", "/how-it-works", "/why-it-matters"]);
-      const hrefs = await page.locator("nav.pages a:not([data-root]), nav.crumbs a, #landing .link-list a, a.path").evaluateAll(as => as.map(a => a.getAttribute("href")));
+      const hrefs = await page.locator("nav.pages a:not([data-root]), nav.crumbs a, #landing .link-list a:not([data-root]), a.path").evaluateAll(as => as.map(a => a.getAttribute("href")));
       expect(hrefs.every(h => h!.startsWith(`${base}/`))).toBe(true);
       expect(hrefs).toContain(`${base}/llms.txt`);
       expect(await page.locator("a.mark").getAttribute("href")).toBe("/");
@@ -318,8 +323,7 @@ describe("the demo client", () => {
   test("an app registered on /connect shows what its developer needs", async () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
-    await signIn(page, "josh");
-    const base = baseOf(page);
+    const base = await signIn(page, "josh");
     await page.goto(`${ORIGIN}${base}/connect`);
     await page.getByLabel("App name").fill("My test app");
     await page.getByLabel("Redirect URI").fill("https://app.example/callback");
@@ -337,8 +341,7 @@ describe("the demo client", () => {
   test("unticking one study approves the rest of that site", async () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
-    const sandboxBase = await enterSandbox(page);
-    await page.goto(`${ORIGIN}${sandboxBase}/viewer`);
+    await viewerOn(page, await enterSandbox(page));
     const tab = await signInTab(page, pressConnect(page));
     await tab.locator("input[name=username][value=josh]").check();
     await tab.getByRole("button", { name: "Continue" }).click();
@@ -381,12 +384,11 @@ describe("the demo client", () => {
   test("a sandbox set to unified imaging still works end to end", async () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
-    await signIn(page, "josh");
-    const base = baseOf(page);
+    const base = await signIn(page, "josh");
     await page.locator(".study-button").first().waitFor();
     await page.evaluate(async b => { await (window as any).api("PATCH", "/api/sandbox", { topology: "unified" }, b); }, base);
     await page.evaluate(() => sessionStorage.clear());
-    await page.goto(`${ORIGIN}${base}/viewer`);
+    await page.goto(`${ORIGIN}/viewer`);
     await approveIn(await signInTab(page, pressConnect(page)), "josh");
     await page.locator(".study-button").nth(5).waitFor();
     await page.locator("[data-stage=discover] .fact", { hasText: "this server" }).waitFor();
@@ -396,8 +398,7 @@ describe("the demo client", () => {
   test.skipIf(!!process.env.BASE_URL)("a backend service registered on /connect works in the viewer with no sign-in", async () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
-    await signIn(page, "josh");
-    const base = baseOf(page);
+    const base = await signIn(page, "josh");
     await page.goto(`${ORIGIN}${base}/connect`);
     await page.getByLabel("App name").fill("Referral service");
     await page.getByRole("radio", { name: /Backend service/ }).check();
@@ -418,12 +419,11 @@ describe("the demo client", () => {
   test.skipIf(!!process.env.BASE_URL)("a confidential app registered on /connect signs in and proves its key", async () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
-    await signIn(page, "josh");
-    const base = baseOf(page);
+    const base = await signIn(page, "josh");
     await page.goto(`${ORIGIN}${base}/connect`);
     await page.getByLabel("App name").fill("Confidential one");
     await page.getByRole("radio", { name: /Confidential app/ }).check();
-    await page.getByLabel("Redirect URI").fill(`${ORIGIN}${base}/`);
+    await page.getByLabel("Redirect URI").fill(`${ORIGIN}/viewer`);
     await page.getByRole("button", { name: "Register" }).click();
     await page.getByRole("button", { name: "Try it in the viewer" }).click();
     await page.waitForURL(/\/viewer$/);
@@ -436,8 +436,7 @@ describe("the demo client", () => {
   test("a server that can't be reached brings the landing page back with the error", async () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
-    const unreachable = await enterSandbox(page);
-    await page.goto(`${ORIGIN}${unreachable}/viewer`);
+    await viewerOn(page, await enterSandbox(page));
     await page.route("**/.well-known/smart-configuration", route => route.abort());
     await page.getByRole("button", { name: "Connect", exact: true }).click();
     await page.locator("#connect-error").waitFor({ state: "visible" });

@@ -29,17 +29,17 @@
   </section>
   <section class="panel guide-step" aria-labelledby="h-2">
     <h2 id="h-2"><span class="step-no">2</span> Register our viewer</h2>
-    <p>As a client on your server, with PKCE (S256) and scope <code>launch/patient patient/*.rs</code>. The redirect URI is your sandbox's address:</p>
-    <p><code data-redirect>Open a sandbox to see it</code></p>
+    <p>As a client on your server, in any of three ways: a public app with PKCE (S256), a confidential app signing with <code>private_key_jwt</code>, or a backend service using <code>client_credentials</code>. Apps ask for <code>launch/patient patient/*.rs</code>, services for <code>system/ImagingStudy.rs</code>. The redirect URI, the same for every server:</p>
+    <p><code data-viewer-url></code></p>
   </section>
   <section class="panel guide-step" aria-labelledby="h-3">
     <h2 id="h-3"><span class="step-no">3</span> Add your server, and connect</h2>
-    <p>Describe your server for the viewer. The page checks your discovery as the viewer reads it, and can make a key pair for a confidential client.</p>
-    <p class="guide-links"><a class="button" href="/servers" data-sandbox>Your servers</a></p>  </section>
+    <p>Describe your server for the viewer, and how it signs in. The page checks your discovery as the viewer reads it, and makes a key pair in your browser for a confidential app or a service.</p>
+    <p class="guide-links"><a class="button" href="/servers">Your servers</a></p>  </section>
   <section class="panel guide-step" aria-labelledby="h-4">
     <h2 id="h-4"><span class="step-no">4</span> Compare with a working server</h2>
     <p>Open the viewer on a sandbox, and read its logs: every request and response, from discovery to the last image.</p>
-    <p class="guide-links"><a href="/viewer" data-sandbox>Viewer →</a> <a href="/activity" data-sandbox>Logs →</a></p>  </section>
+    <p class="guide-links"><a href="/viewer" data-open-viewer>Viewer →</a> <a href="/activity" data-sandbox>Logs →</a></p>  </section>
   <section class="panel guide-step" aria-labelledby="h-5">
     <h2 id="h-5"><span class="step-no">5</span> Conformance checks, planned</h2>
     <p>Our client will check your server against the guide, step by step. Tell us what you'd want checked.</p>

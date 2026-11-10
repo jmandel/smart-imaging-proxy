@@ -1,10 +1,5 @@
 // The site's home page, the sandboxes this browser knows, and a sandbox's landing page: its name, sharing,
-// and what's in it. A sign-in's redirect lands here too, and goes back to the viewer that asked for it.
-const SANDBOXES_KEY = "smart-imaging-client:sandboxes";
-function knownSandboxes() {
-  try { return JSON.parse(stored(SANDBOXES_KEY) ?? "[]"); } catch { return []; }
-}
-const saveSandboxes = list => store(SANDBOXES_KEY, JSON.stringify(list));
+// and what's in it.
 const shareLink = base => `${location.origin}${base}/`;
 /** The home page: the sandboxes this browser has made or joined, and a way to make another. */
 function paintHome(list) {
@@ -60,7 +55,6 @@ async function renderSandbox() {
     if (!mine.joined && !confirm(`Delete “${name}” and everything in it? Anyone you shared it with loses it too.`)) return;
     if (!mine.joined) try { await api("DELETE", "/api/sandbox"); } catch {}
     saveSandboxes(knownSandboxes().filter(w => w.base !== BASE));
-    try { sessionStorage.removeItem(`smart-imaging-client:${BASE}`); } catch {}
     location.assign("/");
   });
 }

@@ -127,21 +127,19 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     // this page's address back, and checks its state. A sign-in a page walks itself reads the address it ended at.
     const callback = traced("app", async () => new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Back in the app</title></head><body style="font:15px system-ui;padding:2rem"><p>Back in the app. You can close this window.</p><script>if (window.opener) { window.opener.postMessage({ signedIn: location.href }, location.origin); window.close(); }</script></body></html>`, { headers: { "content-type": "text/html" } }), (_req, url) => `Redirect back to the app: ${url.pathname}`);
 
+    const SITE_PAGES: Record<string, string> = { "/viewer": "viewer.html", "/servers": "servers.html", "/build-an-app": "guide-app.html", "/run-a-server": "guide-server.html", "/how-it-works": "guide-how.html", "/why-it-matters": "guide-why.html" };
     async function fetch(req: Request): Promise<Response> {
       const url = new URL(req.url);
       const p = url.pathname;
       if (p === "/") return file("client.html");
-      if (p === "/viewer") return file("viewer.html");
-      if (p === "/build-an-app") return file("guide-app.html");
-      if (p === "/run-a-server") return file("guide-server.html");
-      if (p === "/how-it-works") return file("guide-how.html");
-      if (p === "/why-it-matters") return file("guide-why.html");
+      // The site's own pages, at its root only: the guides, the viewer, and the servers it knows.
+      const sitePage = !sandbox.id && SITE_PAGES[p];
+      if (sitePage) return file(sitePage);
       if (p === "/tours") return file("tours.html");
       if (p === "/explore") return file("index.html");
       if (p === "/activity") return file("activity.html");
       if (p === "/connect") return file("connect.html");
       if (p === "/build") return new Response((await Bun.file(join(root, "web", "build.html")).text()).replaceAll("{{SITE}}", sandbox.urls.demo), { headers: { "content-type": "text/html; charset=utf-8" } });
-      if (p === "/servers") return file("servers.html");
       if (p === "/checks") return file("checks.html");
       if (p === "/llms.txt") return llmsTxt(sandbox);
       // The management API takes this sandbox's admin token. Its keys are the one thing open: the URL is the access.

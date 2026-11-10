@@ -1,18 +1,23 @@
-// The viewer: our general SMART app. A standalone SMART App Launch against this sandbox or a server you added, then its clinical and
+// The viewer: our general SMART app. A standalone SMART App Launch against a sandbox or a server you added, then its clinical and
 // imaging data with one token. Every request goes through `traced`, which keeps what the protocol panel
 // shows. Images come one instance at a time, the search result already naming them: the middle one
 // first, then outward, so the first picture doesn't wait for the rest of the study.
-const CLIENT_ID = "demo-client", SCOPE = "launch/patient patient/*.rs";
-const REDIRECT = `${location.origin}${BASE}/`, VIEWER = `${BASE}/viewer`;
-const SANDBOX = { id: "sandbox", label: "SMART Imaging sandbox", detail: "Your own sandbox of sample patients", own: true };
-const allServers = () => [SANDBOX, ...savedServers().map(s => ({ ...s, id: serverKey(s), detail: new URL(s.iss).host }))];
+const SCOPE = "launch/patient patient/*.rs";
+/** Your sandboxes, then the servers you added. One you added by hand stands in for the sandbox it names. */
+function allServers() {
+  const added = savedServers().map(s => ({ ...s, id: serverKey(s), detail: new URL(s.iss).host })), ids = new Set(added.map(s => s.id));
+  const sandboxes = knownSandboxes().map(w => sandboxServer(w.base, w.name)).map(s => ({ ...s, id: serverKey(s), detail: "Your sandbox of sample patients" }));
+  return [...sandboxes.filter(s => !ids.has(s.id)), ...added];
+}
 function chosenServer() { const all = allServers(); return all.find(s => s.id === stored(CHOICE_KEY)) ?? all[0]; }
 function renderServers() {
   const chosen = chosenServer();
-  $("#servers").innerHTML = allServers().map(s => `<label class="server"><input type="radio" name="server" value="${esc(s.id)}" ${s.id === chosen.id ? "checked" : ""}><strong>${esc(s.label)}</strong><span>${esc(s.detail)}</span></label>`).join("");
+  $("#servers").innerHTML = chosen ? allServers().map(s => `<label class="server"><input type="radio" name="server" value="${esc(s.id)}" ${s.id === chosen.id ? "checked" : ""}><strong>${esc(s.label)}</strong><span>${esc(s.detail)}</span></label>`).join("")
+    : `<p class="note">No servers yet. <a href="/" data-root>Create a sandbox</a>, or add a server of your own.</p>`;
+  $("#connect").disabled = !chosen;
   $$("input[name=server]").forEach(r => r.addEventListener("change", () => store(CHOICE_KEY, r.value)));
 }
-const STORE = `smart-imaging-client:${BASE}`;
+const STORE = VIEWER_SESSION;
 
 const saved = () => { try { return JSON.parse(sessionStorage.getItem(STORE) ?? "{}"); } catch { return {}; } };
 const save = patch => { try { sessionStorage.setItem(STORE, JSON.stringify({ ...saved(), ...patch })); } catch {} };
@@ -156,7 +161,7 @@ function signInReturn(tab, state) {
   return new Promise((done, fail) => {
     const closed = setInterval(() => { if (tab.closed) { clearInterval(closed); removeEventListener("message", heard); fail(new Error("The sign-in tab closed before it finished. Connect again.")); } }, 500);
     function heard(e) {
-      const back = e.origin === location.origin && typeof e.data?.signedIn === "string" && e.data.signedIn.startsWith(REDIRECT) ? new URL(e.data.signedIn) : undefined;
+      const back = e.origin === location.origin && typeof e.data?.signedIn === "string" && e.data.signedIn.startsWith(VIEWER_URL) ? new URL(e.data.signedIn) : undefined;
       if (!back || back.searchParams.get("state") !== state) return;
       clearInterval(closed); removeEventListener("message", heard); done(back.searchParams);
     }
@@ -172,16 +177,16 @@ async function connect() {
   try {
     if (server.mode === "backend") { await connectBackend(server); return; }
     trail.length = 0;
-    const iss = server.own ? `${location.origin}${BASE}/fhir` : server.iss, clientId = server.own ? CLIENT_ID : server.clientId, scope = server.scope ?? SCOPE;
+    const { iss, clientId } = server, scope = server.scope ?? SCOPE;
     const config = await discover(iss);
     if (config.code_challenge_methods_supported && !config.code_challenge_methods_supported.includes("S256")) throw new Error("This server doesn't offer PKCE with S256.");
     // Nobody signs in to a server this app can't use.
     if (!imagingOf(config, iss) && !server.imaging) throw new Error("This server doesn't advertise SMART Imaging with App Launch. If you know where its imaging FHIR server is, add it under Advanced in Your servers.");
     const verifier = random(), state = random();
     const challenge = b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
-    save({ pending: { verifier, state, config, iss, clientId, imaging: server.imaging, own: !!server.own, label: server.label, jwk: server.jwk } });
+    save({ pending: { verifier, state, config, iss, clientId, imaging: server.imaging, label: server.label, jwk: server.jwk } });
     const url = new URL(config.authorization_endpoint);
-    Object.entries({ response_type: "code", client_id: clientId, redirect_uri: REDIRECT, scope, aud: iss, state, code_challenge: challenge, code_challenge_method: "S256" }).forEach(([k, v]) => url.searchParams.set(k, v));
+    Object.entries({ response_type: "code", client_id: clientId, redirect_uri: VIEWER_URL, scope, aud: iss, state, code_challenge: challenge, code_challenge_method: "S256" }).forEach(([k, v]) => url.searchParams.set(k, v));
     addStep({ id: "authorize", kind: "authorize", title: "Sign in and approve the app", request: requestLine("GET", url.toString().replace(/([?&](state|code_challenge)=)[^&]+/g, "$1…")), response: "The sign-in tab returned with a one-time code." });
     // A browser that blocks the tab: the sign-in happens here instead, and comes back to the viewer.
     if (!tab) { location.assign(url); return; }
@@ -205,23 +210,23 @@ async function connectBackend(server) {
   const scope = server.scope ?? "system/ImagingStudy.rs";
   const body = new URLSearchParams({ grant_type: "client_credentials", scope, client_assertion_type: ASSERTION_TYPE, client_assertion: await signAssertion(server.jwk, server.clientId, config.token_endpoint) }).toString();
   const token = await traced({ id: "backend-token", kind: "backend-token", title: "Authenticate and get a token" }, config.token_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body }, t => ({ Granted: t.scope, "Token lasts": `${Math.round(t.expires_in / 60)} min` }));
-  const session = { token: token.access_token, patient: server.patient, imaging: imaging.replace(/\/$/, ""), iss: server.iss, own: false, label: server.label, backend: true };
+  const session = { token: token.access_token, patient: server.patient, imaging: imaging.replace(/\/$/, ""), iss: server.iss, label: server.label, backend: true };
   save({ session });
   await run(session);
 }
 async function finishSignIn(params) {
   const { pending } = saved();
   // A sign-in that came back to this tab leaves the viewer's address clean.
-  if (location.search) history.replaceState(null, "", VIEWER);
+  if (location.search) history.replaceState(null, "", "/viewer");
   if (!pending || pending.state !== params.get("state")) throw new Error("This sign-in didn't start here. Connect again.");
   save({ pending: undefined });
   if (params.get("error")) { addStep({ id: "authorize", kind: "authorize", title: "Sign in and approve the app", failed: true, response: params.get("error") }); throw new Error(`The sign-in ended with: ${params.get("error")}`); }
-  const body = new URLSearchParams({ grant_type: "authorization_code", code: params.get("code"), redirect_uri: REDIRECT, client_id: pending.clientId, code_verifier: pending.verifier, ...(pending.jwk ? { client_assertion_type: ASSERTION_TYPE, client_assertion: await signAssertion(pending.jwk, pending.clientId, pending.config.token_endpoint) } : {}) }).toString();
+  const body = new URLSearchParams({ grant_type: "authorization_code", code: params.get("code"), redirect_uri: VIEWER_URL, client_id: pending.clientId, code_verifier: pending.verifier, ...(pending.jwk ? { client_assertion_type: ASSERTION_TYPE, client_assertion: await signAssertion(pending.jwk, pending.clientId, pending.config.token_endpoint) } : {}) }).toString();
   const token = await traced({ id: "token", kind: "token", title: "Exchange the code for a token" }, pending.config.token_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body }, t => ({ Granted: t.scope, "Token lasts": `${Math.round(t.expires_in / 60)} min` }));
   const imaging = imagingOf(pending.config, pending.iss)?.url ?? pending.imaging;
   if (!imaging) throw new Error("This server doesn't advertise SMART Imaging with App Launch. If you know where its imaging FHIR server is, add it under Advanced on Your servers.");
   if (!token.patient) throw new Error("The token response didn't name a patient.");
-  const session = { token: token.access_token, patient: token.patient, imaging, iss: pending.iss, own: pending.own, label: pending.label };
+  const session = { token: token.access_token, patient: token.patient, imaging, iss: pending.iss, label: pending.label };
   save({ session });
   return session;
 }
@@ -331,8 +336,7 @@ function showApp() {
 }
 async function run(session) {
   showApp();
-  $("#connected").textContent = session.own ? "" : `Connected to ${session.label}`;
-  if (session.own && BASE) sandboxName(BASE).then(name => { if (name) $("#connected").textContent = `Sandbox: ${name}`; });
+  $("#connected").textContent = `Connected to ${session.label}`;
   if (session.backend) {
     $("#patient").innerHTML = `<p class="who">Patient ${esc(session.patient)}</p><p class="facts">Backend service: no one signed in</p>`;
     $("#clinical").hidden = true;

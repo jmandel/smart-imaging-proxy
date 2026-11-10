@@ -4,12 +4,8 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SMART Imaging Demo</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Crect width='20' height='20' rx='3' fill='%230f2a3d'/%3E%3Ccircle cx='10' cy='10' r='4' fill='%23e8f1f6'/%3E%3C/svg%3E">
-<script>
-// A sign-in's redirect lands here, in the tab the viewer opened for it: hand the address back, and close.
-// A browser that wouldn't open the tab signed in here instead, so the viewer page takes it from here.
-(() => { const base = (location.pathname.match(/^\/s\/[^/]+/) || [""])[0]; if (/[?&](code|error)=/.test(location.search)) { document.documentElement.classList.add("handing-back"); if (window.opener) { window.opener.postMessage({ signedIn: location.href }, location.origin); window.close(); } else location.replace(`${base}/viewer${location.search}`); } if (!base) document.documentElement.classList.add("at-home"); })();
-</script>
-<style>html.handing-back main, html.at-home #landing { display:none; } #home { display:none; } html.at-home #home { display:block; } #back-note { display:none; } html.handing-back #back-note { display:block; }</style>
+<script>if (!/^\/s\//.test(location.pathname)) document.documentElement.classList.add("at-home");</script>
+<style>html.at-home #landing { display:none; } #home { display:none; } html.at-home #home { display:block; }</style>
 <link rel="preload" href="/fonts/atkinson-next.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/atkinson-mono.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/styles.css">
@@ -22,7 +18,6 @@
 </header>
 <div id="announce" class="sr-only" role="status" aria-live="polite"></div>
 
-<p class="connecting-note" id="back-note" role="status">Signed in. Returning to the viewer…</p>
 <main id="home" class="landing">
   <h1>SMART Imaging Access</h1>
   <p class="lead">A public sandbox and test client for the SMART Imaging Access guide: one sign-in that gives an app a patient's records and their medical images.</p>
@@ -47,7 +42,7 @@
     <section aria-labelledby="h-try">
       <h2 id="h-try">Try it</h2>
       <ul class="link-list">
-        <li><a href="/viewer">Viewer</a><span>Our SMART app, on this sandbox or your server.</span></li>
+        <li><a href="/viewer" data-root data-open-viewer>Viewer</a><span>Our SMART app, signed in to this sandbox.</span></li>
         <li><a href="/tours">Tour</a><span>Sharing, guardians and referrals, step by step.</span></li>
         <li><a href="/explore">Explore</a><span>What each person and service can reach, and why.</span></li>
       </ul>
@@ -63,7 +58,7 @@
     <section aria-labelledby="h-server">
       <h2 id="h-server">Your server</h2>
       <ul class="link-list">
-        <li><a href="/servers">Your servers</a><span>Describe your server for the viewer, and connect.</span></li>
+        <li><a href="/servers" data-root>Your servers</a><span>Describe your server for the viewer, and connect.</span></li>
         <li><a href="/checks">Conformance</a><span>Checks against the guide, run in the page.</span></li>
       </ul>
     </section>

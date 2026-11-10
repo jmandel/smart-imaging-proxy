@@ -1,6 +1,6 @@
-// The servers of your own that this browser's viewer can connect to, kept in this browser. The "Test your
-// server" page writes them, and the viewer reads them, so both agree on what an entry must hold.
-const SERVERS_KEY = "smart-imaging-client:servers", CHOICE_KEY = "smart-imaging-client:choice";
+// The servers of your own that this browser's viewer can connect to, kept in this browser. Your servers
+// writes them, and the viewer reads them, so both agree on what an entry must hold.
+const SERVERS_KEY = "smart-imaging-client:servers";
 const stored = key => { try { return localStorage.getItem(key); } catch { return null; } };
 const store = (key, value) => { try { value === null ? localStorage.removeItem(key) : localStorage.setItem(key, value); } catch {} };
 const isLocal = host => ["localhost", "127.0.0.1"].includes(host);
@@ -42,12 +42,6 @@ function putServer(entry, replacing = serverKey(entry)) {
   const list = savedServers(), at = list.findIndex(s => serverKey(s) === replacing);
   if (at >= 0) list[at] = entry; else list.push(entry);
   saveServers(list);
-}
-/** Makes a server the viewer's choice, and opens the viewer, ending any session it had there. */
-function tryServer(entry) {
-  store(CHOICE_KEY, serverKey(entry));
-  try { sessionStorage.removeItem(`smart-imaging-client:${BASE}`); } catch {}
-  location.assign(`${BASE}/viewer`);
 }
 
 const IMAGING = "smart-imaging-access", APP_LAUNCH = "http://fhir.org/argonaut/smart-imaging/capabilities/app-launch";

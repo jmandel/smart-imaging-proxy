@@ -129,19 +129,44 @@ async function renderSettings(message = "") {
   }).catch(() => {});
 }
 
+// The sandboxes this browser has made or joined, and the one it was last in.
+const SANDBOXES_KEY = "smart-imaging-client:sandboxes", CURRENT_KEY = "smart-imaging-client:current";
+function knownSandboxes() { try { return JSON.parse(localStorage.getItem(SANDBOXES_KEY) ?? "[]"); } catch { return []; } }
+const saveSandboxes = list => { try { localStorage.setItem(SANDBOXES_KEY, JSON.stringify(list)); } catch {} };
+/** The sandbox that links outside one go to: the one you were last in, or the newest you know. */
+function linkedSandbox() {
+  const list = knownSandboxes(); let current;
+  try { current = localStorage.getItem(CURRENT_KEY); } catch {}
+  return list.find(w => w.base === current) ?? list.at(-1);
+}
 /** Makes a sandbox, remembered in this browser. Gives its base path. */
 async function createSandbox() {
   const r = await fetch("/api/sandboxes", { method: "POST" });
   if (!r.ok) throw new Error(r.status === 429 ? "Too many sandboxes from this address. Try again in a while." : `The sandbox couldn't be created (HTTP ${r.status})`);
   const { base } = await r.json();
-  let list = [];
-  try { list = JSON.parse(localStorage.getItem("smart-imaging-client:sandboxes") ?? "[]"); } catch {}
-  try { localStorage.setItem("smart-imaging-client:sandboxes", JSON.stringify([...list, { base, joined: false }])); } catch {}
+  saveSandboxes([...knownSandboxes(), { base, joined: false }]);
   return base;
 }
-/** The sandbox you were last in, which the guides at the root link into. */
-const CURRENT_KEY = "smart-imaging-client:current";
-const currentSandbox = () => { try { return localStorage.getItem(CURRENT_KEY) || undefined; } catch { return undefined; } };
+
+// The viewer is one page at the site's root, and its address is the redirect URI it signs in with. A sandbox is
+// a server in its list like any other, signed in to with the sandbox's built-in public client.
+const VIEWER_URL = `${location.origin}/viewer`, VIEWER_SESSION = "smart-imaging-viewer", CHOICE_KEY = "smart-imaging-client:choice";
+const SANDBOX_CLIENT = "demo-client";
+const sandboxServer = (base, name) => ({ label: name ?? "Sandbox", iss: `${location.origin}${base}/fhir`, clientId: SANDBOX_CLIENT, sandbox: base });
+/** Opens the viewer with a server chosen, ending any session it had. */
+function openViewer(server) {
+  try { localStorage.setItem(CHOICE_KEY, `${server.iss}|${server.clientId}`); sessionStorage.removeItem(VIEWER_SESSION); } catch {}
+  location.assign("/viewer");
+}
+// A link marked data-open-viewer opens the viewer on this page's sandbox, or the one links go to, or a new one.
+document.addEventListener("click", async e => {
+  const a = e.target.closest?.("a[data-open-viewer]");
+  if (!a) return;
+  e.preventDefault();
+  let base = BASE || linkedSandbox()?.base;
+  try { base ??= await createSandbox(); } catch (err) { alert(err.message); return; }
+  openViewer(sandboxServer(base));
+});
 /** On a narrow screen, the menu is behind a button, so the header stays one row and the page starts high. */
 function initMenu() {
   const bar = $(".topbar"), pages = $(".topbar nav.pages");

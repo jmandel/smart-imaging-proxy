@@ -7,14 +7,13 @@ const typeNow = () => $("input[name=type]:checked").value;
 function showFields() { const t = typeNow(); $("#redirect-field").hidden = t === "backend"; $("#key-field").hidden = t === "public"; $("#patients-field").hidden = t !== "backend"; }
 $$("input[name=type]").forEach(r => r.addEventListener("change", showFields));
 /** Whether the viewer on this site can act as this client: it holds the key, and for sign-in, its address is registered. */
-const canTry = c => (c.type === "public" || savedKeys()[c.id]) && (c.type === "backend" || c.redirectUris.includes(`${location.origin}${BASE}/`));
+const canTry = c => (c.type === "public" || savedKeys()[c.id]) && (c.type === "backend" || c.redirectUris.includes(VIEWER_URL));
 function tryInViewer(c) {
   const jwk = savedKeys()[c.id], entry = { label: c.name, iss: fhirBase(), clientId: c.id, ...(c.type === "backend" ? { mode: "backend", jwk, patient: c.patients === "any" ? "josh-example" : c.patients, scope: "system/ImagingStudy.rs" } : c.type === "confidential" ? { auth: "private_key_jwt", jwk } : {}) };
   let list = [];
   try { list = JSON.parse(localStorage.getItem("smart-imaging-client:servers") ?? "[]").filter(s => s.clientId !== c.id); } catch {}
-  list.push(entry);
-  try { localStorage.setItem("smart-imaging-client:servers", JSON.stringify(list)); localStorage.setItem("smart-imaging-client:choice", `${entry.iss}|${entry.clientId}`); sessionStorage.clear(); } catch {}
-  location.assign(`${BASE}/viewer`);
+  try { localStorage.setItem("smart-imaging-client:servers", JSON.stringify([...list, entry])); } catch {}
+  openViewer(entry);
 }
 const fhirBase = () => `${location.origin}${BASE}/fhir`;
 function clientHtml(c) {
@@ -71,3 +70,4 @@ $("#clients").addEventListener("click", async e => {
   if (!BASE) { location.replace("/"); return; }
   await refresh();
 })();
+$("#viewer-url").textContent = VIEWER_URL;

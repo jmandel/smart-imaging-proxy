@@ -9,7 +9,7 @@
 A sandbox has both sides of SMART Imaging: the health system's servers, and a viewer app. Most people need one side.
 
 - **Building a client?** Point your app at this sandbox's servers. Read "The parts", "Connect an app" and "Sign in without a browser". The page for people is `{{SITE}}/build`.
-- **Testing your own server?** Point this sandbox's viewer at it. Read "Test your server with the viewer". The page for people is `{{SITE}}/servers`.
+- **Testing your own server?** Point our viewer at it. Read "Test your server with the viewer". The page for people is `{{ORIGIN}}/servers`.
 
 ## The parts
 
@@ -271,20 +271,20 @@ The menu is a guide for each audience, at the site's root. Each lists what matte
 A sandbox's own pages:
 
 - [Home]({{SITE}}/): its name and sharing, and its pages by what they're for.
-- **Try it:** [Viewer]({{SITE}}/viewer) (our SMART app, against this sandbox or your server), [Tour]({{SITE}}/tours) (stories about sharing, guardians and policy), [Explore]({{SITE}}/explore) (what each person and service can reach, and why).
+- **Try it:** [Viewer]({{ORIGIN}}/viewer) (our SMART app, at the site's root, signed in to this sandbox or your server), [Tour]({{SITE}}/tours) (stories about sharing, guardians and policy), [Explore]({{SITE}}/explore) (what each person and service can reach, and why).
 - **Your app:** [Start here]({{SITE}}/build) (endpoints and sample accounts), [Register an app]({{SITE}}/connect), [Logs]({{SITE}}/activity) (what happened, and why; the [live trace]({{SITE}}/trace/) has every request between the services).
-- **Your server:** [Your servers]({{SITE}}/servers) (describe your FHIR server for the viewer), [Conformance]({{SITE}}/checks) (checks of this sandbox's servers against the guide, run in the page).
+- **Your server:** [Your servers]({{ORIGIN}}/servers) (describe your FHIR server for the viewer, at the site's root), [Conformance]({{SITE}}/checks) (checks of this sandbox's servers against the guide, run in the page).
 
 ## Test your server with the viewer
 
-The viewer at `{{SITE}}/viewer` can connect to any SMART server, in the browser, exactly as it connects here. What your server needs:
+The viewer at `{{ORIGIN}}/viewer` can connect to any SMART server, in the browser, exactly as it connects to a sandbox. It belongs to no sandbox: a sandbox is one more server in its list, signed in to with the sandbox's built-in public client, `demo-client`. What your server needs:
 
 1. **CORS** for the origin `{{ORIGIN}}`, on discovery, the token endpoint, FHIR searches and image retrieval. The browser makes every request.
 2. **Discovery** at `{FHIR base}/.well-known/smart-configuration`, with `authorization_endpoint` and `token_endpoint`. SMART Imaging is found by capability: `smart-imaging-access` together with `http://fhir.org/argonaut/smart-imaging/capabilities/app-launch` (or `.../backend-services`), either in top-level `capabilities` or on an entry in `associated_endpoints`, whose `url` is the imaging FHIR server.
-3. **A client for the viewer.** For sign-in, register the redirect URI `{{SITE}}/` exactly, with PKCE S256, and scope `launch/patient patient/*.rs`. A confidential client uses `private_key_jwt` with ES256. A backend service uses `client_credentials` with `system/ImagingStudy.rs`.
+3. **A client for the viewer.** For sign-in, register the redirect URI `{{ORIGIN}}/viewer` exactly, the same for every server, with PKCE S256, and scope `launch/patient patient/*.rs`. A confidential client uses `private_key_jwt` with ES256. A backend service uses `client_credentials` with `system/ImagingStudy.rs`.
 4. **Searches the viewer makes:** `Patient/{id}`, `AllergyIntolerance`, `Condition`, `MedicationRequest` and `DiagnosticReport` by `patient`, then `{imaging}/ImagingStudy?patient={id}&_include=ImagingStudy:endpoint`, following `next` links. It retrieves instances from each study's `dicom-wado-rs` `Endpoint.address`, sending the token only there, and honours `503` with `Retry-After`.
 
-The test-your-server page has a form for these settings, a button that checks discovery as the viewer reads it, and generates a key pair in the browser for clients that sign. Saved servers live in the browser's storage, which an agent can't write, so give the person the values for the form, or a JSON entry to paste under "Import or export as JSON":
+The Your servers page has a form for these settings, a button that checks discovery as the viewer reads it, and generates a key pair in the browser for clients that sign. Saved servers live in the browser's storage, which an agent can't write, so give the person the values for the form, or a JSON entry to paste under "Import or export as JSON":
 
 ```json
 [{ "label": "My server", "iss": "https://example.org/fhir", "clientId": "my-client", "scope": "launch/patient patient/*.rs", "imaging": "https://example.org/imaging/fhir" }]

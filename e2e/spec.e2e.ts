@@ -40,7 +40,7 @@ beforeAll(async () => {
   stack = await startStack(root);
   demo = Bun.serve({ port: PORTS.demo, hostname: "127.0.0.1", fetch: createDemoServer(stack, registerClients(stack), root).fetch });
   sandbox = stack.sandboxes.mint();
-  clientId = (addClient(sandbox.store, { name: "Spec test", redirectUris: [`${sandbox.urls.demo}/`] }) as any).id;
+  clientId = (addClient(sandbox.store, { name: "Spec test", redirectUris: [`${new URL(sandbox.urls.demo).origin}/viewer`] }) as any).id;
   fixture = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) {
     const url = new URL(req.url), [, kind, ...rest] = url.pathname.split("/"), path = `/${rest.join("/")}`;
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
@@ -72,12 +72,12 @@ async function connect(kind: string): Promise<Page> {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   context.setDefaultTimeout(10000);
   const page = await context.newPage();
-  await page.goto(`${sandbox.urls.demo}/servers`);
+  await page.goto(`${new URL(sandbox.urls.demo).origin}/servers`);
   await page.locator("#json summary").click();
   await page.locator("#servers-json").fill(JSON.stringify([{ label: kind, iss: `${FIX}/${kind}/fhir`, clientId }]));
   await page.getByRole("button", { name: "Replace with this" }).click();
   await page.getByText("Saved 1 server of your own.").waitFor();
-  await page.goto(`${sandbox.urls.demo}/viewer`);
+  await page.goto(`${new URL(sandbox.urls.demo).origin}/viewer`);
   await page.getByRole("radio", { name: new RegExp(`^${kind}`) }).check();
   // Connect opens the sign-in in a tab of its own, from the click.
   const [tab] = await Promise.all([context.waitForEvent("page"), page.getByRole("button", { name: "Connect", exact: true }).click()]);

@@ -1,6 +1,5 @@
-// Describing a server of your own for this sandbox's viewer: what it is, how the viewer signs in, and what to
+// Describing a server of your own for the viewer: what it is, how the viewer signs in, and what to
 // register there. Discovery is checked here, from the browser, the way the viewer itself will read it.
-const REDIRECT = `${location.origin}${BASE}/`;
 const SCOPES = { public: "launch/patient patient/*.rs", confidential: "launch/patient patient/*.rs", backend: "system/ImagingStudy.rs" };
 const HOW_LABEL = { public: "Sign-in, public app", confidential: "Sign-in, confidential app", backend: "Backend service" };
 const howNow = () => $("input[name=how]:checked").value;
@@ -15,7 +14,7 @@ function paintForm() {
   $("#patient-field").hidden = how !== "backend";
   $("#srv-scope").placeholder = SCOPES[how];
   const facts = [
-    ...(how === "backend" ? [] : [["Redirect URI", REDIRECT]]),
+    ...(how === "backend" ? [] : [["Redirect URI", VIEWER_URL]]),
     ["Scopes", SCOPES[how]],
     ...(signs ? [["Client authentication", "private_key_jwt, signed with ES256"]] : [["Client authentication", "None (a public client using PKCE)"]]),
     ...(how === "backend" ? [["Grant type", "client_credentials"]] : []),
@@ -76,7 +75,7 @@ function save() {
   } catch (e) { err.hidden = false; err.textContent = e.message; return null; }
 }
 $("#save").addEventListener("click", save);
-$("#server-form").addEventListener("submit", e => { e.preventDefault(); const entry = save(); if (entry) tryServer(entry); });
+$("#server-form").addEventListener("submit", e => { e.preventDefault(); const entry = save(); if (entry) openViewer(entry); });
 function clearForm() {
   $("#server-form").reset();
   delete $("#srv-label").dataset.auto;
@@ -169,7 +168,7 @@ function paintSaved() {
 $("#saved").addEventListener("click", e => {
   const list = savedServers(), at = name => { const b = e.target.closest(`[data-${name}]`); return b ? list[Number(b.dataset[name])] : undefined; };
   const connectTo = at("connect"), editThis = at("edit"), removeThis = at("remove");
-  if (connectTo) tryServer(connectTo);
+  if (connectTo) openViewer(connectTo);
   if (editThis) edit(editThis);
   if (removeThis) {
     saveServers(list.filter(s => s !== removeThis));
@@ -184,7 +183,6 @@ $("#servers-save").addEventListener("click", () => {
   catch (e) { status.textContent = `Not saved. ${e.message}`; }
 });
 
-if (!BASE) location.replace("/");
 paintForm();
 paintSaved();
 addEventListener("pageshow", e => { if (e.persisted) { paintSaved(); $("#check").disabled = false; $("#check").textContent = "Check discovery"; } });
