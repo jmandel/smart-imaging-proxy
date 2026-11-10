@@ -304,7 +304,7 @@ describe("the demo client", () => {
     for (const path of [`${base}/`, `${base}/build`, `${base}/servers`, `${base}/checks`, `${base}/tours`, `${base}/explore`, `${base}/activity`, `${base}/connect`]) {
       await page.goto(`${ORIGIN}${path}`);
       expect(await page.locator("nav.pages a[data-root]").evaluateAll(as => as.map(a => a.getAttribute("href")))).toEqual(["/build-an-app", "/run-a-server", "/how-it-works", "/why-it-matters"]);
-      const hrefs = await page.locator("nav.pages a:not([data-root]), nav.crumbs a, a.path:not([data-root])").evaluateAll(as => as.map(a => a.getAttribute("href")));
+      const hrefs = await page.locator("nav.pages a:not([data-root]), nav.crumbs a, #landing .link-list a, a.path").evaluateAll(as => as.map(a => a.getAttribute("href")));
       expect(hrefs.every(h => h!.startsWith(`${base}/`))).toBe(true);
       expect(hrefs).toContain(`${base}/llms.txt`);
       expect(await page.locator("a.mark").getAttribute("href")).toBe("/");

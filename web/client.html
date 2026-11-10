@@ -24,14 +24,14 @@
 
 <p class="connecting-note" id="back-note" role="status">Signed in. Returning to the viewer…</p>
 <main id="home" class="landing">
-  <h1>SMART Imaging, working</h1>
-  <p class="lead">One sign-in that gives an app a patient's records and their medical images. This site runs it end to end: a health system's servers with sample patients, and an imaging app that connects to them.</p>
-  <div class="paths audiences">
-    <a class="path panel" href="/build-an-app" data-root><h2>Build an App</h2><p>Connect your SMART app to a sandbox health system with sample patients and studies.</p></a>
-    <a class="path panel" href="/run-a-server" data-root><h2>Run a Server</h2><p>Connect our known-good viewer to your server, and see what it needs.</p></a>
-    <a class="path panel" href="/how-it-works" data-root><h2>How It Works</h2><p>Watch one sign-in reach a patient's records and images, part by part.</p></a>
-    <a class="path panel" href="/why-it-matters" data-root><h2>Why It Matters</h2><p>What patients, caregivers and health systems get from imaging interoperability.</p></a>
-  </div>
+  <h1>SMART Imaging Access</h1>
+  <p class="lead">A public sandbox and test client for the SMART Imaging Access guide: one sign-in that gives an app a patient's records and their medical images.</p>
+  <ul class="link-list jobs">
+    <li><a href="/build-an-app" data-root>Build an App</a><span>Connect your SMART app to a sandbox health system with sample patients and studies.</span></li>
+    <li><a href="/run-a-server" data-root>Run a Server</a><span>Connect our known-good viewer to your server, and see what it needs.</span></li>
+    <li><a href="/how-it-works" data-root>How It Works</a><span>Watch one sign-in reach a patient's records and images, part by part.</span></li>
+    <li><a href="/why-it-matters" data-root>Why It Matters</a><span>What patients, caregivers and health systems get from imaging interoperability.</span></li>
+  </ul>
   <p class="note agents">Working with an AI agent? Give it <a href="/llms.txt">llms.txt</a>. It describes everything here, and its API.</p>
   <section class="your-sandboxes" aria-labelledby="h-sandboxes">
     <h2 id="h-sandboxes">Your sandboxes</h2>
@@ -43,29 +43,31 @@
 </main>
 <main id="landing" class="landing overview">
   <section class="sandbox panel" id="sandbox"></section>
-  <section class="sandbox-group" aria-labelledby="h-app">
-    <h2 id="h-app">Your app</h2>
-    <div class="paths">
-      <a class="path panel" href="/build"><h3>Start here</h3><p>Endpoints, scopes, and sample people to sign in as.</p></a>
-      <a class="path panel" href="/connect"><h3>Register an app</h3><p>A public app, a confidential app, or a backend service.</p></a>
-      <a class="path panel" href="/activity"><h3>Logs</h3><p>Every request, and why each was allowed or refused.</p></a>
-    </div>
-  </section>
-  <section class="sandbox-group" aria-labelledby="h-try">
-    <h2 id="h-try">Try it</h2>
-    <div class="paths">
-      <a class="path panel" href="/viewer"><h3>Viewer</h3><p>Our SMART app, signed in to this sandbox or to your server.</p></a>
-      <a class="path panel" href="/tours"><h3>Tour</h3><p>Sharing, guardians and referrals, played out step by step.</p></a>
-      <a class="path panel" href="/explore"><h3>Explore</h3><p>What each sample person and service can reach, and why.</p></a>
-    </div>
-  </section>
-  <section class="sandbox-group" aria-labelledby="h-server">
-    <h2 id="h-server">Your server</h2>
-    <div class="paths">
-      <a class="path panel" href="/servers"><h3>Your servers</h3><p>Describe your server for the viewer, and connect.</p></a>
-      <a class="path panel" href="/checks"><h3>Conformance</h3><p>Checks against the guide, run in the page.</p></a>
-    </div>
-  </section>
+  <div class="sandbox-groups">
+    <section aria-labelledby="h-app">
+      <h2 id="h-app">Your app</h2>
+      <ul class="link-list">
+        <li><a href="/build">Start here</a><span>Endpoints, scopes, and sample people to sign in as.</span></li>
+        <li><a href="/connect">Register an app</a><span>Public, confidential, or a backend service.</span></li>
+        <li><a href="/activity">Logs</a><span>Every request, and why each was allowed or refused.</span></li>
+      </ul>
+    </section>
+    <section aria-labelledby="h-try">
+      <h2 id="h-try">Try it</h2>
+      <ul class="link-list">
+        <li><a href="/viewer">Viewer</a><span>Our SMART app, on this sandbox or your server.</span></li>
+        <li><a href="/tours">Tour</a><span>Sharing, guardians and referrals, step by step.</span></li>
+        <li><a href="/explore">Explore</a><span>What each person and service can reach, and why.</span></li>
+      </ul>
+    </section>
+    <section aria-labelledby="h-server">
+      <h2 id="h-server">Your server</h2>
+      <ul class="link-list">
+        <li><a href="/servers">Your servers</a><span>Describe your server for the viewer, and connect.</span></li>
+        <li><a href="/checks">Conformance</a><span>Checks against the guide, run in the page.</span></li>
+      </ul>
+    </section>
+  </div>
   <p class="note agents">Working with an AI agent? Give it <a href="/llms.txt">this sandbox's llms.txt</a>. It explains the whole sandbox and its API.</p>
 </main>
 <script src="/page.js"></script>

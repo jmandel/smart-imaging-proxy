@@ -270,10 +270,16 @@ a.path p:not(.path-kicker) { color:var(--muted); }
 }
 
 /* The site's home: who you are, then your sandboxes. A sandbox's home: its pages, by what they're for. */
-.audiences { margin-bottom:1.2rem; }
+/* Links with a line each saying what they're for: a list, dense enough to read at a glance. */
+.link-list { list-style:none; margin:0 0 1.2rem; padding:0; border-top:1px solid var(--line); }
+.link-list li { display:grid; grid-template-columns:minmax(9rem, 12rem) 1fr; gap:.15rem 1rem; align-items:baseline; padding:.6rem 0; border-bottom:1px solid var(--line); }
+.link-list a { font-weight:700; }
+.link-list span { color:var(--muted); }
+.sandbox-groups { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 13rem), 1fr)); gap:.5rem 1.5rem; margin-top:1.6rem; }
+.sandbox-groups .link-list li { grid-template-columns:1fr; }
+@media (max-width:34rem) { .link-list li { grid-template-columns:1fr; } }
 .your-sandboxes { margin-top:2.2rem; padding-top:1.4rem; border-top:1px solid var(--line); }
-.your-sandboxes h2, .sandbox-group h2 { font-size:1.1rem; margin:0 0 .3rem; }
-.sandbox-group { margin-top:1.6rem; }
+.your-sandboxes h2, .sandbox-groups h2 { font-size:1.1rem; margin:0 0 .4rem; }
 .guide-step { margin:0 0 .9rem; }
 .guide-step h2 { font-size:1.15rem; margin:0 0 .4rem; }
 .guide-links { display:flex; flex-wrap:wrap; gap:.4rem 1.2rem; align-items:center; margin:.6rem 0 0; }
