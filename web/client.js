@@ -13,10 +13,6 @@ function renderServers() {
   $$("input[name=server]").forEach(r => r.addEventListener("change", () => store(CHOICE_KEY, r.value)));
 }
 const STORE = `smart-imaging-client:${BASE}`;
-// As stored, since the decoder reads every standard syntax, with uncompressed as the fallback the spec makes universal.
-const WADO_ACCEPT = 'multipart/related; type="application/dicom"; transfer-syntax=*, multipart/related; type="application/dicom"; transfer-syntax=1.2.840.10008.1.2.1; q=0.5';
-/** How long the app will wait, in all, on servers that say to retry. */
-const MOST_RETRIES = 5, LONGEST_WAIT_SECONDS = 30;
 
 const saved = () => { try { return JSON.parse(sessionStorage.getItem(STORE) ?? "{}"); } catch { return {}; } };
 const save = patch => { try { sessionStorage.setItem(STORE, JSON.stringify({ ...saved(), ...patch })); } catch {} };
@@ -125,18 +121,6 @@ const preview = text => {
 const pretty = text => { try { return JSON.stringify(JSON.parse(text), null, 1); } catch { return text; } };
 const requestLine = (method, url, headers) => [`${method} ${preview(url)}`, ...Object.entries(headers ?? {}).map(([k, v]) => `${k}: ${/^authorization$/i.test(k) ? "Bearer …" : v}`)].join("\n");
 
-const sleep = (ms, signal) => new Promise((done, fail) => { const t = setTimeout(done, ms); signal?.addEventListener("abort", () => { clearTimeout(t); fail(new DOMException("aborted", "AbortError")); }, { once: true }); });
-/** A request, repeated while the server answers 503 with Retry-After: the spec's way of saying results are being assembled. */
-async function patientFetch(url, init, waiting = () => {}) {
-  for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url, init), after = Number(res.headers.get("retry-after"));
-    if (res.status !== 503 || !res.headers.has("retry-after") || !Number.isFinite(after) || attempt >= MOST_RETRIES) return res;
-    await res.body?.cancel();
-    const seconds = Math.min(after, LONGEST_WAIT_SECONDS);
-    waiting(seconds);
-    await sleep(seconds * 1000, init?.signal);
-  }
-}
 
 /** The same GET from a terminal. The token stays a variable, so the panel never holds it. */
 const curlOf = (url, headers) => `curl "${url}" \\\n${Object.entries(headers ?? {}).map(([k, v]) => `  -H "${k}: ${/^authorization$/i.test(k) ? "Bearer $TOKEN" : v.replace(/"/g, '\\"')}"`).join(" \\\n")}`;
@@ -224,7 +208,6 @@ function disconnect() {
 }
 
 // The chart.
-const fhirHeaders = token => ({ authorization: `Bearer ${token}`, accept: "application/fhir+json" });
 const CLINICAL = [
   ["AllergyIntolerance", "clinical-status=active", "Allergies", r => r.code?.text],
   ["Condition", "clinical-status=active", "Conditions", r => r.code?.text],
@@ -282,53 +265,14 @@ async function loadReports(s) {
   };
 }
 let currentStudies = [];
-const connectionOf = e => e?.connectionType?.code ?? e?.connectionType?.coding?.[0]?.code;
-/** An Endpoint by reference: contained, a response-local urn:uuid, or a full or relative URL in the Bundle. */
-function resolveEndpoint(owner, ref, entries) {
-  if (!ref) return undefined;
-  if (ref.startsWith("#")) return owner.contained?.find(c => c.id === ref.slice(1));
-  const endpoints = entries.filter(e => e.resource.resourceType === "Endpoint");
-  const relative = /^Endpoint\/[^/]+$/.test(ref);
-  return (endpoints.find(e => e.fullUrl === ref) ?? (relative ? endpoints.find(e => e.fullUrl?.endsWith(`/${ref}`) || e.resource.id === ref.split("/")[1]) : undefined))?.resource;
-}
-/** The WADO-RS address among some references. The token only ever goes to one of these, never to a QIDO-RS or viewer link. */
-function wadoAddress(owner, refs, entries) {
-  for (const r of refs ?? []) {
-    const e = resolveEndpoint(owner, r.reference, entries);
-    if (e?.address && connectionOf(e) === "dicom-wado-rs") return e.address.replace(/\/$/, "");
-  }
-  return undefined;
-}
-/** Every page of a search, each from the same server, and whether the server says something is missing. */
-async function searchAll(s) {
-  const first = `${s.imaging}/ImagingStudy?patient=${encodeURIComponent(s.patient)}&_include=ImagingStudy:endpoint`, origin = new URL(first).origin;
-  const entries = [];
-  let url = first, page = 0, incomplete = false;
-  const seen = new Set();
-  while (url && !seen.has(url) && page < 200) {
-    seen.add(url); page++;
-    const bundle = await traced({ id: page === 1 ? "imaging" : `imaging-${page}`, kind: "imaging", title: page === 1 ? "Search imaging studies" : `Search imaging studies, page ${page}` }, url, { headers: fhirHeaders(s.token) }, b => { const of = t => (b.entry ?? []).filter(e => e.resource?.resourceType === t).length; return page === 1 ? { Studies: of("ImagingStudy"), Endpoints: of("Endpoint") } : { [`Page ${page}`]: of("ImagingStudy") }; });
-    for (const e of bundle.entry ?? []) {
-      if (e.resource?.resourceType === "OperationOutcome" && e.resource.issue?.some(i => i.code === "incomplete")) incomplete = true;
-      else entries.push(e);
-    }
-    const next = bundle.link?.find(l => l.relation === "next")?.url;
-    // A next link is followed with the token, so it has to stay on the imaging server.
-    url = next && new URL(next, first).origin === origin ? new URL(next, first).toString() : undefined;
-  }
-  return { entries, incomplete };
-}
+/** Every page of the study search, each one recorded on the protocol panel. */
+const searchStudies = s => searchAll(`${s.imaging}/ImagingStudy?patient=${encodeURIComponent(s.patient)}&_include=ImagingStudy:endpoint`, (url, page) => traced({ id: page === 1 ? "imaging" : `imaging-${page}`, kind: "imaging", title: page === 1 ? "Search imaging studies" : `Search imaging studies, page ${page}` }, url, { headers: fhirHeaders(s.token) }, b => { const of = t => (b.entry ?? []).filter(e => e.resource?.resourceType === t).length; return page === 1 ? { Studies: of("ImagingStudy"), Endpoints: of("Endpoint") } : { [`Page ${page}`]: of("ImagingStudy") }; }));
 async function loadStudies(s) {
   const el = $("#studies");
   let entries, incomplete;
-  try { ({ entries, incomplete } = await searchAll(s)); }
+  try { ({ entries, incomplete } = await searchStudies(s)); }
   catch (e) { el.innerHTML = `<p class="error">${esc(e.message)}</p>`; throw e; }
-  const studies = entries.filter(e => e.resource?.resourceType === "ImagingStudy").map(e => e.resource).map(r => ({
-    ...r,
-    uid: (r.identifier ?? []).find(i => i.system === "urn:dicom:uid")?.value?.replace(/^urn:oid:/, ""),
-    address: r.status === "available" || r.status === undefined ? wadoAddress(r, r.endpoint, entries) : undefined,
-    series: (r.series ?? []).map(x => ({ ...x, address: wadoAddress(r, x.endpoint, entries) })),
-  })).sort((a, b) => String(b.started ?? "").localeCompare(String(a.started ?? "")));
+  const studies = studiesFrom(entries);
   currentStudies = studies;
   const warning = incomplete ? `<p class="note">The server says these results are incomplete. Some sources haven't answered yet.</p>` : "";
   if (!studies.length) { el.innerHTML = `${warning}<p class="note">This patient has no studies this app can see.</p>`; $("#stage-note").textContent = "No studies to show."; return; }
@@ -344,55 +288,17 @@ const viewer = ImageViewer.create($(".viewer"), { onShown: ms => { if (stats.fir
 const note = text => viewer.note(text);
 const stats = { images: 0, bytes: 0, firstMs: undefined };
 
-/** The one part of a single-instance retrieval, as bytes for the decoder. */
-function onlyPart(buffer, contentType) {
-  const boundary = contentType?.match(/boundary="?([^";]+)/)?.[1];
-  const bytes = new Uint8Array(buffer);
-  if (!boundary) return buffer;
-  const CRLF2 = [13, 10, 13, 10];
-  let head = -1;
-  for (let i = 0; i + 4 <= Math.min(bytes.length, 4096); i++) if (CRLF2.every((c, k) => bytes[i + k] === c)) { head = i; break; }
-  if (head < 0) throw new Error("The response had no multipart header.");
-  const start = head + 4, length = new TextDecoder().decode(bytes.subarray(0, head)).match(/content-length:\s*(\d+)/i)?.[1];
-  if (length) return buffer.slice(start, start + Number(length));
-  const close = new TextEncoder().encode(`\r\n--${boundary}`);
-  for (let i = bytes.length - close.length; i >= start; i--) if (close.every((c, k) => bytes[i + k] === c)) return buffer.slice(start, i);
-  throw new Error("The response had no closing boundary.");
-}
-/** How the viewer gets a study's images: from the WADO-RS address search gave, with this app's token. */
-function wadoSource(session, study) {
-  const base = series => series.address ?? study.address;
-  return {
-    async retrieve(series, instance, signal, waiting) {
-      const url = `${base(series)}/studies/${study.uid}/series/${series.uid}/instances/${instance}`, t0 = performance.now();
-      const res = await patientFetch(url, { headers: { authorization: `Bearer ${session.token}`, accept: WADO_ACCEPT }, signal }, waiting);
-      if (!res.ok) { await res.body?.cancel(); addStep({ id: "wado", kind: "wado", title: "Retrieve images", failed: true, request: requestLine("GET", url, { authorization: "x", accept: WADO_ACCEPT }), response: `HTTP ${res.status}` }); throw new Error(res.status === 406 ? "The image server can't send this image in a form this viewer accepts." : `The image server answered ${res.status}.`); }
-      const buffer = await res.arrayBuffer();
-      stats.images++; stats.bytes += buffer.byteLength;
-      addStep({ id: "wado", kind: "wado", title: "Latest image retrieved", ms: Math.round(performance.now() - t0), request: requestLine("GET", url, { authorization: "x", accept: WADO_ACCEPT }), response: `HTTP ${res.status}\ncontent-type: ${res.headers.get("content-type")}`, curl: curlOf(url, { authorization: "x", accept: WADO_ACCEPT }), facts: { Images: stats.images, Data: bytes(stats.bytes), ...(stats.firstMs === undefined ? {} : { "First image": `${stats.firstMs} ms` }) } });
-      return onlyPart(buffer, res.headers.get("content-type"));
-    },
-    /** A slide's small picture: the pyramid's THUMBNAIL, or its smallest single-frame level. Never OVERVIEW, which can show the label. */
-    async slideInstance(series, signal) {
-      const res = await patientFetch(`${base(series)}/studies/${study.uid}/series/${series.uid}/metadata`, { headers: { authorization: `Bearer ${session.token}`, accept: "application/dicom+json" }, signal });
-      if (!res.ok) throw new Error(`The image server answered ${res.status} for this slide's details.`);
-      const items = await res.json(), get = (o, t) => o?.[t]?.Value;
-      const typeOf = o => get(o, "00080008") ?? [], uid = o => get(o, "00080018")?.[0];
-      const thumb = items.find(o => typeOf(o)[2] === "THUMBNAIL");
-      if (thumb) return uid(thumb);
-      const area = o => Number(get(o, "00280010")?.[0] ?? 0) * Number(get(o, "00280011")?.[0] ?? 0);
-      const smallest = items.filter(o => typeOf(o)[2] === "VOLUME" && Number(get(o, "00280008")?.[0] ?? 1) === 1).sort((a, b) => area(a) - area(b))[0];
-      return smallest && uid(smallest);
-    },
-  };
-}
+/** How the viewer gets a study's images, each retrieval recorded on the protocol panel. */
+const recordedSource = (session, study) => wadoSource(session.token, study, { seen: r => {
+  const request = requestLine("GET", r.url, { authorization: "x", accept: WADO_ACCEPT });
+  if (r.failed) { addStep({ id: "wado", kind: "wado", title: "Retrieve images", failed: true, request, response: `HTTP ${r.status}` }); return; }
+  stats.images++; stats.bytes += r.bytes;
+  addStep({ id: "wado", kind: "wado", title: "Latest image retrieved", ms: r.ms, request, response: `HTTP ${r.status}\ncontent-type: ${r.contentType}`, curl: curlOf(r.url, { authorization: "x", accept: WADO_ACCEPT }), facts: { Images: stats.images, Data: bytes(stats.bytes), ...(stats.firstMs === undefined ? {} : { "First image": `${stats.firstMs} ms` }) } });
+} });
 function openStudy(session, study, button) {
   $$(".study-button").forEach(b => b.setAttribute("aria-pressed", String(b === button)));
   stats.firstMs = undefined;
-  viewer.openStudy((study.series ?? []).map(s => ({
-    uid: s.uid, number: s.number, modality: s.modality?.code, description: s.description, address: s.address, count: s.numberOfInstances ?? s.instance?.length ?? 0,
-    instances: [...(s.instance ?? [])].sort((a, b) => (a.number ?? 0) - (b.number ?? 0)).map(i => i.uid),
-  })), wadoSource(session, study));
+  viewer.openStudy(viewerSeries(study), recordedSource(session, study));
 }
 
 // The sandboxes this browser knows. The list is the only thing kept: the URL says which one a page is in.
