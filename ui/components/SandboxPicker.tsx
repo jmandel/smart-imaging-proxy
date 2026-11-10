@@ -13,12 +13,11 @@ export function SandboxPicker() {
   return (
     <div className="sandbox-picker" id="guide-sandbox">
       {current ? <>
-        <label htmlFor="picker-sandbox">Working in</label>
+        <label htmlFor="picker-sandbox">The steps below use</label>
         <select id="picker-sandbox" value={current.base} onChange={e => chooseSandbox(e.target.value)}>
           {list.map(w => <option key={w.base} value={w.base}>{w.name ?? "Sandbox"}</option>)}
         </select>
         <button type="button" className="tool" onClick={make} disabled={making}>New sandbox</button>
-        <a href={`${current.base}/`}>Its home</a>
       </> : <>
         <span>You don't have a sandbox yet. Make one to follow these steps in it.</span>
         <button type="button" className="primary" onClick={make} disabled={making}>Create a sandbox</button>
