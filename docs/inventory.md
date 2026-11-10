@@ -102,6 +102,27 @@ it. A sandbox is one more server in its list, signed in to with the sandbox's bu
 chosen. It signs in all three ways, to a sandbox or to your server: a public app with PKCE, a confidential
 app with `private_key_jwt`, and a backend service.
 
+### Surfaces for agents
+
+Settled with Josh, November 2026. Each thing an agent can do is offered one way, so no second surface has to be
+kept in step or second-guessed. There are three, each for a different job:
+
+1. **The HTTP API, mapped by llms.txt.** Everything an agent can do, browser or not: a sandbox's state, its
+   activity log (and in it, the steps a person takes), `contract.json`, check runs. A capability that exists
+   only in the UI is a gap to close here, as per-study approval at sign-in was.
+2. **Links.** How to hand a person an exact view, or put something in their browser: every state worth showing
+   someone is a link. Browser-only data, such as Your servers, arrives by a link that fills in its form, with
+   the values after `#` so they never reach the server, not by a JavaScript API.
+3. **The pages, driven as a person would drive them.** By role and accessible name, with `html[data-ready]`
+   once a page's data has loaded. Anything else a driver needs to read, such as a tab's session, is a plain
+   attribute on the page, not a JavaScript object.
+
+So there's no documented in-browser API: `window.sandboxApi` is a helper for this site's own tests. A step a
+person takes is recorded once, on the server, by tagging the requests it makes; an agent driving a page reads
+the tab's session from the page and asks the API, as any agent would. `contract.json`'s `state` stays a small
+read-only summary of what the management API owns, so "is this sandbox clean?" needs no token, and doesn't
+grow into a second management API.
+
 ### Done
 
 - The guides, the home page, the menu, the sandbox bar and the footer, from one site map.
