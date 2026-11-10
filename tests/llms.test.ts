@@ -33,7 +33,8 @@ test("from a sandbox it names that sandbox, and keeps it out of indexes", async 
 test("the documented sign-in, reads, and management all work", async () => {
   const w = stack.sandboxes.mint(), S = w.urls.auth, redirect = "https://example.org/callback";
   const admin = await adminHeaders(demo, w.prefix);
-  const made = await (await demo.fetch(new Request(`${CONFIG.demoUrl}${w.prefix}/api/sandbox/clients`, { method: "POST", headers: { "content-type": "application/json", ...admin }, body: JSON.stringify({ name: "Agent", redirectUris: [redirect] }) }))).json() as any;
+  const made = await (await demo.fetch(new Request(`${CONFIG.demoUrl}${w.prefix}/register`, { method: "POST", headers: { "content-type": "application/json", ...admin }, body: JSON.stringify({ client_name: "Agent", redirect_uris: [redirect] }) }))).json() as any;
+  made.id = made.client_id;
   const verifier = randomBytes(32).toString("base64url"), challenge = createHash("sha256").update(verifier).digest("base64url");
   const url = new URL(`${S}/authorize`);
   Object.entries({ response_type: "code", client_id: made.id, redirect_uri: redirect, scope: "launch/patient patient/*.rs", aud: `${S}/fhir`, state: "x", code_challenge: challenge, code_challenge_method: "S256" }).forEach(([k, v]) => url.searchParams.set(k, v));

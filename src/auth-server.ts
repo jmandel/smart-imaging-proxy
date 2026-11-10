@@ -471,6 +471,8 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
       return Response.json({
         issuer: opts.issuer, authorization_endpoint: `${opts.issuer}/authorize`, token_endpoint: tokenUrl,
         introspection_endpoint: `${opts.issuer}/introspect`, revocation_endpoint: `${opts.issuer}/revoke`,
+        // A sandbox registers apps by RFC 7591, with its admin token as the initial access token.
+        ...(opts.registeredClient ? { registration_endpoint: `${opts.issuer}/register` } : {}),
         grant_types_supported: ["authorization_code", "client_credentials", "refresh_token"],
         response_types_supported: ["code"], code_challenge_methods_supported: ["S256"],
         token_endpoint_auth_methods_supported: ["none", "private_key_jwt"], token_endpoint_auth_signing_alg_values_supported: ["ES256", "ES384", "RS384"],

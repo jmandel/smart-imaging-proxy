@@ -34,8 +34,8 @@ beforeAll(async () => {
   stack = await startStack(root);
   demo = Bun.serve({ port: PORTS.demo, hostname: "127.0.0.1", ...createDemoServer(stack, registerClients(stack), root) });
   base = ((await (await fetch(`${CONFIG.demoUrl}/api/sandboxes`, { method: "POST" })).json()) as any).base;
-  const app: any = await (await fetch(`${S()}/api/sandbox/clients`, { method: "POST", headers: { ...await adminHeaders({ fetch: r => fetch(r) }, base), "content-type": "application/json" }, body: JSON.stringify({ name: "Contract test", redirectUris: [REDIRECT] }) })).json();
-  clientId = app.id;
+  const app: any = await (await fetch(`${S()}/register`, { method: "POST", headers: { ...await adminHeaders({ fetch: r => fetch(r) }, base), "content-type": "application/json" }, body: JSON.stringify({ client_name: "Contract test", redirect_uris: [REDIRECT] }) })).json();
+  clientId = app.client_id;
   contract = await (await fetch(`${S()}/contract.json`)).json() as Contract;
 });
 afterAll(() => { demo?.stop(true); stack?.stop(); });

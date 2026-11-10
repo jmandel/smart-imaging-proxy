@@ -70,6 +70,14 @@ export function useClients(base: string) {
 export const CLIENT_KINDS = TYPES.map(t => t[0]);
 /** The form that registers an app in `base`'s sandbox. `registered` hears of the app it made. Its kind of app is
  *  its own, unless the page holds it, as Register an app does in its address. */
+/** What registering answers, RFC 7591's client metadata, as the app this page shows. */
+interface RegisteredMetadata { client_id: string; client_name: string; token_endpoint_auth_method: string; grant_types: string[]; redirect_uris?: string[]; jwks?: { keys: (JsonWebKey & { kid: string })[] }; jwks_uri?: string; patients?: string }
+const clientOf = (m: RegisteredMetadata): Client => ({
+  id: m.client_id, name: m.client_name, redirectUris: m.redirect_uris ?? [],
+  type: m.grant_types.includes("client_credentials") ? "backend" : m.token_endpoint_auth_method === "private_key_jwt" ? "confidential" : "public",
+  ...(m.jwks ? { jwk: m.jwks.keys[0] } : {}), ...(m.jwks_uri ? { jwksUrl: m.jwks_uri } : {}), ...(m.patients ? { patients: m.patients } : {}),
+} as Client);
+
 export function RegisterForm({ base, registered, title = "Register an app", kind }: { base: string; registered: (c: Client) => void; title?: string; kind?: [ClientType, (t: ClientType) => void] }) {
   const [name, setName] = useState(""), [ownType, setOwnType] = useState<ClientType>("public"), [redirect, setRedirect] = useState("");
   const [type, setType] = kind ?? [ownType, setOwnType];
@@ -80,17 +88,18 @@ export function RegisterForm({ base, registered, title = "Register an app", kind
     e.preventDefault();
     setError(undefined);
     try {
-      const body: Record<string, unknown> = { name, type };
+      // RFC 7591 client metadata: the kind of app follows from how it authenticates, and its grant.
+      const body: Record<string, unknown> = { client_name: name, token_endpoint_auth_method: type === "public" ? "none" : "private_key_jwt", grant_types: type === "backend" ? ["client_credentials"] : ["authorization_code"] };
       let priv: PrivateJwk | undefined;
       // Its own redirect URI, and ours too unless asked not to, so it can be tried in our viewer.
-      if (type !== "backend") body.redirectUris = [...new Set([redirect.trim(), ...(viewerToo ? [VIEWER_URL] : [])].filter(Boolean))];
+      if (type !== "backend") body.redirect_uris = [...new Set([redirect.trim(), ...(viewerToo ? [VIEWER_URL] : [])].filter(Boolean))];
       if (type !== "public") {
-        if (jwks.trim()) body.jwksUrl = jwks.trim();
-        else if (pasted.trim()) { try { body.jwk = JSON.parse(pasted); } catch { throw new Error("The key isn't valid JSON."); } }
-        else { const made = await generateKey(); body.jwk = made.pub; priv = made.priv; }
+        if (jwks.trim()) body.jwks_uri = jwks.trim();
+        else if (pasted.trim()) { try { body.jwks = { keys: [JSON.parse(pasted)] }; } catch { throw new Error("The key isn't valid JSON."); } }
+        else { const made = await generateKey(); body.jwks = { keys: [made.pub] }; priv = made.priv; }
       }
       if (type === "backend") body.patients = patients;
-      const made = await api<Client>("POST", "/api/sandbox/clients", body, base);
+      const made = clientOf(await api<RegisteredMetadata>("POST", "/register", body, base));
       if (priv) keepKey(made.id, priv);
       setName(""); setType("public"); setRedirect(""); setJwks(""); setPasted(""); setPatients("any");
       announce(`${made.name} registered.`);

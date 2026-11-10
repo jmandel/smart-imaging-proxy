@@ -31,6 +31,6 @@ export const adminHeaders = async (demo: Demo, prefix: string) => ({ authorizati
 /** Headers with the admin token of the sandbox a path is in, for a path that's on the management API; none otherwise. */
 export async function adminFor(demo: Demo, path: string): Promise<Record<string, string>> {
   const at = new URL(path, CONFIG.demoUrl).pathname;
-  if (!/^(\/s\/[^/]+)?\/api\/sandbox(\/|$|\?)/.test(at) || /\/api\/sandbox\/keys-shared-on-purpose$/.test(at)) return {};
+  if (!/^(\/s\/[^/]+)?(\/api\/sandbox(\/|$|\?)|\/register$)/.test(at) || /\/api\/sandbox\/keys-shared-on-purpose$/.test(at)) return {};
   return adminHeaders(demo, at.match(/^\/s\/[^/]+/)?.[0] ?? "");
 }

@@ -6,7 +6,7 @@ import { contractOf, expectedTable } from "./contract";
 import { join } from "node:path";
 import { fetchJwks } from "./jwks";
 import { PORTS, PUBLIC_DEMO } from "./config";
-import { addClient, listClients, removeClient } from "./clients";
+import { listClients, metadataOf, register, removeClient } from "./clients";
 import { traced, traceSettled } from "./trace";
 import type { BackendName, Stack } from "./stack";
 import { flowById } from "./flows";
@@ -165,6 +165,20 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       if (p === "/checks" && req.method === "GET") return new Response(null, { status: 308, headers: { location: `/check${sandbox.id ? `?sandbox=${encodeURIComponent(sandbox.prefix)}` : ""}` } });
       // The management API takes this sandbox's admin token. Its keys are the one thing open: the URL is the access.
       if (p === KEYS_PATH && req.method === "GET") return PUBLIC_DEMO && !sandbox.id ? json({ error: "the shared sandbox gives out no keys: make a sandbox of your own with POST /api/sandboxes" }, 403) : json(sampleKeys(sandbox));
+      // Registering an app: RFC 7591 dynamic registration, with the sandbox's admin token as the initial access
+      // token, so it's protected as the management API is. Listing and removing apps stay in the management API.
+      if (p === "/register") {
+        if (req.method !== "POST") return json({ error: "invalid_request", error_description: "register with POST" }, 405, { allow: "POST" });
+        if (!sandbox.id) return json({ error: "invalid_request", error_description: "apps are registered in a sandbox: POST /api/sandboxes for one, then POST $SANDBOX/register" }, 409);
+        if (adminDenied(sandbox, req)) return json({ error: "invalid_token", error_description: "registering takes this sandbox's admin token as its initial access token: get one with its admin key, from GET /api/sandbox/keys-shared-on-purpose" }, 401, { "WWW-Authenticate": 'Bearer error="invalid_token"' });
+        const refused = refuseWrite(req, url);
+        if (refused) return refused;
+        const metadata = await req.json().catch(() => null);
+        // A jwks_uri has to work when it's registered, which also shows its owner any mistake straight away.
+        const uri = metadata?.jwks_uri, reachable = typeof uri === "string" && uri ? !!(await fetchJwks(uri, PUBLIC_DEMO))?.length : true;
+        const made = register(sandbox.store, metadata, { jwksReachable: () => reachable });
+        return "error" in made ? json(made, 400) : json({ ...metadataOf(made), client_id_issued_at: Math.floor(Date.now() / 1000) }, 201);
+      }
       if (p === "/api/sandbox" || p.startsWith("/api/sandbox/")) {
         const denied = adminDenied(sandbox, req);
         if (denied) return denied;
@@ -241,13 +255,6 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         if (req.method === "GET" && p === "/api/sandbox/clients") return json({ clients: listClients(sandbox.store) });
         const refused = refuseWrite(req, url);
         if (refused) return refused;
-        if (req.method === "POST" && p === "/api/sandbox/clients") {
-          const body = await req.json().catch(() => ({}));
-          // A URL has to work when it's registered, which also shows its owner any mistake straight away.
-          const jwksUrl = (body as any).jwksUrl, jwksOk = typeof jwksUrl === "string" && jwksUrl ? !!(await fetchJwks(jwksUrl, PUBLIC_DEMO))?.length : true;
-          const made = addClient(sandbox.store, body as any, { jwksReachable: () => jwksOk });
-          return "error" in made ? json(made, 400) : json(made, 201);
-        }
         // Clearing up after a batch of test apps: every one whose name starts with the prefix, which can't be empty.
         if (req.method === "DELETE" && p === "/api/sandbox/clients") {
           const prefix = url.searchParams.get("name-prefix") ?? "";

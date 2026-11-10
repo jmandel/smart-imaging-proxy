@@ -94,3 +94,45 @@ export function removeClient(store: PolicyStore, id: string): boolean {
   save(store, clients.filter(c => c.id !== id));
   return true;
 }
+
+/** Client metadata, as RFC 7591 names it, with one extension: `patients`, which patients a backend service may
+ *  reach (`any`, or one patient's id), since a service has no one to approve it. */
+export interface ClientMetadata {
+  client_name?: string; redirect_uris?: string[]; grant_types?: string[]; response_types?: string[];
+  token_endpoint_auth_method?: "none" | "private_key_jwt"; token_endpoint_auth_signing_alg?: string;
+  jwks?: { keys: JsonWebKey[] }; jwks_uri?: string; scope?: string; patients?: string;
+}
+/** An RFC 7591 error: `invalid_redirect_uri` or `invalid_client_metadata`, with what's wrong. */
+export interface RegistrationError { error: "invalid_redirect_uri" | "invalid_client_metadata"; error_description: string }
+
+/** What a registered app is, as RFC 7591 client metadata, with its id: the answer to registering it. */
+export function metadataOf(c: RegisteredClient): ClientMetadata & { client_id: string } {
+  const signs = c.type !== "public";
+  return {
+    client_id: c.id, client_name: c.name,
+    ...(c.type === "backend" ? {} : { redirect_uris: c.redirectUris, response_types: ["code"] }),
+    grant_types: c.type === "backend" ? ["client_credentials"] : ["authorization_code"],
+    token_endpoint_auth_method: signs ? "private_key_jwt" : "none",
+    ...(c.jwk ? { jwks: { keys: [c.jwk] } } : {}), ...(c.jwksUrl ? { jwks_uri: c.jwksUrl } : {}),
+    scope: c.type === "backend" ? BACKEND_SCOPES.join(" ") : "launch/patient patient/*.rs",
+    ...(c.type === "backend" ? { patients: c.patients } : {}),
+  };
+}
+
+/** Registers an app from RFC 7591 client metadata: its kind follows from how it authenticates and its grant. */
+export function register(store: PolicyStore, m: ClientMetadata, check: { jwksReachable?: (url: string) => boolean } = {}): RegisteredClient | RegistrationError {
+  const bad = (d: string): RegistrationError => ({ error: "invalid_client_metadata", error_description: d });
+  if (typeof m !== "object" || m === null || Array.isArray(m)) return bad("the body must be a JSON object of client metadata");
+  const method = m.token_endpoint_auth_method ?? "none", grants = m.grant_types ?? ["authorization_code"];
+  if (method !== "none" && method !== "private_key_jwt") return bad("token_endpoint_auth_method must be none or private_key_jwt");
+  const backend = grants.length === 1 && grants[0] === "client_credentials";
+  if (!backend && !(grants.includes("authorization_code") && grants.every(g => g === "authorization_code" || g === "refresh_token"))) return bad("grant_types must be [\"authorization_code\"] (optionally with refresh_token), or [\"client_credentials\"]");
+  if (backend && method !== "private_key_jwt") return bad("a client_credentials client authenticates with private_key_jwt");
+  if (m.response_types && (backend || m.response_types.join() !== "code")) return bad("response_types must be [\"code\"], and only for authorization_code");
+  if (m.jwks && m.jwks_uri) return bad("give jwks or jwks_uri, not both");
+  if (method === "none" && (m.jwks || m.jwks_uri)) return bad("a client with token_endpoint_auth_method none has no keys");
+  const type: ClientType = backend ? "backend" : method === "private_key_jwt" ? "confidential" : "public";
+  const made = addClient(store, { name: m.client_name ?? "Unnamed app", type, redirectUris: m.redirect_uris, jwk: m.jwks, jwksUrl: m.jwks_uri, patients: m.patients }, check);
+  if (!("error" in made)) return made;
+  return { error: /redirect URI/.test(made.error) ? "invalid_redirect_uri" : "invalid_client_metadata", error_description: made.error };
+}

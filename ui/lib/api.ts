@@ -15,7 +15,8 @@ export class ApiError extends Error {
 
 /** A call to a sandbox, with any headers of the page's own. Gives the JSON answer, or throws what went wrong. */
 export async function api<T = any>(method: string, path: string, body?: unknown, base = BASE, headers: Record<string, string> = {}): Promise<T> {
-  const managed = path.startsWith("/api/sandbox");
+  // The management API, and registering an app, which takes the admin token as RFC 7591's initial access token.
+  const managed = path.startsWith("/api/sandbox") || path === "/register";
   const send = async () => fetch(`${base}${path}`, {
     method,
     headers: { ...headers, ...(managed ? { authorization: `Bearer ${await adminToken(base)}` } : {}), ...(body === undefined ? {} : { "content-type": "application/json" }) },
@@ -25,7 +26,7 @@ export async function api<T = any>(method: string, path: string, body?: unknown,
   // A token revoked, or expired by the demo clock: get a fresh one, once.
   if (r.status === 401 && managed) { adminTokens.delete(base); r = await send(); }
   const b = await r.json().catch(() => ({}));
-  if (!r.ok) throw new ApiError(b.error ?? `HTTP ${r.status}`, r.status);
+  if (!r.ok) throw new ApiError(b.error_description ?? b.error ?? `HTTP ${r.status}`, r.status);
   return b;
 }
 

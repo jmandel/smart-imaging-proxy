@@ -292,7 +292,7 @@ describe("the demo client", () => {
     expect(await page.locator("#discovery li[data-state=bad]").count()).toBe(0);
     // Registered in this sandbox as a developer would at their own server: the redirect URI, and the jwks_uri,
     // which the sandbox's sign-in fetches to check the viewer's assertion.
-    const made = await page.evaluate(([b, u]) => (window as any).sandboxApi("POST", "/api/sandbox/clients", { name: "Builder test", type: "confidential", redirectUris: [`${location.origin}/viewer`], jwksUrl: u }, b), [base, jwksUri] as const);
+    const made = await page.evaluate(([b, u]) => (window as any).sandboxApi("POST", "/register", { client_name: "Builder test", token_endpoint_auth_method: "private_key_jwt", redirect_uris: [`${location.origin}/viewer`], jwks_uri: u }, b).then((m: any) => ({ ...m, id: m.client_id })), [base, jwksUri] as const);
     await page.getByLabel("Name", { exact: true }).fill("Signed in");
     await page.getByLabel("Client ID").fill(made.id);
     await shot(page, "server-builder-confidential");

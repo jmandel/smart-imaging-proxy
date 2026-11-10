@@ -12,11 +12,14 @@ const assertion = `${head}.${b64(sign("sha256", Buffer.from(head), { key: create
 const admin = (await (await must(await fetch(k.tokenEndpoint, { method: "POST", body: new URLSearchParams({ grant_type: "client_credentials", scope: "sandbox/admin", client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: assertion }) }), "admin token")).json()).access_token;
 // 2. A public app, with a redirect URI nothing needs to serve: the code is read from the redirect itself.
 const redirect = "http://localhost:8123/callback";
-const app = await (await must(await fetch(`${SANDBOX}/api/sandbox/clients`, { method: "POST", headers: { authorization: `Bearer ${admin}`, "content-type": "application/json" }, body: JSON.stringify({ name: "Smoke test", redirectUris: [redirect] }) }), "register")).json();
+// Registered by RFC 7591 dynamic registration, at discovery's registration_endpoint, with the admin token as its
+// initial access token. An app that already registers itself this way needs nothing else.
+const conf = await (await must(await fetch(`${SANDBOX}/fhir/.well-known/smart-configuration`), "discovery")).json();
+const registered = await (await must(await fetch(conf.registration_endpoint, { method: "POST", headers: { authorization: `Bearer ${admin}`, "content-type": "application/json" }, body: JSON.stringify({ client_name: "Smoke test", redirect_uris: [redirect], token_endpoint_auth_method: "none", grant_types: ["authorization_code"], response_types: ["code"], scope: "launch/patient patient/*.rs" }) }), "register")).json();
+const app = { id: registered.client_id };
 // The app is removed at the end, pass or fail, and its approval and tokens with it.
 try {
   // 3. Sign in as josh, through the forms, with PKCE.
-  const conf = await (await must(await fetch(`${SANDBOX}/fhir/.well-known/smart-configuration`), "discovery")).json();
   const state = b64(randomBytes(16)), verifier = b64(randomBytes(32)), challenge = b64(createHash("sha256").update(verifier).digest());
   const auth = new URL(conf.authorization_endpoint);
   for (const [n, v] of Object.entries({ response_type: "code", client_id: app.id, redirect_uri: redirect, scope: "launch/patient patient/*.rs", aud: `${SANDBOX}/fhir`, state, code_challenge: challenge, code_challenge_method: "S256" })) auth.searchParams.set(n, v);
