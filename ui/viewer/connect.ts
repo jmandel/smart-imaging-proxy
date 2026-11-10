@@ -5,14 +5,16 @@ import { BACKEND_CAPABILITY, imagingOf, VIEWER_URL, type ServerEntry } from "../
 import { viewerKeeper, type Keeper, type Session } from "./session";
 import { requestLine, type Trail } from "./trail";
 
-const SCOPE = "launch/patient patient/*.rs";
+/** The scopes asked for when an entry names none: a sign-in's, and a backend service's. */
+export const SCOPE = "launch/patient patient/*.rs", BACKEND_SCOPE = "system/ImagingStudy.rs";
 const NO_LAUNCH = "This server doesn't advertise SMART Imaging with App Launch. If you know where its imaging FHIR server is, add it under Advanced in Your servers.";
 const random = () => b64url(crypto.getRandomValues(new Uint8Array(32)));
 /**
- * How a connection is made. `keeper` is where it saves its state (the viewer's tab, unless given), and `config`
- * a discovery already read, so it isn't asked for again.
+ * How a connection is made. `keeper` is where it saves its state (the viewer's tab, unless given), `config`
+ * a discovery already read, so it isn't asked for again, and `assertion` signs the client's assertion for a
+ * token endpoint when the key isn't in the entry, as when it stays on the server with an agent's run.
  */
-export interface ConnectOptions { keeper?: Keeper; config?: any }
+export interface ConnectOptions { keeper?: Keeper; config?: any; assertion?: (tokenEndpoint: string) => Promise<string> }
 const tokenFacts = (t: any) => ({ Granted: t.scope, "Token lasts": `${Math.round(t.expires_in / 60)} min` });
 
 function discover(trail: Trail, iss: string) {
@@ -56,13 +58,14 @@ export function signInReturn(tab: Window, state: string): Promise<URLSearchParam
 }
 
 /** The code exchanged for a token, signed with the client's key when it has one. */
-export async function finishSignIn(trail: Trail, params: URLSearchParams, { keeper = viewerKeeper }: ConnectOptions = {}): Promise<Session> {
+export async function finishSignIn(trail: Trail, params: URLSearchParams, { keeper = viewerKeeper, assertion }: ConnectOptions = {}): Promise<Session> {
   const { pending } = keeper.saved();
   if (!pending || pending.state !== params.get("state")) throw new Error("This sign-in didn't start here. Connect again.");
   keeper.save({ pending: undefined });
   const error = params.get("error");
   if (error) { trail.add({ id: "authorize", kind: "authorize", title: "Sign in and approve the app", failed: true, response: error }); throw new Error(`The sign-in ended with: ${error}`); }
-  const signed: Record<string, string> = pending.jwk ? { client_assertion_type: ASSERTION_TYPE, client_assertion: await signAssertion(pending.jwk, pending.clientId, pending.config.token_endpoint) } : {};
+  const sign = assertion ?? (pending.jwk && ((aud: string) => signAssertion(pending.jwk!, pending.clientId, aud)));
+  const signed: Record<string, string> = sign ? { client_assertion_type: ASSERTION_TYPE, client_assertion: await sign(pending.config.token_endpoint) } : {};
   const body = new URLSearchParams({ grant_type: "authorization_code", code: params.get("code") ?? "", redirect_uri: VIEWER_URL, client_id: pending.clientId, code_verifier: pending.verifier, ...signed }).toString();
   const token = await trail.traced({ id: "token", kind: "token", title: "Exchange the code for a token" }, pending.config.token_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body }, tokenFacts);
   const imaging = imagingOf(pending.config, pending.iss)?.url ?? pending.imaging;
@@ -74,13 +77,14 @@ export async function finishSignIn(trail: Trail, params: URLSearchParams, { keep
 }
 
 /** A backend service: no one signs in. It proves its identity, gets a token, and names the patient itself. */
-export async function connectBackend(trail: Trail, server: ServerEntry, { keeper = viewerKeeper, config: read }: ConnectOptions = {}): Promise<Session> {
+export async function connectBackend(trail: Trail, server: ServerEntry, { keeper = viewerKeeper, config: read, assertion }: ConnectOptions = {}): Promise<Session> {
   if (!read) trail.clear();
   const config = read ?? await discover(trail, server.iss);
   const imaging = imagingOf(config, server.iss, BACKEND_CAPABILITY)?.url ?? server.imaging;
   if (!imaging) throw new Error("This server doesn't advertise SMART Imaging for Backend Services.");
-  const scope = server.scope ?? "system/ImagingStudy.rs";
-  const body = new URLSearchParams({ grant_type: "client_credentials", scope, client_assertion_type: ASSERTION_TYPE, client_assertion: await signAssertion(server.jwk!, server.clientId, config.token_endpoint) }).toString();
+  const scope = server.scope ?? BACKEND_SCOPE;
+  const signed = assertion ? await assertion(config.token_endpoint) : await signAssertion(server.jwk!, server.clientId, config.token_endpoint);
+  const body = new URLSearchParams({ grant_type: "client_credentials", scope, client_assertion_type: ASSERTION_TYPE, client_assertion: signed }).toString();
   const token = await trail.traced({ id: "backend-token", kind: "backend-token", title: "Authenticate and get a token" }, config.token_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body }, tokenFacts);
   const session: Session = { token: token.access_token, patient: server.patient!, imaging: imaging.replace(/\/$/, ""), iss: server.iss, label: server.label, backend: true };
   keeper.save({ session });

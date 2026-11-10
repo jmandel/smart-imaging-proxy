@@ -1,10 +1,10 @@
 // Describing a server of your own for the viewer: what it is, how the viewer signs in, and what to
 // register there. Discovery is checked here, from the browser, the way the viewer itself will read it.
 import { Fragment, useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { launchViewer } from "../lib/launch";
 import type { PrivateJwk } from "../lib/api";
-import { announce, CopyButton, plural } from "../lib/format";
+import { Address, announce, CopyButton, plural } from "../lib/format";
 import {
   APP_LAUNCH, BACKEND_CAPABILITY, checkServer, generateKey, imagingOf, parseServers, putServer,
   savedServers, saveServers, serverKey, VIEWER_URL, type ServerEntry,
@@ -112,25 +112,21 @@ function RegisterFacts({ how, keyPair }: { how: How; keyPair: PrivateJwk | null 
 const checkOf = (s: ServerEntry) => `/check?${new URLSearchParams({ server: serverKey(s) })}`;
 
 function Saved({ list, onEdit, onRemove }: { list: ServerEntry[]; onEdit: (s: ServerEntry) => void; onRemove: (s: ServerEntry) => void }) {
-  if (!list.length) return <p className="note">None yet. Servers you save here are offered in the viewer, beside your sandboxes.</p>;
-  return <>{list.map(s => (
-    <article className="panel registered" key={serverKey(s)}>
-      <div className="registered-head"><h3>{s.label}</h3></div>
-      <dl className="registered-facts">
-        <dt>FHIR base</dt><dd><code>{s.iss}</code></dd>
-        <dt>Connects as</dt><dd>{HOW_LABEL[howOf(s)]}</dd>
-        <dt>Client ID</dt><dd><code>{s.clientId}</code></dd>
-        {s.patient && <><dt>Patient</dt><dd><code>{s.patient}</code></dd></>}
-        {s.imaging && <><dt>Imaging</dt><dd><code>{s.imaging}</code></dd></>}
-      </dl>
-      <div className="configure-actions">
+  return <ul className="server-rows">{list.map(s => (
+    <li key={serverKey(s)}>
+      <div className="server-row-what">
+        <h3>{s.label}</h3>
+        <p><code>{s.iss}</code></p>
+        <p className="note">{HOW_LABEL[howOf(s)]}, client ID <code>{s.clientId}</code>{s.patient ? <>, patient <code>{s.patient}</code></> : null}</p>
+      </div>
+      <div className="server-row-actions">
         <Link className="button" to={checkOf(s)}>Check it</Link>
         <button type="button" className="secondary" onClick={() => launchViewer(s, { connect: true })}>Open in the viewer</button>
-        <button type="button" className="secondary" onClick={() => onEdit(s)}>Edit</button>
+        <button type="button" className="tool" onClick={() => onEdit(s)} aria-label={`Edit ${s.label}`}>Edit</button>
         <button type="button" className="tool quiet-danger" aria-label={`Remove ${s.label}`} onClick={() => onRemove(s)}>Remove</button>
       </div>
-    </article>
-  ))}</>;
+    </li>
+  ))}</ul>;
 }
 
 /** The same list as JSON, to copy into another browser or edit by hand. */
@@ -155,6 +151,9 @@ function ServersJson({ list, replaced }: { list: ServerEntry[]; replaced: () => 
 
 export default function Servers() {
   const [list, setList] = useState<ServerEntry[]>(savedServers);
+  // The list, or the form: adding (?add) or editing (?edit=key), so Back and a reload keep the place. With none saved, the form.
+  const [params, setParams] = useSearchParams();
+  const editKey = params.get("edit");
   const [fields, setFields] = useState<Fields>(EMPTY);
   const [how, setHow] = useState<How>("public");
   /** The private key the viewer signs with, made here or pasted. */
@@ -180,15 +179,20 @@ export default function Servers() {
     setFields(EMPTY); setHow("public"); setKeyPair(null); setEditing(null); setAutoLabel(false);
     setPasteOpen(false); setAdvancedOpen(false); setDiscovered(null); setError(undefined);
   };
-  const edit = (s: ServerEntry) => {
+  const fill = (s: ServerEntry) => {
     clearForm();
     setEditing({ key: serverKey(s), label: s.label });
     setFields({ ...EMPTY, iss: s.iss, label: s.label, clientId: s.clientId, scope: s.scope ?? "", imaging: s.imaging ?? "", patient: s.patient ?? "" });
     setHow(howOf(s)); setKeyPair(s.jwk ?? null); setAdvancedOpen(!!(s.scope || s.imaging));
-    const form = document.getElementById("server-form");
-    form?.scrollIntoView({ block: "start" });
-    document.getElementById("srv-iss")?.focus({ preventScroll: true });
   };
+  const toList = () => { clearForm(); setParams({}); };
+  const edit = (s: ServerEntry) => { setParams({ edit: serverKey(s) }); window.scrollTo(0, 0); };
+  // The form follows the address: an edit link, Back, or a reload fills it from the saved entry.
+  useEffect(() => {
+    if (!editKey) { if (editing) clearForm(); return; }
+    const s = savedServers().find(x => serverKey(x) === editKey);
+    if (s && editing?.key !== editKey) fill(s);
+  }, [editKey]);
   const remove = (s: ServerEntry) => {
     saveServers(savedServers().filter(x => serverKey(x) !== serverKey(s)));
     if (editing?.key === serverKey(s)) clearForm();
@@ -241,6 +245,7 @@ export default function Servers() {
       putServer(entry, editing?.key ?? serverKey(entry));
       clearForm();
       reload();
+      setParams({});
       announce(`Saved ${entry.label}.`);
       return entry;
     } catch (e) { setError((e as Error).message); return null; }
@@ -250,16 +255,23 @@ export default function Servers() {
   const missing = (() => { try { entryOfForm(false); return undefined; } catch (e) { return (e as Error).message.replace(/ \("\w+"\)/, ""); } })();
   const saveAndCheck = (e: FormEvent) => { e.preventDefault(); const entry = save(); if (entry) navigate(checkOf(entry)); };
 
+  const editingSaved = editKey ? list.find(x => serverKey(x) === editKey) : undefined;
+  const showForm = !list.length || params.has("add") || !!editingSaved;
+
   return (
     <main className="landing servers-page">
-      <h1>Your servers</h1>
-      <p className="lead">Describe your server once, then check it step by step, or open it in our viewer. The viewer and the server check both use this list.</p>
-      <ol className="steps-line" aria-label="Steps">
-        <li>Describe your server</li><li>Register the viewer with it</li><li>Check it, step by step</li>
-      </ol>
+      <div className="your-sandboxes-head">
+        <h1>Your servers</h1>
+        {list.length > 0 && !showForm && <Link className="button" id="add-server" to="?add">Add a server</Link>}
+      </div>
+      <p className="lead">The servers you test, kept in this browser. Check one step by step, or open it in our viewer: both use this list.</p>
+      {editKey && !editingSaved && <p className="error" role="alert">There's no saved server <code>{editKey}</code> to edit.</p>}
 
+      {!showForm && <section aria-label="Saved servers" id="saved"><Saved list={list} onEdit={edit} onRemove={remove} /></section>}
+
+      {showForm && <>
       <form id="server-form" className="panel form" noValidate onSubmit={saveAndCheck}>
-        <h2 id="form-title">{editing ? `Edit ${editing.label}` : "Add a server"}</h2>
+        <h2 id="form-title">{editing ? `Edit ${editing.label}` : list.length ? "Add a server" : "Add your first server"}</h2>
         <label htmlFor="srv-iss">FHIR base URL</label>
         <div className="inline-field">
           <input type="url" id="srv-iss" required placeholder="https://ehr.example.org/fhir" autoComplete="off" autoCapitalize="off" spellCheck={false} value={fields.iss} onChange={set("iss")} onBlur={issChanged} />
@@ -317,15 +329,15 @@ export default function Servers() {
         <div className="form-actions">
           <button type="submit" className="primary" id="save-try" disabled={!!missing} aria-describedby="form-missing">Save and check</button>
           <button type="button" className="secondary" id="save" disabled={!!missing} aria-describedby="form-missing" onClick={save}>Save</button>
-          {editing && <button type="button" className="tool" id="cancel-edit" onClick={clearForm}>Cancel</button>}
+          {list.length > 0 && <button type="button" className="tool" id="cancel-edit" onClick={toList}>Cancel</button>}
         </div>
         {missing && <p className="form-missing" id="form-missing">Before saving: {missing.replace(/^This server needs/, "it needs")}</p>}
         {error && <p className="error" id="form-error" role="alert">{error}</p>}
       </form>
 
-      <section aria-labelledby="yours"><h2 id="yours">Your servers</h2><div id="saved"><Saved list={list} onEdit={edit} onRemove={remove} /></div></section>
+      </>}
 
-      <ServersJson list={list} replaced={reload} />
+      {(!showForm || !list.length) && <ServersJson list={list} replaced={reload} />}
 
 
       <p className="note agents">Working with an AI agent? Give it <a href="/llms.txt">llms.txt</a>. It describes this page's settings and what the viewer expects from a server, so the agent can work out your server's values, or why discovery fails, with you.</p>

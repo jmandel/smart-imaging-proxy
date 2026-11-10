@@ -2,7 +2,6 @@
 // page is a SMART Imaging client, like the demo app (see ../explore/protocol.ts). The sandbox explains the view
 // from its policy, and a change, a share or an approval, is a write to the sandbox's management API. Every
 // request carries this view's trace session, so the activity log shows what it did.
-import { Link } from "react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Chain, Legend } from "../components/Layers";
 import { pictures } from "../components/Thumbnail";
@@ -159,12 +158,15 @@ export default function Explore() {
   const shownPictures = view?.pictures;
   useEffect(() => () => shownPictures?.cancel(), [shownPictures]);
 
+  const firstView = useRef(true);
   // The new view's headline, or the opened study's, takes focus, unless the person has moved it elsewhere meanwhile.
   useEffect(() => {
     if (!view || view.running || !wantFocus.current) return;
     wantFocus.current = false;
     const a = document.activeElement, free = !a || a === document.body || !!main.current?.contains(a);
-    if (free) headline.current?.focus({ preventScroll: innerWidth > 720 });
+    // The first view is where the page opened, so it isn't moved; later ones are brought into sight on a phone.
+    if (free) headline.current?.focus({ preventScroll: firstView.current || innerWidth > 720 });
+    firstView.current = false;
     announce(headline.current?.textContent ?? "");
   }, [view, open]);
 
@@ -198,7 +200,7 @@ export default function Explore() {
       {form && <ActionForm action={form} cast={cast} submit={f => act(form, f)} cancel={() => setForm(undefined)} />}
       <div className="actions">
         {(view.actions ?? []).map((a, i) => <button key={i} type="button" className="secondary" onClick={() => take(a)}>{a.label}</button>)}
-        {view.activityUrl && <Link to={view.activityUrl} className="log-link">Logs</Link>}
+        {view.activityUrl && <a href={view.activityUrl} className="log-link" target="_blank" rel="noopener">Logs</a>}
       </div>
     </>;
   }

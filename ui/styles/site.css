@@ -32,7 +32,9 @@ html { -webkit-text-size-adjust:100%; }
 body { margin:0; background:var(--box); color:var(--ink); font:16px/1.5 var(--sans); }
 a { color:var(--accent); text-underline-offset:.15em; }
 h1, h2, h3, h4 { line-height:1.2; font-weight:700; }
-code { background:var(--code); padding:.05em .3em; border-radius:3px; font:.86em var(--mono); overflow-wrap:anywhere; }
+/* Code never breaks inside a word. A long piece in a sentence scrolls within itself instead; blocks wrap. */
+code { background:var(--code); padding:.05em .3em; border-radius:3px; font:.86em var(--mono); white-space:nowrap; display:inline-block; max-width:100%; overflow-x:auto; vertical-align:bottom; scrollbar-width:none; }
+pre code { display:inline; white-space:inherit; overflow:visible; }
 pre { background:var(--code); padding:.6rem .7rem; border-radius:5px; overflow:auto; font:.78rem/1.5 var(--mono); margin:.4rem 0; max-height:420px; max-width:100%; white-space:pre-wrap; overflow-wrap:anywhere; }
 /* Controls, as one family. A page's main action is solid; every other control is quiet until it's pointed at,
    and a pressed one is filled. One focus ring everywhere. */
@@ -196,47 +198,22 @@ button.sheet:hover { background:var(--film-raised); }
 .tour-list button.tour { display:block; width:100%; text-align:left; background:none; color:var(--ink); border:2px solid transparent; border-radius:10px; padding:.7rem .9rem; }
 .tour-list button.tour:hover { background:var(--code); }
 .tour-list button.tour[aria-current=true] { background:var(--plate); border-color:var(--accent); }
-.tour-list button.tour b { display:block; }
-.tour-list button.tour span { color:var(--muted); font-size:.88rem; }
-.tour-list[hidden] { display:none; }
-/* The home page: the stories as film sheets on the viewbox, each with the chain it ends on. */
-.tours.home { grid-template-columns:minmax(0,1fr); }
+.tour-list button.tour { font-weight:600; line-height:1.35; padding:.55rem .8rem; border-radius:8px; }
+.tour-list > a { display:inline-flex; align-items:center; min-height:2.75rem; padding:0 .8rem; }
+.tour-list .cast { margin-top:.6rem; background:none; border:0; border-top:1px solid var(--line); border-radius:0; padding:.6rem .8rem 0; }
+.tour-list .cast summary { cursor:pointer; font-weight:700; min-height:2rem; display:flex; align-items:center; }
+.tour-list .cast dl { grid-template-columns:minmax(0,1fr); margin-top:.4rem; }
 .home-head { display:flex; flex-wrap:wrap; align-items:baseline; gap:.4rem 1.4rem; }
 .home-head h1 { margin:0; font-size:1.9rem; font-weight:800; }
 .home-head h1:focus { outline:none; }
 .home-head > a { margin-left:auto; display:inline-flex; align-items:center; min-height:2.75rem; }
-.stories { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 21rem), 1fr)); gap:.9rem; }
-.story { position:relative; display:flex; flex-direction:column; gap:.55rem; padding:1rem 1rem .85rem; border-radius:10px; background:var(--film); color:var(--on-film); }
-.story:hover, .story:focus-within { background:var(--film-raised); }
-.story h2 { margin:0; font-size:1.1rem; font-weight:800; line-height:1.2; }
-.story-go { all:unset; cursor:pointer; }
-.story-go::after { content:""; position:absolute; inset:0; border-radius:10px; }
-.story-go:focus-visible::after { outline:2px solid var(--on-film); outline-offset:-4px; }
-.story p { margin:0; font-size:.92rem; color:var(--on-film-dim); line-height:1.4; }
-.story > .layers, .story > .ly-pair { padding-top:.3rem; }
-.story .ly-pane-label { color:var(--on-film); }
-.story-steps { margin-top:auto; font-size:.78rem; color:var(--on-film-dim); }
 .tour-chain { display:flex; flex-direction:column; gap:.6rem; background:var(--plate); border:1px solid var(--line); border-radius:10px; padding:.85rem 1rem; max-width:44rem; }
 /* Before, after, and once links expire: room for the panels side by side. */
 .tour-chain:has(.ly-pair) { max-width:none; }
 .step-chain { grid-column:1 / -1; max-width:40rem; padding:.5rem 0 .2rem; }
-.checks-panel { margin-top:.8rem; padding:1rem; border-radius:10px; background:var(--plate); border:1px solid var(--line); display:flex; flex-direction:column; gap:.6rem; }
-.checks-panel h2 { margin:0; font-size:1rem; letter-spacing:0; text-transform:none; color:var(--ink); }
-.checks-panel .row { display:flex; flex-wrap:wrap; gap:.6rem; align-items:center; }
-.check-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:.2rem; font-size:.92rem; }
-.check-list li { display:flex; flex-wrap:wrap; gap:.15rem .5rem; align-items:baseline; padding:.3rem 0; border-top:1px solid var(--line); }
-.check-list .verdict { font-weight:700; min-width:3.2rem; }
-.check-list .verdict:empty { display:none; }
-.check-list .verdict.ok { color:var(--good); } .check-list .verdict.bad { color:var(--bad); }
-.check-list a { margin-left:auto; display:inline-flex; align-items:center; min-height:2.75rem; }
-.check-list .fail-detail { flex-basis:100%; color:var(--bad); font-size:.86rem; }
-.check-what { display:flex; flex-direction:column; gap:.1rem; min-width:0; flex:1 1 16rem; }
-.check-what span { color:var(--muted); font-size:.86rem; }
 /* Who's who and the diagram key, above the stories. */
 .cast, .key { background:var(--plate); border:1px solid var(--line); border-radius:10px; padding:.85rem 1rem; display:flex; flex-direction:column; gap:.5rem; }
 .cast h2, .key h2 { margin:0; font-size:1rem; font-weight:800; }
-/* The key on the home page sits on film, as the story cards do, so its boxes look like theirs. */
-.key.film { background:var(--film); color:var(--on-film); border-color:var(--film); }
 .cast dl { margin:0; display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 19rem), 1fr)); gap:.45rem 1.4rem; }
 .cast dl div { display:flex; flex-direction:column; }
 .cast dt { font-weight:700; }
@@ -484,7 +461,6 @@ tr.detail > td { background:var(--box); max-width:none; padding:.6rem .8rem .8re
 .ly-pane-label { margin:0 0 .3rem; font-weight:800; font-size:.86rem; }
 .ly-pair .ly-pane + .ly-pane { border-top:1px dashed var(--line); padding-top:.6rem; }
 @media (min-width:44rem) { .ly-pair .ly-pane + .ly-pane { border-top:0; padding-top:0; } }
-.story .ly-pair .ly-pane + .ly-pane { border-top-color:var(--film-line); }
 .ly-legend { display:flex; flex-direction:column; gap:.3rem; font-size:.8rem; color:var(--muted); line-height:1.35; }
 .ly-legend ul { display:flex; flex-wrap:wrap; gap:.3rem 1rem; list-style:none; margin:0; padding:0; }
 .ly-legend li { display:inline-flex; align-items:center; gap:.35rem; }
@@ -570,8 +546,3 @@ tr.detail > td { background:var(--box); max-width:none; padding:.6rem .8rem .8re
   .who-select { display:block; }
   .sheets { grid-template-columns:repeat(auto-fill, minmax(10rem, 1fr)); }
 }
-/* The Conformance page. */
-.checks-page .checks-panel { margin-top:1rem; }
-.checks-page .planned { margin-top:1.4rem; }
-.checks-page .planned h2 { font-size:1.05rem; }
-.checks-page .planned ul { margin:.3rem 0 .6rem; padding-left:1.2rem; }

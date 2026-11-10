@@ -116,25 +116,23 @@ describe("every page, on desktop and phone, in light and dark", () => {
         // Every page of the site, the trace's too, ends with the site map and the source.
         if (!path.startsWith(CONFIG.authUrl)) expect([path, await page.locator(".site-footer a[href='https://github.com/jmandel/smart-imaging-proxy']").count()]).toEqual([path, 2]);
         if (!path.startsWith("http") && path !== "/") {
-          expect(await page.locator(".pages a").allInnerTexts()).toEqual(["Build an App", "Run a Server", "How It Works", "Why It Matters", "For Agents"]);
+          expect(await page.locator(".pages a").allInnerTexts()).toEqual(["Build an App", "Run a Server", "Why SMART Imaging", "My Sandboxes", "For Agents"]);
         }
         await context!.close(); context = undefined;
       }
       expect(problems).toEqual([]);
     });
-    test(`${name} ${colorScheme}: the story cards' small diagram text keeps its contrast on the film`, async () => {
-      const page = await open("/tours", { viewport, colorScheme });
-      await page.locator(".story .layers").first().waitFor();
-      for (const sel of [".story .ly-site", ".story .ly-count", ".story .ly-box.off", ".story .ly-row.choice .ly-box.on", ".story .ly-row.outcome .ly-box.on", ".story .ly-box.linked", ".key .ly-row.outcome .ly-box", ".key .ly-legend p"]) {
+    test(`${name} ${colorScheme}: a story's diagram text keeps its contrast, and a study in the result looks the same as in Explore`, async () => {
+      const page = await open("/tours?tour=revoke", { viewport, colorScheme });
+      await page.locator(".tour-chain .layers").first().waitFor();
+      for (const sel of [".tour-chain .ly-site", ".tour-chain .ly-count", ".tour-chain .ly-box.off", ".tour-chain .ly-row.choice .ly-box.on", ".tour-chain .ly-row.outcome .ly-box.on", ".tour-chain .ly-box.linked", ".tour-chain .ly-legend p"]) {
         expect([sel, (await contrast(page, sel)) >= 4.5]).toEqual([sel, true]);
       }
-      // A study in the result looks the same on the dark cards, in their key, and on a light page.
       const fill = (sel: string) => page.locator(sel).first().evaluate(el => getComputedStyle(el).backgroundColor);
-      const onCard = await fill(".story .ly-row.outcome .ly-box.on");
-      expect(await fill(".key .ly-row.outcome .ly-box")).toBe(onCard);
+      const inTour = await fill(".tour-chain .ly-row.outcome .ly-box.on");
       await page.goto(`${DEMO}/explore`);
       await pick(page, "josh");
-      expect(await fill(".why .ly-row.outcome .ly-box.on")).toBe(onCard);
+      expect(await fill(".why .ly-row.outcome .ly-box.on")).toBe(inTour);
       expect(await contrast(page, ".why .ly-row.outcome .ly-box.on")).toBeGreaterThanOrEqual(4.5);
       expect(problems).toEqual([]);
     });
@@ -344,21 +342,25 @@ describe("Explore", () => {
 });
 
 describe("Tours", () => {
-  test("the home page is the stories, each a card with the chain it ends on, the guardian's shows the locked study, and the revoke's shows before and after", async () => {
+  test("one layout: the stories listed beside the chosen one, which shows the chain it ends on, the guardian's with the locked study, and the revoke's before and after", async () => {
     const page = await open("/tours");
-    await page.locator(".story").first().waitFor();
-    expect(await page.locator(".story").count()).toBe(6);
-    expect(await page.locator(".story .layers").count()).toBe(8);
-    expect(await page.locator(".story", { hasText: "Sam, guardian of 15-year-old Riley" }).locator(".ly-box.locked").count()).toBeGreaterThan(0);
-    expect(await page.locator(".story", { hasText: "Josh stops sharing with Sam" }).locator(".ly-pane-label").allInnerTexts()).toEqual(["Before Josh stops sharing", "After Josh stops sharing", "Once those study links expire"]);
-    expect(await page.locator(".cast dt").allInnerTexts()).toContain("The imaging network");
+    await page.locator(".tour-list .tour").first().waitFor();
+    expect(await page.locator(".tour-list .tour").count()).toBe(6);
+    expect(await page.locator(".tour-chain figure.layers").count()).toBe(1);
+    await page.locator(".tour-list .tour", { hasText: "Sam, guardian of 15-year-old Riley" }).click();
+    await page.getByRole("heading", { name: "Sam, guardian of 15-year-old Riley" }).waitFor();
+    expect(await page.locator(".tour-chain .ly-box.locked").count()).toBeGreaterThan(0);
+    await page.locator(".tour-list .tour", { hasText: "Josh stops sharing with Sam" }).click();
+    await page.getByRole("heading", { name: "Josh stops sharing with Sam" }).waitFor();
+    expect(await page.locator(".tour-chain .ly-pane .ly-pane-label").allInnerTexts()).toEqual(["Before Josh stops sharing", "After Josh stops sharing", "Once those study links expire"]);
+    expect(await page.locator(".cast dt").allTextContents()).toContain("The imaging network");
     expect(await overflow(page)).toBe(0);
     expect(problems).toEqual([]);
   });
   for (const tour of ["own", "guardian", "caregiver", "revoke", "backend", "turns-18"]) {
     test(`${tour}: its card starts it in its own scope, it runs end to end, and every step matches the model`, async () => {
-      const page = await open("/tours");
-      await page.locator(`[data-start="${tour}"]`).first().click();
+      const page = await open(`/tours?tour=${tour}`);
+      await page.locator(`[data-start="${tour}"]`).click();
       await page.waitForURL(/\/s\/[^/]+\/tours\?tour=/);
       await page.locator(".step.next .what span", { hasText: "Expected:" }).waitFor();
       await page.locator(".tour-chain figure.layers").first().waitFor();
@@ -374,8 +376,8 @@ describe("Tours", () => {
     });
   }
   test("a sign-in step runs in the page from its own button, and Back and Forward keep the story where it stood", async () => {
-    const page = await open("/tours");
-    await page.locator('[data-start="own"]').first().click();
+    const page = await open("/tours?tour=own");
+    await page.locator('[data-start="own"]').click();
     await page.waitForURL(/\/s\/[^/]+\/tours\?tour=own/);
     const launch = page.locator("[data-step=launch]");
     expect(await launch.innerText()).toBe("Run");
@@ -385,8 +387,8 @@ describe("Tours", () => {
     // Focus moves on to the next step's button.
     expect(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.step)).toBe(await page.locator("[data-step]").getAttribute("data-step"));
     await page.goBack();
-    await page.locator(".story").first().waitFor();
-    expect(await page.locator(".story").count()).toBe(6);
+    await page.getByRole("button", { name: "Run this story" }).waitFor();
+    expect(await page.locator(".tour-list .tour").count()).toBe(6);
     await page.goForward();
     await page.locator(".step .verdict").first().waitFor();
     expect(await page.locator(".step .verdict").allInnerTexts()).toEqual(["As expected"]);
@@ -396,21 +398,26 @@ describe("Tours", () => {
     const page = await open("/tours");
     let opened = 0;
     context!.on("page", () => { opened++; });
-    await page.locator('[data-start="caregiver"]').first().click();
+    await page.goto(page.url().replace(/\/tours.*/, "/tours?tour=caregiver"));
+    await page.locator('[data-start="caregiver"]').click();
     await page.waitForURL(/\/s\/[^/]+\/tours/);
     await page.getByRole("button", { name: "Run the rest" }).click();
     await page.locator(".tour-buttons .verdict").waitFor({ timeout: 90000 });
     expect(opened).toBe(0);
   });
-  test("the Conformance page runs every protocol check in the page, as one pass or fail list, each opening its activity", async () => {
-    const page = await open("/checks");
-    await page.getByRole("button", { name: "Run all checks" }).click();
-    await page.locator(".checks-panel .row .verdict", { hasText: "passed" }).waitFor({ timeout: 110000 });
-    expect(await page.locator(".checks-panel .row .verdict").innerText()).toBe("8 of 8 passed");
-    const link = page.locator(".check-list a").first();
-    await link.click();
-    await page.waitForURL(/\/activity\?session=/);
-    await page.locator("tr.ev").first().waitFor();
+  test("the server check on a sandbox runs the checks only a sandbox can run, as one pass or fail list, each opening its activity", async () => {
+    const { base } = await (await fetch(`${DEMO}/api/sandboxes`, { method: "POST" })).json() as { base: string };
+    const page = await open(`/check?sandbox=${encodeURIComponent(base)}`);
+    await page.getByRole("heading", { name: "Checks only a sandbox can run" }).waitFor();
+    await page.getByRole("button", { name: "Run the sandbox checks" }).click();
+    await page.locator(".sandbox-checks-summary", { hasText: "passed" }).waitFor({ timeout: 110000 });
+    expect(await page.locator(".sandbox-checks-summary").innerText()).toBe("8 of 8 passed");
+    const link = page.locator(".sandbox-checks .state a").first();
+    // The logs open in a tab of their own, so the check keeps its place.
+    const [logs] = await Promise.all([page.context().waitForEvent("page"), link.click()]);
+    await logs.waitForURL(/\/activity\?session=/);
+    await logs.locator("tr.ev").first().waitFor();
+    expect(page.url()).toContain("/check");
     // The checks provoke refusals on purpose, which the browser logs as failed loads: no script error is the test.
     expect(problems.filter(p => !/Failed to load resource/.test(p))).toEqual([]);
   });

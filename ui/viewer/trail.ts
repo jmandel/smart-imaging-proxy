@@ -13,6 +13,12 @@ export interface Step {
   facts?: Record<string, string | number>;
   /** For a failed request: what it most likely means, and how to check. */
   diagnosis?: Diagnosis;
+  /** How many requests this step stands for, when it's one line for many, such as a study's images. */
+  count?: number;
+  /** Not a request: its facts are the stage's totals. */
+  summary?: boolean;
+  /** Seconds the app waited, in all, on 503 answers with Retry-After, and how many there were. */
+  waited?: { seconds: number; times: number };
 }
 /** A failed answer, with its status, so a page can tell a 401 or a 404 from the rest. */
 export class HttpError extends Error { constructor(message: string, readonly status: number) { super(message); } }
@@ -46,9 +52,12 @@ export class Trail {
   async traced<T = any>(step: Pick<Step, "id" | "kind" | "title">, url: string, init: RequestInit & { headers?: Record<string, string> } = {}, learned: (body: any) => Step["facts"] = () => ({})): Promise<T> {
     const started = performance.now(), method = init.method ?? "GET";
     const request = requestLine(method, url, init.headers) + (init.body ? `\n\n${preview(String(init.body))}` : "");
-    let res: Response, text: string;
+    let res: Response, text: string, waited: Step["waited"];
     try {
-      res = await patientFetch(url, init, seconds => this.add({ ...step, request, status: "503", response: `HTTP 503\nretry-after: ${seconds}\n\nThe server is assembling this. Waiting ${seconds} s, then asking again.` }));
+      res = await patientFetch(url, init, seconds => {
+        waited = { seconds: (waited?.seconds ?? 0) + seconds, times: (waited?.times ?? 0) + 1 };
+        this.add({ ...step, request, waited, status: "503", response: `HTTP 503\nretry-after: ${seconds}\n\nThe server is assembling this. Waiting ${seconds} s, then asking again.` });
+      });
       text = await res.text();
     } catch (e) {
       // No answer the page can read: the browser says only "Failed to fetch", so the step says what that usually means.
@@ -57,7 +66,7 @@ export class Trail {
     }
     let facts: Step["facts"] = {};
     if (res.ok) { try { facts = learned(JSON.parse(text)); } catch {} }
-    this.add({ ...step, request, facts, status: `${res.status}`, curl: method === "GET" ? curlOf(url, init.headers) : undefined, ms: Math.round(performance.now() - started), failed: !res.ok, response: `HTTP ${res.status}\n\n${preview(pretty(text))}`, ...(res.ok ? {} : { diagnosis: diagnose(step.kind, url, { status: res.status }) }) });
+    this.add({ ...step, request, facts, ...(waited ? { waited } : {}), status: `${res.status}`, curl: method === "GET" ? curlOf(url, init.headers) : undefined, ms: Math.round(performance.now() - started), failed: !res.ok, response: `HTTP ${res.status}\n\n${preview(pretty(text))}`, ...(res.ok ? {} : { diagnosis: diagnose(step.kind, url, { status: res.status }) }) });
     if (!res.ok) throw new HttpError(`${step.title}: HTTP ${res.status}`, res.status);
     return JSON.parse(text);
   }

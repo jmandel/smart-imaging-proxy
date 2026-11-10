@@ -68,7 +68,7 @@ const shot = async (page: Page, name: string) => { if (SHOTS) await page.screens
 
 /** From the home page, a new sandbox, entered. Its path is returned. */
 async function enterSandbox(page: Page) {
-  await page.goto(`${ORIGIN}/`);
+  await page.goto(`${ORIGIN}/sandboxes`);
   await page.getByRole("button", { name: "Create a sandbox" }).click();
   await page.waitForURL(u => /^\/s\/[^/]+\/$/.test(u.pathname));
   await page.locator("#sandbox-name").waitFor();
@@ -197,7 +197,8 @@ describe("the demo client", () => {
     await page.waitForURL(u => u.pathname === "/run-a-server");
     await page.locator("main").getByRole("link", { name: "Your servers" }).click();
     await page.waitForURL(u => u.pathname === "/servers");
-    await page.getByText("None yet.").waitFor();
+    // With none saved, the page is the form.
+    await page.getByRole("heading", { name: "Add your first server" }).waitFor();
     // An empty form can't be saved, and says what it needs first.
     expect(await page.getByRole("button", { name: "Save", exact: true }).isDisabled()).toBe(true);
     await page.locator("#form-missing", { hasText: "it needs a name." }).waitFor();
@@ -229,12 +230,19 @@ describe("the demo client", () => {
     // Saved: offered again, editable, and removable.
     await page.goto(`${ORIGIN}/servers`);
     await page.getByRole("heading", { name: "Another server" }).waitFor();
-    await page.getByRole("button", { name: "Edit" }).click();
+    // Saved, the page opens on the list; the form is a step away, and its address survives a reload.
+    expect(await page.locator("#server-form").count()).toBe(0);
+    await page.getByRole("button", { name: "Edit Another server" }).click();
+    await page.getByRole("heading", { name: "Edit Another server" }).waitFor();
+    await page.reload();
     await page.getByRole("heading", { name: "Edit Another server" }).waitFor();
     expect(await page.getByLabel("Client ID").inputValue()).toBe(ext.clientId);
+    await page.getByRole("button", { name: "Cancel" }).click();
+    await page.getByRole("link", { name: "Add a server" }).click();
+    await page.getByRole("heading", { name: "Add a server" }).waitFor();
+    await page.getByRole("button", { name: "Cancel" }).click();
     await page.getByRole("button", { name: "Remove Another server" }).click();
-    await page.getByText("None yet.").waitFor();
-    expect(await page.getByRole("heading", { name: "Add a server" }).count()).toBe(1);
+    await page.getByRole("heading", { name: "Add your first server" }).waitFor();
     await context.close();
   });
   test("a confidential client made on Your servers signs with the key it generated", async () => {
@@ -264,38 +272,38 @@ describe("the demo client", () => {
     expect(await page.locator("#connected").textContent()).toBe("Connected to Signed in");
     await context.close();
   });
-  test("home lists this browser's sandboxes, and deleting one removes it", async () => {
+  test("My Sandboxes lists this browser's sandboxes, and deleting one removes it", async () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     page.on("dialog", d => d.accept());
-    await page.goto(`${ORIGIN}/`);
+    await page.goto(`${ORIGIN}/sandboxes`);
     await page.getByText("You don't have any yet.").waitFor();
     // On a phone the menu is behind a button.
     expect(await page.locator("nav.pages a:visible").count()).toBe(0);
     await page.getByRole("button", { name: "Menu" }).click();
-    expect(await page.locator("nav.pages a:visible").allInnerTexts()).toEqual(["Build an App", "Run a Server", "How It Works", "Why It Matters", "For Agents"]);
+    expect(await page.locator("nav.pages a:visible").allInnerTexts()).toEqual(["Build an App", "Run a Server", "Why SMART Imaging", "My Sandboxes", "For Agents"]);
     const first = await enterSandbox(page), second = await enterSandbox(page);
-    await page.goto(`${ORIGIN}/`);
+    await page.goto(`${ORIGIN}/sandboxes`);
     await page.locator(`.sandbox-list a[href="${first}/"]`).waitFor();
     await page.locator(`.sandbox-list a[href="${second}/"]`).waitFor();
-    await shot(page, "home");
+    await shot(page, "sandboxes");
     await page.locator(`.sandbox-list a[href="${first}/"]`).click();
     await page.waitForURL(u => u.pathname === `${first}/`);
     await page.getByRole("button", { name: "Delete" }).click();
-    await page.waitForURL(u => u.pathname === "/");
+    await page.waitForURL(u => u.pathname === "/sandboxes");
     await page.locator(`.sandbox-list a[href="${second}/"]`).waitFor();
     expect(await page.locator(`.sandbox-list a[href="${first}/"]`).count()).toBe(0);
     expect((await page.request.get(`${ORIGIN}${first}/api/sandbox`)).status()).toBe(404);
     await context.close();
   });
-  test("a sandbox made while home is still checking the list stays on it, and a sandbox that can't be asked isn't dropped", async () => {
+  test("a sandbox made while My Sandboxes is still checking the list stays on it, and a sandbox that can't be asked isn't dropped", async () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     const first = await enterSandbox(page);
-    // Home's check of the first sandbox is held until after Create has made the second.
+    // The list's check of the first sandbox is held until after Create has made the second.
     let release!: () => void; const held = new Promise<void>(r => { release = r; });
     await page.route(`**${first}/api/sandbox`, async r => { await held; await r.continue(); });
-    await page.goto(`${ORIGIN}/`);
+    await page.goto(`${ORIGIN}/sandboxes`);
     await page.getByRole("button", { name: "Create a sandbox" }).click();
     await page.waitForURL(u => /^\/s\/[^/]+\/$/.test(u.pathname) && !u.pathname.startsWith(`${first}/`));
     release();
@@ -304,7 +312,7 @@ describe("the demo client", () => {
     await page.unroute(`**${first}/api/sandbox`);
     // A check that fails for any reason but the sandbox being gone leaves it listed.
     await page.route(`**${second}/api/sandbox`, r => r.fulfill({ status: 500, body: "{}" }));
-    await page.goto(`${ORIGIN}/`);
+    await page.goto(`${ORIGIN}/sandboxes`);
     await page.locator(`.sandbox-list a[href="${first}/"]`).waitFor();
     await page.waitForLoadState("networkidle");
     expect(await page.locator(`.sandbox-list a[href="${second}/"]`).count()).toBe(1);
@@ -313,11 +321,11 @@ describe("the demo client", () => {
   test("a page brought back with Back shows where things are now", async () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
-    // Create disables its button and goes to the new sandbox. Back to the home page finds the button ready again,
+    // Create disables its button and goes to the new sandbox. Back to My Sandboxes finds the button ready again,
     // and the new sandbox on the list, whether the browser kept the page or loaded it afresh.
     const base = await enterSandbox(page);
     await page.goBack();
-    await page.waitForURL(u => u.pathname === "/");
+    await page.waitForURL(u => u.pathname === "/sandboxes");
     await page.locator(`.sandbox-list a[href="${base}/"]`).waitFor();
     expect(await page.locator("#create").isEnabled()).toBe(true);
     await context.close();
@@ -362,16 +370,16 @@ describe("the demo client", () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     const base = await enterSandbox(page);
-    for (const path of [`${base}/`, `${base}/build`, `${base}/checks`, `${base}/tours`, `${base}/explore`, `${base}/activity`, `${base}/connect`]) {
+    for (const path of [`${base}/`, `${base}/build`, `${base}/tours`, `${base}/explore`, `${base}/activity`, `${base}/connect`]) {
       await page.goto(`${ORIGIN}${path}`);
       await page.locator(".sandbox-bar").waitFor();
       const hrefs = (sel: string) => page.locator(sel).evaluateAll(as => as.map(a => a.getAttribute("href")));
       // The header is the site's: its guides, at the root, and this sandbox's guide for agents.
-      expect([path, await hrefs("nav.pages a")]).toEqual([path, ["/build-an-app", "/run-a-server", "/how-it-works", "/why-it-matters", `${base}/llms.txt`]]);
-      // The sandbox's bar, and the footer's map of it, stay in it, but for the site's one viewer, opened on it.
-      const own = [`${base}/`, "/viewer", `${base}/tours`, `${base}/explore`, `${base}/build`, `${base}/connect`, `${base}/activity`, `${base}/trace/`, `${base}/config`, `${base}/checks`];
+      expect([path, await hrefs("nav.pages a")]).toEqual([path, ["/build-an-app", "/run-a-server", "/about", "/sandboxes", `${base}/llms.txt`]]);
+      // The sandbox's bar, and the footer's map of it, stay in it, but for the site's one viewer and its server check, opened on it.
+      const own = [`${base}/`, "/viewer", `${base}/tours`, `${base}/explore`, `/check?sandbox=${encodeURIComponent(base)}`, `${base}/build`, `${base}/connect`, `${base}/activity`, `${base}/trace/`, `${base}/config`];
       expect([path, await hrefs(".sandbox-bar a")]).toEqual([path, own]);
-      expect([path, await hrefs(".site-footer-sandbox a")]).toEqual([path, [...own, "/"]]);
+      expect([path, await hrefs(".site-footer-sandbox a")]).toEqual([path, [...own, "/sandboxes"]]);
       expect(await page.locator("a.mark").getAttribute("href")).toBe("/");
     }
     await page.goto(`${ORIGIN}${base}/build`);
@@ -442,7 +450,7 @@ describe("the demo client", () => {
     await other.getByText("Join “Team demo”?").waitFor();
     await other.getByRole("button", { name: "Join this sandbox" }).click();
     await other.getByRole("button", { name: "Leave" }).click();
-    await other.waitForURL(u => u.pathname === "/");
+    await other.waitForURL(u => u.pathname === "/sandboxes");
     await other.getByText("You don't have any yet.").waitFor();
     await page.reload();
     await page.locator("#sandbox-name", { hasText: "Team demo" }).waitFor();
@@ -573,6 +581,8 @@ describe("the demo client", () => {
     expect(down).toBeGreaterThan(100);
     await page.locator(".site-footer a", { hasText: "Viewer" }).click();
     await page.waitForURL(u => u.pathname === "/viewer");
+    // The address changes before the new page is drawn: read the scroll once the viewer is on screen.
+    await page.locator("#landing").waitFor({ state: "visible" });
     expect(await page.evaluate(() => scrollY)).toBe(0);
     await page.goBack();
     await page.waitForURL(u => u.pathname === "/");
@@ -594,28 +604,56 @@ describe("the demo client", () => {
     await context.close();
   });
 
-  test("the server check passes every step against a sandbox, pausing for the sign-in", async () => {
+  /** A sandbox for the server check, made by API and remembered in this browser, as the site's own button would. */
+  async function checkSandbox(page: Page) {
+    const { base } = await (await fetch(`${ORIGIN}/api/sandboxes`, { method: "POST" })).json() as { base: string };
+    await page.goto(`${ORIGIN}/servers`);
+    await page.evaluate(base => localStorage.setItem("smart-imaging-client:sandboxes", JSON.stringify([{ base, joined: false }])), base);
+    return base;
+  }
+  test("the server check passes every step against a sandbox, pausing for the sign-in with what to register", async () => {
     const context = await newContext({ viewport: { width: 1280, height: 900 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
-    const base = await enterSandbox(page);
+    const base = await checkSandbox(page);
     await page.goto(`${ORIGIN}/check?server=${encodeURIComponent(`${ORIGIN}${base}/fhir|demo-client`)}`);
-    await page.locator("#check-summary", { hasText: "Waiting at step 4 of 8: sign in to continue." }).waitFor();
-    expect(await page.locator(".check-step[data-state=pass]").count()).toBe(3);
-    expect(await page.locator(".check-step[data-state=todo]").count()).toBe(4);
+    await page.locator("#check-summary", { hasText: "Waiting at step 4 of 12: sign in to continue." }).waitFor();
+    expect(await page.locator(".check-step[data-step][data-state=pass]").count()).toBe(3);
+    expect(await page.locator(".check-step[data-step][data-state=todo]").count()).toBe(8);
+    // Before signing in: the redirect URI, client ID and scope to register, each to copy.
+    const register = page.locator(".register-first");
+    await register.getByText(`${ORIGIN}/viewer`, { exact: true }).waitFor();
+    await register.getByText("demo-client", { exact: true }).waitFor();
+    await register.getByText("launch/patient patient/*.rs", { exact: true }).waitFor();
+    expect(await register.getByRole("button", { name: /^Copy the / }).count()).toBe(3);
+    await shot(page, "server-check-paused");
     await approveIn(await signInTab(page, () => page.getByRole("button", { name: "Sign in to continue" }).click()), "josh");
-    await page.locator("#check-summary", { hasText: "All 8 steps passed." }).waitFor({ timeout: 30000 });
-    expect(await page.locator(".check-step[data-state=pass]").count()).toBe(8);
-    await page.locator(".check-step[data-step='8']", { hasText: "Refused with 401" }).waitFor();
+    await page.locator("#check-summary", { hasText: "Ran all 12 steps: 11 passed, and step 12 had nothing to check." }).waitFor({ timeout: 30000 });
+    await page.locator(".check-step[data-step='7']", { hasText: "Refused with 401" }).waitFor();
+    await page.locator(".check-step[data-step='8']", { hasText: "for riley-example, with josh-example's token" }).waitFor();
+    await page.locator(".check-step[data-step='11']", { hasText: "Refused with 401" }).waitFor();
+    // A sandbox also gets the checks only a sandbox can run.
+    await page.getByRole("heading", { name: "Checks only a sandbox can run" }).waitFor();
     await shot(page, "server-check");
     // Nothing the check did is kept for the viewer, so it isn't left thinking it's connected.
     expect(await page.evaluate(() => sessionStorage.getItem("smart-imaging-viewer"))).toBeNull();
+    // The report, as Markdown: the summary and each step, and no token.
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.getByRole("button", { name: "Copy report as Markdown" }).click();
+    const md = await page.evaluate(() => navigator.clipboard.readText());
+    expect(md).toContain("**Ran all 12 steps: 11 passed, and step 12 had nothing to check.**");
+    expect(md).toContain("11. ✓ The image is refused without the token: Refused with 401");
+    expect(md).not.toMatch(/eyJ[A-Za-z0-9_-]{20,}/);
+    const [file] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Download JSON" }).click()]);
+    const json = JSON.parse(await Bun.file(await file.path()).text());
+    expect(json.steps.map((x: any) => x.state)).toEqual([...Array(11).fill("pass"), "note"]);
+    expect(JSON.stringify(json)).not.toMatch(/eyJ[A-Za-z0-9_-]{20,}/);
     await context.close();
   });
 
   test.skipIf(!!process.env.BASE_URL)("the server check runs a backend service end to end with no sign-in tab", async () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
-    const base = await enterSandbox(page);
+    const base = await checkSandbox(page);
     await page.goto(`${ORIGIN}${base}/connect`);
     await page.getByLabel("App name").fill("Referral service");
     await page.getByRole("radio", { name: /Backend service/ }).check();
@@ -626,7 +664,8 @@ describe("the demo client", () => {
     await page.goto(`${ORIGIN}/check`);
     await page.getByRole("link", { name: /Referral service/ }).click();
     await page.waitForURL(u => u.pathname === "/check" && u.searchParams.has("server"));
-    await page.locator("#check-summary", { hasText: "All 8 steps passed." }).waitFor({ timeout: 30000 });
+    // A service may be granted many patients, so another patient's studies aren't its to be refused.
+    await page.locator("#check-summary", { hasText: "Ran all 12 steps: 10 passed, and steps 8 and 12 had nothing to check." }).waitFor({ timeout: 30000 });
     expect(context.pages().length).toBe(1);
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
     await context.close();
@@ -640,9 +679,40 @@ describe("the demo client", () => {
     await page.goto(`${ORIGIN}/`);
     await page.evaluate(iss => localStorage.setItem("smart-imaging-client:servers", JSON.stringify([{ label: "Nowhere", iss, clientId: "app" }])), iss);
     await page.goto(`${ORIGIN}/check?server=${encodeURIComponent(`${iss}|app`)}`);
-    await page.locator("#check-summary", { hasText: "Stopped at step 1 of 8" }).waitFor();
+    await page.locator("#check-summary", { hasText: "Stopped at step 1 of 12" }).waitFor();
     await page.locator(".check-step[data-step='1'] .call-diagnosis", { hasText: "CORS" }).waitFor();
-    expect(await page.locator(".check-step[data-state=unreached]").count()).toBe(7);
+    expect(await page.locator(".check-step[data-step][data-state=unreached]").count()).toBe(11);
+    // Not a sandbox, so no sandbox section.
+    expect(await page.getByRole("heading", { name: "Checks only a sandbox can run" }).count()).toBe(0);
+    await context.close();
+  });
+
+  test("an agent starts a check by API, its person finishes it from the link, and the agent reads every step", async () => {
+    const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    const base = await checkSandbox(page);
+    const made = await fetch(`${ORIGIN}/api/checks`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ server: { label: "My sandbox", iss: `${ORIGIN}${base}/fhir`, clientId: "demo-client" } }) });
+    expect(made.status).toBe(201);
+    const run: any = await made.json();
+    expect(run.url).toBe(`${ORIGIN}/check?run=${run.id}`);
+    const read = async () => (await fetch(`${ORIGIN}/api/checks/${run.id}`)).json() as Promise<any>;
+    expect((await read()).status).toBe("waiting");
+    await page.goto(run.url);
+    await page.locator("#check-summary", { hasText: "Waiting at step 4 of 12" }).waitFor();
+    await page.locator(".register-first").getByText("demo-client", { exact: true }).waitFor();
+    await page.waitForFunction(async u => (await (await fetch(u)).json()).status === "paused", `${ORIGIN}/api/checks/${run.id}`);
+    await shot(page, "server-check-agent");
+    await approveIn(await signInTab(page, () => page.getByRole("button", { name: "Sign in to continue" }).click()), "josh");
+    await page.locator("#check-summary", { hasText: "Ran all 12 steps" }).waitFor({ timeout: 30000 });
+    await page.waitForFunction(async u => (await (await fetch(u)).json()).status === "done", `${ORIGIN}/api/checks/${run.id}`);
+    const done = await read();
+    expect(done.summary).toBe("Ran all 12 steps: 11 passed, and step 12 had nothing to check.");
+    expect(done.steps.map((x: any) => x.state)).toEqual([...Array(11).fill("pass"), "note"]);
+    expect(done.steps[4].requests[0].request).toContain("/ImagingStudy?patient=josh-example");
+    expect(JSON.stringify(done)).not.toMatch(/eyJ[A-Za-z0-9_-]{20,}/);
+    // A public client can be kept.
+    await page.getByRole("button", { name: "Save to Your servers" }).click();
+    await page.getByText("This server is in").waitFor();
     await context.close();
   });
 });

@@ -46,7 +46,7 @@ Everything is at one origin, port 4605: the demo's pages, the live trace at `/tr
 
 | Port | Service | Paths |
 |---|---|---|
-| 4600 | Demo | `/` the tours, `/explore` Explore, `/activity` the activity log, `/api/activity/summary` its rollups, `/api/flows/...` the flows |
+| 4600 | Demo | `/` the tours, `/explore` Explore, `/activity` the activity log, `/api/activity/summary` its rollups, `/api/flows/...` the flows, `/check` the server check, and at the root only, `/api/checks/...` the checks an agent starts for its person (in memory, for a day) |
 | 4601 | WADO-RS proxy | `/wado/{signed-context}/studies/...`, opaque to clients |
 | 4602 | Imaging Server | `/fhir/ImagingStudy`, `/fhir/metadata`, `/access/v1/evaluation`, `/policy/v2/...`, `/.well-known/jwks.json`, `/.well-known/authzen-configuration` |
 | 4603 | Authorization Server | `/fhir/.well-known/smart-configuration`, `/authorize`, `/token`, `/introspect`, `/revoke`, `/account`, `/fhir/Patient/{id}` (with a token for that patient) |

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ImageViewer, type ImageViewerHandle } from "../components/ImageViewer";
 import { announce, bytes, plural, studyDate } from "../lib/format";
+import { diagnose } from "../lib/diagnose";
 import { fhirHeaders, searchAll, studiesFrom, viewerSeries, WADO_ACCEPT, wadoSource, type Resource, type Study } from "../lib/smart-imaging";
 import { Protocol } from "./Protocol";
 import { save, type Session } from "./session";
@@ -116,16 +117,29 @@ export function Workspace({ session, trail, disconnect }: { session: Session; tr
   const [reports, setReports] = useState<Load<Resource[]>>({});
   const [studies, setStudies] = useState<Load<{ studies: Study[]; incomplete: boolean }>>({});
   const [chosen, setChosen] = useState<number>();
+  // What's been retrieved, in all and by study, for the protocol panel.
   const stats = useRef({ images: 0, bytes: 0, firstMs: undefined as number | undefined });
+  const byStudy = useRef(new Map<string, { images: number; bytes: number; failed?: { request: string; response: string; status: number } }>());
   const found = useRef<Study[]>([]);
 
   /** How the viewer gets a study's images, each retrieval recorded on the protocol panel. */
+  // One line per study opened: its images and their size, its latest request, and a failure that stays shown once
+  // one happens. The stage's totals are a summary of their own.
   const recordedSource = (study: Study) => wadoSource(session.token, study, { seen: r => {
     const request = requestLine("GET", r.url, { authorization: "x", accept: WADO_ACCEPT });
-    if (r.failed) { trail.add({ id: "wado", kind: "wado", title: "Retrieve images", failed: true, request, response: `HTTP ${r.status}` }); return; }
+    const key = study.uid ?? study.id ?? "study", mine = byStudy.current.get(key) ?? { images: 0, bytes: 0 };
+    byStudy.current.set(key, mine);
     const s = stats.current;
-    s.images++; s.bytes += r.bytes ?? 0;
-    trail.add({ id: "wado", kind: "wado", title: "Latest image retrieved", ms: r.ms, request, response: `HTTP ${r.status}\ncontent-type: ${r.contentType}`, curl: curlOf(r.url, { authorization: "x", accept: WADO_ACCEPT }), facts: { Images: s.images, Data: bytes(s.bytes), ...(s.firstMs === undefined ? {} : { "First image": `${s.firstMs} ms` }) } });
+    if (r.failed) mine.failed = { request, response: `HTTP ${r.status}`, status: r.status };
+    else { s.images++; s.bytes += r.bytes ?? 0; mine.images++; mine.bytes += r.bytes ?? 0; }
+    const name = study.description ?? "A study", count = mine.images + (mine.failed ? 1 : 0);
+    trail.add({
+      id: `wado-${key}`, kind: "wado", title: `${name}: ${plural(mine.images, "image")}, ${bytes(mine.bytes)}`, count,
+      ...(mine.failed
+        ? { failed: true, request: mine.failed.request, response: mine.failed.response, diagnosis: diagnose("wado", r.url, { status: mine.failed.status }) }
+        : { ms: r.ms, request, response: `HTTP ${r.status}\ncontent-type: ${r.contentType}`, curl: curlOf(r.url, { authorization: "x", accept: WADO_ACCEPT }) }),
+    });
+    trail.add({ id: "wado", kind: "wado", title: "Retrieved", summary: true, facts: { Images: s.images, "Data retrieved": bytes(s.bytes), ...(s.firstMs === undefined ? {} : { "First image": `${s.firstMs} ms` }) } });
   } });
   const openStudy = (i: number) => {
     const study = found.current[i];

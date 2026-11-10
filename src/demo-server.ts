@@ -25,11 +25,14 @@ import { ADMIN_SCOPE, SANDBOX_ADMIN } from "./sandbox-keys";
 import app from "../ui/index.html";
 import { pageAt, PAGES } from "../ui/sitemap";
 import { pagesSection } from "./llms-pages";
+import { createCheckRuns } from "./check-runs";
 
 const json = (b: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(b, { status, headers });
 
 /** `viewerKitDir` is where viewer-kit was downloaded, `$DEMO_STORAGE/vendor/{tag}` unless given. */
 export function createDemoServer(stack: Stack, clients: Record<string, BackendClient>, root: string, options: { viewerKitDir?: string } = {}) {
+  // Server checks agents start, at the site's root only: they belong to no sandbox.
+  const checkRuns = createCheckRuns();
   const perSandbox = new WeakMap<Sandbox, ReturnType<typeof sandboxServer>>();
   const serverOf = (w: Sandbox) => { let s = perSandbox.get(w); if (!s) perSandbox.set(w, s = sandboxServer(w)); return s; };
   /** A sandbox's keys, given out as sample credentials: its admin client's, and each demo service's. */
@@ -133,6 +136,9 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       const url = new URL(req.url);
       const p = url.pathname;
       if (p === "/llms.txt") return llmsTxt(sandbox);
+      if (!sandbox.id && (p === "/api/checks" || p.startsWith("/api/checks/"))) return checkRuns.fetch(req, url, new URL(sandbox.urls.demo).origin);
+      // The Conformance page's old address: its checks are part of the server check now.
+      if (p === "/checks" && req.method === "GET") return new Response(null, { status: 308, headers: { location: `/check${sandbox.id ? `?sandbox=${encodeURIComponent(sandbox.prefix)}` : ""}` } });
       // The management API takes this sandbox's admin token. Its keys are the one thing open: the URL is the access.
       if (p === "/api/sandbox/keys" && req.method === "GET") return PUBLIC_DEMO && !sandbox.id ? json({ error: "the shared sandbox gives out no keys: make a sandbox of your own with POST /api/sandboxes" }, 403) : json(sampleKeys(sandbox));
       if (p === "/api/sandbox" || p.startsWith("/api/sandbox/")) {

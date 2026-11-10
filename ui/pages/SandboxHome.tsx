@@ -19,7 +19,7 @@ export default function SandboxHome() {
     <main id="landing" className="landing overview">
       <section className="sandbox panel" id="sandbox">
         <p className="error">{name === null ? "This sandbox doesn't exist any more." : "This sandbox couldn't be reached. Reload to try again."}</p>
-        <p><a href="/">Your sandboxes</a></p>
+        <p><a href="/sandboxes">Your sandboxes</a></p>
       </section>
     </main>
   );
@@ -40,7 +40,7 @@ export default function SandboxHome() {
     if (!mine!.joined) try { await api("DELETE", "/api/sandbox"); } catch {}
     saveSandboxes(knownSandboxes().filter(w => w.base !== BASE));
     session.set(VIEWER_SESSION, null);
-    location.assign("/");
+    location.assign("/sandboxes");
   };
   return (
     <main id="landing" className="landing overview">
@@ -49,7 +49,7 @@ export default function SandboxHome() {
           <div className="sandbox-head"><p className="sandbox-name" id="sandbox-name">{shown}</p><button type="button" className="tool" onClick={rename}>Rename</button></div>
           <div className="sandbox-actions">
             <button type="button" className="tool" onClick={share}>Share</button>
-            <a className="tool" href="/">All sandboxes</a>
+            <a className="tool" href="/sandboxes">All sandboxes</a>
             <button type="button" className="tool quiet-danger" onClick={end}>{mine.joined ? "Leave" : "Delete"}</button>
           </div>
           {sharing && <div id="share-panel"><input type="text" id="share-link" readOnly aria-label="Link to this sandbox" value={shareLink} onFocus={e => e.target.select()} autoFocus /><p className="note" id="share-note">{shareNote}</p></div>}
@@ -63,7 +63,7 @@ export default function SandboxHome() {
         {SANDBOX_GROUPS.map(g => (
           <section key={g.title} aria-label={g.title}>
             <h2>{g.title}</h2>
-            <ul className="link-list">{g.pages.map(id => <li key={id}><PageLink id={id} /><span>{id === "viewer" ? "Our SMART app, signed in to this sandbox." : PAGES[id].blurb}</span></li>)}</ul>
+            <ul className="link-list">{g.pages.map(id => <li key={id}><PageLink id={id} /><span>{id === "viewer" ? "Our SMART app, signed in to this sandbox." : id === "check" ? "Every step of the guide, and the checks only a sandbox can run, against this sandbox." : PAGES[id].blurb}</span></li>)}</ul>
           </section>
         ))}
       </div>

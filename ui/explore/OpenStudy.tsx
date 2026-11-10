@@ -1,6 +1,5 @@
 // One study, opened: its images in the viewer, retrieving the whole of it, and its chain in one line. The
 // viewer stays mounted while the study is open, so the chain or a retrieval arriving never loses its place.
-import { Link } from "react-router";
 import { useEffect, useRef, type Ref } from "react";
 import { ImageViewer, type ImageViewerHandle } from "../components/ImageViewer";
 import { bytes, studyDate } from "../lib/format";
@@ -41,7 +40,7 @@ export function OpenStudy({ sheet: s, study, source, retrieval: r, chain, backTo
           </dl>
         </div>
       )}
-      <p className="chain" id="chain">{chain ? <>{chain.line} <Link to={chain.activityUrl}>Logs</Link></> : <><span className="spinner" aria-hidden="true" />Loading…</>}</p>
+      <p className="chain" id="chain">{chain ? <>{chain.line} <a href={chain.activityUrl} target="_blank" rel="noopener">Logs</a></> : <><span className="spinner" aria-hidden="true" />Loading…</>}</p>
     </div>
   </>;
 }

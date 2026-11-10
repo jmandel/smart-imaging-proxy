@@ -144,17 +144,20 @@ export default function Trace() {
   const groups = useMemo(() => groupsOf(trace, { hidden, checks, parts }), [trace, trace.version, hidden, checks, parts]);
   const active = trace.activeSession();
 
-  // Following, the newest spans stay in view: the end of the list sits at the bottom of the window.
+  // Following, the newest spans stay in view: the end of the list sits at the bottom of the window. A page just
+  // opened stays at its top, with the header in sight, until the reader has reached the end once.
+  const reachedEnd = useRef(false);
   const toBottom = () => {
     const el = list.current;
     if (!el) return;
     scrollTo(0, Math.max(0, scrollY + el.getBoundingClientRect().bottom - innerHeight));
     lastY.current = scrollY;
   };
-  useLayoutEffect(() => { if (trace.follow) toBottom(); });
+  useLayoutEffect(() => { if (trace.follow && reachedEnd.current) toBottom(); });
   useEffect(() => {
     const nearBottom = () => list.current!.getBoundingClientRect().bottom <= innerHeight + 80;
     const scrolled = () => {
+      if (nearBottom()) reachedEnd.current = true;
       const movedUp = scrollY < lastY.current - 1;
       lastY.current = scrollY;
       if (movedUp && trace.follow && !nearBottom()) trace.stopFollowing();
@@ -175,7 +178,7 @@ export default function Trace() {
   return (
     <main className="trace-page">
       <div className="trace-head">
-        <div><h1>Live trace</h1><p role="status">{trace.status}</p></div>
+        <div><h1>Live trace</h1><p role="status" className={trace.status === "Live." ? "sr-only" : undefined}>{trace.status}</p></div>
         <div className="trace-controls">
           <label>Session{" "}
             <select value={trace.chosen} onChange={e => { const v = e.target.value; trace.choose(v).then(() => { if (v) scrollTo(0, 0); }); }}>
@@ -184,8 +187,8 @@ export default function Trace() {
             </select>
           </label>
           <label><input type="checkbox" checked={trace.follow} onChange={e => trace.setFollow(e.target.checked)} /> Follow newest</label>
-          <label><input type="checkbox" checked={checks} onChange={e => setChecks(e.target.checked)} /> In-memory checks</label>
-          <label><input type="checkbox" checked={parts} onChange={e => setParts(e.target.checked)} /> Per-part lines</label>
+          <label title="A line for each check a service made, such as a token's expiry or an assertion's signature"><input type="checkbox" checked={checks} onChange={e => setChecks(e.target.checked)} /> Checks each service made</label>
+          <label title="A line for each DICOM part streamed in a retrieval, with its transfer syntax and size"><input type="checkbox" checked={parts} onChange={e => setParts(e.target.checked)} /> Each image part</label>
           <button type="button" onClick={() => trace.togglePause()}>{trace.paused ? "Resume" : "Pause"}</button>
           {active && <a className="action" download href={sessionApi(active, "/export")} title={`Download ${active} as JSON, with its full exchanges`}>Export session</a>}
           {/* Only the site's own trace can be cleared: a sandbox's is kept for everyone using it. */}

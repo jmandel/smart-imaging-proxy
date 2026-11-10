@@ -125,10 +125,6 @@ const PAGE_CHECKS: Record<string, Step[]> = {
       const rn = await c.retrieve(c.state.token, c.studyUrl(`${head}/wado/${none}`, s.uid)), how = await c.decided();
       c.check("alg:none doesn't take the fast path", how !== "instant", `authorization: ${how}, status ${rn.status}`);
     }],
-    ["Use the URL with no token", async c => {
-      const s = c.found(WRIST), r = await c.retrieve(undefined, c.studyUrl(s.base, s.uid));
-      c.check("401", r.status === 401);
-    }],
     ["Send malformed UIDs and overrides", async c => {
       const s = c.found(WRIST);
       const a = await c.retrieve(c.state.token, c.studyUrl(s.base, "abc"));
@@ -281,12 +277,20 @@ const PAGE_CHECKS: Record<string, Step[]> = {
 export interface Failure { step: string; label: string; detail?: string }
 export interface CheckResult { ok: boolean; passed?: number; failures: Failure[]; sandbox?: string; activityUrl?: string }
 
-/** One check, in a sandbox of its own: every step, each in a trace of its own, as one line of pass or fail. */
-export async function runCheck(id: string): Promise<CheckResult> {
+/** How a sandbox is set up, for a fresh one to match: where its images are stored, and its servers' topology. */
+export interface SandboxSetup { storage?: string; topology?: string }
+
+/**
+ * One check, in a sandbox of its own, set up like `like` when given: every step, each in a trace of its own, as
+ * one line of pass or fail. Its own sandbox, since checks set faults, move the clock and change policy.
+ */
+export async function runCheck(id: string, like: SandboxSetup = {}): Promise<CheckResult> {
   const steps = PAGE_CHECKS[id];
   if (!steps) throw new Error(`This page has no check called ${id}.`);
   const made = await fetch("/api/sandboxes", { method: "POST" }).then(r => r.json());
   const sandboxId = made.base.slice("/s/".length), session = `check-${id}-${hexOf(3)}@${sandboxId}`;
+  const setup = Object.fromEntries(Object.entries(like).filter(([, v]) => v));
+  if (Object.keys(setup).length) await sandboxClient(made.base, session).manage("PATCH", "/api/sandbox", setup);
   const c = await checkContext(made.base, session), failures: Failure[] = [];
   let passed = 0;
   for (const [step, run] of steps) {

@@ -2,6 +2,8 @@
 // it from a terminal. The viewer and the server check both say it beside the request that failed.
 export type Hop = "discover" | "authorize" | "token" | "backend-token" | "patient" | "clinical" | "imaging" | "wado";
 export interface Diagnosis { cause: string; check?: string }
+/** An answer that came, but shouldn't have, or was the wrong thing. */
+export type Wrong = "open" | "not-dicom" | "not-bundle" | "open-search" | "other-patient" | "off-origin" | "no-cors-refusal";
 
 const where = (url: string) => { try { return new URL(url).host; } catch { return url; } };
 
@@ -9,8 +11,21 @@ const where = (url: string) => { try { return new URL(url).host; } catch { retur
  * A request that got no readable answer (`error`), one answered with `status`, or one answered when it shouldn't
  * have been, or with the wrong thing (`wrong`).
  */
-export function diagnose(hop: Hop, url: string, failure: { error?: unknown; status?: number; wrong?: "open" | "not-dicom" | "not-bundle" }): Diagnosis {
+export function diagnose(hop: Hop, url: string, failure: { error?: unknown; status?: number; wrong?: Wrong; other?: string }): Diagnosis {
   const host = where(url), origin = location.origin;
+  if (failure.wrong === "open-search") return {
+    cause: `${host} answered an ImagingStudy search that carried no access token. It has to refuse one with 401 (or 403), so nothing about a patient's imaging is readable without their sign-in.`,
+    check: `curl -i "${url}" -H "accept: application/fhir+json"   # expect 401`,
+  };
+  if (failure.wrong === "other-patient") return {
+    cause: `${host} returned studies for ${failure.other ?? "another patient"} to a token issued for a different patient. A patient's token reaches only that patient's studies: the search has to answer 403, or an empty Bundle.`,
+    check: `curl -i "${url}" -H "authorization: Bearer $TOKEN"   # expect 403, or a Bundle with no ImagingStudy`,
+  };
+  if (failure.wrong === "off-origin") return { cause: `A next link from ${host} points at another server. An app follows next links with the access token, so a link off the imaging server would hand the token to someone else; the check didn't follow it. Next links have to stay on the server that answered the search.` };
+  if (failure.wrong === "no-cors-refusal") return {
+    cause: `The browser couldn't read the answer from ${host}, so it can't be told whether the request was refused. A refusal (401 or 403) needs access-control-allow-origin for ${origin} too, so an app can tell a refusal from a network failure.`,
+    check: `curl -i "${url}" -H "origin: ${origin}"   # a 401 should still carry access-control-allow-origin`,
+  };
   if (failure.wrong === "open") return {
     cause: `${host} sent the image with no access token. Anyone with a study's address could read it: the image server has to check the token from the patient's sign-in on every retrieval.`,
     check: `curl -i "${url}"   # expect 401 or 403`,

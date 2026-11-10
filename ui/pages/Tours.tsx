@@ -1,5 +1,5 @@
-// Tours: six stories, each drawing the layer chain it ends on. Choosing one starts it in a sandbox, and opens its
-// step runner there. Each step is an action this page takes, as an app or a person would: a real sign-in, walked
+// Tours: six stories, listed beside the chosen one, which shows the layer chain it ends on. Running it starts it in a
+// sandbox, and opens its step runner there. Each step is an action this page takes, as an app or a person would: a real sign-in, walked
 // through the Authorization Server's forms, a search, a retrieval with its own token, or a change through the
 // sandbox's management API. The sandbox plans each step and says beforehand what the reference model expects,
 // and the step passes when what this page saw matches.
@@ -55,23 +55,23 @@ async function perform(client: SandboxClient, plan: Plan, trace: string) {
   }
 }
 
-/** The home page: who's who, then a card per story, on film, with the chain it ends on. */
-function StoryCards({ list, error, start }: { list: TourList; error?: string; start: (id: string) => void }) {
+/** A story not yet started: what happens, the chain it ends on, and the button that runs it. */
+function Preview({ story, error, start }: { story: Story; error?: string; start: (id: string) => void }) {
   return (
     <>
-      <div className="home-head"><h1 id="tour-title" tabIndex={-1}>Tours</h1><PageLink id="explore">Explore on your own</PageLink></div>
+      <div className="tour-head">
+        <h1 id="tour-title" tabIndex={-1}>{story.title}</h1><p>{story.premise}</p>
+      </div>
+      <div className="tour-buttons">
+        <button type="button" className="primary" data-start={story.id} onClick={() => start(story.id)}>Run this story</button>
+        <span className="note">{BASE ? "It starts over in this sandbox." : "It runs in a new sandbox of its own."} Each step is a real sign-in, search or retrieval.</span>
+      </div>
       {error && <p className="error" role="alert">{error}</p>}
-      <section className="cast" aria-labelledby="h-cast"><h2 id="h-cast">Who's who</h2>
-        <dl>{list.cast.map(c => <div key={c.name}><dt>{c.name}</dt><dd>{c.line}</dd></div>)}</dl>
-      </section>
-      <section className="key film" aria-labelledby="h-key"><h2 id="h-key">Reading the diagrams</h2><Legend film {...marks(list.tours.flatMap(t => t.chains.map(c => c.chain)))} /></section>
-      <ul className="stories">{list.tours.map(t => (
-        <li className="story" key={t.id}>
-          <h2><button type="button" className="story-go" data-start={t.id} onClick={() => start(t.id)}>{t.title}</button></h2>
-          <p>{t.premise}</p>
-          <Chains list={t.chains} film label={`${t.title}: why the app sees what it sees`} />
-        </li>
-      ))}</ul>
+      <div className="tour-chain">
+        {story.chains.length === 1 && <p className="ly-pane-label">Where the story ends</p>}
+        <Chains list={story.chains} label={`${story.title}: why the app sees what it sees`} />
+        <Legend {...marks(story.chains.map(c => c.chain))} />
+      </div>
     </>
   );
 }
@@ -112,7 +112,7 @@ function StepItem({ s, next, before, running, run, buttonRef }: { s: Step; next:
           {r.write && <><dt>Policy written</dt><dd>{r.write}</dd></>}
         </dl>
         {changed && <div className="step-chain"><p className="ly-pane-label">After this step</p><Chain c={r.chain} label="After this step: why the app sees what it sees" /></div>}
-        {r.eventCount ? <p className="result"><a href={r.activityUrl}>Logs</a>, {plural(r.eventCount, "event")}</p> : r.quiet ? <p className="result note">{r.quiet}</p> : null}
+        {r.eventCount ? <p className="result"><a href={r.activityUrl} target="_blank" rel="noopener">Logs</a>, {plural(r.eventCount, "event")}</p> : r.quiet ? <p className="result note">{r.quiet}</p> : null}
       </>}
     </li>
   );
@@ -151,7 +151,8 @@ export default function Tours() {
     // Focus waits for what it goes to: the title once the page has loaded, the next step's button once it's enabled.
     const to = focus.current === "title" ? document.getElementById("tour-title") : focus.current === "step" && !running ? nextButton.current : undefined;
     if (!to) return;
-    to.focus();
+    // The title is at the top of a page just opened, so focusing it mustn't move the page; a step's button may.
+    to.focus(focus.current === "title" ? { preventScroll: true } : undefined);
     focus.current = undefined;
   });
 
@@ -201,16 +202,25 @@ export default function Tours() {
   }
 
   const inRunner = !!(BASE && state?.tour);
+  // One layout throughout: the stories on the left, the chosen one on the right, as a preview until it runs.
+  const chosen = inRunner ? state!.tour!.id : params.get("tour") ?? list?.tours[0]?.id;
+  const preview = list?.tours.find(t => t.id === chosen) ?? list?.tours[0];
+  const choose = (id: string) => inRunner ? start(id) : navigate(`?tour=${encodeURIComponent(id)}`);
   return (
-    <main className={`tours ${inRunner ? "" : "home"}`} id="tours-main">
-      <nav className="tour-list" aria-label="Stories" id="tour-list" hidden={!inRunner}>
-        {inRunner && list && <><h2>Stories</h2>{list.tours.map(t => (
-          <button type="button" className="tour" key={t.id} data-start={t.id} aria-current={t.id === state!.tour!.id ? "true" : undefined} onClick={() => start(t.id)}><b>{t.title}</b><span>{t.premise}</span></button>
-        ))}</>}
+    <main className="tours" id="tours-main">
+      <nav className="tour-list" aria-label="Stories" id="tour-list">
+        {list && <><h2>Stories</h2>{list.tours.map(t => (
+          <button type="button" className="tour" key={t.id} data-tour={t.id} aria-current={t.id === preview?.id ? "true" : undefined} onClick={() => choose(t.id)}>{t.title}</button>
+        ))}
+          <details className="cast"><summary>Who's who</summary>
+            <dl>{list.cast.map(c => <div key={c.name}><dt>{c.name}</dt><dd>{c.line}</dd></div>)}</dl>
+          </details>
+          <PageLink id="explore">Explore on your own</PageLink>
+        </>}
       </nav>
       <section className="tour-main" id="tour" aria-labelledby="tour-title">
         {!list ? (error ? <><h1 id="tour-title" tabIndex={-1}>Something went wrong</h1><p className="error" role="alert">{error}</p></> : <p className="note">Loading…</p>)
-          : !inRunner ? <StoryCards list={list} error={error} start={start} />
+          : !inRunner ? (preview ? <Preview story={preview} error={error} start={start} /> : <p className="note">No stories.</p>)
           : error ? <><h1 id="tour-title" tabIndex={-1}>Something went wrong</h1><p className="error" role="alert">{error}</p></>
           : <Runner state={state!} running={running} runStep={id => runStep(state!, id)} runRest={runRest} startOver={() => start(state!.tour!.id)} nextButton={nextButton} />}
       </section>
@@ -236,7 +246,7 @@ function Runner({ state, running, runStep, runRest, startOver, nextButton }: { s
         {left ? <button type="button" className="secondary" id="run-rest" disabled={running} onClick={runRest}>Run the rest</button>
           : <span className={`verdict ${allOk ? "ok" : "bad"}`} role="status">{allOk ? "Every step went as expected" : "Some steps didn't go as expected"}</span>}
         <button type="button" className="secondary" id="start" onClick={startOver}>Start over</button>
-        {state.activityUrl && <a href={state.activityUrl}>Logs</a>}
+        {state.activityUrl && <a href={state.activityUrl} target="_blank" rel="noopener">Logs</a>}
       </div>
     </>
   );

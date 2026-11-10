@@ -120,7 +120,7 @@ a.tool { display:inline-flex; align-items:center; justify-content:center; color:
 .call > summary:hover { background:var(--accent-soft); }
 .call-title { flex:1 1 auto; min-width:0; font-weight:600; overflow-wrap:anywhere; }
 .call-status { flex:none; font:.75rem var(--mono); color:var(--good); }
-.call-status.bad { color:var(--bad); font-weight:700; }
+.call-status.bad { color:var(--bad); font:600 .85rem var(--sans); }
 .call-ms { flex:none; color:var(--muted); font:.75rem var(--mono); }
 .chevron { flex:none; width:.5rem; height:.5rem; border-right:2px solid var(--accent); border-bottom:2px solid var(--accent); transform:rotate(45deg); margin:0 .2rem .15rem; }
 .call[open] .chevron { transform:rotate(-135deg); margin-bottom:-.15rem; }
@@ -359,35 +359,66 @@ a.path p:not(.path-kicker) { color:var(--muted); }
 
 /* The server check: which server, one line saying how far it got, then a line per step. A step's state is its
    mark as well as its colour. */
-.check-server { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem 1rem; margin:0 0 .6rem; }
-.check-server p { flex:1 1 20rem; margin:0; min-width:0; overflow-wrap:anywhere; }
-.check-actions { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem 1rem; }
-.check-actions a { display:inline-flex; align-items:center; min-height:2.75rem; }
-.check-summary { margin:.4rem 0 .8rem; padding:.55rem .75rem; border-left:4px solid var(--line); background:var(--plate); border-radius:0 6px 6px 0; font-weight:700; }
+.check-server { margin:0 0 1rem; }
+.check-name { font-size:1.25rem; margin:0 0 .5rem; overflow-wrap:anywhere; }
+.check-facts { display:grid; grid-template-columns:max-content minmax(0,1fr); align-items:baseline; gap:.35rem 1.25rem; margin:0 0 .9rem; }
+.check-facts > div { display:contents; }
+.check-facts dt { color:var(--muted); font-size:.9rem; line-height:1.6; }
+.check-facts dd { margin:0; min-width:0; line-height:1.6; }
+.check-facts code { display:inline; vertical-align:baseline; overflow-wrap:anywhere; white-space:normal; }
+.check-actions { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; }
+.check-actions > button { min-height:2.5rem; padding:.3rem .95rem; font-size:.92rem; font-weight:600; }
+.check-actions > a { min-height:2.5rem; }
+.check-actions .check-another { display:inline-flex; align-items:center; margin-left:auto; }
+.check-summary { margin:0 0 .75rem; padding:.6rem .85rem; border-left:3px solid var(--line); background:var(--plate); border-radius:0 6px 6px 0; font-weight:500; line-height:1.45; }
 .check-summary.good { border-left-color:var(--good); }
 .check-summary.bad { border-left-color:var(--bad); }
 .check-steps { list-style:none; margin:0; padding:0; border-top:1px solid var(--line); }
 .check-step { border-bottom:1px solid var(--line); }
-.check-step > details > summary, .step-head { display:flex; align-items:baseline; gap:.6rem; padding:.55rem .2rem; min-height:2.75rem; }
+.check-step > details > summary, .step-head { display:flex; align-items:flex-start; gap:.75rem; padding:.65rem .25rem; min-height:2.75rem; }
 .check-step > details > summary { list-style:none; cursor:pointer; }
 .check-step > details > summary::-webkit-details-marker { display:none; }
 .check-step > details > summary:hover { background:var(--accent-soft); }
+.check-step > details > summary .chevron { align-self:flex-start; margin-top:.5rem; }
 .check-step > details[open] > summary .chevron { transform:rotate(-135deg); margin-bottom:-.15rem; }
-.check-step .mark { flex:none; width:1.3rem; text-align:center; font-weight:700; color:var(--muted); }
-.check-step .what { flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
+.check-step .mark { flex:none; width:1.25rem; line-height:1.5; text-align:center; font-weight:700; font-size:1rem; color:var(--muted); }
+.check-step .what { flex:1 1 auto; min-width:0; line-height:1.5; overflow-wrap:anywhere; }
 .check-step .what b { font-weight:600; }
 .check-step .said { display:block; color:var(--muted); font-size:.9rem; }
-.check-step .state { flex:none; font-size:.85rem; color:var(--muted); }
+.check-step .state { flex:none; line-height:1.5; font-size:.85rem; color:var(--muted); }
 .check-step[data-state=pass] .mark, .check-step[data-state=pass] .state { color:var(--good); }
-.check-step[data-state=fail] .mark, .check-step[data-state=fail] .state { color:var(--bad); font-weight:700; }
+.check-step[data-state=fail] .mark, .check-step[data-state=fail] .state { color:var(--bad); font-weight:600; }
 .check-step[data-state=fail] .said { color:var(--ink); }
-.check-step[data-state=paused] .state, .check-step[data-state=running] .state { color:var(--accent); font-weight:700; }
+.check-step[data-state=paused] .state, .check-step[data-state=running] .state { color:var(--accent); font-weight:600; }
 .check-step[data-state=todo] .what, .check-step[data-state=unreached] .what { color:var(--muted); }
-.check-step[data-state=unreached] .mark::before, .check-step[data-state=todo] .mark::before { content:""; display:inline-block; width:.7rem; height:.7rem; border:2px solid var(--line); border-radius:50%; }
+.check-step[data-state=unreached] .mark::before, .check-step[data-state=todo] .mark::before { content:""; display:inline-block; width:.65rem; height:.65rem; border:2px solid var(--line); border-radius:50%; vertical-align:middle; }
+@media (max-width:40rem) { .check-facts { grid-template-columns:minmax(0,1fr); gap:0; } .check-facts dd { margin-bottom:.35rem; } .check-actions .check-another { margin-left:0; } }
 .check-step .spinner { margin:0; }
 .step-body { padding:0 .2rem .7rem 2.1rem; font-size:.9rem; }
-.step-action { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem .9rem; padding:0 .2rem .75rem 2.1rem; }
-.step-action .note { flex:1 1 14rem; margin:0; font-size:.88rem; }
+.step-action { padding:0 .2rem .8rem 2.1rem; display:grid; gap:.7rem; }
+.step-go { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem .9rem; }
+.step-go .note { flex:1 1 14rem; margin:0; font-size:.88rem; }
+/* What to register before signing in: the values, each with its copy button. */
+.register-first { font-size:.9rem; }
+.register-first p { margin:0 0 .4rem; }
+.register-first dl { display:grid; grid-template-columns:max-content minmax(0,1fr); gap:.3rem .8rem; margin:0; align-items:center; }
+.register-first dt { color:var(--muted); }
+.register-first dd { margin:0; display:flex; flex-wrap:wrap; align-items:center; gap:.3rem .5rem; min-width:0; }
+.register-first dd code { overflow-wrap:anywhere; min-width:0; }
+.register-first .tool { min-height:2rem; padding:.1rem .55rem; font-size:.82rem; }
+@media (max-width:30rem) { .register-first dl { grid-template-columns:minmax(0,1fr); } .register-first dd { margin-bottom:.3rem; } }
+.check-run-note { display:flex; flex-wrap:wrap; align-items:center; gap:.3rem 1rem; margin:0 0 .4rem; }
+.check-run-note p { margin:0; }
+.check-step[data-state=note] .mark, .check-step[data-state=note] .state { color:var(--muted); }
+.check-step .fail-detail { color:var(--bad); }
+/* The checks only a sandbox can run: a section of their own under the steps. */
+.sandbox-checks { margin-top:2rem; }
+.sandbox-checks h2 { font-size:1.2rem; margin:0 0 .3rem; }
+.sandbox-checks > .note { margin:0 0 .7rem; }
+.sandbox-checks .check-actions { margin-bottom:.6rem; }
+.sandbox-checks-summary { font-weight:700; }
+.sandbox-checks-summary.good { color:var(--good); } .sandbox-checks-summary.bad { color:var(--bad); }
+.sandbox-checks .state a { display:inline-flex; align-items:center; min-height:2.75rem; }
 .seen { list-style:none; margin:.2rem 0 .5rem; padding:0; display:grid; gap:.15rem; }
 .seen li { display:flex; gap:.45rem; align-items:baseline; min-width:0; }
 .seen li span { flex:none; font-weight:700; color:var(--good); }
@@ -401,3 +432,54 @@ a.path p:not(.path-kicker) { color:var(--muted); }
 .check-servers a:hover { background:var(--accent-soft); }
 .check-servers b { color:var(--accent); }
 .check-servers span { color:var(--muted); font-size:.9rem; overflow-wrap:anywhere; min-width:0; }
+
+/* Addresses to copy: each one boxed line, never wrapped, its copy button joined to its end, so a column of them
+   lines up. A long address scrolls inside its box. */
+.addr { display:flex; width:100%; min-width:0; border:1px solid var(--line); border-radius:6px; background:var(--code); overflow:hidden; vertical-align:middle; }
+.addr code { flex:1 1 auto; display:block; min-width:0; padding:.45rem .65rem; background:none; border-radius:0; font-size:.82rem; }
+.addr .tool { flex:none; border:0; border-left:1px solid var(--line); border-radius:0; min-height:2.3rem; }
+.addr-list { display:grid; gap:.35rem; }
+.addresses { display:grid; gap:.5rem; margin:.4rem 0 .8rem; }
+.address { display:grid; grid-template-columns:10rem minmax(0, 1fr); align-items:center; gap:.25rem 1rem; }
+.address dt { color:var(--muted); font-size:.92rem; }
+.address dd { margin:0; min-width:0; }
+@media (max-width:40rem) { .address { grid-template-columns:minmax(0, 1fr); } }
+
+/* A guide's sections: headings and text, apart by a rule, with no numbers or boxes, since they aren't steps. */
+.guide-section { padding:1.25rem 0 0; margin-top:1.25rem; border-top:1px solid var(--line); }
+.guide-section h2 { margin:0 0 .5rem; font-size:1.2rem; }
+
+/* Your servers: one row per server, its actions on the row. */
+.server-rows { list-style:none; margin:0 0 1.25rem; padding:0; border-top:1px solid var(--line); }
+.server-rows > li { display:flex; flex-wrap:wrap; align-items:center; gap:.6rem 1.25rem; padding:.85rem .25rem; border-bottom:1px solid var(--line); }
+.server-row-what { flex:1 1 18rem; min-width:0; }
+.server-row-what h3 { font-size:1.05rem; margin:0 0 .15rem; overflow-wrap:anywhere; }
+.server-row-what p { margin:0; line-height:1.5; }
+.server-row-what > p:first-of-type code { max-width:100%; }
+.server-row-what .note code { display:inline; vertical-align:baseline; }
+.server-row-actions { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; }
+.server-row-actions > .button, .server-row-actions > .secondary { min-height:2.5rem; padding:.3rem .95rem; font-size:.92rem; }
+.server-row-actions > .tool { min-height:2.5rem; }
+.server-row-actions .quiet-danger { margin-left:0; }
+
+/* Build an App: the wizard's steps, one at a time. Numbered, since they are a sequence. */
+.wizard-steps { list-style:none; counter-reset:wz; display:flex; flex-wrap:wrap; gap:.25rem; margin:0 0 1.25rem; padding:0; border-bottom:1px solid var(--line); }
+.wizard-steps li { counter-increment:wz; }
+.wizard-steps li > * { display:inline-flex; align-items:center; gap:.5rem; min-height:2.75rem; padding:0 .9rem 0 .1rem; margin-bottom:-1px; border-bottom:3px solid transparent; color:var(--muted); text-decoration:none; font-weight:600; }
+.wizard-steps li > *::before { content:counter(wz); display:inline-flex; align-items:center; justify-content:center; width:1.5rem; height:1.5rem; border-radius:50%; border:1.5px solid currentColor; font-size:.8rem; }
+.wizard-steps li.done > *::before { content:"✓"; background:var(--good); border-color:var(--good); color:var(--plate); }
+.wizard-steps li > a { color:var(--ink); }
+.wizard-steps li > a:hover { color:var(--accent); }
+.wizard-steps li[aria-current=step] > * { color:var(--accent); border-bottom-color:var(--accent); }
+.wizard-steps li[aria-current=step] > *::before { background:var(--accent); border-color:var(--accent); color:var(--plate); }
+.wizard-step { display:flex; flex-direction:column; gap:.75rem; }
+.wizard-step h2 { margin:0; font-size:1.35rem; }
+.wizard-step p { margin:0; max-width:64ch; }
+.wizard-step h3 { margin:.75rem 0 0; font-size:1.05rem; }
+.wizard-actions { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem 1.25rem; }
+.wizard-nav { display:flex; gap:.6rem; justify-content:space-between; margin:1.5rem 0 0; padding-top:1rem; border-top:1px solid var(--line); }
+.wizard-nav .primary { margin-left:auto; }
+/* A checkbox and its words, aligned on the first line, with room before what follows. */
+label.check { display:flex; align-items:baseline; flex-wrap:wrap; gap:.25rem .5rem; margin:.4rem 0 1rem; font-weight:500; }
+label.check input { align-self:center; margin:0; width:1.1rem; height:1.1rem; }
+label.check code { font-size:.85em; }

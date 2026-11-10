@@ -183,7 +183,7 @@ Everything the Tours page does, you can do with these calls. `begin` returns `{p
 | `referral-check` | Whether `plan.patientRef` is under `plan.clinicalFhir/Patient/` | `{"ok":true}` |
 | `none` | Nothing: the sandbox did it, such as moving its clock | `{}` |
 
-The conformance checks on the Conformance page ({{SITE}}/checks) have no step API. Each is a scenario a client runs against a fresh sandbox, using the calls above, `POST /api/sandbox/faults`, and `GET /api/sandbox/catalog`. The page's source, `{{ORIGIN}}/checks.js`, is the reference for each one.
+The checks only a sandbox can run, at the foot of the Server check page when it checks a sandbox (`{{ORIGIN}}/check?sandbox=/s/{id}`), have no step API. Each is a scenario a client runs against a fresh sandbox, using the calls above, `POST /api/sandbox/faults`, `POST /api/sandbox/clock` and `GET /api/sandbox/catalog`.
 
 ## API types
 
@@ -258,6 +258,20 @@ type Plan =
   | { do: "none" };
 interface StepResult { ok: boolean; expected: string; actual: string; detail?: string; write?: string; eventCount: number; activityUrl: string }
 
+// Server checks, at the site's root: POST /api/checks, then GET /api/checks/{id}. See "Check a server for someone".
+interface CheckServer { label: string; iss: string; clientId: string; mode?: "launch" | "backend"; auth?: "public" | "private_key_jwt"; jwk?: JsonWebKey & { kid: string }; patient?: string; scope?: string; imaging?: string }
+interface CheckCreated { id: string; url: string; status: "waiting"; expiresAt: string }
+type CheckStepState = "todo" | "running" | "paused" | "pass" | "fail" | "skip" | "note" | "unreached";
+interface CheckStep { n: number; title: string; state: CheckStepState; result: string; diagnosis?: { cause: string; check?: string }; requests: { request: string; response: string }[] }
+interface CheckRun {
+  id: string;
+  server: Omit<CheckServer, "jwk"> & { hasKey?: boolean; kid?: string };   // never the private key
+  status: "waiting" | "running" | "paused" | "done";   // paused: waiting for the person to sign in
+  summary: string | null;   // "Stopped at step 5 of 12: …", "All 12 steps passed.", …
+  steps: CheckStep[];
+  updatedAt: string; expiresAt: string;
+}
+
 // POST /api/sandbox/clients
 interface ClientRequest { name: string; type?: "public" | "confidential" | "backend"; redirectUris?: string[]; jwk?: JsonWebKey & { kid: string }; jwksUrl?: string; patients?: "any" | string }
 ```
@@ -282,6 +296,28 @@ The Your servers page has a form for these settings, a button that checks discov
 `scope` and `imaging` are optional. `imaging` is needed only if discovery doesn't name the imaging server. A confidential app adds `"auth":"private_key_jwt"` and `"jwk"`, a private ES256 JWK with a `kid`. A backend service adds `"mode":"backend"`, `"jwk"` and `"patient"`, the FHIR id it searches for. Keys are easier to make on the page: it shows the public half to register.
 
 If discovery can't be read from the page, it's usually CORS or a wrong base: check `curl -i "$ISS/.well-known/smart-configuration" -H "origin: {{ORIGIN}}"` for a 200 with `access-control-allow-origin`.
+
+## Check a server for someone
+
+The Server check (`{{ORIGIN}}/check`) runs every step of SMART Imaging Access against one server, in a person's browser: discovery and CORS, the sign-in endpoints, SMART Imaging advertised, a token, the imaging search and its paging, refusals with no token and for another patient, every study's Endpoint, an image retrieved with the token and refused without it, and 503 with Retry-After. It needs a person for the sign-in, so an agent starts the run and hands its person a link:
+
+```sh
+curl -sX POST {{ORIGIN}}/api/checks -H 'content-type: application/json' \
+  -d '{"server":{"label":"Acme","iss":"https://fhir.acme.example/r4","clientId":"acme-check"}}'
+# 201 {"id":"…","url":"{{ORIGIN}}/check?run=…","status":"waiting","expiresAt":"…"}
+```
+
+`server` is a `CheckServer` (see "API types"), checked as the Your servers form checks one: `iss` and `imaging` use https. A confidential app adds `"auth":"private_key_jwt"` and `"jwk"`, a private ES256 JWK with a `kid`; a backend service adds `"mode":"backend"`, `"jwk"` and `"patient"`. A private key stays with the run on this site's server, which signs each assertion the page needs; no answer ever contains it. Send only a test client's key.
+
+Give your person the `url`, saying what it does: "This opens a check of your server in your browser. It stops once for you to sign in; the page shows what to register first: the redirect URI `{{ORIGIN}}/viewer`, the client ID, and the scope." A backend service runs to the end with no sign-in, but still runs in their browser, so they still open the link. Then poll:
+
+```sh
+curl -s {{ORIGIN}}/api/checks/$ID   # a CheckRun: status, summary, and each step's result, diagnosis and requests
+```
+
+`status` is `waiting` until they open the link, `paused` while it waits for their sign-in, `running`, then `done`. Each step's `state` is `pass`, `fail`, `skip`, `note` (nothing to check on this server, such as paging when everything fits one page), or `unreached` (an earlier step it depends on failed). A failed step's `diagnosis` says what it most likely means and how to check from a terminal. Requests are recorded masked, with no token in them. Poll every few seconds; the page reports after every step.
+
+The `id` is long and random, and holding it is the only access to the run: anyone with the link can open it, read it, and report to it. Runs live in this server's memory for 24 hours, a few hundred at a time, and are gone on a restart.
 
 ## Specifications
 

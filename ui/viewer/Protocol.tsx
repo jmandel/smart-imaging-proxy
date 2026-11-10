@@ -8,9 +8,9 @@ const IG = "https://build.fhir.org/ig/argonautproject/smart-imaging/", SMART = "
 interface Stage { key: string; from: string; to: string; name: string; line: string; kinds: StepKind[]; spec: [string, string] }
 /** The protocol as the client meets it. */
 const STAGES: Stage[] = [
-  { key: "discover", from: "This app", to: "Clinical FHIR server", name: "Discover", line: "From one FHIR address, find the sign-in page and the imaging server.", kinds: ["discover"], spec: [`${SMART}conformance.html`, "SMART discovery"] },
+  { key: "discover", from: "This app", to: "The FHIR server it was given", name: "Discover", line: "From one FHIR address, find the sign-in page and the imaging server: the same server, or another.", kinds: ["discover"], spec: [`${SMART}conformance.html`, "SMART discovery"] },
   { key: "authorize", from: "Browser and app", to: "Authorization server", name: "Authorize", line: "Sign in, approve this app, and receive an access token for one patient.", kinds: ["authorize", "token", "backend-token"], spec: [`${SMART}app-launch.html`, "SMART App Launch"] },
-  { key: "clinical", from: "This app", to: "Clinical FHIR server", name: "Read the chart", line: "Query the clinical server with that token.", kinds: ["patient", "clinical"], spec: [`${SMART}scopes-and-launch-context.html`, "Sandboxes and context"] },
+  { key: "clinical", from: "This app", to: "Clinical FHIR server", name: "Read the chart", line: "Query the clinical server with that token.", kinds: ["patient", "clinical"], spec: [`${SMART}scopes-and-launch-context.html`, "SMART scopes and launch context"] },
   { key: "imaging", from: "This app", to: "Imaging FHIR server", name: "Find studies", line: "Ask the imaging server for studies, and where to retrieve each one.", kinds: ["imaging"], spec: [IG, "SMART Imaging Access"] },
   { key: "retrieve", from: "This app", to: "DICOMweb endpoint", name: "Retrieve images", line: "Download DICOM from each study's Endpoint, and decode it in the browser.", kinds: ["wado"], spec: ["https://www.dicomstandard.org/using/dicomweb/retrieve-wado-rs-and-wado-uri", "DICOMweb WADO-RS"] },
 ];
@@ -25,7 +25,7 @@ const WHY: Record<StepKind, string> = {
   wado: "A DICOMweb WADO-RS retrieval from the address in the study's Endpoint, still sending the access token. Each request is one DICOM instance.",
 };
 /** Which system answered each kind of request. */
-const ANSWERED_BY: Record<StepKind, string> = { "backend-token": "Authorization server", discover: "Clinical FHIR server", authorize: "Authorization server", token: "Authorization server", patient: "Clinical FHIR server", clinical: "Clinical FHIR server", imaging: "Imaging FHIR server", wado: "DICOMweb endpoint" };
+const ANSWERED_BY: Record<StepKind, string> = { "backend-token": "Authorization server", discover: "The FHIR server the app was given", authorize: "Authorization server", token: "Authorization server", patient: "Clinical FHIR server", clinical: "Clinical FHIR server", imaging: "Imaging FHIR server", wado: "DICOMweb endpoint" };
 type State = "done" | "failed" | "waiting";
 const GLYPH: Partial<Record<State, string>> = { done: "✓", failed: "✕" };
 const STATE_WORD: Record<State, string> = { done: "Done", failed: "Failed", waiting: "Not yet" };
@@ -64,6 +64,8 @@ function StageRow({ stage, index, steps }: { stage: Stage; index: number; steps:
   // A service never signs anyone in, so that stage says what it does instead.
   const shown = steps.some(s => s.kind === "backend-token") ? { ...stage, from: "This service", line: "Prove this service's identity with a signed assertion, and receive an access token." } : stage;
   const facts = Object.entries(Object.assign({}, ...steps.map(s => s.facts ?? {})) as Record<string, string | number>);
+  // A summary step carries the stage's totals; the rest are the requests.
+  const requests = steps.filter(s => !s.summary);
   return (
     <li className="stage-row" data-stage={stage.key} data-state={state}>
       <span className="node" aria-hidden="true">{GLYPH[state] ?? index + 1}</span>
@@ -72,10 +74,10 @@ function StageRow({ stage, index, steps }: { stage: Stage; index: number; steps:
         <p className="parties"><span>{shown.from}</span><span className="arrow" aria-hidden="true">→</span><span className="sr-only">talks to</span><span>{shown.to}</span></p>
         <p className="line">{shown.line}</p>
         {facts.length > 0 && <dl className="facts-grid">{facts.map(([k, v]) => <div key={k} className={`fact${String(v).length > 12 ? " long" : ""}`}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>}
-        {steps.length > 0 && (
+        {requests.length > 0 && (
           <details className="calls" open={state === "failed" || undefined}>
-            <summary>{plural(steps.length, "request")}</summary>
-            <ul className="call-list">{steps.map(s => <Call key={s.id} s={s} />)}</ul>
+            <summary>{plural(requests.reduce((n, s) => n + (s.count ?? 1), 0), "request")}{requests.some(s => s.count) ? `, across ${plural(requests.length, "study", "studies")}` : ""}</summary>
+            <ul className="call-list">{requests.map(s => <Call key={s.id} s={s} />)}</ul>
             <p className="spec">Underlying standard: <a href={stage.spec[0]} target="_blank" rel="noopener">{stage.spec[1]}</a></p>
           </details>
         )}

@@ -23,6 +23,11 @@ export function CopyButton({ label, value, aria }: { label: string; value: strin
   return <button type="button" className="tool" data-copy={value} onClick={copy} aria-label={aria && aria !== label ? aria : undefined}>{said ?? label}</button>;
 }
 
+/** An address to copy: one boxed line, never wrapped, its copy button joined to its end. */
+export function Address({ value, name }: { value: string; name: string }) {
+  return <span className="addr"><code>{value}</code><CopyButton label="Copy" value={value} aria={`Copy ${name}`} /></span>;
+}
+
 /** Says `text` to screen readers, once, through the page's live region. */
 export function announce(text: string) {
   const el = document.getElementById("announce");

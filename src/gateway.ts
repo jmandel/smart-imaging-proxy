@@ -33,11 +33,13 @@ function target(path: string, prefix: string): string {
 const INTERNAL = /^\/imaging\/policy(\/|$)|^\/internal\/|^\/trace\/v1\//;
 
 /** Pages that only make sense inside a sandbox. At the root of a public deployment they go to the list of sandboxes. */
-const SCOPED_PAGES = new Set(["/tours", "/explore", "/activity", "/account", "/connect", "/build", "/checks"]);
+const SCOPED_PAGES = new Set(["/tours", "/explore", "/activity", "/account", "/connect", "/build"]);
 /** What a public deployment's root sandbox refuses or redirects: everyone shares it, so nobody changes it. */
 export function publicRootGate(method: string, path: string): Response | undefined {
   if (method === "GET" || method === "HEAD") return SCOPED_PAGES.has(path) ? new Response(null, { status: 302, headers: { location: "/" } }) : undefined;
   if (method === "OPTIONS" || (method === "POST" && path === "/api/sandboxes")) return undefined;
+  // Server checks belong to no sandbox: an agent starts one at the root, and its page reports to it there.
+  if ((method === "POST" && path === "/api/checks") || (method === "PUT" && /^\/api\/checks\/[^/]+\/report$/.test(path)) || (method === "POST" && /^\/api\/checks\/[^/]+\/assertion$/.test(path))) return undefined;
   return Response.json({ error: "the shared sandbox is read-only here: POST /api/sandboxes for a sandbox of your own, and work at its URLs" }, { status: 403 });
 }
 

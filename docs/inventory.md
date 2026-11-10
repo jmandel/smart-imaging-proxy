@@ -13,7 +13,8 @@ November 2026. The design settled with Josh, and the app as built.
   page, and React Router moves between pages in place.
 - **Shared code** in `ui/lib/`: the management API with the sandbox's admin token (`api.ts`), what the browser
   remembers (`store.ts`, whose sandbox list every open tab sees change), the viewer's servers (`servers.ts`), the
-  SMART Imaging client (`smart-imaging.ts`), and the client Tours and Conformance act with (`sandbox-client.ts`).
+  SMART Imaging client (`smart-imaging.ts`), and the client Tours and the sandbox checks act with (`sandbox-client.ts`).
+  The server check's steps and report are in `ui/check/`; its API for agents is `src/check-runs.ts`.
   Components shared by pages are in `ui/components/` (the layer chain, the image viewer, thumbnails).
 - **Styles** in `ui/styles/`, and the trace's own in `ui/trace/trace.css`, scoped to its pages.
 - **The trace service keeps only data:** its API, stream and span intake. Its pages are the app's, at `/trace/`,
@@ -23,7 +24,7 @@ November 2026. The design settled with Josh, and the app as built.
 
 1. **The viewer**, against a sandbox or your server: a real authorization code flow, in a tab of its own, which
    hands the code back to the viewer.
-2. **Tours and Conformance**: a real flow, whose forms the page walks itself with `fetch`.
+2. **Tours and the sandbox checks**: a real flow, whose forms the page walks itself with `fetch`.
 3. **Explore**: no sign-in. The admin key mints the person's token.
 4. **Agents and tests**: post the forms over HTTP.
 
@@ -56,15 +57,20 @@ Settled with Josh, November 2026. This replaces earlier plans.
 
 ### A guide for each audience
 
-The home page asks who you are. Each audience has a short guide at the site's root, listing what matters for
-its jobs, most important first, and linking to the pages that do them. The menu is just the guides, plus For
-Agents: **Build an App · Run a Server · How It Works · Why It Matters · For Agents**.
+The home page shows what SMART Imaging adds, as one diagram, and the two ways in. The menu is the guides, your
+sandboxes, and For Agents: **Build an App · Run a Server · Why SMART Imaging · My Sandboxes · For Agents**.
 
-- **Build an App:** get a sandbox; endpoints and sample logins; register; logs; the hard cases.
-- **Run a Server:** what the server needs (advice and gotchas); register our viewer; add the server and
-  connect; compare with a working sandbox and its logs; conformance (planned, issue #1).
-- **How It Works:** the viewer on a sandbox; the parts; the Tour's stories; the live trace.
-- **Why It Matters:** what it makes possible; watch it work; what it takes to implement.
+- **Build an App:** a wizard, one step at a time, with the step in the address: choose a sandbox, choose or
+  register the app in place, see where to point it, then try it. It never sends you elsewhere to finish a step.
+- **Run a Server:** what the server needs (advice and gotchas); register our viewer; add the server on Your
+  servers and check it; compare with a working sandbox and its logs.
+- **Why SMART Imaging:** what it makes possible, how it works (the diagram), see it work, what it takes.
+- **My Sandboxes:** the sandboxes this browser made or joined, and Create.
+
+Pages that hold a list open on the list (Your servers, My Sandboxes); adding or editing is a step away, in the
+address (`?add`, `?edit=`), and with nothing saved the page is the form. Numbered steps are kept for real
+sequences: the wizard, the server check, a Tour's steps. Links to the logs from the middle of a task open in a
+new tab, so the task keeps its place.
 
 Connectathon participants use the app and server guides. A registry of external test environments, and
 connectathon support, come later.
@@ -74,8 +80,11 @@ A guide's links go to the sandbox you were last in. With none, the first link ma
 ### Inside a sandbox
 
 A sandbox's pages have its bar under the header: its name, and its pages by what they're for, the same groups
-its home page and the footer list: **Try it** (Viewer, Tour, Explore), **Your app** (Start here, Register an app,
-Logs, Live trace), **Under the hood** (Sandbox Config, Conformance). On a phone, the pages open from a button.
+its home page and the footer list: **Try it** (Viewer, Tour, Explore, Server check), **Your app** (Start here,
+Register an app, Logs, Live trace), **Under the hood** (Sandbox Config). On a phone, the pages open from a button.
+The Viewer and Server check are the site's own pages, opened on the sandbox: the check adds a second section,
+checks only a sandbox can run (faults, the clock, policy changed between pages), each in a fresh sandbox set up
+like it. There is no separate Conformance page; its old address opens the check.
 Activity is called **Logs**.
 
 **Sandbox Config** holds what makes the sandbox realistic, for the curious: the settings (clock, storage,
@@ -106,4 +115,4 @@ app with `private_key_jwt`, and a backend service.
 1. Sandbox Config's policy editor: see, edit, and named scenarios.
 2. The sample-logins table shows each login's patients and studies.
 3. Cuts: `src/flows` moves into the tests; URL-seeded sandboxes go.
-4. Conformance checks against your own server (issue #1).
+4. More of the sandbox's checks against your own server, where a client alone can do them (issue #1).

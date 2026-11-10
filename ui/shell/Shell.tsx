@@ -65,6 +65,7 @@ function SandboxBar({ page, sandbox }: { page: PageId; sandbox: KnownSandbox | u
 
 function Footer({ sandbox }: { sandbox: KnownSandbox | undefined }) {
   const ref = useRef<HTMLElement>(null);
+  const yours = useSandboxes();
   // It sits at the foot of a page at least a screen tall, so it's never on the first screen, and content that
   // arrives later pushes it along out of sight, never across what someone is reading. Measured before the first
   // paint, so it's never seen anywhere else.
@@ -102,12 +103,13 @@ function Footer({ sandbox }: { sandbox: KnownSandbox | undefined }) {
                 <ul>{g.pages.map(id => <li key={id}><PageLink id={id} base={base} /></li>)}</ul>
               </div>
             ))}
-            <p><a href="/">All your sandboxes</a></p>
+            <p><PageLink id="sandboxes">All your sandboxes</PageLink></p>
           </section>
         ) : (
           <section>
-            <h2>Sandboxes</h2>
-            <ul><li><a href="/">Your sandboxes</a></li></ul>
+            <h2>Your sandboxes</h2>
+            <ul>{yours.slice(0, 6).map(w => <li key={w.base}><a href={`${w.base}/`}>{w.name ?? "Sandbox"}</a></li>)}
+              <li><PageLink id="sandboxes">{yours.length ? "All, or a new one" : "Make one"}</PageLink></li></ul>
           </section>
         )}
         <section>
