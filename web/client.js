@@ -318,8 +318,9 @@ function knownSandboxes() {
 }
 const saveSandboxes = list => store(SANDBOXES_KEY, JSON.stringify(list));
 const shareLink = base => `${location.origin}${base}/`;
+/** A sandbox's name: `null` when the server says it's gone, and `undefined` when it couldn't be asked. */
 async function sandboxName(base) {
-  try { return (await api("GET", "/api/sandbox", undefined, base)).name; } catch { return null; }
+  try { return (await api("GET", "/api/sandbox", undefined, base)).name; } catch (e) { return e.status === 404 ? null : undefined; }
 }
 /** The home page: the sandboxes this browser has made or joined, and a way to make another. */
 function paintHome(list) {
@@ -329,9 +330,10 @@ async function renderHome() {
   let list = knownSandboxes();
   // What this browser remembers, straight away, then checked against the server.
   paintHome(list);
-  const names = await Promise.all(list.map(w => sandboxName(w.base)));
-  // One deleted by whoever made it is gone for everyone.
-  list = list.map((w, i) => names[i] ? { ...w, name: names[i] } : null).filter(Boolean);
+  const names = new Map(await Promise.all(list.map(async w => [w.base, await sandboxName(w.base)])));
+  // The list as it is now, since one made or joined meanwhile belongs on it. One deleted by whoever made it is
+  // gone for everyone; one that couldn't be asked stays, as it was.
+  list = knownSandboxes().flatMap(w => { const n = names.get(w.base); return n === null ? [] : [n ? { ...w, name: n } : w]; });
   saveSandboxes(list);
   paintHome(list);
 }
@@ -351,7 +353,8 @@ async function renderSandbox() {
   const box = $("#sandbox");
   const list = knownSandboxes();
   const name = await sandboxName(BASE);
-  if (!name) { box.innerHTML = `<p class="error">This sandbox doesn't exist any more.</p><p><a href="/" data-root>Your sandboxes</a></p>`; return; }
+  if (name === null) { box.innerHTML = `<p class="error">This sandbox doesn't exist any more.</p><p><a href="/" data-root>Your sandboxes</a></p>`; return; }
+  if (!name) { box.innerHTML = `<p class="error">This sandbox couldn't be reached. Reload to try again.</p><p><a href="/" data-root>Your sandboxes</a></p>`; return; }
   const mine = list.find(w => w.base === BASE);
   if (!mine) {
     box.innerHTML = `<h2>Join “${esc(name)}”?</h2><p class="note">Someone shared this sandbox with you. Anyone with its link can see and change it. It holds sample data only.</p><div class="sandbox-actions"><button type="button" class="primary" id="join">Join this sandbox</button></div>`;

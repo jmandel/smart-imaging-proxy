@@ -239,6 +239,28 @@ describe("the demo client", () => {
     expect((await page.request.get(`${ORIGIN}${first}/api/sandbox`)).status()).toBe(404);
     await context.close();
   });
+  test("a sandbox made while home is still checking the list stays on it, and a sandbox that can't be asked isn't dropped", async () => {
+    const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    const first = await enterSandbox(page);
+    // Home's check of the first sandbox is held until after Create has made the second.
+    let release!: () => void; const held = new Promise<void>(r => { release = r; });
+    await page.route(`**${first}/api/sandbox`, async r => { await held; await r.continue(); });
+    await page.goto(`${ORIGIN}/`);
+    await page.getByRole("button", { name: "Create a sandbox" }).click();
+    await page.waitForURL(u => /^\/s\/[^/]+\/$/.test(u.pathname) && !u.pathname.startsWith(`${first}/`));
+    release();
+    await page.locator("#sandbox-name").waitFor();
+    const second = new URL(page.url()).pathname.replace(/\/$/, "");
+    await page.unroute(`**${first}/api/sandbox`);
+    // A check that fails for any reason but the sandbox being gone leaves it listed.
+    await page.route(`**${second}/api/sandbox`, r => r.fulfill({ status: 500, body: "{}" }));
+    await page.goto(`${ORIGIN}/`);
+    await page.locator(`.sandbox-list a[href="${first}/"]`).waitFor();
+    await page.waitForLoadState("networkidle");
+    expect(await page.locator(`.sandbox-list a[href="${second}/"]`).count()).toBe(1);
+    await context.close();
+  });
   test("a page brought back with Back shows where things are now", async () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();

@@ -31,7 +31,7 @@ async function signAssertion(jwk, clientId, tokenEndpoint, now = Math.floor(Date
 /** A sandbox's sample keys, its admin client's and its services', and its time now. Anyone with the sandbox's URL may have them. */
 async function keysOf(base = BASE) {
   const r = await fetch(`${base}/api/sandbox/keys`);
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`);
+  if (!r.ok) throw Object.assign(new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`), { status: r.status });
   return r.json();
 }
 /** A token from a Backend Services client's key: client_credentials with a signed assertion, plus any extra fields and headers. */
