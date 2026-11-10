@@ -57,7 +57,7 @@ Approving fewer sites leaves those sites' studies and reports out. `GET /api/san
 
 ## Connect an app
 
-Public clients with PKCE (S256) are supported. Register one in the sandbox, or use the page at `$SANDBOX/connect`. Registering, like every call under `$SANDBOX/api/sandbox`, takes the sandbox's admin token: three calls, under "Manage a sandbox" below, with a key the sandbox gives out on purpose.
+Public clients with PKCE (S256) are supported. Every endpoint an app uses (discovery, `/token`, FHIR, imaging and DICOMweb) answers CORS for any origin, so a browser app works as is. Register one in the sandbox, or use the page at `$SANDBOX/connect`. Registering, like every call under `$SANDBOX/api/sandbox`, takes the sandbox's admin token: three calls, under "Manage a sandbox" below, with a key the sandbox gives out on purpose.
 
 ```sh
 curl -X POST "$SANDBOX/api/sandbox/clients" -H "authorization: Bearer $ADMIN" -H 'content-type: application/json' \
@@ -81,6 +81,65 @@ curl -X POST "$SANDBOX/api/sandbox/clients" -H "authorization: Bearer $ADMIN" -H
 
 The assertion is a JWT with `iss` and `sub` set to the client id, `aud` set to `$SANDBOX/token`, a unique `jti`, and `exp` at most five minutes ahead, by real time: assertions are checked by real time, whatever the sandbox's demo clock says. A backend service names the patient in each search, and asking about a patient outside its grant returns 403.
 
+## Smoke test
+
+One script, Node 20+ with no packages, that does what an app does, end to end, and prints `OK`: the admin token, registering a public app, signing in as `josh` through the forms, searching every page with the endpoints included, retrieving one image, and reading a report. Run it with `SANDBOX=https://…/s/{id} node smoke.mjs`. This site's tests run this exact script, so it stays true.
+
+```js
+// smoke.mjs
+import { createHash, createPrivateKey, randomBytes, randomUUID, sign } from "node:crypto";
+const SANDBOX = process.env.SANDBOX, b64 = b => Buffer.from(b).toString("base64url");
+const must = async (r, what) => { if (!r.ok && r.status !== 302 && r.status !== 303) throw new Error(`${what}: HTTP ${r.status} ${await r.text()}`); return r; };
+// 1. The admin token, from the keys this sandbox shares on purpose.
+const k = await (await must(await fetch(`${SANDBOX}/api/sandbox/keys-shared-on-purpose`), "keys")).json();
+const head = `${b64(JSON.stringify({ alg: "ES256", kid: k.admin.jwk.kid }))}.${b64(JSON.stringify({ iss: k.admin.client_id, sub: k.admin.client_id, aud: k.tokenEndpoint, jti: randomUUID(), exp: Math.floor(Date.now() / 1000) + 240 }))}`;
+const assertion = `${head}.${b64(sign("sha256", Buffer.from(head), { key: createPrivateKey({ key: k.admin.jwk, format: "jwk" }), dsaEncoding: "ieee-p1363" }))}`;
+const admin = (await (await must(await fetch(k.tokenEndpoint, { method: "POST", body: new URLSearchParams({ grant_type: "client_credentials", scope: "sandbox/admin", client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: assertion }) }), "admin token")).json()).access_token;
+// 2. A public app, with a redirect URI nothing needs to serve: the code is read from the redirect itself.
+const redirect = "http://localhost:8123/callback";
+const app = await (await must(await fetch(`${SANDBOX}/api/sandbox/clients`, { method: "POST", headers: { authorization: `Bearer ${admin}`, "content-type": "application/json" }, body: JSON.stringify({ name: "Smoke test", redirectUris: [redirect] }) }), "register")).json();
+// 3. Sign in as josh, through the forms, with PKCE.
+const conf = await (await must(await fetch(`${SANDBOX}/fhir/.well-known/smart-configuration`), "discovery")).json();
+const verifier = b64(randomBytes(32)), challenge = b64(createHash("sha256").update(verifier).digest());
+const auth = new URL(conf.authorization_endpoint);
+for (const [n, v] of Object.entries({ response_type: "code", client_id: app.id, redirect_uri: redirect, scope: "launch/patient patient/*.rs", aud: `${SANDBOX}/fhir`, state: "smoke", code_challenge: challenge, code_challenge_method: "S256" })) auth.searchParams.set(n, v);
+const action = async (r, what) => new URL((await (await must(r, what)).text()).match(/<form[^>]*action="([^"]+)"/)[1].replaceAll("&amp;", "&"), r.url);
+const signIn = await action(await fetch(auth), "authorize");
+const consent = new URL((await must(await fetch(signIn, { method: "POST", body: new URLSearchParams({ username: "josh" }), redirect: "manual" }), "sign in")).headers.get("location"), signIn);
+const decide = await action(await fetch(consent), "consent page");
+const back = new URL((await must(await fetch(decide, { method: "POST", body: new URLSearchParams({ decision: "approve", patient: "josh-example" }), redirect: "manual" }), "approve")).headers.get("location"));
+const token = await (await must(await fetch(conf.token_endpoint, { method: "POST", body: new URLSearchParams({ grant_type: "authorization_code", code: back.searchParams.get("code"), redirect_uri: redirect, client_id: app.id, code_verifier: verifier }) }), "token")).json();
+const bearer = { authorization: `Bearer ${token.access_token}` };
+// 4. Every page of the search, with each study's Endpoint, found by capability in discovery.
+const imaging = conf.associated_endpoints.find(e => e.capabilities.includes("smart-imaging-access")).url;
+const entries = [];
+for (let next = `${imaging}/ImagingStudy?patient=Patient/${token.patient}&_include=ImagingStudy:endpoint`; next;) {
+  const page = await (await must(await fetch(next, { headers: bearer }), "search")).json();
+  entries.push(...(page.entry ?? []));
+  next = page.link?.find(l => l.relation === "next")?.url;
+}
+const studies = entries.filter(e => e.resource.resourceType === "ImagingStudy").map(e => e.resource);
+if (studies.length !== 6) throw new Error(`expected josh's 6 studies, got ${studies.length}`);
+// 5. One image, from the study's own Endpoint.address, with retries while it's prepared.
+const study = studies[0], endpoint = entries.find(e => e.fullUrl === study.endpoint[0].reference).resource;
+const uid = study.identifier.find(i => i.system === "urn:dicom:uid").value.replace(/^urn:oid:/, "");
+const series = study.series[0], url = `${endpoint.address}/studies/${uid}/series/${series.uid}/instances/${series.instance[0].uid}`;
+let image;
+for (let tries = 0; !image; tries++) {
+  const r = await fetch(url, { headers: { ...bearer, accept: 'multipart/related; type="application/dicom"; transfer-syntax=*' } });
+  if (r.status === 503 && tries < 10) { await new Promise(done => setTimeout(done, 1000 * Number(r.headers.get("retry-after") ?? 1))); continue; }
+  image = Buffer.from(await (await must(r, "retrieve")).arrayBuffer());
+}
+const part = image.subarray(image.indexOf("\r\n\r\n") + 4);
+if (part.subarray(128, 132).toString() !== "DICM") throw new Error("the image isn't DICOM");
+// 6. A report, as text.
+const reports = await (await must(await fetch(`${SANDBOX}/fhir/DiagnosticReport?patient=Patient/${token.patient}`, { headers: bearer }), "reports")).json();
+const text = reports.entry[0].resource.presentedForm.find(f => f.contentType.startsWith("text/plain"));
+await must(await fetch(text.url, { headers: bearer }), "report text");
+await fetch(`${SANDBOX}/api/sandbox/clients/${app.id}`, { method: "DELETE", headers: { authorization: `Bearer ${admin}` } });
+console.log(`OK: ${studies.length} studies, an image of ${image.length} bytes, ${reports.entry.length} reports`);
+```
+
 ## Sign in without a browser
 
 An agent can walk the forms a person would:
@@ -90,7 +149,7 @@ An agent can walk the forms a person would:
 3. `POST` that action with `decision=approve` and `patient=josh-example`. The 302 `Location` has the `code`.
 4. `POST $SANDBOX/token` with `grant_type=authorization_code`, `code`, `redirect_uri`, `client_id` and `code_verifier`. The response has `access_token` and `patient`.
 
-To limit what's approved, add `sites_shown=1` and a `sites` field per site. Sites left out aren't approved.
+To limit what's approved, add `sites_shown=1` and a `sites` field per site, with the site's name exactly: `Northside Pathology`, `Lakeside Imaging` or `Riverside Hospital`. Sites left out aren't approved. A name that isn't a site at all is refused: the redirect carries `error=invalid_request` and an `error_description` listing the sites. A real site the person doesn't hold for that patient is dropped. Each sign-in's choice replaces that app's approval for that patient, so a later sign-in that approves fewer sites narrows what earlier tokens' searches return.
 
 ## Read data
 
@@ -106,7 +165,7 @@ Reports link to their images by accession number, and each has a PDF and a text 
 curl "$SANDBOX/fhir/DiagnosticReport?patient=Patient/josh-example" -H "authorization: Bearer $TOKEN"
 ```
 
-Retrieve images from each study's `Endpoint.address`, still sending the token:
+Each study in a search comes with its `Endpoint`, as a bundle entry the study's `endpoint` reference names. Its `address` is that study's own DICOMweb base: retrieve under it, never under an address you build. `$STUDY_UID` is the study's `identifier` with system `urn:dicom:uid`, less its `urn:oid:` prefix (not `ImagingStudy.id`); series and instance UIDs are `series[].uid` and `series[].instance[].uid`. Still send the token:
 
 ```sh
 curl "$ADDRESS/studies/$STUDY_UID/series/$SERIES_UID/instances/$INSTANCE_UID" \
@@ -114,7 +173,9 @@ curl "$ADDRESS/studies/$STUDY_UID/series/$SERIES_UID/instances/$INSTANCE_UID" \
   -H 'accept: multipart/related; type="application/dicom"; transfer-syntax=*'
 ```
 
-`/studies/{uid}` and `/metadata` also work. `/frames`, `/rendered` and `/thumbnail` return 501.
+The answer is `multipart/related`: each part is one DICOM file, starting after the part's headers, with `DICM` at byte 128. `/studies/{uid}` and `/metadata` (`accept: application/dicom+json`) also work. `/frames`, `/rendered` and `/thumbnail` return 501. A study not yet ready answers 503 with `Retry-After`: wait that long and ask again.
+
+Every refusal says why. FHIR endpoints answer an `OperationOutcome` whose `issue[0].diagnostics` gives the reason; everything else answers JSON `{error, hint?}`.
 
 ## Manage a sandbox
 
@@ -136,7 +197,7 @@ const t = await (await fetch(k.tokenEndpoint, { method: "POST", body: new URLSea
 const ADMIN = t.access_token;
 ```
 
-The same assertion, with `user`, `patient` and optionally `app` (default `portal-app`) in place of `scope`, gets a token as that person for that app, as the app would get one at sign-in. It's a sandbox-only extension, for exploring what a person's app can reach without walking the sign-in. What it reads is decided by policy, like any token's.
+The same assertion, signed with `admin.jwk`, with `user`, `patient` and optionally `app` (default `portal-app`) sent in place of `scope` (send no `scope` at all), gets a token as that person for that app, as the app would get one at sign-in. It's a sandbox-only extension, for exploring what a person's app can reach without walking the sign-in. What it reads is decided by policy, like any token's.
 
 The three services in `services` are ordinary Backend Services clients. Sign as one of them the same way, with `scope=system/ImagingStudy.rs`.
 
@@ -158,14 +219,28 @@ All paths below are under `$SANDBOX`. Bodies are JSON.
 | `GET /api/sandbox/policy/policies`, `PUT /api/sandbox/policy/policies/{id}`, `DELETE /api/sandbox/policy/policies/{id}` | The imaging network's rules: sharing, guardian access, service access |
 | `GET /api/sandbox/policy/shares`, `POST` `{"from":"user:josh","with":"user:sam-caregiver","patient":"patient:josh-example","sites":[...],"label":"caregiver"}`, `DELETE ?from=&with=&patient=` | People's shares |
 | `GET /api/sandbox/policy/app-approvals`, `POST` `{"by":"user:josh","app":"app:portal-app","patient":"patient:josh-example","sites":[...]}`, `DELETE ?by=&app=&patient=` | Which sites a person lets an app see |
-| `GET /api/sandbox/policy/explain?client=&user=&patient=` | Each of a patient's studies, whether it's released to that app or service, and why |
+| `GET /api/sandbox/policy/explain?client=&user=&fhirUser=&patient=` | Each of a patient's studies, whether it's released to that app or service, and why. A `user` needs its `fhirUser`, e.g. `user=josh&fhirUser=Patient/josh-example` |
 | `GET /api/sandbox/explore/cast` | The people and services, whose records each holds, and each person's `fhirUser` |
 | `GET /api/sandbox/explore/referrals` | The referrals the services work from: the report each cites, its patient reference, accession number and system |
 | `GET /api/sandbox/explore/view?session=&user=&patient=` or `?session=&client=&referral=` | A view explained from policy: headline, the studies its viewer may know of with why each is or isn't released, the layer chain, and what could change it. `session` names the trace session your requests carry |
 | `GET /api/sandbox/explore/happened?session=&study=` | One line for what a session did with a study, from the activity log |
 | `GET /api/sandbox/explore/rule-sets?service=` | The imaging network's named rule sets for a service, with their rules to `PUT` |
 | `GET /api/sandbox/catalog?patient=` | A patient's studies as the catalog holds them, with UIDs, sites, dates and image counts, in the order search returns them |
-| `POST /api/sandbox/faults` `{"decisionOutage":true}` or `{"truncateAfter":N}` | Injects a fault: the Imaging Server's decision API down, or the image store stopping after `N` instances. `false` and `null` clear them |
+| `GET /api/sandbox/faults` | The faults on now, and the app check running here, if any: `{faults, appCheck}` |
+| `POST /api/sandbox/faults` with any of the fields below | Sets those faults and leaves the rest, answering with what's on now. `false` and `null` clear them. Refused with 409 while an app check runs here |
+
+What each fault affects:
+
+| Field | Affects | Doesn't affect |
+|---|---|---|
+| `decisionOutage: true` | Image retrieval the proxy can't decide from the signed address alone, so asks the Imaging Server's decision API: an address with no signed context, or an expired or restricted one, with no cached decision. These answer `503` with `Retry-After` | `ImagingStudy` search, which decides access itself and still answers `200`; retrievals whose signed context the proxy verifies on its own |
+| `truncateAfter: N` | Image retrieval: the image store stops after `N` instances, so a multipart response is cut off with no closing boundary | Search, and metadata |
+| `pageSize: N` (1 to 100) | `ImagingStudy` search: at most `N` studies a page, with the rest behind `next` links that repeat the `_count` asked for | Retrieval |
+| `searchRetryAfter: N` (1 to 30) | `ImagingStudy` search: each token's first search, once access is checked, answers `503` with `Retry-After: N`; later ones answer normally | Retrieval, and refusals: a search that would be 401 or 403 still is |
+| `retrievalRetryAfter: N` (1 to 30) | Image retrieval, including metadata: the first allowed request for each study answers `503` with `Retry-After: N` | Search, and refused requests |
+| `endpointForms: true` | `ImagingStudy` search: Endpoints rotate, study by study, through the three forms the guide allows: a response-local `urn:uuid` entry, a contained `#wado`, and an entry with fullUrl `{imaging}/fhir/Endpoint/{id}` referenced as `Endpoint/{id}`. That address isn't served: the Endpoint is only in the Bundle | Retrieval: every form holds the same address |
+
+The last four are what the guide or FHIR lets any server do, and are what an app check stages.
 | `POST /api/sandbox/tours/{id}/start` | Starts a guided tour here, putting policy back to what's on file |
 | `GET /api/sandbox/tours/state?tour=` | A tour's steps, what the model expects of the next, and each finished step's result |
 | `POST /api/sandbox/tours/{id}/steps/{step}/begin` | Begins a step: the sandbox decides what the model expects, and returns a `plan` for you to carry out, with the `session` and `trace` to send it under |
@@ -214,7 +289,11 @@ interface SandboxStatus {
   storage: { current: "static-files" | "s3" | "orthanc"; names: string[] };
   topology: { current: "separate" | "unified"; names: string[] };
   catalog: { source: string; studies: number; series: number; [count: string]: unknown }; signing: { kid: string }; proxy: { cachedDecisions: number };
+  faults: Faults; appCheck: AppCheckOn | null;
 }
+// GET /api/sandbox/faults gives { faults, appCheck }, and POST /api/sandbox/faults answers the same. POST takes any of these fields.
+interface Faults { decisionOutage: boolean; truncateAfter: number | null; pageSize: number | null; searchRetryAfter: number | null; retrievalRetryAfter: number | null; endpointForms: boolean }
+interface AppCheckOn { run: string; client: string; script: string; staged: string[]; startedAt: string; endsAt: string }
 
 // The policy API, /api/sandbox/policy/*.
 interface Relationship { id?: string; subject: Ref; relation: "guardian_of"; object: Ref; recordedBy?: string }
@@ -283,6 +362,20 @@ interface CheckRun {
   updatedAt: string; expiresAt: string;
 }
 
+// App checks, at the site's root too: POST /api/checks with an app, then start, end and GET. See "Check an app for someone".
+interface CheckApp { sandbox: string; clientId: string; script?: "josh" | "riley" | "robin" | "service"; conditions?: ("small-pages" | "search-503" | "retrieval-503" | "endpoint-forms")[] }
+interface Source { doc: string; section: string; url: string; text: string }
+interface AppCheckStep { n: number; group: "script" | "requirement"; title: string; state: "pass" | "fail" | "note" | "unreached"; result: string; sources?: Source[]; requests: { request: string; response: string; log?: string }[] }
+interface AppCheckRun {
+  id: string; app: Required<CheckApp> & { name: string; type: string };
+  status: "waiting" | "running" | "done"; summary: string | null;
+  script: { id: string; title: string; steps: string[] }; staged: { id: string; text: string }[]; fhirBase: string;
+  startedAt?: string; endsAt?: string; endedAt?: string; ended?: "graded" | "abandoned" | "expired";
+  progress?: { tokens: number; searches: number; retrievals: number };   // while it runs
+  steps: AppCheckStep[]; notes: { title: string; detail: string; sources: Source[]; requests: AppCheckStep["requests"] }[];
+  updatedAt: string; expiresAt: string;
+}
+
 // POST /api/sandbox/clients
 interface ClientRequest { name: string; type?: "public" | "confidential" | "backend"; redirectUris?: string[]; jwk?: JsonWebKey & { kid: string }; jwksUrl?: string; patients?: "any" | string }
 ```
@@ -329,6 +422,35 @@ curl -s {{ORIGIN}}/api/checks/$ID   # a CheckRun: status, summary, and each step
 `status` is `waiting` until they open the link, `paused` while it waits for their sign-in, `running`, then `done`. Each step's `state` is `pass`, `fail`, `skip`, `note` (nothing to check on this server, such as paging when everything fits one page), or `unreached` (an earlier step it depends on failed). A failed step's `diagnosis` says what it most likely means and how to check from a terminal. Requests are recorded masked, with no token in them. Poll every few seconds; the page reports after every step.
 
 The `id` is long and random, and holding it is the only access to the run: anyone with the link can open it, read it, and report to it. Runs live in this server's memory for 24 hours, a few hundred at a time, and are gone on a restart.
+
+## Check an app for someone
+
+The App check (`$SANDBOX/app-check`) grades an app from the server side. A run puts the person's own sandbox, where their app is registered, into a staged mode: until the run ends, the sandbox does things the guide or FHIR lets any server do. The person follows a script with their app, then ends the run, and every request that client made in the meantime is graded from the sandbox's log. One run at a time per sandbox; a banner on every page of the sandbox says it's on. Ending it, abandoning it, or its two hours running out puts the sandbox back exactly as it was.
+
+```sh
+curl -sX POST {{ORIGIN}}/api/checks -H 'content-type: application/json' \
+  -d '{"app":{"sandbox":"/s/{id}","clientId":"app-…","script":"josh"}}'
+# 201 {"id":"…","url":"{{ORIGIN}}/s/{id}/app-check?run=…","status":"waiting","expiresAt":"…"}
+curl -sX POST {{ORIGIN}}/api/checks/$ID/start   # the staged mode goes on: an AppCheckRun, status running
+curl -sX POST {{ORIGIN}}/api/checks/$ID/end     # graded: status done, with steps and notes
+curl -sX POST {{ORIGIN}}/api/checks/$ID/abandon # put back, not graded
+curl -s {{ORIGIN}}/api/checks/$ID               # an AppCheckRun; while it runs, progress counts the app's requests so far
+```
+
+`app` is a `CheckApp`. `sandbox` is the sandbox's base or URL; `clientId` an app registered there. `script` is one of these, `josh` by default, and `service` for a backend service:
+
+| `script` | The person | A correct app |
+|---|---|---|
+| `josh` | Signs in as `josh`, approves every site, opens every study | Finds and opens all 6 |
+| `riley` | Signs in as `sam-caregiver` and chooses Riley | Finds 1 of Riley's 2, and opens it |
+| `robin` | Signs in as `robin` | Finds none, with no error |
+| `service` | Runs the backend service for `josh-example` | Finds and retrieves all 6 |
+
+`conditions` are what's staged, all four by default: `small-pages` (`pageSize: 2`), `search-503` and `retrieval-503` (`Retry-After: 2`), and `endpoint-forms`, as in the faults table above. Give the person the `url`, or start the run and tell them: "Point your app at `$SANDBOX/fhir` with client ID `…`, sign in as josh, approve every site, open every study, then press End the run and grade on the page." Only that client's requests while the run is on count: its tokens from `token.issued`, its searches by `client`, and its retrievals by `tokenHash`, or with no token, by the address a search issued to one of its tokens.
+
+The result has three parts. `steps` with `group: "script"` say whether the app did what the script asked, against what the server itself released, so an app that stopped early fails where one that correctly found 1 or none passes. `steps` with `group: "requirement"` are clear requirements on apps, each with its `sources`, quoted: `pass`, `fail` with the requests behind it, or `note` when the app made no request it covers. `notes` are where the app relied on something the spec doesn't promise, such as one page of results or `/rendered`: not failures, each with why. The requirements and their sources are in [docs/app-check.md](https://github.com/jmandel/smart-imaging-proxy/blob/main/docs/app-check.md).
+
+Holding the id is the only access to the run, as with a server check, and runs live in this server's memory for 24 hours.
 
 ## Specifications
 

@@ -66,9 +66,11 @@ export interface ProxyEvent {
   bytes?: number; disconnected?: boolean;
   /** What the typed events name: the study, the resource asked for, and hashes of the token and context. */
   studyUid?: string; resource?: string; tokenHash?: string; contextHash?: string; encoding?: "zstd" | "identity"; streamed?: boolean;
+  /** The request had no Accept header. */
+  noAccept?: boolean;
 }
 
-const hashesOf = (ev: ProxyEvent) => ({ ...(ev.tokenHash ? { tokenHash: ev.tokenHash } : {}), ...(ev.contextHash ? { contextHash: ev.contextHash } : {}) });
+const hashesOf = (ev: ProxyEvent) => ({ ...(ev.tokenHash ? { tokenHash: ev.tokenHash } : {}), ...(ev.contextHash ? { contextHash: ev.contextHash } : {}), ...(ev.noAccept ? { noAccept: true as const } : {}) });
 
 /** Keys come from a JWKS URL or, in tests, from a map. */
 type KeyOption = { jwksUrl: string; jwksTtlSeconds?: number; jwksCooldownSeconds?: number; jwksClock?: () => number; keys?: undefined } | { keys: Map<string, KeyObject>; jwksUrl?: undefined };
@@ -87,6 +89,9 @@ export function createProxy(opts: KeyOption & {
   const cache = new Map<string, { until: number; outcome: Outcome }>();
   const events: ProxyEvent[] = [];
   let seq = 0;
+  /** Staged for an app check: each study's first retrieval answers 503 with Retry-After of this many seconds. */
+  let retryAfter: number | undefined;
+  const answered = new Set<string>();
 
   const verified = async (ctx: string) => verifyJws(ctx, await keySource.keysFor(kidOf(ctx)));
 
@@ -523,6 +528,7 @@ export function createProxy(opts: KeyOption & {
     ev.studyUid = study;
     ev.resource = tail ? tail.split("/")[0]! : instance ? "instance" : series ? "series" : "study";
     if (ctxSeg !== "-") ev.contextHash = shortHash(ctxSeg);
+    ev.noAccept = !req.headers.get("accept")?.trim();
     if (!check("dicomweb-proxy", "UIDs and context are well formed", CTX.test(ctxSeg) && validUid(study) && (!series || validUid(series)) && (!instance || validUid(instance)), { study, series, instance })) return new Response(null, { status: 400 });
     if (instance && !series) return new Response(null, { status: 404 });
 
@@ -541,6 +547,12 @@ export function createProxy(opts: KeyOption & {
     const scope: Scope = { study, series, instance };
     if (decision.version !== undefined) scope.version = decision.version;
     if (!series && typeof released === "object") scope.onlySeries = released.series;
+    // A server assembling a study may answer 503 with Retry-After first (the guide's Retrieving images). Staged, once per study.
+    if (retryAfter && !answered.has(study)) {
+      answered.add(study);
+      ev.note = `staged: each study's first retrieval answers 503 with Retry-After: ${retryAfter}`;
+      return new Response(null, { status: 503, headers: { "Retry-After": String(retryAfter) } });
+    }
 
     const acceptable = (forms: MediaForm[]) => {
       const form = negotiate(req.headers.get("accept"), forms);
@@ -581,7 +593,10 @@ export function createProxy(opts: KeyOption & {
       return res;
     }),
     events,
-    reset() { cache.clear(); events.length = 0; },
+    reset() { cache.clear(); events.length = 0; retryAfter = undefined; answered.clear(); },
+    /** Stages a 503 with Retry-After on each study's first retrieval from now on, or none. */
+    setRetryAfter(seconds: number | undefined) { retryAfter = seconds; answered.clear(); },
+    get retryAfter() { return retryAfter; },
     flushDecisions() { cache.clear(); },
     refreshKeys: () => keySource.refresh(),
     get cachedDecisions() { return cache.size; },

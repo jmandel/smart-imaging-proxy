@@ -408,7 +408,7 @@ describe("the demo client", () => {
       // The header is the site's: its guides, at the root, and this sandbox's guide for agents.
       expect([path, await hrefs("nav.pages a")]).toEqual([path, ["/build-an-app", "/run-a-server", "/about", "/sandboxes", `${base}/llms.txt`]]);
       // The sandbox's bar, and the footer's map of it, stay in it, but for the site's one viewer and its server check, opened on it.
-      const own = [`${base}/`, "/viewer", `${base}/tours`, `${base}/explore`, `/check?sandbox=${encodeURIComponent(base)}`, `${base}/build`, `${base}/connect`, `${base}/activity`, `${base}/trace/`, `${base}/config`];
+      const own = [`${base}/`, "/viewer", `${base}/tours`, `${base}/explore`, `/check?sandbox=${encodeURIComponent(base)}`, `${base}/app-check`, `${base}/build`, `${base}/connect`, `${base}/activity`, `${base}/trace/`, `${base}/config`];
       expect([path, await hrefs(".sandbox-bar a")]).toEqual([path, own]);
       expect([path, await hrefs(".site-footer-sandbox a")]).toEqual([path, [...own, "/sandboxes"]]);
       expect(await page.locator("a.mark").getAttribute("href")).toBe("/");

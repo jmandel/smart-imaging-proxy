@@ -4,7 +4,7 @@ import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from
 import { ath, publicJwk, signJws, verifyJws, sameSecret } from "./jws";
 import { systemClock, type Clock } from "./clock";
 import { noopObserver, type Observer } from "./observer";
-import { shortHash, type SearchReturned } from "./events";
+import { shortHash, type EndpointForm, type SearchReturned } from "./events";
 import { createPolicyApi, POLICY_API_PATH, type Access, type ExplainQuery } from "./policy-api";
 import type { PolicyStore } from "./policy-store";
 import { createModel, defaultName, GUARDIAN_OF, idOf, ref, SELF, type Decision, type Namer, type PatientAttributes, type Snapshot } from "./policy-model";
@@ -90,6 +90,14 @@ export function accessLevel(t: { patient?: string; sub?: string }): "patient" | 
   return t.patient ? "patient" : t.sub ? undefined : "system";
 }
 
+/**
+ * What any server may do that an app has to cope with, staged on purpose: pages of at most `pageSize` studies,
+ * a 503 with Retry-After of `retryAfter` seconds on each token's first search, and Endpoints in every form.
+ */
+export interface SearchStaging { pageSize?: number; retryAfter?: number; endpointForms?: boolean }
+/** The forms staged Endpoints take, in turn, by a study's place among those released. */
+const FORMS: EndpointForm[] = ["response-local", "contained", "separate"];
+
 export interface ImagingServerOptions {
   /** The FHIR base this server is reached at, ending in `/fhir`. Every URL it issues starts here or at `proxyBase`. */
   base: string;
@@ -138,6 +146,9 @@ export function createImagingServer(opts: ImagingServerOptions) {
   // This server's own view. A proxy reads the same keys from /.well-known/jwks.json.
   const keys = new Map([[key.kid, key.publicKey]]);
   let outage = false;
+  let staged: SearchStaging = {};
+  /** The tokens that have searched since staging began, so only each one's first search is delayed. */
+  const searched = new Set<string>();
   const decisions: any[] = [];
   const cursorKey = opts.cursorKey ?? randomBytes(32);
   const pageBytes = opts.pageBytes ?? PAGE_BYTES;
@@ -355,10 +366,18 @@ export function createImagingServer(opts: ImagingServerOptions) {
     if (level === "patient" && patient !== t.patient) return fail(403, "forbidden", "patient does not match the token's patient context");
     const policy = snapshotOf(patient);
     if (level === "system" && !model.preAuthorized(policy, t.client_id, patient).length) return fail(403, "forbidden", "this patient is outside the client's authorized access");
+    // Staged: results "being assembled", which the guide lets a server say with 503 and Retry-After (Finding studies).
+    if (staged.retryAfter && !searched.has(e.tokenHash!)) {
+      searched.add(e.tokenHash!);
+      e.reason = `staged: this token's first search answers 503 with Retry-After: ${staged.retryAfter}`;
+      return new Response(null, { status: 503, headers: { "Retry-After": String(staged.retryAfter) } });
+    }
 
     const countParam = url.searchParams.get("_count");
     if (countParam !== null && !/^\d+$/.test(countParam)) return fail(400, "invalid", "_count must be a whole number");
-    const count = countParam === null ? DEFAULT_COUNT : Math.min(Number(countParam), MAX_COUNT);
+    const asked = countParam === null ? DEFAULT_COUNT : Math.min(Number(countParam), MAX_COUNT);
+    // A server may return fewer than asked (FHIR search, Page Count); staged pages do, and next links repeat what was asked.
+    const count = Math.min(asked, staged.pageSize ?? asked);
     const filters = searchFilters(url, patient);
     if ("error" in filters) return fail(400, "invalid", filters.error);
     const cursorParam = url.searchParams.get("_cursor");
@@ -373,7 +392,7 @@ export function createImagingServer(opts: ImagingServerOptions) {
     // The walk covers all of this patient's matching studies on every page, since `total` is what
     // this caller may see now. Its cost depends on one patient, and it reads no hierarchy.
     const catalog = opts.catalog();
-    const page: { study: CatalogStudy; ev: Evaluation }[] = [];
+    const page: { study: CatalogStudy; ev: Evaluation; place: number }[] = [];
     let total = 0, bytes = 0, more = false;
     // What policy didn't release, in two parts: what the user reaches by a route of their own and this
     // client isn't released, and what no route or policy of the caller's reaches.
@@ -389,7 +408,7 @@ export function createImagingServer(opts: ImagingServerOptions) {
       if (after && !isAfter(study, after)) continue;
       if (more) continue;
       if (page.length >= count || (page.length > 0 && bytes + study.hierarchyBytes > pageBytes)) { more = true; continue; }
-      page.push({ study, ev });
+      page.push({ study, ev, place: total - 1 });
       bytes += study.hierarchyBytes;
     }
 
@@ -398,12 +417,13 @@ export function createImagingServer(opts: ImagingServerOptions) {
     const withEndpoint = page.filter(p => hasEndpoint(p.study));
     const hierarchies = withEndpoint.length ? catalog.hierarchies(withEndpoint.map(p => p.study.pk)) : new Map<number, StudyHierarchy>();
     // Signed here, inside this request's trace. Everything below this only serializes.
-    const rows = page.map(({ study, ev }) => ({ study, ev, uuid: randomUUID(), address: hasEndpoint(study) ? `${opts.proxyBase()}/wado/${contextFor(bearer, t, study, ev)}` : undefined }));
+    const rows = page.map(({ study, ev, place }) => ({ study, ev, uuid: randomUUID(), address: hasEndpoint(study) ? `${opts.proxyBase()}/wado/${contextFor(bearer, t, study, ev)}` : undefined, form: staged.endpointForms ? FORMS[place % FORMS.length]! : "response-local" as EndpointForm }));
+    if (staged.endpointForms) e.endpointForms = Object.fromEntries(rows.filter(r => r.address).map(r => [r.study.id, r.form]));
 
     const link: { relation: string; url: string }[] = [{ relation: "self", url: `${opts.base}/ImagingStudy${url.search}` }];
     if (more && count > 0) {
       const next = new URLSearchParams(url.searchParams);
-      if (countParam !== null) next.set("_count", String(count));
+      if (countParam !== null) next.set("_count", String(asked));
       next.set("_cursor", signCursor(positionOf(page[page.length - 1]!.study), filters));
       link.push({ relation: "next", url: `${opts.base}/ImagingStudy?${next}` });
     }
@@ -414,22 +434,21 @@ export function createImagingServer(opts: ImagingServerOptions) {
     const self = (function* () {
       yield `${JSON.stringify({ resourceType: "Bundle", type: "searchset", total, link }).slice(0, -1)}${rows.length ? ',"entry":[' : ""}`;
       let first = true;
-      for (const { study, ev, uuid, address } of rows) {
-        const endpointRef = address ? `urn:uuid:${uuid}` : undefined;
-        const resource = imagingStudy(study, hierarchies.get(study.pk), ev, endpointRef);
+      const endpoint = (id: string, address: string) => ({
+        resourceType: "Endpoint", id, status: "active", name: "WADO-RS",
+        connectionType: { system: "http://terminology.hl7.org/CodeSystem/endpoint-connection-type", code: "dicom-wado-rs" },
+        payloadType: [{ coding: [{ system: "http://terminology.hl7.org/CodeSystem/endpoint-payload-type", code: "any" }] }],
+        address,
+      });
+      for (const { study, ev, uuid, address, form } of rows) {
+        const endpointRef = !address ? undefined : form === "contained" ? "#wado" : form === "separate" ? `Endpoint/${uuid}` : `urn:uuid:${uuid}`;
+        const resource: any = imagingStudy(study, hierarchies.get(study.pk), ev, endpointRef);
+        if (address && form === "contained") resource.contained = [endpoint("wado", address)];
         hierarchies.delete(study.pk);
         yield `${first ? "" : ","}${JSON.stringify({ fullUrl: `${opts.base}/ImagingStudy/${study.id}`, resource, search: { mode: "match" } })}`;
         first = false;
         // Each Endpoint is written right after its study, so both are always on the same page.
-        if (address) yield `,${JSON.stringify({
-          fullUrl: endpointRef, search: { mode: "include" },
-          resource: {
-            resourceType: "Endpoint", id: uuid, status: "active", name: "WADO-RS",
-            connectionType: { system: "http://terminology.hl7.org/CodeSystem/endpoint-connection-type", code: "dicom-wado-rs" },
-            payloadType: [{ coding: [{ system: "http://terminology.hl7.org/CodeSystem/endpoint-payload-type", code: "any" }] }],
-            address,
-          },
-        })}`;
+        if (address && form !== "contained") yield `,${JSON.stringify({ fullUrl: form === "separate" ? `${opts.base}/Endpoint/${uuid}` : endpointRef, search: { mode: "include" }, resource: endpoint(uuid, address) })}`;
       }
       yield rows.length ? "]}" : "}";
     })();
@@ -534,6 +553,9 @@ export function createImagingServer(opts: ImagingServerOptions) {
       return new Response("not found", { status: 404 });
     }),
     setOutage(on: boolean) { outage = on; },
+    /** Stages what any server may do, starting afresh: every token's next search is its first again. */
+    setStaged(s: SearchStaging) { staged = { ...s }; searched.clear(); },
+    get staged(): SearchStaging { return { ...staged }; },
     get outage() { return outage; },
     get signingKid() { return key.kid; },
     /** URLs signed with the old key stop verifying here right away, and at a proxy once it refetches its keys. */
@@ -544,7 +566,7 @@ export function createImagingServer(opts: ImagingServerOptions) {
       return key.kid;
     },
     decisions,
-    /** Clears the outage switch and the decision log. Policy belongs to the stores. */
-    reset() { outage = false; decisions.length = 0; },
+    /** Clears the outage switch, anything staged and the decision log. Policy belongs to the stores. */
+    reset() { outage = false; staged = {}; searched.clear(); decisions.length = 0; },
   };
 }

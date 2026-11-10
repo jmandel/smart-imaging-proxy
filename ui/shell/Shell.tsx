@@ -3,7 +3,7 @@
 // in all three at once, in every tab.
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import { BASE, sandboxName } from "../lib/api";
+import { api, BASE } from "../lib/api";
 import { enterSandbox, rememberName, useLinkedSandbox, useSandboxes, type KnownSandbox } from "../lib/store";
 import { openViewer, sandboxServer } from "../lib/servers";
 import { hrefOf, MENU, PAGES, REFERENCES, REPO, SANDBOX_GROUPS, SITE_TOOLS, type PageId } from "../sitemap";
@@ -128,24 +128,44 @@ function Footer({ sandbox }: { sandbox: KnownSandbox | undefined }) {
   );
 }
 
+interface AppCheckOn { run: string; client: string; staged: string[]; endsAt: string }
+/** While an app check runs in this sandbox: loud on every page, since the sandbox isn't answering as it usually does. */
+function AppCheckBanner({ on }: { on: AppCheckOn }) {
+  const ends = new Date(on.endsAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return (
+    <div className="app-check-banner" role="status" id="app-check-banner">
+      <p><b>An app check is running here</b>, grading <code>{on.client}</code>, until it's ended or {ends}. Staged: {on.staged.length ? on.staged.join("; ") : "nothing"}.</p>
+      <Link to={`${BASE}/app-check?run=${encodeURIComponent(on.run)}`}>End it on the App check page</Link>
+    </div>
+  );
+}
+
 /** A page of the site, in its shell. Inside a sandbox, the sandbox's bar sits under the header. */
 export function Shell({ page, children }: { page: PageId; children: ReactNode }) {
   const list = useSandboxes();
   const inSandbox = !!BASE;
   const [served, setServed] = useState<string>();
+  const [appCheck, setAppCheck] = useState<AppCheckOn | null>(null);
   const working = useLinkedSandbox();
   const sandbox = inSandbox ? list.find(w => w.base === BASE) ?? { base: BASE, joined: false, name: served } : working;
   useEffect(() => {
     document.title = page === "home" ? PAGES.home.name : `${PAGES[page].name} · SMART Imaging`;
     if (!inSandbox) return;
     enterSandbox();
-    // The server has the name as it is now, which may have changed in another browser.
-    sandboxName(BASE).then(name => { if (name) { setServed(name); rememberName(BASE, name); } });
+    // The server has the name as it is now, which may have changed in another browser, and whether an app check is on.
+    const read = () => api<{ name: string | null; appCheck: AppCheckOn | null }>("GET", "/api/sandbox").then(s => {
+      if (s.name) { setServed(s.name); rememberName(BASE, s.name); }
+      setAppCheck(s.appCheck ?? null);
+    }, () => {});
+    read();
+    addEventListener("app-check", read);
+    return () => removeEventListener("app-check", read);
   }, [page, inSandbox, BASE]);
   return (
     <>
       <Header page={page} />
       {inSandbox && <SandboxBar page={page} sandbox={sandbox} />}
+      {inSandbox && appCheck && <AppCheckBanner on={appCheck} />}
       <div id="announce" className="sr-only" role="status" aria-live="polite" />
       {children}
       <Footer sandbox={sandbox} />

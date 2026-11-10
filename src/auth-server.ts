@@ -154,7 +154,7 @@ form.inline{display:inline}
  * Every URL it issues starts at `issuer`, including the paths in its own pages and redirects, so it can
  * be served under a prefix. It answers requests with the prefix already taken off.
  */
-export function createAuthServer(opts: { issuer: string; imagingFhirBase: string; serviceSecret: string; redirectUri: string; demoClientRedirectUri: string; unified?: () => boolean; releasedStudies?: (token: Grant) => Promise<CatalogStudy[]>; imagingFetch?: (req: Request) => Response | Promise<Response>; registeredClient?: (id: string) => { name: string; type?: string; redirectUris: string[]; jwk?: JsonWebKey & { kid: string }; jwksUrl?: string } | undefined; directory: Directory; store: () => PolicyStore; clock?: Clock }) {
+export function createAuthServer(opts: { issuer: string; imagingFhirBase: string; serviceSecret: string; redirectUri: string; demoClientRedirectUri: string; unified?: () => boolean; releasedStudies?: (token: Grant) => Promise<CatalogStudy[]>; imagingFetch?: (req: Request) => Response | Promise<Response>; registeredClient?: (id: string) => { name: string; type?: string; redirectUris: string[]; jwk?: JsonWebKey & { kid: string }; jwksUrl?: string } | undefined; directory: Directory; store: () => PolicyStore; clock?: Clock; siteNames?: () => string[] }) {
   const clock = opts.clock ?? demoClock;
   const now = () => clock.now();
   /** The path the issuer adds, which every path this server writes into a page or a redirect starts with. */
@@ -357,6 +357,14 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     const record = access.records.find(r => r.patient === (f.get("patient") ?? access.records[0]?.patient));
     if (!check("authorization-server", "user has access to the chosen patient", !!record, { user: txn.user, patient: f.get("patient"), via: record?.via })) return deny();
     const chosen = chosenSites(f, record!.patient);
+    // A name that isn't a site at all is a mistake, not a choice: approving it would quietly approve nothing. A real
+    // site the person doesn't hold is only dropped, as the form itself would.
+    const sites = opts.siteNames?.(), unknown = sites ? chosen.sites.filter(x => !sites.includes(x)) : [];
+    if (!check("authorization-server", "every site chosen is a site", !unknown.length, { unknown, sites })) {
+      back.searchParams.set("error", "invalid_request");
+      back.searchParams.set("error_description", `not a site: ${unknown.join(", ")}. The sites are: ${sites!.join(", ")}`);
+      return new Response(null, { status: 302, headers: { Location: back.toString() } });
+    }
     // A site with every study ticked is approved as the site, so it covers later studies there. Otherwise only the ticked studies are.
     const ticked = new Set([...f.getAll("study"), ...f.getAll(`study@${record!.patient}`)]), listed = new Set([...f.getAll("study_listed"), ...f.getAll(`study@${record!.patient}_listed`)]), approvedSites: string[] = [], approvedStudies: string[] = [];
     for (const site of chosen.sites) {
@@ -462,7 +470,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
         introspection_endpoint: `${opts.issuer}/introspect`, revocation_endpoint: `${opts.issuer}/revoke`,
         grant_types_supported: ["authorization_code", "client_credentials", "refresh_token"],
         response_types_supported: ["code"], code_challenge_methods_supported: ["S256"],
-        token_endpoint_auth_methods_supported: ["private_key_jwt"], token_endpoint_auth_signing_alg_values_supported: ["ES256", "ES384", "RS384"],
+        token_endpoint_auth_methods_supported: ["none", "private_key_jwt"], token_endpoint_auth_signing_alg_values_supported: ["ES256", "ES384", "RS384"],
         scopes_supported: ["patient/ImagingStudy.rs", "patient/Patient.rs", "patient/DiagnosticReport.rs", "patient/AllergyIntolerance.rs", "patient/Condition.rs", "patient/MedicationRequest.rs", "patient/*.rs", "system/ImagingStudy.rs", "launch/patient", "online_access"],
         capabilities: ["launch-standalone", "client-public", "client-confidential-asymmetric", "permission-v2", "context-standalone-patient", ...(opts.unified?.() ? IMAGING_CAPABILITIES : [])],
         ...(opts.unified?.() ? {} : { associated_endpoints: [{ url: opts.imagingFhirBase, capabilities: IMAGING_CAPABILITIES }] }),

@@ -71,6 +71,14 @@ export const policyClient = (base: string, policySecret: string, service: Servic
   createPolicyClient({ base, policySecret, fetch: (op, url, init) => tfetch(service, POLICY_CALLS[op], url, init) });
 
 export type Topology = "separate" | "unified";
+/**
+ * What a sandbox can be made to do, as faults a check sets: the decision API down, the image store stopping after
+ * some instances, and four things the guide lets any server do that an app has to cope with: small search pages,
+ * a 503 with Retry-After on a token's first search or a study's first retrieval, and Endpoints in every form.
+ */
+export interface Faults { decisionOutage: boolean; truncateAfter: number | null; pageSize: number | null; searchRetryAfter: number | null; retrievalRetryAfter: number | null; endpointForms: boolean }
+/** An app check's run while it's on here: what the banner on every page says. */
+export interface AppCheckOn { run: string; client: string; script: string; staged: string[]; startedAt: string; endsAt: string }
 export function createSandbox(o: { id?: string; store: PolicyStore; clock: DemoClock; shared: Shared; serviceSecret?: string; policySecret?: string; jwksTtlSeconds?: number }) {
   const { store, clock, shared } = o;
   // A sandbox remembers its own choice, with the rest of its state.
@@ -88,7 +96,7 @@ export function createSandbox(o: { id?: string; store: PolicyStore; clock: DemoC
   const directoryPolicy = policyClient(local(PORTS.imaging), policySecret, "authorization-server");
 
   const auth = createAuthServer({
-    issuer: urls.auth, imagingFhirBase: `${urls.imaging}/fhir`, serviceSecret, redirectUri: urls.callback, demoClientRedirectUri: `${new URL(urls.demo).origin}/viewer`, unified: () => store.note("topology") === "unified", releasedStudies: async t => { const x: any = await policy.explain({ client: t.client_id, ...(t.sub ? { user: t.sub, fhirUser: t.fhirUser } : {}), patient: t.patient! } as any); const ids = new Set((x.studies ?? []).filter((d: any) => d.release !== "none").map((d: any) => d.id)); return catalog().allStudies().filter(st => ids.has(st.id)); }, imagingFetch: (req: Request) => imaging.fetch(req), ...(o.id ? { registeredClient: (id: string) => listClients(store).find(c => c.id === id) } : {}), store: () => store, clock,
+    issuer: urls.auth, imagingFhirBase: `${urls.imaging}/fhir`, serviceSecret, redirectUri: urls.callback, demoClientRedirectUri: `${new URL(urls.demo).origin}/viewer`, unified: () => store.note("topology") === "unified", releasedStudies: async t => { const x: any = await policy.explain({ client: t.client_id, ...(t.sub ? { user: t.sub, fhirUser: t.fhirUser } : {}), patient: t.patient! } as any); const ids = new Set((x.studies ?? []).filter((d: any) => d.release !== "none").map((d: any) => d.id)); return catalog().allStudies().filter(st => ids.has(st.id)); }, imagingFetch: (req: Request) => imaging.fetch(req), siteNames: () => [...new Set(catalog().allStudies().flatMap(st => st.site ? [st.site] : []))].sort(), ...(o.id ? { registeredClient: (id: string) => listClients(store).find(c => c.id === id) } : {}), store: () => store, clock,
     // The Authorization Server's pages, in their own terms, over the policy API's three levels.
     directory: {
       relationships: async () => [
@@ -136,7 +144,12 @@ export function createSandbox(o: { id?: string; store: PolicyStore; clock: DemoC
   const backend = () => { const b = shared.backends[current]; let w = wrapped.get(b); if (!w) wrapped.set(b, w = withTruncation(b, () => truncateAfter)); return w; };
   const proxy = createProxy({ publicBase: () => urls.proxy, jwksUrl: `${urls.imaging}/.well-known/jwks.json`, jwksTtlSeconds: o.jwksTtlSeconds, decisionUrl: `${urls.imaging}/access/v1/evaluation`, serviceSecret, backend, observer: traceObserver, clock });
 
-  const clearRuntime = () => { auth.reset(); imaging.reset(); proxy.reset(); truncateAfter = undefined; };
+  let appCheck: AppCheckOn | undefined;
+  const clearRuntime = () => { auth.reset(); imaging.reset(); proxy.reset(); truncateAfter = undefined; appCheck = undefined; };
+  const faults = (): Faults => {
+    const s = imaging.staged;
+    return { decisionOutage: imaging.outage, truncateAfter: truncateAfter ?? null, pageSize: s.pageSize ?? null, searchRetryAfter: s.retryAfter ?? null, retrievalRetryAfter: proxy.retryAfter ?? null, endpointForms: !!s.endpointForms };
+  };
   return {
     id: o.id, prefix, urls, store, clock, auth, imaging, proxy, clients,
     /** This sandbox's admin client, whose token manages it. */
@@ -157,6 +170,20 @@ export function createSandbox(o: { id?: string; store: PolicyStore; clock: DemoC
     async resetPolicy() { await policy.reset(); restoreGrants(store); },
     backends: shared.backends,
     setTruncateAfter(n: number | undefined) { truncateAfter = n; },
+    faults,
+    /** Sets the faults given, leaving the rest. Staging any of the last four starts it afresh, so first searches and retrievals are first again. */
+    setFaults(f: Partial<Faults>) {
+      if (f.decisionOutage !== undefined) imaging.setOutage(f.decisionOutage);
+      if (f.truncateAfter !== undefined) truncateAfter = f.truncateAfter ?? undefined;
+      if (f.pageSize !== undefined || f.searchRetryAfter !== undefined || f.endpointForms !== undefined) {
+        const was = faults(), pageSize = f.pageSize !== undefined ? f.pageSize : was.pageSize, retryAfter = f.searchRetryAfter !== undefined ? f.searchRetryAfter : was.searchRetryAfter;
+        imaging.setStaged({ ...(pageSize ? { pageSize } : {}), ...(retryAfter ? { retryAfter } : {}), ...((f.endpointForms ?? was.endpointForms) ? { endpointForms: true } : {}) });
+      }
+      if (f.retrievalRetryAfter !== undefined) proxy.setRetryAfter(f.retrievalRetryAfter ?? undefined);
+    },
+    /** The app check run that's on here, if one is. */
+    get appCheck() { return appCheck; },
+    setAppCheck(on: AppCheckOn | undefined) { appCheck = on; },
     /** Replaces the signing key, then tells the proxy over HTTP, so it stops trusting the old one now. A proxy that isn't told learns within its TTL. */
     async rotateSigningKey() {
       const kid = imaging.rotateSigningKey();

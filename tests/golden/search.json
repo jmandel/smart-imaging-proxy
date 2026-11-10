@@ -2,14 +2,34 @@
  "no token": {
   "query": "patient=josh-example&_include=ImagingStudy:endpoint",
   "status": 401,
-  "contentType": null,
-  "wwwAuthenticate": "Bearer"
+  "contentType": "application/fhir+json",
+  "wwwAuthenticate": "Bearer",
+  "body": {
+   "resourceType": "OperationOutcome",
+   "issue": [
+    {
+     "severity": "error",
+     "code": "login",
+     "diagnostics": "no bearer token. Send authorization: Bearer <access_token>."
+    }
+   ]
+  }
  },
  "unknown token": {
   "query": "patient=josh-example&_include=ImagingStudy:endpoint",
   "status": 401,
-  "contentType": null,
-  "wwwAuthenticate": "Bearer error=\"invalid_token\""
+  "contentType": "application/fhir+json",
+  "wwwAuthenticate": "Bearer error=\"invalid_token\"",
+  "body": {
+   "resourceType": "OperationOutcome",
+   "issue": [
+    {
+     "severity": "error",
+     "code": "login",
+     "diagnostics": "the bearer token isn't active: expired, revoked, or not one this sandbox issued. Get a new token. A sandbox's tokens expire by its demo clock."
+    }
+   ]
+  }
  },
  "josh: all, with _include": {
   "query": "patient=josh-example&_include=ImagingStudy:endpoint",

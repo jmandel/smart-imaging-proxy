@@ -19,7 +19,7 @@ export interface Page {
 
 export type PageId =
   | "home" | "build-an-app" | "run-a-server" | "about" | "sandboxes" | "viewer" | "servers" | "check"
-  | "sandbox" | "tours" | "explore" | "build" | "connect" | "activity" | "trace" | "trace-span" | "trace-log" | "config";
+  | "sandbox" | "app-check" | "tours" | "explore" | "build" | "connect" | "activity" | "trace" | "trace-span" | "trace-log" | "config";
 
 const pages: Page[] = [
   { id: "home", level: "site", path: "/", name: "SMART Imaging Access", blurb: "A public sandbox and test client for the SMART Imaging Access guide." },
@@ -31,6 +31,7 @@ const pages: Page[] = [
   { id: "servers", level: "site", path: "/servers", name: "Your servers", blurb: "Describe your server for the viewer, and how it signs in." },
   { id: "check", level: "site", path: "/check", name: "Server check", blurb: "Every step of the guide, run against your server, saying how far it got and why it stopped.", sandboxParam: "sandbox" },
   { id: "sandbox", level: "sandbox", path: "/", name: "Home", blurb: "This sandbox: its name, sharing, and its pages." },
+  { id: "app-check", level: "sandbox", path: "/app-check", name: "App check", blurb: "Your app, run against this sandbox while it stages what servers may do, graded on each requirement of the guide." },
   { id: "tours", level: "sandbox", path: "/tours", name: "Tour", blurb: "Sharing, guardians and referrals, played out step by step." },
   { id: "explore", level: "sandbox", path: "/explore", name: "Explore", blurb: "What each sample person and service can reach, and why." },
   { id: "build", level: "sandbox", path: "/build", name: "Endpoints", blurb: "This sandbox's addresses, scopes, and sample people to sign in as." },
@@ -53,7 +54,7 @@ export const SITE_TOOLS: PageId[] = ["servers", "check", "viewer"];
 
 /** A sandbox's pages, by what they're for. The viewer is the site's, opened on the sandbox. */
 export const SANDBOX_GROUPS: { title: string; pages: (PageId)[] }[] = [
-  { title: "Try it", pages: ["viewer", "tours", "explore", "check"] },
+  { title: "Try it", pages: ["viewer", "tours", "explore", "check", "app-check"] },
   { title: "Your app", pages: ["build", "connect", "activity", "trace"] },
   { title: "Under the hood", pages: ["config"] },
 ];

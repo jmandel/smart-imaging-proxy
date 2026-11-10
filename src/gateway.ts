@@ -12,6 +12,7 @@
 // `/s/{sandbox}` in front of any of these goes to the same service, which hands it to that sandbox.
 //
 // The services keep their own ports, and add their own CORS.
+import { withReason } from "./error-bodies";
 import { PORTS, PUBLIC_DEMO, PUBLIC_ORIGIN } from "./config";
 import { splitSandbox } from "./sandboxes";
 import { PAGES } from "../ui/sitemap";
@@ -38,8 +39,8 @@ const SCOPED_PAGES = new Set(["/tours", "/explore", "/activity", "/account", "/c
 export function publicRootGate(method: string, path: string): Response | undefined {
   if (method === "GET" || method === "HEAD") return SCOPED_PAGES.has(path) ? new Response(null, { status: 302, headers: { location: "/" } }) : undefined;
   if (method === "OPTIONS" || (method === "POST" && path === "/api/sandboxes")) return undefined;
-  // Server checks belong to no sandbox: an agent starts one at the root, and its page reports to it there.
-  if ((method === "POST" && path === "/api/checks") || (method === "PUT" && /^\/api\/checks\/[^/]+\/report$/.test(path)) || (method === "POST" && /^\/api\/checks\/[^/]+\/assertion$/.test(path))) return undefined;
+  // Checks are made at the root: a server check's page reports to it there, and an app check is started and ended there.
+  if ((method === "POST" && path === "/api/checks") || (method === "PUT" && /^\/api\/checks\/[^/]+\/report$/.test(path)) || (method === "POST" && /^\/api\/checks\/[^/]+\/(assertion|start|end|abandon)$/.test(path))) return undefined;
   return Response.json({ error: "the shared sandbox is read-only here: POST /api/sandboxes for a sandbox of your own, and work at its URLs" }, { status: 403 });
 }
 
@@ -60,7 +61,7 @@ export async function gatewayFetch(req: Request): Promise<Response> {
   // Collapsed before the checks, since a client's fetch collapses it on the way to the service anyway.
   const rest = asSent.replace(/\/{2,}/g, "/");
   const prefix = sandbox ? `/s/${sandbox}` : "";
-  if (INTERNAL.test(rest)) return new Response(null, { status: 404 });
+  if (INTERNAL.test(rest)) return withReason(new Response(null, { status: 404 }), rest, req.method);
   if (PUBLIC_DEMO && !sandbox) { const gated = publicRootGate(req.method, rest); if (gated) return gated; }
   if (PUBLIC_DEMO && !sandbox && req.method === "POST" && rest === "/api/sandboxes" && !allowMint(req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "direct")) return Response.json({ error: "too many sandboxes from this address: try again in a while" }, { status: 429 });
   // The live trace's page is at `/trace/`.
@@ -80,7 +81,7 @@ export async function gatewayFetch(req: Request): Promise<Response> {
       redirect: "manual", decompress: false,
     } as RequestInit);
   } catch {
-    return new Response(null, { status: 502 });
+    return withReason(new Response(null, { status: 502 }), rest, req.method);
   }
-  return new Response(r.body, { status: r.status, statusText: r.statusText, headers: r.headers });
+  return withReason(new Response(r.body, { status: r.status, statusText: r.statusText, headers: r.headers }), rest, req.method);
 }

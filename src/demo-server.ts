@@ -10,7 +10,7 @@ import { traced, traceSettled } from "./trace";
 import type { BackendName, Stack } from "./stack";
 import { flowById } from "./flows";
 import { extraField, readJson, refuseHost, refuseWrite, settingsApi, BACKEND_NAMES } from "./settings-api";
-import { realNow, type BackendClient } from "./auth-server";
+import { PATIENT_NAMES, realNow, type BackendClient } from "./auth-server";
 import { createExplore } from "./explore";
 import { createTours, tourById } from "./tours";
 import { eventQueryOf } from "./trace-collector";
@@ -37,8 +37,12 @@ export const KEYS_PATH = "/api/sandbox/keys-shared-on-purpose";
 const KEYS_WHY = "These keys are given out on purpose. A sandbox's URL is its access: anyone holding it can already read and change the sandbox, so its admin key and its services' keys grant nothing more. The management API still takes a real token, signed the way a SMART Backend Services client signs one, so a call made without one is refused, and so you can see how signing works. They are sample credentials for this sandbox only.";
 
 export function createDemoServer(stack: Stack, clients: Record<string, BackendClient>, root: string, options: { viewerKitDir?: string } = {}) {
-  // Server checks agents start, at the site's root only: they belong to no sandbox.
-  const checkRuns = createCheckRuns();
+  // Checks agents start, at the site's root only: a server check belongs to no sandbox, and an app check names its own.
+  const checkRuns = createCheckRuns({ site: {
+    sandbox: id => { const r = stack.sandboxes.resolve(id); return "sandbox" in r ? r.sandbox : undefined; },
+    mark: async sandbox => { await traceSettled(); return stack.collector.store.events({ sandbox, limit: 1 })[0]?.seq ?? 0; },
+    events: q => stack.collector.store.events({ ...q, limit: EVENT_SUMMARY_MAX }, EVENT_SUMMARY_MAX),
+  } });
   const perSandbox = new WeakMap<Sandbox, ReturnType<typeof sandboxServer>>();
   const serverOf = (w: Sandbox) => { let s = perSandbox.get(w); if (!s) perSandbox.set(w, s = sandboxServer(w)); return s; };
   /** A sandbox's keys, given out on purpose as sample credentials: its admin client's, and each demo service's.
@@ -60,7 +64,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     const token = req.headers.get("authorization")?.match(/^bearer +(.+)$/i)?.[1];
     const g: any = token && sandbox.auth.grantOf(token);
     const ok = g && !g.revoked && g.exp > sandbox.clock.now() && g.client_id === SANDBOX_ADMIN && g.scope.split(" ").includes(ADMIN_SCOPE);
-    return ok ? undefined : json({ error: "the management API takes this sandbox's admin token: get one with its admin key, from GET /api/sandbox/keys-shared-on-purpose" }, 401, { "WWW-Authenticate": 'Bearer scope="sandbox/admin"' });
+    return ok ? undefined : json({ error: "the management API takes this sandbox's admin token: get one with its admin key, from GET /api/sandbox/keys-shared-on-purpose", hint: "The token is checked before the path, so a mistyped path also answers 401 until you send one." }, 401, { "WWW-Authenticate": 'Bearer scope="sandbox/admin"' });
   };
   /** The guide for agents. A sandbox's own copy names that sandbox, so handing over its one link is enough. */
   async function llmsTxt(sandbox: Sandbox) {
@@ -157,7 +161,9 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         if (p.startsWith("/api/sandbox/explore/")) return explore.fetch(req, url);
         // A patient's studies as the sandbox's catalog holds them, in the order search returns them: newest first, then as filed.
         if (p === "/api/sandbox/catalog" && req.method === "GET") {
-          const patient = url.searchParams.get("patient") ?? "josh-example";
+          // A bare id or a Ref, as the rest of the API speaks: anything else is an error, never a quiet empty list.
+          const asked = url.searchParams.get("patient") ?? "josh-example", patient = asked.replace(/^patient:/, "");
+          if (!Object.hasOwn(PATIENT_NAMES, patient)) return json({ error: `no patient "${asked}"`, hint: `Give a patient id or Ref, one of: ${Object.keys(PATIENT_NAMES).join(", ")}` }, 404);
           const rows = sandbox.catalog.allStudies().filter(st => st.patient === patient).sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "") || b.pk - a.pk);
           return json({ patient, studies: rows.map(st => ({ id: st.id, uid: st.uid, site: st.site, date: st.date, instances: st.instanceCount, series: (sandbox.catalog.hierarchies([st.pk]).get(st.pk)?.series ?? []).map(x => ({ uid: x.uid, modality: x.modality, instances: x.instanceCount })) })) });
         }
@@ -234,7 +240,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         }
         const id = p.slice("/api/sandbox/clients/".length);
         if (req.method === "DELETE" && id) return removeClient(sandbox.store, decodeURIComponent(id)) ? json({ removed: true }) : json({ error: "no such app" }, 404);
-        return new Response("not found", { status: 404 });
+        return json({ error: `no ${req.method} ${p}`, hint: "The management API's calls are listed in llms.txt, under Manage a sandbox." }, 404);
       }
       if (p === "/api/sandbox" && req.method === "DELETE") {
         if (!sandbox.id) return json({ error: "only a sandbox can be deleted" }, 409);
@@ -244,6 +250,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         return json({ deleted: true });
       }
       if (p === "/api/sandbox/policy" && req.method === "GET") return json(panelOf(sandbox.store));
+      if (p.startsWith("/api/")) return json({ error: `no ${req.method} ${p}`, hint: "The calls are listed in llms.txt." }, 404);
       return new Response("not found", { status: 404 });
     }
     return { fetch };

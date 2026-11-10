@@ -503,3 +503,34 @@ label.check code { font-size:.85em; }
 .key-by legend { float:left; width:100%; padding:0; margin-bottom:.15rem; font-size:.9rem; color:var(--muted); }
 .key-by label { display:inline-flex; align-items:center; gap:.4rem; min-height:2.25rem; }
 .key-by label span { color:var(--muted); font-size:.88rem; }
+/* The app check: the run's facts and actions as the server check has them, the script to follow, and the results,
+   each requirement with its source and the requests behind it. */
+.app-check-head { font-size:1.05rem; margin:1.4rem 0 .4rem; }
+.app-check-script, .app-check-staged { margin:0 0 .6rem; padding-left:1.4rem; line-height:1.55; }
+.app-check-script li, .app-check-staged li { margin:.15rem 0; overflow-wrap:anywhere; }
+.app-check-setup { margin:0 0 1.2rem; }
+.app-check-setup h2 { font-size:1.15rem; margin:0 0 .5rem; }
+.app-check-register { margin-top:.6rem; }
+.app-check-register > summary { cursor:pointer; color:var(--accent); min-height:2.25rem; display:flex; align-items:center; }
+.app-check-go { margin:0 0 .8rem; }
+.app-check-sources { list-style:none; margin:0 0 .5rem; padding:0; font-size:.9rem; line-height:1.5; }
+.app-check-sources li { margin:.2rem 0; overflow-wrap:anywhere; }
+.app-check-request { display:grid; grid-template-columns:minmax(0,1fr); gap:.2rem; margin:.3rem 0; justify-items:start; }
+.app-check-request pre { margin:0; white-space:pre; overflow-x:auto; justify-self:stretch; }
+.app-check .check-actions > a:not(.check-another) { display:inline-flex; align-items:center; padding:0 .4rem; }
+.app-check-notes { list-style:none; margin:0; padding:0; border-top:1px solid var(--line); }
+.app-check-notes > li { padding:.6rem .25rem; border-bottom:1px solid var(--line); line-height:1.5; }
+.app-check-notes p { margin:.15rem 0 .35rem; }
+.app-check-notes details > summary { cursor:pointer; color:var(--accent); font-size:.9rem; }
+/* On every page of a sandbox while a run is on: the sandbox isn't answering as it usually does. */
+.app-check-banner { display:flex; flex-wrap:wrap; align-items:center; gap:.3rem 1rem; padding:.55rem 1.5rem; background:var(--warn-soft); border-bottom:1px solid var(--warn); color:var(--ink); }
+.app-check-banner p { margin:0; flex:1 1 24rem; min-width:0; line-height:1.45; overflow-wrap:anywhere; }
+.app-check-banner a { font-weight:600; }
+@media (max-width:40rem) { .app-check-banner { padding:.55rem 1rem; } }
+/* On a narrow screen, a step's state goes under its title, so the title and result keep the width. */
+@media (max-width:30rem) {
+  .app-check .check-step > details > summary, .app-check .check-step .step-head { flex-wrap:wrap; row-gap:0; }
+  .app-check .check-step .what { flex-basis:calc(100% - 4rem); }
+  .app-check .check-step .chevron { order:2; }
+  .app-check .check-step .state { order:3; flex-basis:100%; padding-left:2rem; }
+}

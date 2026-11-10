@@ -53,6 +53,8 @@ export function settingsStatus(stack: Stack, sandbox: Sandbox) {
     catalog: { source: sandbox.catalogSource, ...sandbox.catalog.stats() },
     signing: { kid: sandbox.imaging.signingKid },
     proxy: { cachedDecisions: sandbox.proxy.cachedDecisions },
+    faults: sandbox.faults(),
+    appCheck: sandbox.appCheck ?? null,
     // Only the root's store is a file, and only the root sees how many sandboxes there are.
     ...(sandbox.id ? {} : { store: stack.store.info(), sandboxes: { live: stack.sandboxes.size } }),
   };
@@ -70,6 +72,8 @@ export async function settingsApi(stack: Stack, sandbox: Sandbox, req: Request, 
   if (refused) return refused;
 
   if (p === "" && m === "GET") return status();
+  // What's on now, as POST /faults answers too, so a caller can tell.
+  if (p === "/faults" && m === "GET") return json({ faults: sandbox.faults(), appCheck: sandbox.appCheck ?? null });
   if (p === "/storage" && m === "GET") return json({ current: sandbox.backend, stores: await Promise.all(BACKEND_NAMES.map(n => stack.selfTest(n))) });
 
   if (m === "POST" && NO_INPUT.includes(p)) {
@@ -81,7 +85,7 @@ export async function settingsApi(stack: Stack, sandbox: Sandbox, req: Request, 
     return json({ ...settingsStatus(stack, sandbox), rotation: { proxyTold } });
   }
 
-  if (!(p === "" && m === "PATCH") && !(WITH_INPUT.includes(p) && m === "POST")) return new Response("not found", { status: 404 });
+  if (!(p === "" && m === "PATCH") && !(WITH_INPUT.includes(p) && m === "POST")) return Response.json({ error: `no ${m} /api/sandbox${p}`, hint: "The management API's calls are listed in llms.txt, under Manage a sandbox." }, { status: 404 });
   if (url.search) return bad("this request takes its input in the body");
   const b = await readJson(req);
   if (b === undefined || b === null || typeof b !== "object" || Array.isArray(b)) return bad("the request body must be a JSON object");
@@ -93,14 +97,20 @@ export async function settingsApi(stack: Stack, sandbox: Sandbox, req: Request, 
     await sandbox.resetPolicy();
     return status();
   }
-  // Faults a check injects, and clears: the Imaging Server's decision API down, or the image store stopping partway through a study.
+  // Faults a check injects, and clears: the Imaging Server's decision API down, the image store stopping partway through
+  // a study, and what the guide lets any server do: small pages, a 503 with Retry-After first, Endpoints in every form.
   if (p === "/faults") {
-    const extra = only("decisionOutage", "truncateAfter"); if (extra) return extra;
-    if (b.decisionOutage !== undefined && typeof b.decisionOutage !== "boolean") return bad("decisionOutage is true or false");
-    if (b.truncateAfter !== undefined && b.truncateAfter !== null && !(Number.isInteger(b.truncateAfter) && b.truncateAfter > 0 && b.truncateAfter <= 10000)) return bad("truncateAfter is a number of instances, or null");
-    if (b.decisionOutage !== undefined) sandbox.imaging.setOutage(b.decisionOutage);
-    if (b.truncateAfter !== undefined) sandbox.setTruncateAfter(b.truncateAfter ?? undefined);
-    return status();
+    const extra = only("decisionOutage", "truncateAfter", "pageSize", "searchRetryAfter", "retrievalRetryAfter", "endpointForms"); if (extra) return extra;
+    const upTo = (field: string, most: number, what: string) => b[field] !== undefined && b[field] !== null && !(Number.isInteger(b[field]) && b[field] > 0 && b[field] <= most) ? `${field} is ${what} from 1 to ${most}, or null` : undefined;
+    const wrong = (b.decisionOutage !== undefined && typeof b.decisionOutage !== "boolean" ? "decisionOutage is true or false" : undefined)
+      ?? (b.endpointForms !== undefined && typeof b.endpointForms !== "boolean" ? "endpointForms is true or false" : undefined)
+      ?? upTo("truncateAfter", 10000, "a number of instances") ?? upTo("pageSize", 100, "a number of studies")
+      ?? upTo("searchRetryAfter", 30, "a number of seconds") ?? upTo("retrievalRetryAfter", 30, "a number of seconds");
+    if (wrong) return bad(wrong);
+    // A run grades against what it staged, and puts back what was here before it, so nothing changes under it.
+    if (sandbox.appCheck) return json({ error: "an app check is running in this sandbox: end it first, on its App check page" }, 409);
+    sandbox.setFaults(b);
+    return json({ faults: sandbox.faults(), appCheck: null });
   }
   if (p === "/clock") {
     if (b.reset === true) { const extra = only("reset"); if (extra) return extra; sandbox.clock.reset(); return status(); }
@@ -120,5 +130,5 @@ export async function settingsApi(stack: Stack, sandbox: Sandbox, req: Request, 
     if (b.storage !== undefined) sandbox.setBackend(b.storage);
     return status();
   }
-  return new Response("not found", { status: 404 });
+  return Response.json({ error: `no ${m} /api/sandbox${p}`, hint: "The management API's calls are listed in llms.txt, under Manage a sandbox." }, { status: 404 });
 }

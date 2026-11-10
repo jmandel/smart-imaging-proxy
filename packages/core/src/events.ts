@@ -9,6 +9,8 @@ export const shortHash = (value: string) => createHash("sha256").update(value).d
 
 /** A context's form, as signed into it. */
 export type ContextForm = "whole study" | "series list" | "restricted";
+/** How a search Bundle carries a study's Endpoint: a response-local entry, contained in the study, or an entry with its own address. */
+export type EndpointForm = "response-local" | "contained" | "separate";
 /** How the proxy decided a retrieval. */
 export type Authz = "instant" | "cached" | "asked" | "no token";
 
@@ -29,6 +31,8 @@ export interface SearchReturned {
   unreached?: { study: string; why: string }[];
   /** For anything else: why. */
   reason?: string;
+  /** When Endpoints are staged in every form: each study's form, by id. */
+  endpointForms?: Record<string, EndpointForm>;
 }
 export interface DecisionAnswered {
   kind: "decision.answered"; study?: string; studyUid?: string; client?: string; user?: string; patient?: string; tokenHash?: string; contextHash?: string;
@@ -42,8 +46,10 @@ export interface DecisionAsked { kind: "proxy.decision"; studyUid: string; token
 export interface StreamDone {
   kind: "stream.done"; studyUid: string; resource: string; status: number; authz?: Authz; tokenHash?: string; contextHash?: string;
   parts: number; bytes: number; encoding: "zstd" | "identity"; syntaxes: string[]; complete: boolean; note?: string;
+  /** The request had no Accept header. */
+  noAccept?: true;
 }
-export interface RetrievalAnswered { kind: "retrieval.answered"; studyUid?: string; resource: string; status: number; authz?: Authz; denial?: string; note?: string; tokenHash?: string; contextHash?: string; }
+export interface RetrievalAnswered { kind: "retrieval.answered"; studyUid?: string; resource: string; status: number; authz?: Authz; denial?: string; note?: string; tokenHash?: string; contextHash?: string; noAccept?: true; }
 export interface PolicyWritten {
   kind: "policy.written"; operation: string; level: "fact" | "policy" | "choice" | "settings" | "document" | "reset";
   /** The request body and query, which hold no secrets. */
