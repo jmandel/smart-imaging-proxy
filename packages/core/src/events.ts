@@ -44,12 +44,12 @@ export interface DecisionAnswered {
 export interface FastPath { kind: "proxy.fast-path"; studyUid: string; tokenHash: string; contextHash?: string; taken: boolean; /** The first check that failed, when not taken. */ failed?: string; }
 export interface DecisionAsked { kind: "proxy.decision"; studyUid: string; tokenHash: string; contextHash?: string; via: "cached" | "asked"; allowed: boolean; denial?: string; unavailable?: boolean; }
 export interface StreamDone {
-  kind: "stream.done"; studyUid: string; resource: string; status: number; authz?: Authz; tokenHash?: string; contextHash?: string;
+  kind: "stream.done"; studyUid: string; resource: string; target?: string; status: number; authz?: Authz; tokenHash?: string; contextHash?: string;
   parts: number; bytes: number; encoding: "zstd" | "identity"; syntaxes: string[]; complete: boolean; note?: string;
   /** The request had no Accept header. */
   noAccept?: true;
 }
-export interface RetrievalAnswered { kind: "retrieval.answered"; studyUid?: string; resource: string; status: number; authz?: Authz; denial?: string; note?: string; tokenHash?: string; contextHash?: string; noAccept?: true; }
+export interface RetrievalAnswered { kind: "retrieval.answered"; studyUid?: string; resource: string; /** What was asked under the address: `/studies/…`, without the signed context. */ target?: string; status: number; authz?: Authz; denial?: string; note?: string; tokenHash?: string; contextHash?: string; noAccept?: true; }
 export interface PolicyWritten {
   kind: "policy.written"; operation: string; level: "fact" | "policy" | "choice" | "settings" | "document" | "reset";
   /** The request body and query, which hold no secrets. */

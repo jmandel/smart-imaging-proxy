@@ -186,7 +186,7 @@ describe("token lifecycle", () => {
       advance(30 * 86400 + 1);
       const expired = await refresh(stack.auth.tokenUrl, last.refresh_token);
       expect(expired.status).toBe(400);
-      expect(await expired.json()).toEqual({ error: "invalid_grant" });
+      expect(await expired.json()).toMatchObject({ error: "invalid_grant", error_description: expect.stringMatching(/^failed: /) });
     } finally { stack.stop(); }
   });
 

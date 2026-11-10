@@ -164,7 +164,9 @@ describe("over HTTP", () => {
     for (const q of [`user=${encodeURIComponent(String(bait))}`, `user=josh&patient=${encodeURIComponent(String(bait))}`, `client=${encodeURIComponent(String(bait))}`, `client=research-donation&referral=${encodeURIComponent(String(bait))}`]) {
       expect([q, (await send("GET", `/api/sandbox/explore/view?session=x&${q}`)).status]).toEqual([q, 400]);
     }
-    for (const path of ["/api/sandbox/explore/cast", "/api/sandbox/explore/referrals", `/api/sandbox/explore/rule-sets?service=${encodeURIComponent(String(bait))}`]) expect([path, (await send("GET", path)).status]).toEqual([path, 200]);
+    for (const path of ["/api/sandbox/explore/cast", "/api/sandbox/explore/referrals"]) expect([path, (await send("GET", path)).status]).toEqual([path, 200]);
+    // A service it doesn't know is named as such, never answered with a quiet empty list.
+    expect((await send("GET", `/api/sandbox/explore/rule-sets?service=${encodeURIComponent(String(bait))}`)).status).toBe(404);
     // Explore has no writes of its own: changes go through the policy API, whose own checks apply.
     for (const path of ["/api/sandbox/explore/view", "/api/sandbox/explore/share", "/api/explore/start"]) expect([path, (await send("POST", path, { user: bait })).status]).toEqual([path, 404]);
     expect(fingerprint()).toBe(before);

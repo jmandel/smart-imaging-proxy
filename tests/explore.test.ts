@@ -354,6 +354,8 @@ describe("services", () => {
     expect(search.data.query).toContain(`identifier=${encodeURIComponent(`${stack.catalog.accessionSystem}|EXCR2012A`)}`);
     // The organization adds the rule set's rules, as the page does, through the policy API.
     const { ruleSets } = await b.ok("GET", "/api/sandbox/explore/rule-sets?service=hand-referral-service");
+    // A Ref names the same service.
+    expect((await b.ok("GET", "/api/sandbox/explore/rule-sets?service=service:hand-referral-service")).ruleSets).toEqual(ruleSets);
     for (const r of ruleSets.find((x: any) => x.id === "hand-wrist-referral").rules) await b.policy("PUT", `/policies/${encodeURIComponent(r.id)}`, r);
     const after = await b.service("hand-referral-service", "referral-xr-wrist-left-2012");
     expect([after.status, after.searchStatus]).toEqual(["results", 200]);

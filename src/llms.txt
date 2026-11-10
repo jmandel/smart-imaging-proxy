@@ -14,6 +14,8 @@ A sandbox has both sides of SMART Imaging: the health system's servers, and a vi
 
 Each part stands on its own, so read only the ones you need.
 
+The site's pages are a single-page app: fetched without JavaScript, a page is an empty shell. Everything a page does is also a JSON API described here, so an agent never needs a browser: prefer the API. The one exception is your own browser app, whose code has to run in one.
+
 # Shared background
 
 ## The parts
@@ -35,6 +37,7 @@ An app starts at the clinical FHIR base. `GET $SANDBOX/fhir/.well-known/smart-co
 - It's saved to disk, and lasts until its owner deletes it.
 - **Its URL is the access.** Anyone with it can read and change the sandbox, so treat it as a secret. The name is only a label.
 - Access is a union of grants. There are no deny rules: every grant only adds access.
+- **Sites are a stand-in.** Each sample study is filed under a site (Lakeside Imaging, Northside Pathology, Riverside Hospital), and approvals and shares name sites. That's this sandbox's way of modelling a choice a patient might make about what to share. It isn't part of SMART Imaging, an app never sees it, and `ImagingStudy` doesn't carry it.
 - The site root is read-only on public deployments. Work in a sandbox.
 
 ## Sample accounts
@@ -110,9 +113,15 @@ An agent can walk the forms a person would:
 3. `POST` that action with `decision=approve` and `patient=josh-example`. The 302 `Location` has the `code`.
 4. `POST $SANDBOX/token` with `grant_type=authorization_code`, `code`, `redirect_uri`, `client_id` and `code_verifier`. The response has `access_token`, `patient` (a bare FHIR id, such as `josh-example`), `scope` (as requested), and `expires_in` in seconds of the demo clock.
 
-To limit what's approved, add `sites_shown=1` and a `sites` field per site, with the site's name exactly: `Northside Pathology`, `Lakeside Imaging` or `Riverside Hospital`. Sites left out aren't approved. A name that isn't a site at all is refused: the redirect carries `error=invalid_request` and an `error_description` listing the sites. A real site the person doesn't hold for that patient is dropped. Each sign-in's choice replaces that app's approval for that patient, so a later sign-in that approves fewer sites narrows what earlier tokens' searches return.
+To limit what's approved to some sites, add `sites_shown=1` and a `sites` field per site, with the site's name exactly: `Northside Pathology`, `Lakeside Imaging` or `Riverside Hospital`. Sites left out aren't approved. A name that isn't a site at all is refused: the redirect carries `error=invalid_request` and an `error_description` listing the sites. A real site the person doesn't hold for that patient is dropped.
+
+To approve only some studies at a site, as the consent page's study boxes do: add `study_listed` with the site's name, and a `study` field with the id of each study to approve there. A site with `study_listed` approves just the studies named; one without it approves the whole site, including studies that arrive later. A study id is `ImagingStudy.id`, and `contract.json` lists them. When the person can act for more than one patient, the page names each field for its patient instead: `sites@{patient}`, `study@{patient}`, `study@{patient}_listed` and `sites_shown@{patient}`.
+
+Each sign-in's choice replaces that app's approval for that patient, so a later sign-in that approves fewer sites narrows what earlier tokens' searches return.
 
 ## Read data
+
+To look at real answers before your app can sign in, the sandbox's admin key can get a token as a person for an app, with no forms: see "The same assertion, … gets a token as that person" under "Manage a sandbox". Your app should still sign in as below; the App check grades only its own tokens.
 
 ```sh
 curl "$SANDBOX/fhir/Patient/josh-example" -H "authorization: Bearer $TOKEN"
@@ -126,7 +135,7 @@ Reports link to their images by accession number, and each has a PDF and a text 
 curl "$SANDBOX/fhir/DiagnosticReport?patient=Patient/josh-example" -H "authorization: Bearer $TOKEN"
 ```
 
-Each study names its `Endpoint` in `endpoint`, in any of three forms the guide allows, and an app must resolve all three by FHIR's Bundle rules: `#wado` is in the study's own `contained`; `urn:uuid:…` is the entry with that exact `fullUrl`; and a relative `Endpoint/{id}` resolves against the base of the study's own `fullUrl` (`{imaging}/fhir/`), to the entry whose `fullUrl` is `{imaging}/fhir/Endpoint/{id}`. The smoke test below does exactly this. Its `address` is that study's own DICOMweb base: retrieve under it, never under an address you build. A search with no results has no `entry` at all, only `total: 0`, so read `entry ?? []`. `$STUDY_UID` is the study's `identifier` with system `urn:dicom:uid`, less its `urn:oid:` prefix (not `ImagingStudy.id`); series and instance UIDs are `series[].uid` and `series[].instance[].uid`. Still send the token:
+Each study names its `Endpoint` in `endpoint`, in any of three forms the guide allows, and an app must resolve all three by FHIR's Bundle rules: `#wado` is in the study's own `contained`; `urn:uuid:…` is the entry with that exact `fullUrl`; and a relative `Endpoint/{id}` resolves against the base of the study's own `fullUrl` (`{imaging}/fhir/`), to the entry whose `fullUrl` is `{imaging}/fhir/Endpoint/{id}`. The smoke test below does exactly this. Its `address` is that study's own DICOMweb base: retrieve under it, never under an address you build. A search with no results has no `entry` at all, only `total: 0`, so read `entry ?? []`. Sites aren't part of SMART Imaging, and aren't on `ImagingStudy`: they're this sandbox's stand-in for a sharing choice a patient might make, so an app shouldn't depend on them. `contract.json` names each study's site only so a test can predict what a sign-in's choice releases. `$STUDY_UID` is the study's `identifier` with system `urn:dicom:uid`, less its `urn:oid:` prefix (not `ImagingStudy.id`); series and instance UIDs are `series[].uid` and `series[].instance[].uid`. Still send the token:
 
 ```sh
 curl "$ADDRESS/studies/$STUDY_UID/series/$SERIES_UID/instances/$INSTANCE_UID" \
@@ -168,7 +177,7 @@ curl -s {{ORIGIN}}/api/checks/$ID               # an AppCheckRun; while it runs,
 | `robin` | Signs in as `robin` | Finds none, with no error |
 | `service` | Runs the backend service for `josh-example` | Finds and retrieves all 6 |
 
-`conditions` are what's staged, all four by default: `small-pages` (`pageSize: 2`), `search-503` and `retrieval-503` (`Retry-After: 2`), and `endpoint-forms`, as in the faults table under "Manage a sandbox". Give the person the `url`, or start the run and tell them: "Point your app at `$SANDBOX/fhir` with client ID `…`, sign in as josh, approve every site, open every study, then press End the run and grade on the page." Only that client's requests while the run is on count: its tokens from `token.issued`, its searches by `client`, and its retrievals by `tokenHash`, or with no token, by the address a search issued to one of its tokens.
+`conditions` are what's staged, all four by default: `small-pages` (`pageSize: 2`), `search-503` and `retrieval-503` (`Retry-After: 2`), and `endpoint-forms`, as in the faults table under "Manage a sandbox". Give the person the `url`, or start the run and tell them: "Point your app at `$SANDBOX/fhir` with client ID `…`, sign in as josh, approve every site, open every study, then press End the run and grade on the page." It grades the sandbox's log, not a screen, so a headless app is graded exactly as a browser app is. Only that client's requests while the run is on count: its tokens from `token.issued`, its searches by `client`, and its retrievals by `tokenHash`, or with no token, by the address a search issued to one of its tokens.
 
 The result has three parts. `steps` with `group: "script"` say whether the app did what the script asked, against what the server itself released, so an app that stopped early fails where one that correctly found 1 or none passes. `steps` with `group: "requirement"` are clear requirements on apps, each with its `sources`, quoted: `pass`, `fail` with the requests behind it, or `note` when the app made no request it covers. `notes` are where the app relied on something the spec doesn't promise, such as one page of results or `/rendered`: not failures, each with why. The requirements and their sources are in [docs/app-check.md](https://github.com/jmandel/smart-imaging-proxy/blob/main/docs/app-check.md).
 
@@ -267,7 +276,7 @@ All paths below are under `$SANDBOX`. Bodies are JSON.
 | `GET /api/sandbox/explore/referrals` | The referrals the services work from: the report each cites, its patient reference, accession number and system |
 | `GET /api/sandbox/explore/view?session=&user=&patient=` or `?session=&client=&referral=` | A view explained from policy: headline, the studies its viewer may know of with why each is or isn't released, the layer chain, and what could change it. `session` names the trace session your requests carry |
 | `GET /api/sandbox/explore/happened?session=&study=` | One line for what a session did with a study, from the activity log |
-| `GET /api/sandbox/explore/rule-sets?service=` | The imaging network's named rule sets for a service, with their rules to `PUT` |
+| `GET /api/sandbox/explore/rule-sets?service=` | The imaging network's named rule sets for a service (its client id or Ref), with their rules to `PUT`. An unknown service is a 404. A service with no rule set of its own answers `{"ruleSets":[]}` |
 | `GET /api/sandbox/catalog?patient=` | A patient's studies as the catalog holds them, with UIDs, sites, dates and image counts, in the order search returns them |
 | `GET /api/sandbox/faults` | The faults on now, and the app check running here, if any: `{faults, appCheck}` |
 | `POST /api/sandbox/faults` with any of the fields below | Sets those faults and leaves the rest, answering with what's on now. `false` and `null` clear them. Refused with 409 while an app check runs here |
@@ -404,7 +413,7 @@ type Plan =
   | { do: "none" };
 interface StepResult { ok: boolean; expected: string; actual: string; detail?: string; write?: string; eventCount: number; activityUrl: string }
 
-// Server checks, at the site's root: POST /api/checks, then GET /api/checks/{id}. See "Check a server for someone".
+// Server checks, at the site's root: POST /api/checks, then GET /api/checks/{id}. See "Server check: run one for someone".
 interface CheckServer { label: string; iss: string; clientId: string; mode?: "launch" | "backend"; auth?: "public" | "private_key_jwt"; jwk?: JsonWebKey & { kid: string }; patient?: string; scope?: string; imaging?: string }
 interface CheckCreated { id: string; url: string; status: "waiting"; expiresAt: string }
 type CheckStepState = "todo" | "running" | "paused" | "pass" | "fail" | "skip" | "note" | "unreached";
@@ -418,7 +427,7 @@ interface CheckRun {
   updatedAt: string; expiresAt: string;
 }
 
-// App checks, at the site's root too: POST /api/checks with an app, then start, end and GET. See "Check an app for someone".
+// App checks, at the site's root too: POST /api/checks with an app, then start, end and GET. See "App check: run one for someone".
 interface CheckApp { sandbox: string; clientId: string; script?: "josh" | "riley" | "robin" | "service"; conditions?: ("small-pages" | "search-503" | "retrieval-503" | "endpoint-forms")[] }
 interface Source { doc: string; section: string; url: string; text: string }
 interface AppCheckStep { n: number; group: "script" | "requirement"; title: string; state: "pass" | "fail" | "note" | "unreached"; result: string; sources?: Source[]; requests: { request: string; response: string; log?: string }[] }

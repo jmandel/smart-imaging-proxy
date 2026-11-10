@@ -19,13 +19,13 @@ const S = () => `${CONFIG.demoUrl}${base}`;
 const formAction = async (r: Response) => new URL((await r.text()).match(/<form[^>]*action="([^"]+)"/)![1]!.replaceAll("&amp;", "&"), r.url);
 
 /** A token as an app gets one: the forms walked as `user`, choosing `patient`, approving every site. */
-async function signIn(user: string, patient: string) {
+async function signIn(user: string, patient: string, choices: [string, string][] = []) {
   const conf: any = await (await fetch(`${S()}/fhir/.well-known/smart-configuration`)).json();
   const verifier = b64(randomBytes(32)), auth = new URL(conf.authorization_endpoint);
   for (const [n, v] of Object.entries({ response_type: "code", client_id: clientId, redirect_uri: REDIRECT, scope: "launch/patient patient/*.rs", aud: `${S()}/fhir`, state: "c", code_challenge: b64(createHash("sha256").update(verifier).digest()), code_challenge_method: "S256" })) auth.searchParams.set(n, v);
   const signInAt = await formAction(await fetch(auth));
   const consent = new URL((await fetch(signInAt, { method: "POST", body: new URLSearchParams({ username: user }), redirect: "manual" })).headers.get("location")!, signInAt);
-  const back = new URL((await fetch(await formAction(await fetch(consent)), { method: "POST", body: new URLSearchParams({ decision: "approve", patient }), redirect: "manual" })).headers.get("location")!);
+  const back = new URL((await fetch(await formAction(await fetch(consent)), { method: "POST", body: new URLSearchParams([["decision", "approve"], ["patient", patient], ...choices]), redirect: "manual" })).headers.get("location")!);
   const t: any = await (await fetch(conf.token_endpoint, { method: "POST", body: new URLSearchParams({ grant_type: "authorization_code", code: back.searchParams.get("code")!, redirect_uri: REDIRECT, client_id: clientId, code_verifier: verifier }) })).json();
   return { token: t.access_token as string, imaging: conf.associated_endpoints.find((e: any) => e.capabilities.includes("smart-imaging-access")).url as string };
 }
@@ -76,4 +76,12 @@ test("llms.txt's table of expected answers is drawn from it", async () => {
   const doc = await (await fetch(`${S()}/llms.txt`)).text();
   expect(doc).not.toContain("{{EXPECTED_TABLE}}");
   for (const v of contract.expected) expect(doc).toContain(`| \`${v.user}\` | \`${v.patient}\` |`);
+});
+
+test("approving one study at a site, as llms.txt describes, gives the app that study and no other", async () => {
+  const josh = contract.expected.find(v => v.user === "josh")!, riverside = josh.studies.filter(s => s.site === "Riverside Hospital"), chosen = riverside[0]!;
+  expect(riverside.length).toBeGreaterThan(1);
+  const { token, imaging } = await signIn("josh", "josh-example", [["sites_shown", "1"], ["sites", "Riverside Hospital"], ["study_listed", "Riverside Hospital"], ["study", chosen.id]]);
+  const page: any = await (await fetch(`${imaging}/ImagingStudy?patient=Patient/josh-example`, { headers: { authorization: `Bearer ${token}` } })).json();
+  expect((page.entry ?? []).filter((e: any) => e.resource.resourceType === "ImagingStudy").map((e: any) => e.resource.id)).toEqual([chosen.id]);
 });

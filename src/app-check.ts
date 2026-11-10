@@ -112,7 +112,8 @@ export function grade(input: GradeInput): Graded {
     const address = x.contextHash ? issued ? `the address issued for ${issued.data.study}` : "an address not issued to this app" : "no address from a search";
     const parts = [x.authz === "no token" ? "no token" : `token ${tokenLine(x.tokenHash)}`, x.noAccept ? "no Accept" : ""].filter(Boolean).join(", ");
     const response = e.kind === "stream.done" ? `${x.status}: ${plural(x.parts ?? 0, "part")}${x.complete ? "" : ", cut short"}` : `${x.status}${x.note ? `: ${x.note}` : x.denial ? `: ${x.denial}` : ""}`;
-    return { request: `GET ${input.proxy}/wado/…/studies/${x.studyUid ?? "?"} (${x.resource}), with ${address}; ${parts}`, response, ...(log(e) ? { log: log(e) } : {}) };
+    const at = new Date(e.at).toISOString().slice(11, 23);
+    return { request: `${at} GET ${input.proxy}/wado/…${x.target ?? `/studies/${x.studyUid ?? "?"} (${x.resource})`}, with ${address}; ${parts}`, response, ...(log(e) ? { log: log(e) } : {}) };
   };
   const lines = <T>(list: T[], f: (t: T) => Request) => list.slice(0, MAX_REQUESTS).map(f);
 
@@ -210,7 +211,9 @@ export function grade(input: GradeInput): Graded {
   const retryOf = (e: EventRecord, list: EventRecord[], same: (a: EventRecord) => boolean) => list.find(a => (a.seq ?? 0) > (e.seq ?? 0) && same(a));
   for (const [kind, list, same, source] of [
     ["search", searches, (e: EventRecord) => (a: EventRecord) => d(a).query === d(e).query, SOURCES.retry],
-    ["retrieval", retrievals, (e: EventRecord) => (a: EventRecord) => d(a).studyUid === d(e).studyUid, SOURCES.retrieval503],
+    // The identical request: the same path under the same address. Another request for the study meanwhile, such as
+    // its metadata, isn't a repeat.
+    ["retrieval", retrievals, (e: EventRecord) => (a: EventRecord) => d(e).target ? d(a).target === d(e).target && d(a).contextHash === d(e).contextHash : d(a).studyUid === d(e).studyUid, SOURCES.retrieval503],
   ] as const) {
     const delayed = list.filter(staged503), seconds = (e: EventRecord) => Number(String(d(e).reason ?? d(e).note).match(/Retry-After: (\d+)/)?.[1] ?? 0);
     const dropped = delayed.filter(e => !retryOf(e, list, same(e)));
@@ -218,7 +221,7 @@ export function grade(input: GradeInput): Graded {
     const line = kind === "search" ? searchLine : retrievalLine;
     if (dropped.length) notes.push({ title: `Gave up on a ${kind} answered 503 with Retry-After`, sources: [source, SOURCES.retry], requests: lines(dropped, line),
       detail: `${plural(dropped.length, kind === "search" ? "search" : "retrieval")} answered 503 with Retry-After and ${dropped.length === 1 ? "was" : "were"} never repeated. The guide lets a server answer this way while it assembles results, and says an app should wait and repeat the request: a should, so this isn't graded, but the app went without what it asked for.` });
-    if (early.length) notes.push({ title: `Repeated a ${kind} before Retry-After had passed`, sources: [SOURCES.retry], requests: lines(early.map(x => x.again!), line),
+    if (early.length) notes.push({ title: `Repeated a ${kind} before Retry-After had passed`, sources: [SOURCES.retry], requests: lines(early.flatMap(x => [x.e, x.again!]), line),
       detail: `${plural(early.length, kind === "search" ? "search" : "retrieval")} came again ${early.map(x => `${((x.again!.at - x.e.at) / 1000).toFixed(1)} s`).join(", ")} after a 503 that asked for ${seconds(early[0]!.e)} s.` });
   }
   const richer = retrievals.filter(e => d(e).status === 501 && RICHER.has(String(d(e).resource)));

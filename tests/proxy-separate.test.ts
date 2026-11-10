@@ -110,7 +110,7 @@ describe("an auth process on its own", () => {
     }
     const wrongSecret = await ask(derivedBackendClient(DEMO_BACKEND_CLIENTS[0]!, "another-secret"));
     expect(wrongSecret.status).toBe(401);
-    expect(await wrongSecret.json()).toEqual({ error: "invalid_client" });
+    expect(await wrongSecret.json()).toMatchObject({ error: "invalid_client", error_description: expect.stringMatching(/^failed: /) });
     await stop(p);
     if (gateway) await stop(gateway);
   }, 30000);

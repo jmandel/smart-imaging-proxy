@@ -199,7 +199,7 @@ export function createProxy(opts: KeyOption & {
       ev.parts = parts; ev.syntaxes = syntaxes; ev.bytes = sent;
       ev.ms = Math.round((performance.now() - started) * 10) / 10;
       obs.event("dicomweb-proxy", {
-        kind: "stream.done", studyUid: ev.studyUid ?? "", resource: ev.resource ?? "study", status: 200, ...(ev.authz ? { authz: ev.authz as Authz } : {}), ...hashesOf(ev),
+        kind: "stream.done", studyUid: ev.studyUid ?? "", resource: ev.resource ?? "study", target: ev.path.match(/\/studies\/.*$/)?.[0], status: 200, ...(ev.authz ? { authz: ev.authz as Authz } : {}), ...hashesOf(ev),
         parts, bytes: sent, encoding: ev.encoding ?? "identity", syntaxes, complete: status === "ok", ...(ev.note ? { note: ev.note } : {}),
       });
       streamSpan.end(status, { parts, syntaxes: syntaxes.join(", "), bytes_sent: sent, ...attrs });
@@ -587,7 +587,7 @@ export function createProxy(opts: KeyOption & {
       ev.status = res.status;
       ev.encoding = res.headers.get("content-encoding") === "zstd" ? "zstd" : "identity";
       // A stream reports itself when it ends.
-      if (!ev.streamed && ev.resource) obs.event("dicomweb-proxy", { kind: "retrieval.answered", studyUid: ev.studyUid, resource: ev.resource, status: res.status, ...(ev.authz ? { authz: ev.authz as Authz } : {}), ...(ev.denial ? { denial: ev.denial } : {}), ...(ev.note ? { note: ev.note } : {}), ...hashesOf(ev) });
+      if (!ev.streamed && ev.resource) obs.event("dicomweb-proxy", { kind: "retrieval.answered", studyUid: ev.studyUid, resource: ev.resource, target: ev.path.match(/\/studies\/.*$/)?.[0], status: res.status, ...(ev.authz ? { authz: ev.authz as Authz } : {}), ...(ev.denial ? { denial: ev.denial } : {}), ...(ev.note ? { note: ev.note } : {}), ...hashesOf(ev) });
       // A stream sets this again when delivery ends.
       ev.ms = Math.round((performance.now() - start) * 10) / 10;
       return res;

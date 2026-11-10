@@ -118,6 +118,23 @@ describe("grading an app from the log", () => {
     expect(g.steps.filter(s => s.group === "requirement").map(s => s.state)).toEqual(["pass", "pass", "pass", "pass"]);
   });
 
+  test("a repeat before Retry-After is the identical request: the study's other requests meanwhile aren't one, and the note quotes both", () => {
+    const INSTANCE = "/studies/1.1/series/9/instances/8";
+    const timed = (repeatAt: number) => {
+      const e = compliant();
+      const i503 = e.events.findIndex(x => x.kind === "retrieval.answered" && x.data.status === 503);
+      e.events[i503]!.data.target = INSTANCE;
+      // Its metadata a second after the 503, then the instance again: at `repeatAt`.
+      e.events.splice(i503 + 1, 1, ev("stream.done", { studyUid: "1.1", resource: "metadata", target: "/studies/1.1/metadata", status: 200, complete: true, parts: 1, tokenHash: "T1", contextHash: "C1" }, 11000),
+        ev("stream.done", { studyUid: "1.1", resource: "instance", target: INSTANCE, status: 200, complete: true, parts: 1, tokenHash: "T1", contextHash: "C1" }, repeatAt));
+      return graded(e).notes.find(n => n.title === "Repeated a retrieval before Retry-After had passed");
+    };
+    expect(timed(12100)).toBeUndefined();
+    const early = timed(10600)!;
+    expect(early.detail).toContain("0.6 s after a 503 that asked for 2 s");
+    expect(early.requests.map(r => r.request.includes(INSTANCE))).toEqual([true, true]);
+    expect(early.requests.map(r => r.response.split(":")[0])).toEqual(["503", "200"]);
+  });
   test("a correct small answer passes: Riley's 1 of 2, and Robin's none", () => {
     seq = 0;
     const token = ev("token.issued", { client: "app-1", grant: "authorization_code", user: "sam-caregiver", patient: "riley-example", tokenHash: "T1" });

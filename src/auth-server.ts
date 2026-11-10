@@ -189,7 +189,8 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     return res;
   };
   const tokenResponse = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store", Pragma: "no-cache" } });
-  const oauthError = (error: string, status = 400) => tokenResponse({ error }, status);
+  /** An OAuth error, with the check that failed as its description: every refusal says why. */
+  const oauthError = (error: string, status = 400, why?: string) => tokenResponse({ error, ...(why ? { error_description: `failed: ${why}` } : {}) }, status);
 
   /** A JWT part's JSON object, or undefined for anything else. */
   const jwtPart = (part: string | undefined): any => {
@@ -204,28 +205,29 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     if (!a || key.asymmetricKeyType !== a.kty) return false;
     return !a.crv || key.asymmetricKeyDetails?.namedCurve === a.crv;
   };
-  async function verifyAssertion(jwt: string, tokenUrl: string) {
+  /** The client an assertion proves, or which check it failed. */
+  async function verifyAssertion(jwt: string, tokenUrl: string): Promise<{ client_id: string; scopes: string[] } | { failed: string }> {
     const [h, b, s] = jwt.split(".");
     const head = jwtPart(h), claims = jwtPart(b);
-    if (!check("authorization-server", "client assertion is a three-part JWT", !!(head && claims && s))) return undefined;
+    if (!check("authorization-server", "client assertion is a three-part JWT", !!(head && claims && s))) return { failed: "client assertion is a three-part JWT" };
     const registered = opts.registeredClient?.(claims.iss);
     const publishedKey = registered?.jwksUrl && typeof head.kid === "string" ? await jwksKey(registered.jwksUrl, head.kid, PUBLIC_DEMO) : undefined;
     const clientKey = registered?.jwk ?? publishedKey;
     const reg = registered ? (clientKey ? { kid: (clientKey as any).kid as string, publicKey: createPublicKey({ key: clientKey as any, format: "jwk" }), scopes: registered.type === "backend" ? BACKEND_SCOPES : [] } : undefined) : backendKeys.get(claims.iss);
-    if (!check("authorization-server", "client is registered, with its public key on file", !!reg && head.kid === reg.kid, { client: claims.iss, kid: head.kid, registered_scopes: reg?.scopes.join(" ") })) return undefined;
-    if (!check("authorization-server", "assertion's algorithm suits its key, and iss equals sub", algorithmFits(head.alg, reg!.publicKey) && claims.sub === claims.iss, { alg: head.alg, iss: claims.iss, sub: claims.sub })) return undefined;
-    if (!check("authorization-server", "assertion's aud is this token endpoint", claims.aud === tokenUrl, { aud: claims.aud })) return undefined;
+    if (!check("authorization-server", "client is registered, with its public key on file", !!reg && head.kid === reg.kid, { client: claims.iss, kid: head.kid, registered_scopes: reg?.scopes.join(" ") })) return { failed: "client is registered, with its public key on file" };
+    if (!check("authorization-server", "assertion's algorithm suits its key, and iss equals sub", algorithmFits(head.alg, reg!.publicKey) && claims.sub === claims.iss, { alg: head.alg, iss: claims.iss, sub: claims.sub })) return { failed: "assertion's algorithm suits its key, and iss equals sub" };
+    if (!check("authorization-server", "assertion's aud is this token endpoint", claims.aud === tokenUrl, { aud: claims.aud })) return { failed: `assertion's aud is this token endpoint: it's ${JSON.stringify(claims.aud)}, and should be ${tokenUrl}` };
     // An assertion is checked by real time, not the demo clock: an app signs with its own clock, and can't know
     // where this sandbox's clock was moved to. The demo clock governs what the story is about: tokens, links, ages.
     const t = realNow();
-    if (!check("authorization-server", "assertion hasn't expired", Number.isInteger(claims.exp) && claims.exp >= t, { exp: claims.exp, now: t })) return undefined;
-    if (!check("authorization-server", "assertion's exp is no more than five minutes ahead", claims.exp <= t + 300, { exp: claims.exp, now: t })) return undefined;
-    if (!check("authorization-server", "assertion's jti hasn't been used", typeof claims.jti === "string" && !!claims.jti && !usedJti.has(claims.jti), { jti: claims.jti })) return undefined;
+    if (!check("authorization-server", "assertion hasn't expired", Number.isInteger(claims.exp) && claims.exp >= t, { exp: claims.exp, now: t })) return { failed: `assertion hasn't expired: its exp is ${claims.exp}, and it's ${t} now, in real time` };
+    if (!check("authorization-server", "assertion's exp is no more than five minutes ahead", claims.exp <= t + 300, { exp: claims.exp, now: t })) return { failed: `assertion's exp is no more than five minutes ahead: it's ${claims.exp - t} s ahead, in real time` };
+    if (!check("authorization-server", "assertion's jti hasn't been used", typeof claims.jti === "string" && !!claims.jti && !usedJti.has(claims.jti), { jti: claims.jti })) return { failed: "assertion's jti hasn't been used" };
     const algorithm = ALGORITHMS[head.alg]!;
     const ok = verify(algorithm.hash, Buffer.from(`${h}.${b}`), { key: reg!.publicKey, ...(algorithm.ieee ? { dsaEncoding: "ieee-p1363" as const } : {}) }, Buffer.from(s!, "base64url"));
     check("authorization-server", "client assertion signature verifies", ok, { client: claims.iss, kid: head.kid, alg: head.alg });
     if (ok) usedJti.add(claims.jti);
-    return ok ? { client_id: claims.iss as string, scopes: reg!.scopes } : undefined;
+    return ok ? { client_id: claims.iss as string, scopes: reg!.scopes } : { failed: "client assertion signature verifies, with the registered key" };
   }
 
   const page = (title: string, body: string, status = 200) => new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)}</title><style>${PAGE_CSS}</style></head><body><p class="brand">Authorization Server</p><main>${body}</main></body></html>`, { status, headers: { "content-type": "text/html; charset=utf-8" } });
@@ -480,56 +482,56 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
       const f = new URLSearchParams(await req.text());
       const grant = f.get("grant_type");
       if (grant === "client_credentials") {
-        if (!check("authorization-server", "client authenticates with private_key_jwt", f.get("client_assertion_type") === "urn:ietf:params:oauth:client-assertion-type:jwt-bearer")) return oauthError("invalid_client", 401);
+        if (!check("authorization-server", "client authenticates with private_key_jwt", f.get("client_assertion_type") === "urn:ietf:params:oauth:client-assertion-type:jwt-bearer")) return oauthError("invalid_client", 401, "client authenticates with private_key_jwt");
         const reg = await verifyAssertion(f.get("client_assertion") ?? "", tokenUrl);
-        if (!reg) return oauthError("invalid_client", 401);
+        if ("failed" in reg) return oauthError("invalid_client", 401, reg.failed);
         // The sandbox's admin may get a token as a person, for an app, as that app would get at sign-in. A sandbox-only extension.
         if (reg.client_id === SANDBOX_ADMIN && f.has("user")) {
           const user = f.get("user")!, patient = f.get("patient") ?? "", app = f.get("app") ?? "portal-app";
           const known = Object.hasOwn(USERS, user) && /^[A-Za-z0-9\-.]{1,64}$/.test(patient) && (Object.hasOwn(APP_NAMES, app) || !!opts.registeredClient?.(app));
-          if (!check("authorization-server", "the admin names a known user, a patient, and a known app", known, { user, patient, app })) return oauthError("invalid_request");
+          if (!check("authorization-server", "the admin names a known user, a patient, and a known app", known, { user, patient, app })) return oauthError("invalid_request", 400, "the admin names a known user, a patient, and a known app");
           return tokenResponse(issue({ client_id: app, scope: f.get("scope") || PERSON_SCOPE, patient, sub: user, fhirUser: USERS[user]!.fhirUser }, false, "client_credentials"));
         }
         const asked = (f.get("scope") ?? "").split(" ").filter(s => reg.scopes.includes(s));
-        if (!check("authorization-server", "requested scope is within the client's registration", asked.length > 0, { requested: f.get("scope"), granted: asked.join(" ") })) return oauthError("invalid_scope");
+        if (!check("authorization-server", "requested scope is within the client's registration", asked.length > 0, { requested: f.get("scope"), granted: asked.join(" ") })) return oauthError("invalid_scope", 400, "requested scope is within the client's registration");
         return tokenResponse(issue({ client_id: reg.client_id, scope: asked.join(" ") }, false, "client_credentials"));
       }
       if (grant === "authorization_code") {
         const code = f.get("code") ?? "";
         const c = codes.get(code);
-        if (!check("authorization-server", "authorization code is known and unused", !!c, { client: f.get("client_id") })) return oauthError("invalid_grant");
+        if (!check("authorization-server", "authorization code is known and unused", !!c, { client: f.get("client_id") })) return oauthError("invalid_grant", 400, "authorization code is known and unused");
         codes.delete(code); // Single use, even if a later check fails.
-        if (!check("authorization-server", "authorization code hasn't expired", c!.exp > now())) return oauthError("invalid_grant");
-        if (!check("authorization-server", "client_id and redirect_uri match the authorization request", c!.client_id === f.get("client_id") && c!.redirect_uri === f.get("redirect_uri"))) return oauthError("invalid_grant");
+        if (!check("authorization-server", "authorization code hasn't expired", c!.exp > now())) return oauthError("invalid_grant", 400, "authorization code hasn't expired");
+        if (!check("authorization-server", "client_id and redirect_uri match the authorization request", c!.client_id === f.get("client_id") && c!.redirect_uri === f.get("redirect_uri"))) return oauthError("invalid_grant", 400, "client_id and redirect_uri match the authorization request");
         // A confidential app proves who it is as well as holding the code.
         if (opts.registeredClient?.(c!.client_id)?.type === "confidential") {
           const proved = f.get("client_assertion_type") === "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" ? await verifyAssertion(f.get("client_assertion") ?? "", tokenUrl) : undefined;
-          if (!check("authorization-server", "confidential client authenticated with private_key_jwt", proved?.client_id === c!.client_id, { client: c!.client_id })) return oauthError("invalid_client", 401);
+          if (!check("authorization-server", "confidential client authenticated with private_key_jwt", !!proved && !("failed" in proved) && proved.client_id === c!.client_id, { client: c!.client_id })) return oauthError("invalid_client", 401, proved && "failed" in proved ? proved.failed : "confidential client authenticated with private_key_jwt");
         }
         const verifier = f.get("code_verifier") ?? "";
         const computed = createHash("sha256").update(verifier).digest("base64url");
-        if (!check("authorization-server", "PKCE: S256 of code_verifier equals code_challenge", computed === c!.code_challenge, { computed: computed.slice(0, 10), challenge: c!.code_challenge.slice(0, 10) })) return oauthError("invalid_grant");
+        if (!check("authorization-server", "PKCE: S256 of code_verifier equals code_challenge", computed === c!.code_challenge, { computed: computed.slice(0, 10), challenge: c!.code_challenge.slice(0, 10) })) return oauthError("invalid_grant", 400, "PKCE: S256 of code_verifier equals code_challenge");
         return tokenResponse(issue(c!.grant, /(^| )(online|offline)_access( |$)/.test(c!.grant.scope), "authorization_code"));
       }
       if (grant === "refresh_token") {
         const presented = f.get("refresh_token") ?? "";
         const held = opts.store().getToken(presented, "refresh");
-        if (!held) return oauthError("invalid_grant");
-        if (!check("authorization-server", "refresh token was issued to this client", held.client_id === f.get("client_id"), { client: f.get("client_id"), issued_to: held.client_id })) return oauthError("invalid_grant");
+        if (!held) return oauthError("invalid_grant", 400, "refresh token is one this sandbox issued");
+        if (!check("authorization-server", "refresh token was issued to this client", held.client_id === f.get("client_id"), { client: f.get("client_id"), issued_to: held.client_id })) return oauthError("invalid_grant", 400, "refresh token was issued to this client");
         // A used token stays on file, marked revoked, until it expires. Seeing it again means the chain has leaked.
         if (!check("authorization-server", "refresh token hasn't been used or revoked", !held.revoked, { client: held.client_id, family_revoked: held.revoked ? !!held.family : undefined })) {
           if (held.family) opts.store().revokeTokenFamily(held.family);
-          return oauthError("invalid_grant");
+          return oauthError("invalid_grant", 400, "refresh token hasn't been used or revoked; a used one seen again revokes its whole chain");
         }
         if (!check("authorization-server", "refresh token hasn't expired", held.exp === undefined || held.exp > now(), { exp: held.exp, now: now() })) {
           opts.store().deleteToken(presented);
-          return oauthError("invalid_grant");
+          return oauthError("invalid_grant", 400, "refresh token hasn't expired");
         }
         opts.store().revokeToken(presented);
         const { revoked: _revoked, exp: _exp, ...g } = held;
         return tokenResponse(issue(g, true, "refresh_token"));
       }
-      return oauthError("unsupported_grant_type");
+      return oauthError("unsupported_grant_type", 400, "grant_type is authorization_code, client_credentials or refresh_token");
     }
     if (url.pathname === "/authorize" && req.method === "GET") return authorize(url);
     if (url.pathname === "/authorize/signin" && req.method === "POST") return authorizeSignIn(url, req);

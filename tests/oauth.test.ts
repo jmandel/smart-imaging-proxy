@@ -420,7 +420,7 @@ describe("Backend Services", () => {
   const refused = async (assertion: string) => {
     const r = await post(assertionBody(assertion));
     expect(r.status).toBe(401);
-    expect(await r.json()).toEqual({ error: "invalid_client" });
+    expect(await r.json()).toMatchObject({ error: "invalid_client", error_description: expect.stringMatching(/^failed: /) });
   };
 
   test("a replayed assertion is rejected", async () => {
@@ -503,7 +503,7 @@ describe("Refresh tokens", () => {
     for (const client of ["separate-viewer", undefined, "constructor"]) {
       const r = await refresh(t.refresh_token, client);
       expect(r.status).toBe(400);
-      expect(await r.json()).toEqual({ error: "invalid_grant" });
+      expect(await r.json()).toMatchObject({ error: "invalid_grant", error_description: expect.stringMatching(/^failed: /) });
     }
     expect(liveAccess(t.access_token)).toBe(true);
     expect((await refresh(t.refresh_token, "portal-app")).status).toBe(200);
@@ -514,7 +514,7 @@ describe("Refresh tokens", () => {
     const newer: any = await (await refresh(next.refresh_token, "portal-app")).json();
     const replay = await refresh(t.refresh_token, "portal-app");
     expect(replay.status).toBe(400);
-    expect(await replay.json()).toEqual({ error: "invalid_grant" });
+    expect(await replay.json()).toMatchObject({ error: "invalid_grant", error_description: expect.stringMatching(/^failed: /) });
     expect((await refresh(newer.refresh_token, "portal-app")).status).toBe(400);
     for (const token of [t.access_token, next.access_token, newer.access_token]) expect(liveAccess(token)).toBe(false);
     expect((await fetch(`${conf.associated_endpoints[0].url}/ImagingStudy?patient=josh-example`, { headers: { Authorization: `Bearer ${newer.access_token}` } })).status).toBe(401);

@@ -4,7 +4,7 @@
 // viewer may know of with why each is or isn't released, the layer chain, and what could change it. All of
 // it is the sandbox's management API, read with the admin token. Nothing here takes a token or a search.
 import { createModel, ref, type CatalogStudy } from "@smart-imaging-proxy/core";
-import { APP_NAMES, PATIENT_NAMES, RELATIONSHIPS, USERS, type BackendClient } from "./auth-server";
+import { APP_NAMES, PATIENT_NAMES, RELATIONSHIPS, USERS, type BackendClient, DEMO_BACKEND_CLIENTS } from "./auth-server";
 import { chainFor } from "./chain";
 import { PEOPLE_LINES, SERVICE_LINES } from "./cast";
 import { RULE_SETS } from "./rule-presets";
@@ -101,7 +101,7 @@ export function createExplore(sandbox: Sandbox, clients: Record<string, BackendC
 
   const withheldSheet = (row: any, title?: string) => ({
     id: row.id, title: title ?? reportTitle(row), site: row.site, date: row.date ? `${row.date.slice(0, 4)}-${row.date.slice(4, 6)}-${row.date.slice(6, 8)}` : undefined,
-    modalities: row.modalities, released: false, reason: row.why, series: [], thumb: false, retrievable: false,
+    modalities: row.modalities, released: false, reason: row.why,
   });
   /** A person's view of a patient's studies, as their app would find it: from policy, the same evaluation search runs. */
   async function personView(user: string, asked?: string) {
@@ -225,7 +225,9 @@ export function createExplore(sandbox: Sandbox, clients: Record<string, BackendC
       if (p === "/cast") return json(options());
       if (p === "/referrals") return json({ referrals: referralList() });
       if (p === "/rule-sets") {
-        const service = q("service") ?? "";
+        // A client id or a Ref, as the rest of the API speaks: anything else is an error, never a quiet empty list.
+        const asked = q("service") ?? "", service = asked.replace(/^service:/, "");
+        if (!DEMO_BACKEND_CLIENTS.includes(service)) return json({ error: `no service "${asked}"`, hint: `Give a service's client id or Ref, one of: ${DEMO_BACKEND_CLIENTS.join(", ")}` }, 404);
         return json({ ruleSets: RULE_SETS.flatMap(set => { const rules = set.rules(sandbox.catalog)?.filter(r => r.service === `service:${service}`); return rules?.length ? [{ id: set.id, label: set.label, description: set.description, rules }] : []; }) });
       }
       if (p === "/view") {
