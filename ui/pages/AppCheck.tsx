@@ -20,7 +20,7 @@ interface AppRun {
   app: { sandbox: string; clientId: string; script: string; conditions: string[]; name: string; type: string };
   script: { id: string; title: string; steps: string[] }; staged: { id: string; text: string }[]; fhirBase: string;
   startedAt?: string; endsAt?: string; endedAt?: string; ended?: "graded" | "abandoned" | "expired";
-  progress?: { tokens: number; searches: number; retrievals: number }; steps: Step[]; notes: Note[];
+  progress?: { tokens: number; searches: number; retrievals: number }; steps: Step[]; notes: Note[]; notChecked?: string[];
 }
 /** The scripts and conditions a run can have, as the API names them. Kept here so the form needs no call to draw. */
 const SCRIPTS = [
@@ -93,6 +93,7 @@ function markdown(r: AppRun): string {
     out.push("", "## Beyond what the spec guarantees", "");
     for (const n of r.notes) { out.push(`- **${n.title}.** ${n.detail}`); for (const src of n.sources) out.push(`  - [${src.doc}, ${src.section}](${src.url}): “${src.text}”`); }
   }
+  if (r.notChecked?.length) out.push("", "## Not checked by this run", "", ...r.notChecked.map(t => `- ${t}`));
   return `${out.join("\n")}\n`;
 }
 
@@ -111,6 +112,11 @@ function Results({ run }: { run: AppRun }) {
       {run.notes.length ? <ul className="app-check-notes" id="notes">{run.notes.map((n, i) => (
         <li key={i}><b>{n.title}</b><p>{n.detail}</p><Sources list={n.sources} />{n.requests.length > 0 && <details><summary>The requests</summary><Requests list={n.requests} /></details>}</li>
       ))}</ul> : <p className="note" id="notes">Nothing: the app relied on nothing the spec doesn't promise, as far as its requests show.</p>}
+      {!!run.notChecked?.length && <>
+        <h3 className="app-check-head">Not checked by this run</h3>
+        <p className="note">A pass covers only the requirements above, on the requests the app made. These weren't looked at:</p>
+        <ul className="app-check-unchecked" id="not-checked">{run.notChecked.map((t, i) => <li key={i}>{t}</li>)}</ul>
+      </>}
     </>}
   </>;
 }

@@ -47,8 +47,17 @@ test("contract.json lists the four views llms.txt describes, with no sites: an a
   ]);
 });
 
-test("its state says a new sandbox is clean, and a fault makes it not", async () => {
-  expect(contract.state.clean).toBe(true);
+test("its state says a new sandbox is clean, and topology or a policy change makes it not, by name", async () => {
+  expect([contract.state.clean, contract.state.differences]).toEqual([true, []]);
+  const w = stack.sandboxes.mint(), at = `${CONFIG.demoUrl}${w.prefix}`;
+  w.setTopology("unified");
+  expect(((await (await fetch(`${at}/contract.json`)).json()) as Contract).state.differences).toEqual(["topology is unified"]);
+  w.setTopology("separate");
+  w.store.removeRelationship({ subject: "user:sam-caregiver", relation: "guardian_of", object: "patient:riley-example" });
+  const after = (await (await fetch(`${at}/contract.json`)).json()) as Contract;
+  expect([after.state.clean, after.state.differences]).toEqual([false, ["relationships changed"]]);
+});
+test("and a fault makes it not clean, until it's cleared", async () => {
   const admin = { ...await adminHeaders({ fetch: r => fetch(r) }, base), "content-type": "application/json" };
   await fetch(`${S()}/api/sandbox/faults`, { method: "POST", headers: admin, body: JSON.stringify({ pageSize: 2 }) });
   const now = await (await fetch(`${S()}/contract.json`)).json() as Contract;

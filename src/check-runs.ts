@@ -19,7 +19,7 @@ interface ServerRun { kind: "server"; id: string; server: ServerEntry; status: R
 export interface CheckApp { sandbox: string; clientId: string; script: string; conditions: string[] }
 interface AppRun {
   kind: "app"; id: string; app: CheckApp & { name: string; type: string }; origin: string;
-  status: Exclude<RunStatus, "paused">; summary: string | null; steps: GradedStep[]; notes: Note[];
+  status: Exclude<RunStatus, "paused">; summary: string | null; steps: GradedStep[]; notes: Note[]; notChecked: string[];
   createdAt: number; updatedAt: number; expiresAt: number;
   /** While it runs: when it began and must end, the last event before it, and the faults to put back. */
   startedAt?: number; endsAt?: number; endedAt?: number; ended?: "graded" | "abandoned" | "expired"; since?: number; before?: Partial<Faults>; timer?: ReturnType<typeof setTimeout>;
@@ -61,7 +61,7 @@ const appView = (r: AppRun, progress?: ReturnType<typeof progressOf>) => ({
   fhirBase: `${r.origin}${r.app.sandbox}/fhir`,
   ...(r.startedAt ? { startedAt: iso(r.startedAt) } : {}), ...(r.endsAt && r.status === "running" ? { endsAt: iso(r.endsAt) } : {}),
   ...(r.endedAt ? { endedAt: iso(r.endedAt), ended: r.ended } : {}), ...(progress ? { progress } : {}),
-  steps: r.steps, notes: r.notes, updatedAt: iso(r.updatedAt), expiresAt: iso(r.expiresAt),
+  steps: r.steps, notes: r.notes, notChecked: r.notChecked, updatedAt: iso(r.updatedAt), expiresAt: iso(r.expiresAt),
 });
 
 /** A client assertion for `aud`, signed with the run's ES256 key, as the page would sign it with a key it held. */
@@ -156,7 +156,7 @@ export function createCheckRuns({ now = Date.now, site }: { now?: () => number; 
     if (how === "abandoned" || !wasRunning) { r.summary = "Abandoned, so not graded. The sandbox is as it was before the run."; return; }
     await site!.mark(sandboxIdOf(r)).catch(() => 0);
     const g = graded(r);
-    Object.assign(r, { steps: g.steps, notes: g.notes, summary: how === "expired" ? `Ended when its ${APP_WINDOW_MS / 3600_000} hours were up. ${g.summary}` : g.summary, updatedAt: now() });
+    Object.assign(r, { steps: g.steps, notes: g.notes, notChecked: g.notChecked, summary: how === "expired" ? `Ended when its ${APP_WINDOW_MS / 3600_000} hours were up. ${g.summary}` : g.summary, updatedAt: now() });
   }
   async function start(r: AppRun): Promise<Response> {
     if (r.status !== "waiting") return json({ error: r.status === "running" ? "this run has started" : "this run has ended: start a new one" }, 409);
@@ -194,7 +194,7 @@ export function createCheckRuns({ now = Date.now, site }: { now?: () => number; 
         prune();
         if (runs.size >= MAX_RUNS) return json({ error: "too many check runs are open: try again later" }, 429);
         const t = now(), id = randomBytes(24).toString("base64url");
-        const run: AppRun = { kind: "app", id, app: named.app, origin, status: "waiting", summary: null, steps: [], notes: [], createdAt: t, updatedAt: t, expiresAt: t + RUN_LIFETIME_MS };
+        const run: AppRun = { kind: "app", id, app: named.app, origin, status: "waiting", summary: null, steps: [], notes: [], notChecked: [], createdAt: t, updatedAt: t, expiresAt: t + RUN_LIFETIME_MS };
         runs.set(id, run);
         return json({ id, url: `${origin}${named.app.sandbox}/app-check?run=${id}`, status: run.status, expiresAt: iso(run.expiresAt) }, 201);
       }

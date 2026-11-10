@@ -534,3 +534,5 @@ label.check code { font-size:.85em; }
   .app-check .check-step .chevron { order:2; }
   .app-check .check-step .state { order:3; flex-basis:100%; padding-left:2rem; }
 }
+.app-check-unchecked { margin:.3rem 0 0; padding-left:1.2rem; color:var(--muted); line-height:1.5; }
+.app-check-unchecked li { margin:.15rem 0; }

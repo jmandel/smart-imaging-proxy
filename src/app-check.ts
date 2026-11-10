@@ -58,7 +58,17 @@ export type GradeState = "pass" | "fail" | "note" | "unreached";
 export interface Request { request: string; response: string; log?: string }
 export interface GradedStep { n: number; group: "script" | "requirement"; title: string; state: GradeState; result: string; sources?: Source[]; requests: Request[] }
 export interface Note { title: string; detail: string; sources: Source[]; requests: Request[] }
-export interface Graded { summary: string; steps: GradedStep[]; notes: Note[] }
+export interface Graded { summary: string; steps: GradedStep[]; notes: Note[]; notChecked: string[] }
+
+/** What no app check looks at, so a pass isn't read as more than it is. */
+export const NOT_CHECKED = [
+  "Signing in: PKCE, state, aud and client assertions are enforced by the sign-in server, so an app that breaks them gets no token, but they aren't graded here",
+  "Token expiry and renewal: no token expires during a run",
+  "Approving less at sign-in: the script approves everything offered",
+  "Reports and clinical data: only imaging searches and retrievals are graded",
+  "Discovery: reading smart-configuration can't be tied to the app",
+  "What the app shows: the check sees requests, not the screen",
+];
 
 /** The events grading reads: the client's tokens, whenever issued; the addresses issued to them; and the run's events. */
 export interface Evidence { tokens: EventRecord[]; contexts: EventRecord[]; events: EventRecord[] }
@@ -237,7 +247,9 @@ export function grade(input: GradeInput): Graded {
   if (otherPatient.length) notes.push({ title: "Searched for a patient the token isn't for", sources: [SOURCES.patient], requests: lines(otherPatient, searchLine),
     detail: `The search named ${[...new Set(otherPatient.map(e => d(e).patient))].join(", ")}, and the token is for ${[...new Set(right.map(e => d(e).patient).filter(Boolean))].join(", ") || "another patient"}. The server must refuse it with 403, and did.` });
 
-  return { summary: summaryOf(steps), steps, notes };
+  // This run's own gaps: a requirement the app made no request for wasn't checked either.
+  const unexercised = steps.filter(s => s.group === "requirement" && s.state === "note").map(s => `${s.title}: the app made no request it covers`);
+  return { summary: summaryOf(steps), steps, notes, notChecked: [...unexercised, ...NOT_CHECKED] };
 }
 
 /** The line at the top: how the requirements came out, and how far the script got. */

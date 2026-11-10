@@ -51,6 +51,14 @@ test("apps can be removed by a name prefix, and only those, and never with an em
   expect(((await r.json()) as any).removed.length).toBe(2);
   expect(((await (await call("GET", `${w.prefix}/api/sandbox/clients`)).json()) as any).clients.map((c: any) => c.name)).toEqual(["Keep me"]);
 });
+test("removing an app removes its approvals and its tokens too", async () => {
+  const w = stack.sandboxes.mint();
+  const made: any = await (await call("POST", `${w.prefix}/api/sandbox/clients`, { name: "Leaves nothing", redirectUris: ["https://example.org/cb"] })).json();
+  w.store.upsertApproval({ by: "user:josh", app: `app:${made.id}`, patient: "patient:josh-example" } as any);
+  expect(w.store.approvals().some(a => a.app === `app:${made.id}`)).toBe(true);
+  expect((await call("DELETE", `${w.prefix}/api/sandbox/clients/${made.id}`)).status).toBe(200);
+  expect(w.store.approvals().some(a => a.app === `app:${made.id}`)).toBe(false);
+});
 test("the shared root has no registrations", async () => expect((await call("GET", "/api/sandbox/clients")).status).toBe(409));
 
 test("named studies add to an approval's sites, and only what the person can see counts", async () => {

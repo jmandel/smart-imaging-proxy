@@ -12,7 +12,7 @@ A sandbox has both sides of SMART Imaging: the health system's servers, and a vi
 - **Testing your own server?** Read the shared background, then "Testing your server". The page for people is `{{ORIGIN}}/servers`.
 - **Driving a sandbox** (its policy, faults, clock and tours)? "The management API". Both of the above use it too, for its admin token.
 
-Each part stands on its own, so read only the ones you need.
+Each part stands on its own, so read only the ones you need. Any one comes on its own, with this opening, from the same file: `llms.txt?part=shared`, `?part=app`, `?part=server`, `?part=management` or `?part=references`.
 
 The site's pages are a single-page app: fetched without JavaScript, a page is an empty shell. Everything a page does is also a JSON API described here, so an agent never needs a browser: prefer the API. The exceptions are your own browser app, whose code has to run in one, and showing a person a page: "Links to a view" and "Driving the site in a browser" cover both.
 
@@ -53,7 +53,7 @@ What a correct app sees, signed in with a public client and approving everything
 
 {{EXPECTED_TABLE}}
 
-The same, as data, with study ids, UIDs and titles, the people and the kinds of client: `GET $SANDBOX/contract.json`, no token. Assert against it rather than this table. Its `state` says whether the sandbox answers as a new one: `clean` is false while a fault is set, an app check is running, or the demo clock has moved.
+The same, as data, with study ids, UIDs and titles, the people and the kinds of client: `GET $SANDBOX/contract.json`, no token. Assert against it rather than this table. Its `state` says whether the sandbox answers as a new one: `clean` is true when `differences` is empty, and `differences` names, in words, each way it doesn't: a fault set, an app check running, the demo clock moved, unified topology, or policy changed (relationships, the imaging network's rules, shares). App approvals aren't counted, since every sign-in makes one.
 
 Approving less at sign-in leaves those studies and their reports out. `GET /api/sandbox/policy/explain` says why each study is or isn't released.
 
@@ -158,7 +158,7 @@ Every refusal says why. FHIR endpoints answer an `OperationOutcome` whose `issue
 
 ## Smoke test
 
-One script, Node 20+ with no packages, that does what an app does, end to end, and prints `OK`: the admin token, registering a public app, signing in as `josh` through the forms, searching every page with the endpoints included, retrieving one image, and reading a report. Download it from `$SANDBOX/smoke.mjs` and run it with `SANDBOX=https://…/s/{id} node smoke.mjs`. It's the same file shown here, and this site's tests run it as served, both in a new sandbox and with every condition an app check stages (small pages, 503s with Retry-After, and Endpoints in all three forms).
+One script, Node 20+ with no packages, that does what an app does, end to end, and prints `OK`: the admin token, registering a public app, signing in as `josh` through the forms, searching every page with the endpoints included, retrieving one image from each study (about 46 MB for josh's six), and reading a report. It removes its app at the end, pass or fail, and the app's approval and tokens go with it. It's a test of this sandbox, not authorization code to copy: it walks the sign-in forms itself, which only the sandbox's passwordless sample accounts allow. Download it from `$SANDBOX/smoke.mjs` and run it with `SANDBOX=https://…/s/{id} node smoke.mjs`. It's the same file shown here, and this site's tests run it as served, both in a new sandbox and with every condition an app check stages (small pages, 503s with Retry-After, and Endpoints in all three forms).
 
 ```js
 {{SMOKE_SCRIPT}}```
@@ -188,7 +188,7 @@ curl -s {{ORIGIN}}/api/checks/$ID               # an AppCheckRun; while it runs,
 
 `conditions` are what's staged, all four by default: `small-pages` (`pageSize: 2`), `search-503` and `retrieval-503` (`Retry-After: 1`), and `endpoint-forms`, as in the faults table under "Manage a sandbox". Give the person the `url`, or start the run and tell them: "Point your app at `$SANDBOX/fhir` with client ID `…`, sign in as josh, approve everything offered, open every study, then press End the run and grade on the page." It grades the sandbox's log, not a screen, so a headless app is graded exactly as a browser app is. Only that client's requests while the run is on count: its tokens from `token.issued`, its searches by `client`, and its retrievals by `tokenHash`, or with no token, by the address a search issued to one of its tokens.
 
-The result has three parts. `steps` with `group: "script"` say whether the app did what the script asked, against what the server itself released, so an app that stopped early fails where one that correctly found 1 or none passes. `steps` with `group: "requirement"` are clear requirements on apps, each with its `sources`, quoted: `pass`, `fail` with the requests behind it, or `note` when the app made no request it covers. `notes` are where the app relied on something the spec doesn't promise, such as one page of results or `/rendered`: not failures, each with why. The requirements and their sources are in [docs/app-check.md](https://github.com/jmandel/smart-imaging-proxy/blob/main/docs/app-check.md).
+The result has three parts. `steps` with `group: "script"` say whether the app did what the script asked, against what the server itself released, so an app that stopped early fails where one that correctly found 1 or none passes. `steps` with `group: "requirement"` are clear requirements on apps, each with its `sources`, quoted: `pass`, `fail` with the requests behind it, or `note` when the app made no request it covers. `notes` are where the app relied on something the spec doesn't promise, such as one page of results or `/rendered`: not failures, each with why. The requirements and their sources are in [docs/app-check.md](https://github.com/jmandel/smart-imaging-proxy/blob/main/docs/app-check.md). `notChecked` lists what the run didn't look at, so a pass isn't read as more than it is: signing in (the sign-in server enforces it), token renewal, approving less, reports and clinical data, discovery, what the app shows, and any requirement the app made no request for.
 
 Holding the id is the only access to the run, as with a server check, and runs live in this server's memory for 24 hours.
 
@@ -353,7 +353,7 @@ interface Contract {
   users: { username: string; name: string; fhirUser: string; patient?: string }[];
   patients: { id: string; name: string; studies: number }[];
   clientTypes: { type: "public" | "confidential" | "backend"; auth: string; grant: string; scope: string }[];
-  state: { clean: boolean; faults: Faults; clockOffsetSeconds: number; appCheck: { script: string; staged: string[]; endsAt: string } | null };
+  state: { clean: boolean; differences: string[]; faults: Faults; clockOffsetSeconds: number; appCheck: { script: string; staged: string[]; endsAt: string } | null };
   expected: { user: string; patient: string; via: "self" | "related";
     studies: { id: string; uid: string; title: string }[];   // what an app approving everything offered finds
     reports: number;
@@ -455,6 +455,7 @@ interface AppCheckRun {
   startedAt?: string; endsAt?: string; endedAt?: string; ended?: "graded" | "abandoned" | "expired";
   progress?: { tokens: number; searches: number; retrievals: number };   // while it runs
   steps: AppCheckStep[]; notes: { title: string; detail: string; sources: Source[]; requests: AppCheckStep["requests"] }[];
+  notChecked: string[];   // what this run didn't look at: a pass covers only the requirements graded
   updatedAt: string; expiresAt: string;
 }
 

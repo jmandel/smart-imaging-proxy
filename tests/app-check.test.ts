@@ -135,6 +135,13 @@ describe("grading an app from the log", () => {
     expect(early.requests.map(r => r.request.includes(INSTANCE))).toEqual([true, true]);
     expect(early.requests.map(r => r.response.split(":")[0])).toEqual(["503", "200"]);
   });
+  test("every result says what it didn't check, and a requirement with nothing to check is named among them", () => {
+    const all = graded(compliant());
+    expect(all.notChecked.some(t => t.startsWith("Token expiry and renewal"))).toBe(true);
+    const e = compliant();
+    e.events = e.events.filter(x => x.kind !== "stream.done" && x.kind !== "retrieval.answered");
+    expect(graded(e).notChecked.filter(t => t.endsWith("the app made no request it covers")).length).toBeGreaterThan(0);
+  });
   test("a correct small answer passes: Riley's 1 of 2, and Robin's none", () => {
     seq = 0;
     const token = ev("token.issued", { client: "app-1", grant: "authorization_code", user: "sam-caregiver", patient: "riley-example", tokenHash: "T1" });

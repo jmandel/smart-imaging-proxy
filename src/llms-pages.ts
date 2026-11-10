@@ -51,3 +51,13 @@ export function controlsTable(): string {
     `In a name, ${Object.entries(NAMED).map(([k, v]) => `\`{${k}}\` is ${v}`).join("; ")}.`,
   ].join("\n");
 }
+
+/** llms.txt's parts, by its top-level headings, each with the id `?part=` names it by. */
+export const LLMS_PARTS: Record<string, string> = { "Shared background": "shared", "Building an app": "app", "Testing your server": "server", "The management API": "management", "References": "references" };
+export function llmsParts(text: string): { opening: string; parts: { id: string; title: string; text: string }[] } {
+  const at = [...text.matchAll(/^# (.+)$/gm)].filter(m => m[1]! in LLMS_PARTS);
+  return {
+    opening: text.slice(0, at[0]?.index ?? text.length),
+    parts: at.map((m, i) => ({ id: LLMS_PARTS[m[1]!]!, title: m[1]!, text: text.slice(m.index!, at[i + 1]?.index ?? text.length) })),
+  };
+}

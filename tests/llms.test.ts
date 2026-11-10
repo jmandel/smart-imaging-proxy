@@ -57,3 +57,16 @@ test("the documented sign-in, reads, and management all work", async () => {
     expect((await demo.fetch(new Request(`${CONFIG.demoUrl}${w.prefix}${path}`))).status).toBe(401);
   }
 });
+
+test("each part of llms.txt comes on its own, with the opening, from the same file; an unknown part says which there are", async () => {
+  const whole = await (await demo.fetch(new Request(`${CONFIG.demoUrl}/llms.txt`))).text();
+  for (const part of ["shared", "app", "server", "management", "references"]) {
+    const one = await (await demo.fetch(new Request(`${CONFIG.demoUrl}/llms.txt?part=${part}`))).text();
+    expect([part, one.length < whole.length, one.startsWith(whole.slice(0, 200))]).toEqual([part, true, true]);
+    // Every line of the part is in the whole file, in order: nothing is written twice.
+    expect([part, whole.includes(one.slice(one.indexOf("\n# ")).trim().split("\n").slice(0, 5).join("\n"))]).toEqual([part, true]);
+  }
+  expect((await (await demo.fetch(new Request(`${CONFIG.demoUrl}/llms.txt?part=app`))).text())).toContain("## Rules an app must follow");
+  const none = await demo.fetch(new Request(`${CONFIG.demoUrl}/llms.txt?part=nope`));
+  expect([none.status, ((await none.json()) as any).hint]).toEqual([404, "One of: shared, app, server, management, references, or none for the whole file"]);
+});

@@ -400,6 +400,8 @@ export class PolicyStore {
   // The whole document
 
   /** Every level the store holds, for the admin screen and seeds. Decisions read a patient's snapshot. */
+  /** The relationships, policies and approvals a new store starts with, as configured. */
+  defaults(): Required<OnFile> { return structuredClone(this.onFile); }
   snapshot(): PolicyDocument & { revision: Revision } {
     return this.tx(() => ({ relationships: this.relationships(), policies: this.policies(), shares: this.shares(), approvals: this.approvals(), revision: this.revision() }));
   }

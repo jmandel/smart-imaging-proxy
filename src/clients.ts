@@ -88,6 +88,9 @@ export function removeClient(store: PolicyStore, id: string): boolean {
   const clients = listClients(store), target = clients.find(c => c.id === id);
   if (!target) return false;
   if (target.type === "backend") store.removePolicy(grantId(id));
+  // An approval or a token for an app that's gone means nothing, and would linger in the policy and the log.
+  for (const by of new Set(store.approvals().filter(x => x.app === `app:${id}`).map(x => x.by))) store.removeApprovals({ by, app: `app:${id}` });
+  store.deleteTokensOf([id]);
   save(store, clients.filter(c => c.id !== id));
   return true;
 }

@@ -23,8 +23,11 @@ export interface Contract {
   clientTypes: { type: "public" | "confidential" | "backend"; auth: string; grant: string; scope: string }[];
   /** What's set on the sandbox now, so whether it answers as a new one is a question with no token. */
   state: {
-    /** No fault set, no app check running, and the demo clock where it started. */
+    /** Whether the sandbox answers as a new one would: nothing in `differences`. */
     clean: boolean;
+    /** What's different from a new sandbox, in words: faults, a running app check, the clock, topology, and
+     *  policy (relationships, rules and shares; app approvals aren't counted, since every sign-in makes one). */
+    differences: string[];
     faults: Faults;
     clockOffsetSeconds: number;
     /** A running app check's script and what it stages, not its run's id, which is the access to the run. */
@@ -65,8 +68,27 @@ export function contractOf(sandbox: Sandbox): Contract {
 
 function stateOf(sandbox: Sandbox): Contract["state"] {
   const faults = sandbox.faults(), offset = sandbox.clock.offset(), run = sandbox.appCheck;
-  const faulty = faults.decisionOutage || faults.endpointForms || [faults.truncateAfter, faults.pageSize, faults.searchRetryAfter, faults.retrievalRetryAfter].some(x => x !== null);
-  return { clean: !faulty && !run && offset === 0, faults, clockOffsetSeconds: offset, appCheck: run ? { script: run.script, staged: run.staged, endsAt: run.endsAt } : null };
+  const differences: string[] = [];
+  const set = Object.entries(faults).filter(([, v]) => v !== false && v !== null).map(([k]) => k);
+  if (set.length) differences.push(`faults set: ${set.join(", ")}`);
+  if (run) differences.push("an app check is running");
+  if (offset) differences.push(`the demo clock is moved ${offset} s`);
+  if (sandbox.topology !== "separate") differences.push(`topology is ${sandbox.topology}`);
+  differences.push(...policyDifferences(sandbox));
+  return { clean: !differences.length, differences, faults, clockOffsetSeconds: offset, appCheck: run ? { script: run.script, staged: run.staged, endsAt: run.endsAt } : null };
+}
+
+/** How the sandbox's policy differs from a new one's: its relationships, rules and shares. Approvals aren't
+ *  counted, since every sign-in makes one, and the expected answers already assume it. */
+function policyDifferences(sandbox: Sandbox): string[] {
+  const now = sandbox.store.snapshot(), was = sandbox.store.defaults();
+  const key = (x: any) => JSON.stringify(Object.fromEntries(Object.entries(x).filter(([k, v]) => v !== undefined && !["id", "basis", "recordedAt"].includes(k)).sort(([a], [b]) => a.localeCompare(b))));
+  const same = (a: any[], b: any[]) => a.length === b.length && a.map(key).sort().join("\n") === b.map(key).sort().join("\n");
+  return [
+    ...(same(now.relationships, was.relationships) ? [] : ["relationships changed"]),
+    ...(same(now.policies, was.policies) ? [] : ["the imaging network's rules changed"]),
+    ...(now.shares.length ? [`${now.shares.length === 1 ? "a share" : `${now.shares.length} shares`} on file`] : []),
+  ];
 }
 
 /** llms.txt's table of expected answers, from the contract. */

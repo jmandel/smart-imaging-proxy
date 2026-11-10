@@ -26,7 +26,7 @@ import type { Sandbox } from "./sandbox";
 import { ADMIN_SCOPE, SANDBOX_ADMIN } from "./sandbox-keys";
 import app from "../ui/index.html";
 import { pageAt, PAGES, type PageId } from "../ui/sitemap";
-import { controlsTable, pagesSection, viewLinksSection } from "./llms-pages";
+import { controlsTable, llmsParts, pagesSection, viewLinksSection } from "./llms-pages";
 import { createCheckRuns } from "./check-runs";
 
 const json = (b: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(b, { status, headers });
@@ -68,14 +68,19 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     return ok ? undefined : json({ error: "the management API takes this sandbox's admin token: get one with its admin key, from GET /api/sandbox/keys-shared-on-purpose", hint: "The token is checked before the path, so a mistyped path also answers 401 until you send one." }, 401, { "WWW-Authenticate": 'Bearer scope="sandbox/admin"' });
   };
   /** The guide for agents. A sandbox's own copy names that sandbox, so handing over its one link is enough. */
-  async function llmsTxt(sandbox: Sandbox) {
+  async function llmsTxt(sandbox: Sandbox, part?: string | null) {
     const site = sandbox.urls.demo, origin = new URL(site).origin;
     const name = sandbox.id ? sandbox.store.note("name") : undefined;
     const section = sandbox.id
       ? `## This sandbox\n\n${name ? `This is "${name}". ` : ""}Everything below works here now. This link is its access, so share it only with those who should use it.\n\n\`\`\`sh\nSANDBOX=${site}\n\`\`\``
       : `## Start here\n\nCreate a sandbox, and use it for everything below:\n\n\`\`\`sh\nSANDBOX=${origin}$(curl -sX POST ${origin}/api/sandboxes | jq -r .base)\n\`\`\`\n\nOr open the site in a browser and choose Create a sandbox. Each sandbox has its own copy of this file at \`$SANDBOX/llms.txt\`, which names it.`;
     const text = (await Bun.file(join(root, "src", "llms.txt")).text()).replaceAll("{{SANDBOX_SECTION}}", section).replaceAll("{{EXPECTED_TABLE}}", expectedTable(contractOf(sandbox))).replaceAll("{{SMOKE_SCRIPT}}", await Bun.file(join(root, "src", "smoke.mjs")).text()).replaceAll("{{PAGES_SECTION}}", pagesSection(origin, site)).replaceAll("{{VIEW_LINKS_SECTION}}", viewLinksSection(origin)).replaceAll("{{CONTROLS_TABLE}}", controlsTable()).replaceAll("{{ORIGIN}}", origin).replaceAll("{{SITE}}", site);
-    return new Response(text, { headers: { "content-type": "text/plain; charset=utf-8", ...(sandbox.id ? { "x-robots-tag": "noindex", "cache-control": "no-store" } : {}) } });
+    const headers = { "content-type": "text/plain; charset=utf-8", ...(sandbox.id ? { "x-robots-tag": "noindex", "cache-control": "no-store" } : {}) };
+    if (!part) return new Response(text, { headers });
+    // One part of the same file, for an agent with a narrow task: the opening, then that part alone.
+    const { opening, parts } = llmsParts(text), chosen = parts.find(x => x.id === part);
+    if (!chosen) return json({ error: `no part "${part}" of llms.txt`, hint: `One of: ${parts.map(x => x.id).join(", ")}, or none for the whole file` }, 404);
+    return new Response(`${opening.trimEnd()}\n\n${chosen.text.trimEnd()}\n`, { headers });
   }
   const sandboxOf = (w: Sandbox) => w.id ? { id: w.id, base: w.prefix } : null;
 
@@ -148,7 +153,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     async function fetch(req: Request): Promise<Response> {
       const url = new URL(req.url);
       const p = url.pathname;
-      if (p === "/llms.txt") return llmsTxt(sandbox);
+      if (p === "/llms.txt") return llmsTxt(sandbox, url.searchParams.get("part"));
       // The sandbox's ground truth as data, for an agent to assert against: no token, since it describes sample data.
       if (p === "/contract.json" && req.method === "GET") return json(contractOf(sandbox));
       // llms.txt's smoke test as a file, the one llms.txt shows and this site's tests run.
