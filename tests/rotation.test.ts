@@ -11,6 +11,7 @@ import { scriptedLaunch } from "../src/flows/oauth";
 import { CONFIG } from "../src/config";
 import { boundaryOf, createProxy, readMultipart } from "@smart-imaging-proxy/core";
 import { resetClock } from "../src/clock";
+import { adminFor } from "./admin-token";
 
 const root = join(import.meta.dir, "..");
 const BACKENDS: BackendName[] = (process.env.BACKENDS?.split(",") as BackendName[]) ?? ["static-files", "s3", "orthanc"];
@@ -22,7 +23,7 @@ afterAll(() => stack.stop());
 beforeEach(async () => { await stack.resetSaved(); stack.store.revokeAllTokens(); stack.proxy.reset(); resetClock(); });
 
 const admin = async (path: string) => {
-  const r = await demo.fetch(new Request(`${CONFIG.demoUrl}/api/sandbox${path}`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host } }));
+  const r = await demo.fetch(new Request(`${CONFIG.demoUrl}/api/sandbox${path}`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host, ...(await adminFor(demo, `/api/sandbox${path}`)) } }));
   expect(r.status).toBe(200);
 };
 async function get(url: string, token: string) {
@@ -231,7 +232,7 @@ test("a proxy that isn't told keeps a rotated key until its TTL, and no longer",
 });
 
 test("the admin action reports whether the proxy was told", async () => {
-  const r = await demo.fetch(new Request(`${CONFIG.demoUrl}/api/sandbox/signing-key/rotate`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host } }));
+  const r = await demo.fetch(new Request(`${CONFIG.demoUrl}/api/sandbox/signing-key/rotate`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host, ...(await adminFor(demo, "/api/sandbox/signing-key/rotate")) } }));
   expect((await r.json() as any).rotation).toEqual({ proxyTold: true });
 });
 

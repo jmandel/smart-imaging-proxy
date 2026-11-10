@@ -22,14 +22,28 @@ import { forViewer, viewerKnows } from "./viewer-events";
 import { loadViewerKit, VIEWER_KIT_FILES } from "./vendor";
 import { panelOf } from "./stores";
 import type { Sandbox } from "./sandbox";
+import { ADMIN_SCOPE, SANDBOX_ADMIN } from "./sandbox-keys";
 
-const json = (b: unknown, status = 200) => Response.json(b, { status });
+const json = (b: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(b, { status, headers });
 
 /** `viewerKitDir` is where viewer-kit was downloaded, `$DEMO_STORAGE/vendor/{tag}` unless given. */
 export function createDemoServer(stack: Stack, clients: Record<string, BackendClient>, root: string, options: { viewerKitDir?: string } = {}) {
   const perSandbox = new WeakMap<Sandbox, ReturnType<typeof sandboxServer>>();
   const serverOf = (w: Sandbox) => { let s = perSandbox.get(w); if (!s) perSandbox.set(w, s = sandboxServer(w)); return s; };
   const file = (name: string) => new Response(Bun.file(join(root, "web", name)));
+  /** A sandbox's keys, given out as sample credentials: its admin client's, and each demo service's. */
+  const sampleKeys = (sandbox: Sandbox) => {
+    const jwkOf = (c: BackendClient) => ({ client_id: c.client_id, jwk: { ...c.privateKey.export({ format: "jwk" }), kid: c.kid, alg: "ES256", use: "sig" } });
+    // The sandbox's time, by its demo clock, which an assertion's expiry is checked against.
+    return { tokenEndpoint: sandbox.auth.tokenUrl, now: sandbox.clock.now(), admin: { ...jwkOf(sandbox.admin), scope: ADMIN_SCOPE }, services: Object.values(sandbox.clients).map(c => ({ ...jwkOf(c), scope: "system/ImagingStudy.rs" })) };
+  };
+  /** Why a management call is refused, if it is: it needs a live token this sandbox issued its admin, with the admin scope. */
+  const adminDenied = (sandbox: Sandbox, req: Request) => {
+    const token = req.headers.get("authorization")?.match(/^bearer +(.+)$/i)?.[1];
+    const g: any = token && sandbox.auth.grantOf(token);
+    const ok = g && !g.revoked && g.exp > sandbox.clock.now() && g.client_id === SANDBOX_ADMIN && g.scope.split(" ").includes(ADMIN_SCOPE);
+    return ok ? undefined : json({ error: "the management API takes this sandbox's admin token: get one with its admin key, from GET /api/sandbox/keys" }, 401, { "WWW-Authenticate": 'Bearer scope="sandbox/admin"' });
+  };
   /** The guide for agents. A sandbox's own copy names that sandbox, so handing over its one link is enough. */
   async function llmsTxt(sandbox: Sandbox) {
     const site = sandbox.urls.demo, origin = new URL(site).origin;
@@ -146,6 +160,18 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       if (p === "/build") return new Response((await Bun.file(join(root, "web", "build.html")).text()).replaceAll("{{SITE}}", sandbox.urls.demo), { headers: { "content-type": "text/html; charset=utf-8" } });
       if (p === "/servers") return file("servers.html");
       if (p === "/llms.txt") return llmsTxt(sandbox);
+      // The management API takes this sandbox's admin token. Its keys are the one thing open: the URL is the access.
+      if (p === "/api/sandbox/keys" && req.method === "GET") return PUBLIC_DEMO && !sandbox.id ? json({ error: "the shared sandbox gives out no keys: make a sandbox of your own with POST /api/sandboxes" }, 403) : json(sampleKeys(sandbox));
+      if (p === "/api/sandbox" || p.startsWith("/api/sandbox/")) {
+        const denied = adminDenied(sandbox, req);
+        if (denied) return denied;
+        if (p.startsWith("/api/sandbox/policy/")) {
+          if (req.method !== "GET") { const refused = refuseWrite(req, url); if (refused) return refused; }
+          const body = req.method === "GET" || req.method === "DELETE" ? undefined : await req.text();
+          const r = await sandbox.policyFetch(`${p.slice("/api/sandbox/policy".length)}${url.search}`, { method: req.method, body, contentType: req.headers.get("content-type") ?? undefined });
+          return new Response(r.body, { status: r.status, headers: { "content-type": r.headers.get("content-type") ?? "application/json" } });
+        }
+      }
       if (p.startsWith("/api/explore/")) return explore.fetch(req, url);
       if (p === "/api/tours" || p.startsWith("/api/tours/") || p.startsWith("/api/checks/")) {
         if (req.method === "POST") { const refused = refuseWrite(req, url); if (refused) return refused; }

@@ -13,6 +13,7 @@ import { ArchiveReader, fileStore, parsePart10, PolicyStore, str } from "@smart-
 import { CONFIG } from "../src/config";
 import { GUARDIANS_ON_FILE, ON_FILE } from "../src/stores";
 import { syntheticInstance, syntheticStudies, writeSynthetic } from "../scripts/generate-synthetic";
+import { adminFor } from "./admin-token";
 
 const root = join(import.meta.dir, "..");
 const BACKENDS: BackendName[] = (process.env.BACKENDS?.split(",") as BackendName[]) ?? ["static-files", "s3", "orthanc"];
@@ -115,7 +116,7 @@ describe("the guardian", () => {
   test("survives every reset, and is in every new scope, and a reset still clears what people chose", async () => {
     await shareFromJosh(["Lakeside Imaging"]);
     await launchFor("riley-example");
-    const res = await demo.fetch(new Request(`${CONFIG.demoUrl}/api/sandbox/reset`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host, "content-type": "application/json" }, body: JSON.stringify({ confirm: true }) }));
+    const res = await demo.fetch(new Request(`${CONFIG.demoUrl}/api/sandbox/reset`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host, "content-type": "application/json", ...(await adminFor(demo, "/api/sandbox/reset")) }, body: JSON.stringify({ confirm: true }) }));
     const status: any = await res.json();
     const after = stack.store.snapshot();
     expect(after.relationships).toMatchObject([riley]);

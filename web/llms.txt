@@ -107,7 +107,29 @@ curl "$ADDRESS/studies/$STUDY_UID/series/$SERIES_UID/instances/$INSTANCE_UID" \
 
 ## Manage a sandbox
 
-All paths are under `$SANDBOX`. Bodies are JSON.
+Everything under `$SANDBOX/api/sandbox` is the management API, and it takes the sandbox's admin token as a bearer token. The admin is a SMART Backend Services client, `sandbox-admin`, whose key the sandbox gives out: its URL is already its access, so the key gives nothing more.
+
+1. `GET $SANDBOX/api/sandbox/keys`, the one call that needs no token. It returns `tokenEndpoint`, `now` (the sandbox's time, by its demo clock), `admin` and `services`, each with `client_id` and a private ES256 `jwk`.
+2. Sign a client assertion with `admin.jwk`: a JWT with header `{"alg":"ES256","kid":...}`, and `iss` and `sub` set to `sandbox-admin`, `aud` set to `tokenEndpoint`, a unique `jti`, and `exp` at most five minutes after `now`. Use `now`, not your own clock: the demo clock may have been moved.
+3. `POST` to `tokenEndpoint` with `grant_type=client_credentials`, `scope=sandbox/admin`, `client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer` and `client_assertion`.
+4. Send `authorization: Bearer $ADMIN` on every management call. A token revoked, or expired by the demo clock, gets 401: get another.
+
+```js
+// Node 20+: an admin token for $SANDBOX.
+import { createPrivateKey, randomUUID, sign } from "node:crypto";
+const k = await (await fetch(`${SANDBOX}/api/sandbox/keys`)).json();
+const part = o => Buffer.from(JSON.stringify(o)).toString("base64url");
+const head = `${part({ alg: "ES256", kid: k.admin.jwk.kid })}.${part({ iss: k.admin.client_id, sub: k.admin.client_id, aud: k.tokenEndpoint, jti: randomUUID(), exp: k.now + 240 })}`;
+const jwt = `${head}.${sign("sha256", Buffer.from(head), { key: createPrivateKey({ key: k.admin.jwk, format: "jwk" }), dsaEncoding: "ieee-p1363" }).toString("base64url")}`;
+const t = await (await fetch(k.tokenEndpoint, { method: "POST", body: new URLSearchParams({ grant_type: "client_credentials", scope: "sandbox/admin", client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: jwt }) })).json();
+const ADMIN = t.access_token;
+```
+
+The same assertion, with `user`, `patient` and optionally `app` (default `portal-app`) in place of `scope`, gets a token as that person for that app, as the app would get one at sign-in. It's a sandbox-only extension, for exploring what a person's app can reach without walking the sign-in. What it reads is decided by policy, like any token's.
+
+The three services in `services` are ordinary Backend Services clients. Sign as one of them the same way, with `scope=system/ImagingStudy.rs`.
+
+All paths below are under `$SANDBOX`. Bodies are JSON.
 
 | Method and path | Does |
 |---|---|
@@ -121,6 +143,11 @@ All paths are under `$SANDBOX`. Bodies are JSON.
 | `POST /api/sandbox/clients` `{"name":"...","redirectUris":["..."]}` | Registers an app |
 | `DELETE /api/sandbox/clients/{id}` | Removes an app |
 | `GET /api/sandbox/policy` | Relationships, policies, shares and approvals |
+| `GET /api/sandbox/policy/relationships`, `PUT` with a relationship, `DELETE ?subject=&relation=&object=` | Facts on file: who is guardian of whom |
+| `GET /api/sandbox/policy/policies`, `PUT /api/sandbox/policy/policies/{id}`, `DELETE /api/sandbox/policy/policies/{id}` | The imaging network's rules: sharing, guardian access, service access |
+| `GET /api/sandbox/policy/shares`, `POST` `{"from":"user:josh","with":"user:sam-caregiver","patient":"patient:josh-example","sites":[...],"label":"caregiver"}`, `DELETE ?from=&with=&patient=` | People's shares |
+| `GET /api/sandbox/policy/app-approvals`, `POST` `{"by":"user:josh","app":"app:portal-app","patient":"patient:josh-example","sites":[...]}`, `DELETE ?by=&app=&patient=` | Which sites a person lets an app see |
+| `GET /api/sandbox/policy/explain?client=&user=&patient=` | Each of a patient's studies, whether it's released to that app or service, and why |
 | `POST /api/sandbox/clock` `{"advanceSeconds":N}` or `{"reset":true}` | Moves the demo clock. `N` must be one of the choices in `GET /api/sandbox` |
 | `POST /api/sandbox/reset` `{"confirm":true}` | Puts policy back to what's on file |
 | `POST /api/sandbox/tokens/revoke-all` | Revokes every token |

@@ -205,7 +205,7 @@ describe("the demo client", () => {
     await page.locator("#discovery li", { hasText: "Signed assertions" }).waitFor();
     expect(await page.locator("#discovery li[data-state=bad]").count()).toBe(0);
     // Registered in this sandbox as a developer would at their own server: the redirect URI and public key shown.
-    const made = await (await page.request.post(`${ORIGIN}${base}/api/sandbox/clients`, { data: { name: "Builder test", type: "confidential", redirectUris: [`${ORIGIN}${base}/`], jwk } })).json();
+    const made = await page.evaluate(([b, k]) => (window as any).api("POST", "/api/sandbox/clients", { name: "Builder test", type: "confidential", redirectUris: [`${location.origin}${b}/`], jwk: k }), [base, jwk] as const);
     await page.getByLabel("Name", { exact: true }).fill("Signed in");
     await page.getByLabel("Client ID").fill(made.id);
     await shot(page, "server-builder-confidential");
@@ -342,7 +342,7 @@ describe("the demo client", () => {
     await signIn(page, "josh");
     const base = new URL(page.url()).pathname.replace(/\/$/, "");
     await page.locator(".study-button").first().waitFor();
-    await page.evaluate(async b => { await fetch(`${b}/api/sandbox`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ topology: "unified" }) }); }, base);
+    await page.evaluate(async b => { await (window as any).api("PATCH", "/api/sandbox", { topology: "unified" }, b); }, base);
     await page.evaluate(() => sessionStorage.clear());
     await page.goto(`${ORIGIN}${base}/`);
     await page.getByRole("button", { name: "Connect", exact: true }).click();

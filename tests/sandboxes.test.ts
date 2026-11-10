@@ -15,6 +15,7 @@ import { flushTraces } from "../src/trace";
 import { TraceStore } from "../src/trace-store";
 import { resetClock } from "../src/clock";
 import type { Sandbox } from "../src/sandbox";
+import { adminFor } from "./admin-token";
 
 const root = join(import.meta.dir, "..");
 const ACCEPT = "multipart/related; type=application/dicom; transfer-syntax=*";
@@ -31,6 +32,8 @@ afterAll(() => { demo.stop(true); stack.stop(); });
 beforeEach(async () => { await stack.resetAll(); resetClock(); stack.setBackend("static-files"); });
 
 const get = (url: string, init: RequestInit = {}) => fetch(localUrl(url), { redirect: "manual", ...init });
+/** A management call, with the admin token of the sandbox it's in. */
+const managed = async (url: string, init: RequestInit = {}) => get(url, { ...init, headers: { ...(init.headers as Record<string, string>), ...(await adminFor({ fetch: r => fetch(localUrl(r.url)) }, url)) } });
 const searchIn = async (w: { urls: Sandbox["urls"] }, token: string) => get(`${w.urls.imaging}/fhir/ImagingStudy?patient=josh-example&_include=ImagingStudy:endpoint&_count=2`, { headers: { Authorization: `Bearer ${token}` } });
 const rootSandbox = () => stack.root;
 
@@ -126,12 +129,12 @@ describe("isolation", () => {
 describe("the backend", () => {
   test("a sandbox picks its own, the root's stays as it was, and a new sandbox starts on the root's", async () => {
     const w = stack.sandboxes.mint();
-    const pick = (base: string, backend: string) => get(`${base}/api/sandbox`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ storage: backend }) });
+    const pick = (base: string, backend: string) => managed(`${base}/api/sandbox`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ storage: backend }) });
     expect((await pick(w.urls.demo, "orthanc")).status).toBe(200);
     expect([w.backend, w.catalogSource]).toEqual(["orthanc", "orthanc"]);
     expect([stack.backend, stack.catalogSource, stack.root.backend]).toEqual(["static-files", "archive", "static-files"]);
-    expect(((await (await get(`${w.urls.demo}/api/sandbox/storage`)).json()) as any).current).toBe("orthanc");
-    expect(((await (await get(`${CONFIG.demoUrl}/api/sandbox/storage`)).json()) as any).current).toBe("static-files");
+    expect(((await (await managed(`${w.urls.demo}/api/sandbox/storage`)).json()) as any).current).toBe("orthanc");
+    expect(((await (await managed(`${CONFIG.demoUrl}/api/sandbox/storage`)).json()) as any).current).toBe("static-files");
     expect(((await (await get(`${w.urls.demo}/api/flows`)).json()) as any).backend).toBe("orthanc");
     stack.setBackend("s3");
     expect(stack.sandboxes.mint().backend).toBe("s3");

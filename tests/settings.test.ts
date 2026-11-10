@@ -10,6 +10,7 @@ import { now, resetClock } from "../src/clock";
 import { CONFIG, PORTS } from "../src/config";
 import { SCHEMA_VERSION } from "@smart-imaging-proxy/core";
 import { RULE_SETS } from "../src/rule-presets";
+import { adminFor } from "./admin-token";
 
 const root = join(import.meta.dir, "..");
 let stack: Stack; let demo: ReturnType<typeof createDemoServer>;
@@ -17,8 +18,8 @@ beforeAll(async () => { stack = await startStack(root); demo = createDemoServer(
 afterAll(() => stack.stop());
 beforeEach(async () => { await stack.resetSaved(); resetClock(); stack.setBackend("static-files"); });
 
-const call = (method: string, path: string, body?: unknown, headers: Record<string, string> = {}) =>
-  demo.fetch(new Request(`${CONFIG.demoUrl}${path}`, { method, headers: { "content-type": "application/json", host: new URL(CONFIG.demoUrl).host, ...headers }, ...(body === undefined ? {} : { body: typeof body === "string" ? body : JSON.stringify(body) }) }));
+const call = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}) =>
+  demo.fetch(new Request(`${CONFIG.demoUrl}${path}`, { method, headers: { "content-type": "application/json", host: new URL(CONFIG.demoUrl).host, ...(await adminFor(demo, path)), ...headers }, ...(body === undefined ? {} : { body: typeof body === "string" ? body : JSON.stringify(body) }) }));
 const ok = async (method: string, path: string, body?: unknown) => { const r = await call(method, path, body); expect(r.status).toBe(200); return r.json() as Promise<any>; };
 const refused = async (method: string, path: string, body: unknown, message: string) => {
   const r = await call(method, path, body);
@@ -293,7 +294,7 @@ describe("writes naming another Host, over real HTTP", () => {
   let server: ReturnType<typeof Bun.serve>;
   beforeAll(() => { server = Bun.serve({ port: PORTS.demo, hostname: "127.0.0.1", fetch: demo.fetch }); });
   afterAll(() => server.stop(true));
-  const send = (path: string, host: string | undefined, init: RequestInit = { method: "POST", body: "{}" }) => fetch(`http://127.0.0.1:${PORTS.demo}${path}`, { ...init, headers: { "content-type": "application/json", ...(host ? { host } : {}) } });
+  const send = async (path: string, host: string | undefined, init: RequestInit = { method: "POST", body: "{}" }) => fetch(`http://127.0.0.1:${PORTS.demo}${path}`, { ...init, headers: { "content-type": "application/json", ...(await adminFor(demo, path)), ...(host ? { host } : {}) } });
 
   test("are refused with a 403 and change nothing", async () => {
     setSaved({ rules: [RULE] });
@@ -317,7 +318,7 @@ describe("writes naming another Host, over real HTTP", () => {
     expect((await send("/api/sandbox", "evil.example", { method: "GET" })).status).toBe(403);
     expect((await send("/api/sandbox/storage", "evil.example", { method: "GET" })).status).toBe(403);
     expect((await send("/api/sandbox", `localhost:${PORTS.demo}`, { method: "GET" })).status).toBe(200);
-    expect((await demo.fetch(new Request(`${CONFIG.demoUrl}/api/sandbox`))).status).toBe(200);
+    expect((await demo.fetch(new Request(`${CONFIG.demoUrl}/api/sandbox`, { headers: await adminFor(demo, "/api/sandbox") }))).status).toBe(200);
   });
 });
 

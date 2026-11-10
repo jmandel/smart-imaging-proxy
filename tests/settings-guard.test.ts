@@ -11,6 +11,7 @@ import { createCollector } from "../src/trace-collector";
 import { resetClock } from "../src/clock";
 import { CONFIG } from "../src/config";
 import { CLOCK_CHOICES } from "../src/settings-api";
+import { adminFor } from "./admin-token";
 
 const root = join(import.meta.dir, "..");
 
@@ -82,8 +83,8 @@ describe("over HTTP", () => {
     stack.setBackend("static-files");
   });
 
-  const send = (method: string, path: string, body?: unknown) =>
-    demo.fetch(new Request(`${CONFIG.demoUrl}${path}`, { method, headers: { "content-type": "application/json", host: new URL(CONFIG.demoUrl).host }, ...(body === undefined ? {} : { body: typeof body === "string" ? body : JSON.stringify(body) }) }));
+  const send = async (method: string, path: string, body?: unknown) =>
+    demo.fetch(new Request(`${CONFIG.demoUrl}${path}`, { method, headers: { "content-type": "application/json", host: new URL(CONFIG.demoUrl).host, ...(await adminFor(demo, path)) }, ...(body === undefined ? {} : { body: typeof body === "string" ? body : JSON.stringify(body) }) }));
   const hostile = () => [canary, bait, "../../../etc/passwd", "/etc/passwd", "file:///etc/passwd", "'; DROP TABLE rules; --", "x' OR '1'='1", "$(rm -rf /)", 1e12, -1, true, null, [], {}];
   const stillIntact = () => {
     expect(readFileSync(canary, "utf8")).toBe("untouched");
@@ -152,7 +153,7 @@ describe("over HTTP", () => {
     expect(js).not.toMatch(/api\("(POST|PUT|DELETE)"[^)]*\bpath\b/);
   });
   test("the status is refused under another Host, before it shows anything", async () => {
-    const status = (host: string) => demo.fetch(new Request(`${CONFIG.demoUrl}/api/sandbox`, { headers: { host } }));
+    const status = async (host: string) => demo.fetch(new Request(`${CONFIG.demoUrl}/api/sandbox`, { headers: { host, ...(await adminFor(demo, "/api/sandbox")) } }));
     const r = await status("evil.example");
     expect(r.status).toBe(403);
     expect(await r.text()).not.toContain("store");

@@ -9,6 +9,7 @@ import { friendlyName } from "./sandbox-names";
 import { createImagingServer, createPolicyClient, createProxy, idOf, ref, withTruncation, type Backend, type CatalogStore, type PolicyOperation, type PolicyStore } from "@smart-imaging-proxy/core";
 import { APP_NAMES, createAuthServer, DEMO_BACKEND_SCOPES, PATIENT_NAMES, USERS, type BackendClient } from "./auth-server";
 import { patientAttributes } from "./stores";
+import { ADMIN_SCOPE, derivedKey, SANDBOX_ADMIN, sandboxSeed } from "./sandbox-keys";
 import { PORTS, urlsFor, type SandboxUrls } from "./config";
 import { tfetch, traceObserver, type Service } from "./trace";
 import type { DemoClock } from "./clock";
@@ -21,7 +22,7 @@ export interface Shared {
   backends: Record<BackendName, Backend>;
   /** The backend a new sandbox starts on. */
   initialBackend(): BackendName;
-  /** The demo's Backend Services clients, the same in every sandbox. */
+  /** The demo's Backend Services clients, by id, with the root sandbox's keys. Every other sandbox derives its own. */
   clientKeys: Map<string, KeyObject>;
 }
 
@@ -114,8 +115,11 @@ export function createSandbox(o: { id?: string; store: PolicyStore; clock: DemoC
       revokeApp: async (client, user, patient) => { if (client) await directoryPolicy.removeApprovals({ by: ref("user", user), app: ref("app", client), patient: patient && ref("patient", patient) }); },
     },
   });
+  // This sandbox's own keys: from its ID, or for the root, the deployment's.
+  const keyOf = (id: string) => o.id ? derivedKey(sandboxSeed(o.id), id) : shared.clientKeys.get(id) ?? derivedKey(serviceSecret, id);
   const clients: Record<string, BackendClient> = {};
-  for (const [id, key] of shared.clientKeys) clients[id] = auth.registerBackendClient(id, DEMO_BACKEND_SCOPES, key);
+  for (const id of shared.clientKeys.keys()) clients[id] = auth.registerBackendClient(id, DEMO_BACKEND_SCOPES, keyOf(id));
+  const admin = auth.registerBackendClient(SANDBOX_ADMIN, [ADMIN_SCOPE], keyOf(SANDBOX_ADMIN));
 
   const introspect = async (token: string) => {
     const r = await tfetch("imaging-fhir", "introspect the token", `${urls.auth}/introspect`, { method: "POST", headers: { Authorization: `Bearer ${serviceSecret}`, "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token }) });
@@ -135,6 +139,8 @@ export function createSandbox(o: { id?: string; store: PolicyStore; clock: DemoC
   const clearRuntime = () => { auth.reset(); imaging.reset(); proxy.reset(); truncateAfter = undefined; };
   return {
     id: o.id, prefix, urls, store, clock, auth, imaging, proxy, clients,
+    /** This sandbox's admin client, whose token manages it. */
+    admin,
     /** The policy API, with this sandbox's policy credential. */
     policy,
     get catalog() { return catalog(); },
@@ -156,6 +162,10 @@ export function createSandbox(o: { id?: string; store: PolicyStore; clock: DemoC
       const kid = imaging.rotateSigningKey();
       const told = await tfetch("demo", "tell the proxy to refetch signing keys", `${local(PORTS.proxy)}/internal/keys/refresh`, { method: "POST", headers: { Authorization: `Bearer ${serviceSecret}` } }).then(r => r.ok, () => false);
       return { kid, proxyTold: told };
+    },
+    /** A call to the Imaging Server's policy API, with the policy credential, for a caller the demo has already let in. */
+    policyFetch(path: string, init: { method: string; body?: string; contentType?: string }) {
+      return tfetch("demo", `policy API: ${init.method} ${path.split("?")[0]}`, `${local(PORTS.imaging)}/policy/v2${path}`, { method: init.method, headers: { Authorization: `Bearer ${policySecret}`, ...(init.contentType ? { "Content-Type": init.contentType } : {}) }, ...(init.body ? { body: init.body } : {}) });
     },
     /** The Imaging Server's view of why a study is or isn't released, asked with the policy credential. */
     explain(q: { client: string; user?: string; fhirUser?: string; patient: string }) {

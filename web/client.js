@@ -156,7 +156,6 @@ async function traced(step, url, init = {}, learned = () => ({})) {
 }
 
 // Connecting.
-const b64url = bytes => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const random = () => b64url(crypto.getRandomValues(new Uint8Array(32)));
 async function discover(iss) {
   return traced({ id: "discover", kind: "discover", title: "Discover the servers" }, `${iss}/.well-known/smart-configuration`, {}, c => {
@@ -190,17 +189,6 @@ async function connect() {
     button.disabled = false;
     const el = $("#connect-error"); el.hidden = false; el.textContent = e.message;
   }
-}
-const ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
-const textBytes = t => new TextEncoder().encode(t);
-const jsonPart = o => b64url(textBytes(JSON.stringify(o)));
-/** A client assertion, signed here with the client's private key: SMART's asymmetric client authentication. */
-async function signAssertion(jwk, clientId, tokenEndpoint) {
-  const key = await crypto.subtle.importKey("jwk", jwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
-  const now = Math.floor(Date.now() / 1000);
-  const head = `${jsonPart({ alg: "ES256", kid: jwk.kid, typ: "JWT" })}.${jsonPart({ iss: clientId, sub: clientId, aud: tokenEndpoint, exp: now + 240, jti: random() })}`;
-  const signature = new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, textBytes(head)));
-  return `${head}.${b64url(signature)}`;
 }
 /** A backend service: no one signs in. It proves its identity, gets a token, and names the patient itself. */
 async function connectBackend(server) {
@@ -425,8 +413,7 @@ function knownSandboxes() {
 const saveSandboxes = list => store(SANDBOXES_KEY, JSON.stringify(list));
 const shareLink = base => `${location.origin}${base}/`;
 async function sandboxName(base) {
-  const r = await fetch(`${base}/api/sandbox`).catch(() => undefined);
-  return r?.ok ? (await r.json()).name : null;
+  try { return (await api("GET", "/api/sandbox", undefined, base)).name; } catch { return null; }
 }
 /** The home page: the sandboxes this browser has made or joined, and a way to make another. */
 function paintHome(list) {
@@ -472,7 +459,7 @@ async function renderSandbox() {
   $("#rename").addEventListener("click", async () => {
     const next = prompt("Name this sandbox", name);
     if (next === null || !next.trim()) return;
-    await fetch(`${BASE}/api/sandbox`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: next }) });
+    await api("PATCH", "/api/sandbox", { name: next });
     renderSandbox();
   });
   $("#share").addEventListener("click", async () => {
@@ -484,7 +471,7 @@ async function renderSandbox() {
   });
   $("#end").addEventListener("click", async () => {
     if (!mine.joined && !confirm(`Delete “${name}” and everything in it? Anyone you shared it with loses it too.`)) return;
-    if (!mine.joined) try { await fetch(`${BASE}/api/sandbox`, { method: "DELETE" }); } catch {}
+    if (!mine.joined) try { await api("DELETE", "/api/sandbox"); } catch {}
     saveSandboxes(knownSandboxes().filter(w => w.base !== BASE));
     try { sessionStorage.removeItem(STORE); } catch {}
     location.assign("/");

@@ -4,11 +4,52 @@ const BASE = location.pathname.match(/^\/s\/[^/]+/)?.[0] ?? "";
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-async function api(method, path, body) {
-  const r = await fetch(`${BASE}${path}`, { method, ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }) });
+/** A call to this page's sandbox. The management API, under /api/sandbox, gets the sandbox's admin token. */
+async function api(method, path, body, base = BASE) {
+  const managed = path.startsWith("/api/sandbox"), send = async () => fetch(`${base}${path}`, { method, headers: { ...(managed ? { authorization: `Bearer ${await adminToken(base)}` } : {}), ...(body === undefined ? {} : { "content-type": "application/json" }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  let r = await send();
+  // A token revoked, or expired by the demo clock: get a fresh one, once.
+  if (r.status === 401 && managed) { adminTokens.delete(base); r = await send(); }
   const b = await r.json().catch(() => ({}));
   if (!r.ok) throw Object.assign(new Error(b.error ?? `HTTP ${r.status}`), { status: r.status });
   return b;
+}
+
+// Signing, for SMART's asymmetric client authentication: the sandbox's admin key here, and apps' keys elsewhere.
+const b64url = bytes => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const textBytes = t => new TextEncoder().encode(t);
+const jsonPart = o => b64url(textBytes(JSON.stringify(o)));
+const ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
+/** A client assertion for `tokenEndpoint`, signed here with the client's private ES256 key, expiring by the sandbox's clock when given. */
+async function signAssertion(jwk, clientId, tokenEndpoint, now = Math.floor(Date.now() / 1000)) {
+  const key = await crypto.subtle.importKey("jwk", jwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
+  const jti = b64url(crypto.getRandomValues(new Uint8Array(16)));
+  const head = `${jsonPart({ alg: "ES256", kid: jwk.kid, typ: "JWT" })}.${jsonPart({ iss: clientId, sub: clientId, aud: tokenEndpoint, exp: now + 240, jti })}`;
+  const signature = new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, textBytes(head)));
+  return `${head}.${b64url(signature)}`;
+}
+/** A sandbox's sample keys, its admin client's and its services', and its time now. Anyone with the sandbox's URL may have them. */
+async function keysOf(base = BASE) {
+  const r = await fetch(`${base}/api/sandbox/keys`);
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`);
+  return r.json();
+}
+/** A token from a Backend Services client's key: client_credentials with a signed assertion, plus any extra fields. */
+async function backendToken(client, tokenEndpoint, fields, now) {
+  const r = await fetch(tokenEndpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "client_credentials", client_assertion_type: ASSERTION_TYPE, client_assertion: await signAssertion(client.jwk, client.client_id, tokenEndpoint, now), ...fields }) });
+  const t = await r.json().catch(() => ({}));
+  if (!t.access_token) throw new Error(`The token endpoint refused ${client.client_id}: ${t.error ?? `HTTP ${r.status}`}`);
+  return t;
+}
+/** The sandbox's admin token, for its management API, held until shortly before it expires. */
+const adminTokens = new Map();
+async function adminToken(base = BASE) {
+  const held = adminTokens.get(base);
+  if (held && held.until > Date.now()) return held.token;
+  const keys = await keysOf(base);
+  const t = await backendToken(keys.admin, keys.tokenEndpoint, { scope: keys.admin.scope }, keys.now);
+  adminTokens.set(base, { token: t.access_token, until: Date.now() + (t.expires_in - 30) * 1000 });
+  return t.access_token;
 }
 const bytes = n => { const v = Number(n ?? 0); return v >= 1e9 ? `${(v / 1e9).toFixed(2)} GB` : v >= 1e6 ? `${(v / 1e6).toFixed(1)} MB` : v >= 1e3 ? `${(v / 1e3).toFixed(1)} KB` : `${v} B`; };
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;

@@ -6,6 +6,7 @@ import { createDemoServer } from "../src/demo-server";
 import { registerClients } from "../src/flows";
 import { CONFIG } from "../src/config";
 import { startStack, type Stack } from "../src/stack";
+import { adminHeaders } from "./admin-token";
 
 const root = join(import.meta.dir, "..");
 let stack: Stack, demo: ReturnType<typeof createDemoServer>;
@@ -31,7 +32,8 @@ test("from a sandbox it names that sandbox, and keeps it out of indexes", async 
 });
 test("the documented sign-in, reads, and management all work", async () => {
   const w = stack.sandboxes.mint(), S = w.urls.auth, redirect = "https://example.org/callback";
-  const made = await (await demo.fetch(new Request(`${CONFIG.demoUrl}${w.prefix}/api/sandbox/clients`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Agent", redirectUris: [redirect] }) }))).json() as any;
+  const admin = await adminHeaders(demo, w.prefix);
+  const made = await (await demo.fetch(new Request(`${CONFIG.demoUrl}${w.prefix}/api/sandbox/clients`, { method: "POST", headers: { "content-type": "application/json", ...admin }, body: JSON.stringify({ name: "Agent", redirectUris: [redirect] }) }))).json() as any;
   const verifier = randomBytes(32).toString("base64url"), challenge = createHash("sha256").update(verifier).digest("base64url");
   const url = new URL(`${S}/authorize`);
   Object.entries({ response_type: "code", client_id: made.id, redirect_uri: redirect, scope: "launch/patient patient/*.rs", aud: `${S}/fhir`, state: "x", code_challenge: challenge, code_challenge_method: "S256" }).forEach(([k, v]) => url.searchParams.set(k, v));
@@ -50,5 +52,8 @@ test("the documented sign-in, reads, and management all work", async () => {
   expect((await fetch(`${S}/fhir/Condition?patient=Patient/josh-example&clinical-status=active`, auth)).status).toBe(200);
   const studies: any = await (await fetch(`${w.urls.imaging}/fhir/ImagingStudy?patient=Patient/josh-example&_include=ImagingStudy:endpoint`, auth)).json();
   expect(studies.entry.filter((e: any) => e.resource.resourceType === "ImagingStudy").length).toBe(6);
-  for (const path of ["/api/sandbox", "/api/sandbox/clients", "/api/sandbox/policy", "/api/sandbox", "/api/sandbox/storage"]) expect((await demo.fetch(new Request(`${CONFIG.demoUrl}${w.prefix}${path}`))).status).toBe(200);
+  for (const path of ["/api/sandbox", "/api/sandbox/clients", "/api/sandbox/policy", "/api/sandbox/policy/shares", "/api/sandbox/storage"]) {
+    expect((await demo.fetch(new Request(`${CONFIG.demoUrl}${w.prefix}${path}`, { headers: admin }))).status).toBe(200);
+    expect((await demo.fetch(new Request(`${CONFIG.demoUrl}${w.prefix}${path}`))).status).toBe(401);
+  }
 });

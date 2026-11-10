@@ -1,9 +1,10 @@
 // Authorization Server: user sign-in, the account page where patients and guardians delegate to related people
 // and users manage apps, SMART App Launch (authorization code with PKCE), Backend Services
 // (signed client assertions), refresh, revocation, introspection, and SMART discovery.
-import { createECDH, createHash, createPrivateKey, createPublicKey, generateKeyPairSync, hkdfSync, randomBytes, sign, verify, type KeyObject } from "node:crypto";
+import { createHash, createPublicKey, generateKeyPairSync, randomBytes, sign, verify, type KeyObject } from "node:crypto";
 import { ath, b64url, sameSecret, type CatalogStudy, type Clock, type PolicyStore } from "@smart-imaging-proxy/core";
 import { demoClock } from "./clock";
+import { derivedKey, SANDBOX_ADMIN } from "./sandbox-keys";
 import { refuseWrite } from "./settings-api";
 import { PORTS, PUBLIC_DEMO } from "./config";
 import { check, recordEvent, traced } from "./trace";
@@ -12,6 +13,8 @@ import { BACKEND_SCOPES } from "./clients";
 import { jwksKey } from "./jwks";
 import { reportAttachment, reportSearch, reportRead } from "./reports";
 
+/** What a token the admin gets as a person allows: what an app asks for at sign-in. */
+const PERSON_SCOPE = "launch/patient patient/*.rs";
 const IMAGING_CAPABILITIES = ["smart-imaging-access", "http://fhir.org/argonaut/smart-imaging/capabilities/app-launch", "http://fhir.org/argonaut/smart-imaging/capabilities/backend-services"];
 export interface Grant { client_id: string; scope: string; patient?: string; sub?: string; fhirUser?: string; family?: string; }
 
@@ -24,12 +27,7 @@ const kidOf = (client_id: string) => `${client_id}-key`;
  * where a generated key would have no way to reach the client. Holding the secret means being able to act as these clients.
  */
 export function derivedBackendClient(client_id: string, serviceSecret: string): BackendClient {
-  const d = Buffer.from(hkdfSync("sha256", serviceSecret, "", `smart-imaging-demo backend client ${client_id}`, 32));
-  const ecdh = createECDH("prime256v1");
-  ecdh.setPrivateKey(d);
-  const point = ecdh.getPublicKey();
-  const jwk = { kty: "EC", crv: "P-256", d: d.toString("base64url"), x: point.subarray(1, 33).toString("base64url"), y: point.subarray(33).toString("base64url") };
-  return { client_id, kid: kidOf(client_id), privateKey: createPrivateKey({ key: jwk, format: "jwk" }) };
+  return { client_id, kid: kidOf(client_id), privateKey: derivedKey(serviceSecret, client_id) };
 }
 
 /** A table looked up by request input. It has no inherited keys, such as "constructor", to find. */
@@ -474,6 +472,13 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
         if (!check("authorization-server", "client authenticates with private_key_jwt", f.get("client_assertion_type") === "urn:ietf:params:oauth:client-assertion-type:jwt-bearer")) return oauthError("invalid_client", 401);
         const reg = await verifyAssertion(f.get("client_assertion") ?? "", tokenUrl);
         if (!reg) return oauthError("invalid_client", 401);
+        // The sandbox's admin may get a token as a person, for an app, as that app would get at sign-in. A sandbox-only extension.
+        if (reg.client_id === SANDBOX_ADMIN && f.has("user")) {
+          const user = f.get("user")!, patient = f.get("patient") ?? "", app = f.get("app") ?? "portal-app";
+          const known = Object.hasOwn(USERS, user) && /^[A-Za-z0-9\-.]{1,64}$/.test(patient) && (Object.hasOwn(APP_NAMES, app) || !!opts.registeredClient?.(app));
+          if (!check("authorization-server", "the admin names a known user, a patient, and a known app", known, { user, patient, app })) return oauthError("invalid_request");
+          return tokenResponse(issue({ client_id: app, scope: f.get("scope") || PERSON_SCOPE, patient, sub: user, fhirUser: USERS[user]!.fhirUser }, false, "client_credentials"));
+        }
         const asked = (f.get("scope") ?? "").split(" ").filter(s => reg.scopes.includes(s));
         if (!check("authorization-server", "requested scope is within the client's registration", asked.length > 0, { requested: f.get("scope"), granted: asked.join(" ") })) return oauthError("invalid_scope");
         return tokenResponse(issue({ client_id: reg.client_id, scope: asked.join(" ") }, false, "client_credentials"));

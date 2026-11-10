@@ -6,11 +6,12 @@ import { createDemoServer } from "../src/demo-server";
 import { registerClients } from "../src/flows";
 import { CONFIG } from "../src/config";
 import { startStack, type Stack } from "../src/stack";
+import { adminFor } from "./admin-token";
 
 let stack: Stack, demo: ReturnType<typeof createDemoServer>;
 beforeAll(async () => { stack = await startStack(join(import.meta.dir, "..")); demo = createDemoServer(stack, registerClients(stack), join(import.meta.dir, "..")); });
 afterAll(() => stack.stop());
-const call = (method: string, path: string, body?: unknown) => demo.fetch(new Request(`${CONFIG.demoUrl}${path}`, { method, ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { "content-type": "application/json" } }) }));
+const call = async (method: string, path: string, body?: unknown) => demo.fetch(new Request(`${CONFIG.demoUrl}${path}`, { method, headers: { ...(await adminFor(demo, path)), ...(body === undefined ? {} : { "content-type": "application/json" }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }));
 const REDIRECT = "https://app.example/callback";
 const authorize = (w: ReturnType<Stack["scopes"]["mint"]>, client: string, redirect = REDIRECT) => {
   const u = new URL(`${w.urls.auth}/authorize`);
