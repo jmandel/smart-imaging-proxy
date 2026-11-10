@@ -29,10 +29,10 @@ function Guide({ heading, lead, steps }: { heading: string; lead: string; steps:
 export function BuildAnApp() {
   return <Guide heading="Build an imaging app" lead="Connect your SMART app to a sandbox: a private copy of a health system's servers, with sample patients, studies and reports, and sign-in with no passwords." steps={[
     { title: "Choose a sandbox", body: <><p>A sandbox keeps its own registered apps, tokens and settings, until you delete it, and you can share its link with your team. The steps below work in the one chosen here.</p><SandboxPicker /></> },
-    { title: "Point your app at it", body: <p>The FHIR base and discovery address, the scopes to ask for, and sample people to sign in as, with what each can see.</p>, links: <InSandbox page="build">Endpoints and sample logins →</InSandbox> },
-    { title: "Register your app", body: <p>A public app with PKCE, a confidential app that signs with its key, or a backend service with no one signing in. You get a client ID, and can try each kind in our viewer.</p>, links: <InSandbox page="connect">Register an app →</InSandbox> },
-    { title: "When a request is refused", body: <p>The logs show every request your app made, and why each was allowed or refused.</p>, links: <InSandbox page="activity">Logs →</InSandbox> },
-    { title: "Try the hard cases", body: <p>Real systems refuse access, expire links, and let guardians act for children. The Tour plays these out, Explore shows what each sample person can reach, and Sandbox Config moves the clock so links and tokens expire.</p>, links: <><InSandbox page="tours">Tour →</InSandbox> <InSandbox page="explore">Explore →</InSandbox> <InSandbox page="config">Sandbox Config →</InSandbox></> },
+    { title: "Point your app at it", body: <p>The FHIR base and discovery address, the scopes to ask for, and sample people to sign in as, with what each can see.</p>, links: <InSandbox page="build">Endpoints and sample logins</InSandbox> },
+    { title: "Register your app", body: <p>A public app with PKCE, a confidential app that signs with its key, or a backend service with no one signing in. You get a client ID, and can try each kind in our viewer.</p>, links: <InSandbox page="connect">Register an app</InSandbox> },
+    { title: "When a request is refused", body: <p>The logs show every request your app made, and why each was allowed or refused.</p>, links: <InSandbox page="activity">Logs</InSandbox> },
+    { title: "Try the hard cases", body: <p>Real systems refuse access, expire links, and let guardians act for children. The Tour plays these out, Explore shows what each sample person can reach, and Sandbox Config moves the clock so links and tokens expire.</p>, links: <><InSandbox page="tours">Tour</InSandbox> <InSandbox page="explore">Explore</InSandbox> <InSandbox page="config">Sandbox Config</InSandbox></> },
   ]} />;
 }
 
@@ -48,9 +48,9 @@ export function RunAServer() {
       <p>As a client on your server, in any of three ways: a public app with PKCE (S256), a confidential app signing with <code>private_key_jwt</code>, or a backend service using <code>client_credentials</code>. Apps ask for <code>launch/patient patient/*.rs</code>, services for <code>system/ImagingStudy.rs</code>. The redirect URI, the same for every server:</p>
       <p><code>{VIEWER_URL}</code></p>
     </> },
-    { title: "Add your server, and connect", body: <p>Describe your server for the viewer, and how it signs in. The page checks your discovery as the viewer reads it, and makes a key pair in your browser for a confidential app or a service.</p>, links: <PageLink id="servers" className="button" /> },
-    { title: "Compare with a working server", body: <p>Open the viewer on a sandbox, and read its logs: every request and response, from discovery to the last image.</p>, links: <><InSandbox page="viewer">Viewer →</InSandbox> <InSandbox page="activity">Logs →</InSandbox></> },
-    { title: "Conformance checks, planned", body: <p>Our client will check your server against the guide, step by step. Tell us what you'd want checked.</p>, links: <a href={CONFORMANCE_PLAN}>The plan, on GitHub →</a> },
+    { title: "Add your server", body: <p>Describe your server, and how the viewer signs in to it. The form checks your discovery as the viewer reads it, and makes a key pair in your browser for a confidential app or a service.</p>, links: <PageLink id="servers" className="button" /> },
+    { title: "Check it, step by step", body: <p>The server check runs every step of the guide against your server, as far as it can get on its own, and says where it stopped and why: each request, its answer, and what a failure usually means. Every saved server has one.</p>, links: <><PageLink id="servers">Check a saved server</PageLink> <a href={CONFORMANCE_PLAN}>Ideas for more checks, on GitHub</a></> },
+    { title: "Compare with a working server", body: <p>Open the viewer on a sandbox, and read its logs: every request and response, from discovery to the last image.</p>, links: <><InSandbox page="viewer">Viewer</InSandbox> <InSandbox page="activity">Logs</InSandbox></> },
   ]} />;
 }
 
@@ -63,8 +63,8 @@ export function HowItWorks() {
       <dt>Imaging FHIR server</dt><dd>The patient's studies, each with where to get its images</dd>
       <dt>DICOMweb server</dt><dd>The images, retrieved with the same token</dd>
     </dl> },
-    { title: "The stories", body: <p>A patient shares with a caregiver, a guardian acts for a teenager, a referral service finds one X-ray. Each is played out step by step.</p>, links: <InSandbox page="tours">Tour →</InSandbox> },
-    { title: "Every request", body: <p>The live trace shows each request between the parts as it happens.</p>, links: <><InSandbox page="trace">Live trace →</InSandbox> <a href={REFERENCES[0]![1]}>The specification →</a></> },
+    { title: "The stories", body: <p>A patient shares with a caregiver, a guardian acts for a teenager, a referral service finds one X-ray. Each is played out step by step.</p>, links: <InSandbox page="tours">Tour</InSandbox> },
+    { title: "Every request", body: <p>The live trace shows each request between the parts as it happens.</p>, links: <><InSandbox page="trace">Live trace</InSandbox> <a href={REFERENCES[0]![1]}>The specification</a></> },
   ]} />;
 }
 
@@ -75,11 +75,11 @@ export function WhyItMatters() {
       <li>A parent or caregiver reaches what they're allowed to, and no more.</li>
       <li>A referral service finds the one study it needs, not the whole record.</li>
       <li>Images stay where they are. Nothing is copied ahead of time.</li>
-    </ul>, links: <InSandbox page="tours">See these as stories →</InSandbox> },
+    </ul>, links: <InSandbox page="tours">See these as stories</InSandbox> },
     { title: "Watch it work", body: <p>A sample patient signs in, and their images open in the viewer.</p>, links: <InSandbox page="viewer" className="button">Open the viewer</InSandbox> },
     { title: "What it takes", body: <ul className="how">
       <li><strong>A health system</strong> adds an imaging FHIR server and a DICOMweb endpoint behind the sign-in it already has for SMART apps.</li>
       <li><strong>An app</strong> uses the SMART App Launch it may already support, asking for imaging too.</li>
-    </ul>, links: <><PageLink id="run-a-server">For server teams →</PageLink> <PageLink id="build-an-app">For app teams →</PageLink></> },
+    </ul>, links: <><PageLink id="run-a-server">For server teams</PageLink> <PageLink id="build-an-app">For app teams</PageLink></> },
   ]} />;
 }

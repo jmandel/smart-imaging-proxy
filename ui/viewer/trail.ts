@@ -2,7 +2,8 @@
 // what it sent and what came back, with no secret in full.
 import { useSyncExternalStore } from "react";
 import { patientFetch } from "../lib/smart-imaging";
-import { save } from "./session";
+import { diagnose, type Diagnosis } from "../lib/diagnose";
+import { viewerKeeper, type Keeper } from "./session";
 
 export type StepKind = "discover" | "authorize" | "token" | "backend-token" | "patient" | "clinical" | "imaging" | "wado";
 export interface Step {
@@ -10,6 +11,8 @@ export interface Step {
   request?: string; response?: string; status?: string; failed?: boolean; ms?: number; curl?: string;
   /** What the app took from the answer, shown as tiles on its stage. */
   facts?: Record<string, string | number>;
+  /** For a failed request: what it most likely means, and how to check. */
+  diagnosis?: Diagnosis;
 }
 /** A failed answer, with its status, so a page can tell a 401 or a 404 from the rest. */
 export class HttpError extends Error { constructor(message: string, readonly status: number) { super(message); } }
@@ -28,9 +31,9 @@ export const curlOf = (url: string, headers?: Record<string, string>) => `curl "
 export class Trail {
   private listeners = new Set<() => void>();
   private ended = false;
-  constructor(public steps: Step[] = []) {}
+  constructor(public steps: Step[] = [], private keeper: Keeper = viewerKeeper) {}
   subscribe = (f: () => void) => { this.listeners.add(f); return () => { this.listeners.delete(f); }; };
-  private changed() { save({ trail: this.steps }); for (const f of this.listeners) f(); }
+  private changed() { this.keeper.save({ trail: this.steps }); for (const f of this.listeners) f(); }
   clear() { if (this.ended) return; this.steps = []; this.changed(); }
   end() { this.ended = true; }
   add(step: Step) {
@@ -47,10 +50,14 @@ export class Trail {
     try {
       res = await patientFetch(url, init, seconds => this.add({ ...step, request, status: "503", response: `HTTP 503\nretry-after: ${seconds}\n\nThe server is assembling this. Waiting ${seconds} s, then asking again.` }));
       text = await res.text();
-    } catch (e) { this.add({ ...step, request, failed: true, response: String(e) }); throw e; }
+    } catch (e) {
+      // No answer the page can read: the browser says only "Failed to fetch", so the step says what that usually means.
+      this.add({ ...step, request, failed: true, response: String(e), diagnosis: diagnose(step.kind, url, { error: e }), curl: curlOf(url, init.headers) });
+      throw e;
+    }
     let facts: Step["facts"] = {};
     if (res.ok) { try { facts = learned(JSON.parse(text)); } catch {} }
-    this.add({ ...step, request, facts, status: `${res.status}`, curl: method === "GET" ? curlOf(url, init.headers) : undefined, ms: Math.round(performance.now() - started), failed: !res.ok, response: `HTTP ${res.status}\n\n${preview(pretty(text))}` });
+    this.add({ ...step, request, facts, status: `${res.status}`, curl: method === "GET" ? curlOf(url, init.headers) : undefined, ms: Math.round(performance.now() - started), failed: !res.ok, response: `HTTP ${res.status}\n\n${preview(pretty(text))}`, ...(res.ok ? {} : { diagnosis: diagnose(step.kind, url, { status: res.status }) }) });
     if (!res.ok) throw new HttpError(`${step.title}: HTTP ${res.status}`, res.status);
     return JSON.parse(text);
   }

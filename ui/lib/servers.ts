@@ -1,7 +1,8 @@
 // The servers the viewer can connect to: your sandboxes, and servers of your own kept in this browser. Your
 // servers writes them and the viewer reads them, so both agree on what an entry must hold.
 import type { PrivateJwk } from "./api";
-import { session, store, stored } from "./store";
+import { store, stored, useSandboxes } from "./store";
+import { launchViewer } from "./launch";
 
 export interface ServerEntry {
   label: string;
@@ -72,12 +73,17 @@ export function putServer(entry: ServerEntry, replacing = serverKey(entry)) {
 
 /** A sandbox as a server in the viewer's list. */
 export const sandboxServer = (base: string, name?: string): ServerEntry => ({ label: name ?? "Sandbox", iss: `${location.origin}${base}/fhir`, clientId: SANDBOX_CLIENT, sandbox: base });
-/** Opens the viewer with a server chosen, ending any session it had. */
-export function openViewer(server: Pick<ServerEntry, "iss" | "clientId">) {
-  store(CHOICE_KEY, serverKey(server));
-  session.set(VIEWER_SESSION, null);
-  location.assign("/viewer");
+/** A server as a list offers it: its key, and a line saying what it is. */
+export interface ServerChoice extends ServerEntry { id: string; detail: string }
+/** The servers the viewer and the server check offer: your sandboxes, then the servers you added. One you added by hand stands in for the sandbox it names. */
+export function useServers(): ServerChoice[] {
+  const sandboxes = useSandboxes();
+  const added = savedServers().map(s => ({ ...s, id: serverKey(s), detail: new URL(s.iss).host })), ids = new Set(added.map(s => s.id));
+  const yours = sandboxes.map(w => sandboxServer(w.base, w.name)).map(s => ({ ...s, id: serverKey(s), detail: "Your sandbox of sample patients" }));
+  return [...yours.filter(s => !ids.has(s.id)), ...added];
 }
+/** Opens the viewer with a server chosen, ending any session it had, ready to connect. */
+export const openViewer = (server: Pick<ServerEntry, "iss" | "clientId">) => launchViewer(server);
 
 export const IMAGING = "smart-imaging-access", APP_LAUNCH = "http://fhir.org/argonaut/smart-imaging/capabilities/app-launch";
 export const BACKEND_CAPABILITY = "http://fhir.org/argonaut/smart-imaging/capabilities/backend-services";

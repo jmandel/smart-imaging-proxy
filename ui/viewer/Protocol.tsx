@@ -45,11 +45,12 @@ function CurlButton({ curl }: { curl: string }) {
 
 function Call({ s }: { s: Step }) {
   return (
-    <li><details className="call" data-call={s.id}>
+    <li><details className="call" data-call={s.id} open={s.failed || undefined}>
       <summary><span className="call-title">{s.title}</span><span className={`call-status${s.failed ? " bad" : ""}`}>{s.failed ? "Failed" : s.status ?? "OK"}</span>{s.ms !== undefined && <span className="call-ms">{s.ms} ms</span>}<span className="chevron" aria-hidden="true" /></summary>
       <div className="call-body">
         <p className="call-why">{WHY[s.kind]}</p>
         <dl className="call-facts"><dt>Answered by</dt><dd>{ANSWERED_BY[s.kind]}</dd></dl>
+        {s.diagnosis && <div className="call-diagnosis"><p>{s.diagnosis.cause}</p>{s.diagnosis.check && <pre>{s.diagnosis.check}</pre>}</div>}
         {s.request && <><h4>Request</h4><pre>{s.request}</pre></>}
         {s.response && <><h4>Response</h4><pre>{s.response}</pre></>}
         {s.curl && <CurlButton curl={s.curl} />}
@@ -72,7 +73,7 @@ function StageRow({ stage, index, steps }: { stage: Stage; index: number; steps:
         <p className="line">{shown.line}</p>
         {facts.length > 0 && <dl className="facts-grid">{facts.map(([k, v]) => <div key={k} className={`fact${String(v).length > 12 ? " long" : ""}`}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>}
         {steps.length > 0 && (
-          <details className="calls">
+          <details className="calls" open={state === "failed" || undefined}>
             <summary>{plural(steps.length, "request")}</summary>
             <ul className="call-list">{steps.map(s => <Call key={s.id} s={s} />)}</ul>
             <p className="spec">Underlying standard: <a href={stage.spec[0]} target="_blank" rel="noopener">{stage.spec[1]}</a></p>

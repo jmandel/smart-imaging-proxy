@@ -10,6 +10,7 @@ import Viewer from "./Viewer";
 import Tours from "./Tours";
 import Checks from "./Checks";
 import Servers from "./Servers";
+import ServerCheck from "./ServerCheck";
 import Explore from "./Explore";
 import Activity from "./Activity";
 import Config from "./Config";
@@ -23,7 +24,7 @@ export const UI_PAGES: Partial<Record<PageId, ComponentType>> = {
   build: Build, connect: Connect,
   viewer: Viewer,
   tours: Tours, checks: Checks,
-  servers: Servers,
+  servers: Servers, check: ServerCheck,
   explore: Explore,
   activity: Activity, config: Config,
   trace: Trace, "trace-span": TraceSpan, "trace-log": TraceLog,

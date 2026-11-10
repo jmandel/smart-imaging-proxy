@@ -2,7 +2,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, BASE, type PrivateJwk } from "../lib/api";
 import { announce, CopyButton } from "../lib/format";
-import { generateKey, openViewer, savedServers, saveServers, VIEWER_URL, type ServerEntry } from "../lib/servers";
+import { generateKey, savedServers, saveServers, VIEWER_URL, type ServerEntry } from "../lib/servers";
+import { launchViewer } from "../lib/launch";
 import { store, stored } from "../lib/store";
 import { PageLink } from "../shell/Shell";
 
@@ -27,7 +28,8 @@ function tryInViewer(c: Client) {
   const jwk = savedKeys()[c.id];
   const entry: ServerEntry = { label: c.name, iss: fhirBaseOf(), clientId: c.id, ...(c.type === "backend" ? { mode: "backend" as const, jwk, patient: c.patients === "any" ? "josh-example" : c.patients, scope: "system/ImagingStudy.rs" } : c.type === "confidential" ? { auth: "private_key_jwt" as const, jwk } : {}) };
   saveServers([...savedServers().filter(s => s.clientId !== c.id), entry]);
-  openViewer(entry);
+  // Straight to connecting: the sign-in tab, if any, opens from this click.
+  launchViewer(entry, { connect: true });
 }
 
 function Registered({ c, removed }: { c: Client; removed: () => void }) {

@@ -294,21 +294,40 @@ a.path p:not(.path-kicker) { color:var(--muted); }
 .sandbox-picker select { flex:0 1 16rem; min-width:0; }
 .sandbox-picker .error { flex-basis:100%; margin:0; }
 
-/* The home page's diagram: three servers, each pointing to the next, and the one token under all of them. */
-.chain-map { margin:1.75rem 0 1.5rem; }
-.chain-map h2 { margin:0 0 .7rem; font-size:1.05rem; }
-.chain-hops { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:1.6rem; }
-.chain-hop { position:relative; display:flex; flex-direction:column; gap:.35rem; padding:.75rem .85rem; border-radius:8px; background:var(--film); color:var(--on-film); font-size:.86rem; }
-.chain-hop code { background:none; padding:0; color:var(--fact-film); font-size:.78rem; }
-.chain-server { font-size:.95rem; }
-.chain-answer { color:var(--on-film-dim); }
-.chain-answer code { display:block; color:var(--on-film); font-weight:700; }
-/* What leads from one server to the next: an arrow in the gap. */
-.chain-hop:not(:last-child)::after { content:""; position:absolute; top:1.35rem; right:-1.45rem; width:1.1rem; height:2px; background:var(--accent); }
-.chain-hop:not(:last-child)::before { content:""; position:absolute; top:calc(1.35rem - 5px); right:-1.55rem; border:6px solid transparent; border-left:8px solid var(--accent); border-right:0; }
-/* The token, a band under all three, with a tick up to each. */
-.chain-token { position:relative; margin:.9rem 0 0; padding-top:.6rem; border-top:2px solid var(--accent); text-align:center; font-size:.86rem; font-weight:700; color:var(--accent); }
-.chain-token::before { content:""; position:absolute; top:calc(-.9rem - 2px); left:16.6%; right:16.6%; height:.9rem; background:linear-gradient(var(--accent), var(--accent)) 0 0 / 2px 100% no-repeat, linear-gradient(var(--accent), var(--accent)) 50% 0 / 2px 100% no-repeat, linear-gradient(var(--accent), var(--accent)) 100% 0 / 2px 100% no-repeat; }
+/* The home page's diagram: the group of servers behind one FHIR address, as a stack with imaging in front and
+   what the group shares under it; then the arrow from a study's Endpoint to the DICOMweb server with its images. */
+.stack-map { margin:1.75rem 0 1.5rem; }
+/* One grid: the back cards' edges above, then the front card, the arrow and the DICOMweb card in one row, the
+   same height, and the note under the stack. */
+.stack-row { display:grid; grid-template-columns:minmax(0, 1fr) 9rem minmax(0, 1fr); grid-template-areas:"behind . ." "front link images" "note . ."; align-items:stretch; }
+.stack-behind { grid-area:behind; position:relative; height:3.3rem; margin-bottom:-.35rem; }
+.stack-card { display:flex; flex-direction:column; justify-content:center; gap:.3rem; padding:.75rem .9rem; border-radius:8px; background:var(--film); color:var(--on-film); font-size:.86rem; }
+.stack-card b { font-size:.98rem; }
+.stack-card code { background:none; padding:0; color:var(--fact-film); font-size:.8rem; }
+.stack-card.behind { position:absolute; top:0; height:3.6rem; justify-content:flex-start; padding:.3rem .9rem; border:1px solid var(--film-line); background:var(--film-raised); }
+.stack-card.behind span { color:var(--on-film); font-weight:600; font-size:.8rem; }
+.stack-card.b2 { left:1.6rem; right:1.6rem; opacity:.8; }
+.stack-card.b1 { top:1.6rem; left:.8rem; right:.8rem; }
+.stack-card.front { grid-area:front; position:relative; box-shadow:0 -1px 0 var(--film-line); }
+.stack-card.images { grid-area:images; }
+.stack-note { grid-area:note; margin:.4rem 0 0; font-size:.84rem; color:var(--muted); text-align:center; }
+/* From the front card's study to its images. */
+.stack-link { grid-area:link; position:relative; align-self:center; margin:0 .5rem; padding-bottom:.45rem; text-align:center; font-size:.75rem; }
+.stack-link code { background:none; padding:0; color:var(--accent); font-weight:700; }
+.stack-link::after { content:""; position:absolute; left:0; right:.3rem; bottom:0; height:2px; background:var(--accent); }
+.stack-link::before { content:""; position:absolute; right:0; bottom:-5px; border:6px solid transparent; border-left:9px solid var(--accent); border-right:0; }
+
+/* What the group shares, under the whole diagram: the token reaches the images too. */
+.stack-shared { list-style:none; margin:.9rem 0 0; padding:.7rem 0 0; display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:.5rem 1.25rem; border-top:2px solid var(--accent); font-size:.86rem; color:var(--muted); }
+.stack-shared b { display:block; color:var(--accent); }
+.stack-shared li { line-height:1.35; }
+@media (max-width:40rem) {
+  .stack-row { grid-template-columns:minmax(0, 1fr); grid-template-areas:"behind" "front" "note" "link" "images"; }
+  .stack-link { justify-self:start; margin:.8rem 0 .8rem 1.2rem; padding:.1rem 0 .1rem 1rem; text-align:left; }
+  .stack-link::after { left:0; right:auto; top:0; bottom:0; width:2px; height:auto; }
+  .stack-link::before { left:-5px; right:auto; bottom:-8px; border:6px solid transparent; border-top:9px solid var(--accent); border-bottom:0; }
+  .stack-shared { grid-template-columns:minmax(0, 1fr); }
+}
 
 /* Where to start: the two ways in, two columns apart by a rule. */
 .ways { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); margin:1.75rem 0 1rem; }
@@ -320,13 +339,65 @@ a.path p:not(.path-kicker) { color:var(--muted); }
 .more-links { list-style:none; display:flex; flex-wrap:wrap; gap:.3rem 1.5rem; margin:1.4rem 0 0; padding:1rem 0 0; border-top:1px solid var(--line); }
 .your-sandboxes-head { display:flex; align-items:center; justify-content:space-between; gap:1rem; }
 @media (max-width:40rem) {
-  .chain-hops { grid-template-columns:minmax(0, 1fr); gap:1.4rem; }
-  .chain-hop:not(:last-child)::after { top:auto; bottom:-1.25rem; right:auto; left:1.4rem; width:2px; height:1rem; }
-  .chain-hop:not(:last-child)::before { top:auto; bottom:-1.35rem; right:auto; left:calc(1.4rem - 5px); border:6px solid transparent; border-top:8px solid var(--accent); border-bottom:0; }
-  .chain-token { border-top:0; padding:0; text-align:left; }
-  .chain-token::before { display:none; }
-  .chain-token span { display:inline-block; padding:.25rem .7rem; border-radius:999px; background:var(--accent); color:var(--plate); }
   .ways { grid-template-columns:minmax(0, 1fr); gap:1.4rem; }
   .way, .way:first-child { padding:0; }
   .way + .way { border-left:0; border-top:1px solid var(--line); padding:1.4rem 0 0; }
 }
+
+/* A connection that failed: the request, what it usually means, how to check it, and the steps it took. */
+.connect-failed { margin-top:1.25rem; padding:1rem 1.1rem; border:1px solid var(--bad); border-left-width:4px; border-radius:8px; background:var(--plate); }
+.connect-failed #h-failed { margin:0 0 .4rem; font-size:1.1rem; color:var(--bad); }
+/* Its cause is said once, at the top. */
+.connect-failed .call-diagnosis { display:none; }
+.failed-what { margin:0 0 .5rem; }
+.failed-check, .call-diagnosis pre { margin:.3rem 0 .6rem; }
+.failed-next { display:flex; flex-wrap:wrap; gap:.4rem 1.25rem; margin:0 0 .9rem; font-weight:700; }
+.connect-failed .protocol { margin:0; border:0; padding:0; }
+.call-diagnosis { margin:.2rem 0 .7rem; padding:.55rem .7rem; border-left:3px solid var(--bad); background:var(--bad-soft); border-radius:0 6px 6px 0; }
+.call-diagnosis p { margin:0; }
+.form-missing { margin:.5rem 0 0; color:var(--muted); font-size:.92rem; }
+
+/* The server check: which server, one line saying how far it got, then a line per step. A step's state is its
+   mark as well as its colour. */
+.check-server { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem 1rem; margin:0 0 .6rem; }
+.check-server p { flex:1 1 20rem; margin:0; min-width:0; overflow-wrap:anywhere; }
+.check-actions { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem 1rem; }
+.check-actions a { display:inline-flex; align-items:center; min-height:2.75rem; }
+.check-summary { margin:.4rem 0 .8rem; padding:.55rem .75rem; border-left:4px solid var(--line); background:var(--plate); border-radius:0 6px 6px 0; font-weight:700; }
+.check-summary.good { border-left-color:var(--good); }
+.check-summary.bad { border-left-color:var(--bad); }
+.check-steps { list-style:none; margin:0; padding:0; border-top:1px solid var(--line); }
+.check-step { border-bottom:1px solid var(--line); }
+.check-step > details > summary, .step-head { display:flex; align-items:baseline; gap:.6rem; padding:.55rem .2rem; min-height:2.75rem; }
+.check-step > details > summary { list-style:none; cursor:pointer; }
+.check-step > details > summary::-webkit-details-marker { display:none; }
+.check-step > details > summary:hover { background:var(--accent-soft); }
+.check-step > details[open] > summary .chevron { transform:rotate(-135deg); margin-bottom:-.15rem; }
+.check-step .mark { flex:none; width:1.3rem; text-align:center; font-weight:700; color:var(--muted); }
+.check-step .what { flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
+.check-step .what b { font-weight:600; }
+.check-step .said { display:block; color:var(--muted); font-size:.9rem; }
+.check-step .state { flex:none; font-size:.85rem; color:var(--muted); }
+.check-step[data-state=pass] .mark, .check-step[data-state=pass] .state { color:var(--good); }
+.check-step[data-state=fail] .mark, .check-step[data-state=fail] .state { color:var(--bad); font-weight:700; }
+.check-step[data-state=fail] .said { color:var(--ink); }
+.check-step[data-state=paused] .state, .check-step[data-state=running] .state { color:var(--accent); font-weight:700; }
+.check-step[data-state=todo] .what, .check-step[data-state=unreached] .what { color:var(--muted); }
+.check-step[data-state=unreached] .mark::before, .check-step[data-state=todo] .mark::before { content:""; display:inline-block; width:.7rem; height:.7rem; border:2px solid var(--line); border-radius:50%; }
+.check-step .spinner { margin:0; }
+.step-body { padding:0 .2rem .7rem 2.1rem; font-size:.9rem; }
+.step-action { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem .9rem; padding:0 .2rem .75rem 2.1rem; }
+.step-action .note { flex:1 1 14rem; margin:0; font-size:.88rem; }
+.seen { list-style:none; margin:.2rem 0 .5rem; padding:0; display:grid; gap:.15rem; }
+.seen li { display:flex; gap:.45rem; align-items:baseline; min-width:0; }
+.seen li span { flex:none; font-weight:700; color:var(--good); }
+.seen li[data-ok=false] span { color:var(--bad); }
+.check-step .call-list { margin:.3rem 0 0; }
+.check-step .call-body .tool { margin-top:.5rem; }
+.check-picker h2 { font-size:1.1rem; margin:.5rem 0 .4rem; }
+.check-servers { list-style:none; margin:0 0 .8rem; padding:0; border-top:1px solid var(--line); }
+.check-servers li { border-bottom:1px solid var(--line); }
+.check-servers a { display:flex; flex-wrap:wrap; align-items:baseline; gap:.1rem .8rem; padding:.6rem .3rem; min-height:2.75rem; color:inherit; text-decoration:none; }
+.check-servers a:hover { background:var(--accent-soft); }
+.check-servers b { color:var(--accent); }
+.check-servers span { color:var(--muted); font-size:.9rem; overflow-wrap:anywhere; min-width:0; }

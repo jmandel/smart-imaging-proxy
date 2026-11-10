@@ -198,8 +198,9 @@ describe("the demo client", () => {
     await page.locator("main").getByRole("link", { name: "Your servers" }).click();
     await page.waitForURL(u => u.pathname === "/servers");
     await page.getByText("None yet.").waitFor();
-    await page.getByRole("button", { name: "Save", exact: true }).click();
-    await page.getByText('This server needs a name ("label").').waitFor();
+    // An empty form can't be saved, and says what it needs first.
+    expect(await page.getByRole("button", { name: "Save", exact: true }).isDisabled()).toBe(true);
+    await page.locator("#form-missing", { hasText: "it needs a name." }).waitFor();
     const ext = process.env.EXTERNAL_ISS ? { iss: process.env.EXTERNAL_ISS, clientId: process.env.EXTERNAL_CLIENT! } : { iss: `${ORIGIN}${base}/fhir`, clientId: "demo-client" };
     await page.getByLabel("FHIR base URL").fill(ext.iss);
     await page.getByLabel("FHIR base URL").blur();
@@ -211,9 +212,11 @@ describe("the demo client", () => {
     await page.getByLabel("Name", { exact: true }).fill("Another server");
     await page.getByLabel("Client ID").fill(ext.clientId);
     await shot(page, "server-builder");
-    await page.getByRole("button", { name: "Save and open the viewer" }).click();
-    await page.waitForURL(u => u.pathname === "/viewer");
-    await approveIn(await signInTab(page, pressConnect(page)), "josh");
+    expect(await page.locator("#form-missing").count()).toBe(0);
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    // Saved, with its check, and the viewer opened on it connects at once: the sign-in tab opens from that click.
+    expect(await page.getByRole("link", { name: "Check it" }).getAttribute("href")).toBe(`/check?${new URLSearchParams({ server: `${ext.iss}|${ext.clientId}` })}`);
+    await approveIn(await signInTab(page, () => page.getByRole("button", { name: "Open in the viewer" }).click()), "josh");
     await page.locator("#app").waitFor({ state: "visible" });
     expect(new URL(page.url()).pathname).toBe("/viewer");
     await page.getByText("Connected to Another server").waitFor();
@@ -241,8 +244,8 @@ describe("the demo client", () => {
     await page.goto(`${ORIGIN}/servers`);
     await page.getByLabel("FHIR base URL").fill(`${ORIGIN}${base}/fhir`);
     await page.getByRole("radio", { name: /confidential app/ }).check();
-    await page.getByRole("button", { name: "Save and open the viewer" }).click();
-    await page.getByText("Generate a key pair, or paste a private key").waitFor();
+    // A signing client needs a key before it can be saved.
+    await page.locator("#form-missing", { hasText: "Generate a key pair, or paste a private key" }).waitFor();
     await page.getByRole("button", { name: "Generate a key pair" }).click();
     const jwk = JSON.parse((await page.getByRole("button", { name: "Copy JWK" }).getAttribute("data-copy"))!);
     expect(jwk.d).toBeUndefined();
@@ -254,9 +257,8 @@ describe("the demo client", () => {
     await page.getByLabel("Name", { exact: true }).fill("Signed in");
     await page.getByLabel("Client ID").fill(made.id);
     await shot(page, "server-builder-confidential");
-    await page.getByRole("button", { name: "Save and open the viewer" }).click();
-    await page.waitForURL(/\/viewer$/);
-    await approveIn(await signInTab(page, pressConnect(page)), "josh");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await approveIn(await signInTab(page, () => page.getByRole("button", { name: "Open in the viewer" }).click()), "josh");
     await page.locator("#app").waitFor({ state: "visible" });
     await page.locator(".study-button").nth(5).waitFor();
     expect(await page.locator("#connected").textContent()).toBe("Connected to Signed in");
@@ -470,9 +472,9 @@ describe("the demo client", () => {
     await page.getByRole("button", { name: "Register" }).click();
     await page.getByRole("heading", { name: "Referral service" }).waitFor();
     await shot(page, "connect-backend");
+    // A service connects at once, with no one to sign in.
     await page.getByRole("button", { name: "Try it in the viewer" }).click();
     await page.waitForURL(/\/viewer$/);
-    await pressConnect(page)();
     await page.getByText("Backend service: no one signed in").waitFor();
     await page.locator(".study-button").nth(5).waitFor();
     await page.locator("[data-stage=authorize]", { hasText: "signed assertion" }).waitFor();
@@ -490,22 +492,28 @@ describe("the demo client", () => {
     await page.getByRole("radio", { name: /Confidential app/ }).check();
     await page.getByLabel("Redirect URI").fill(`${ORIGIN}/viewer`);
     await page.getByRole("button", { name: "Register" }).click();
-    await page.getByRole("button", { name: "Try it in the viewer" }).click();
-    await page.waitForURL(/\/viewer$/);
-    await approveIn(await signInTab(page, pressConnect(page)), "josh");
+    await approveIn(await signInTab(page, () => page.getByRole("button", { name: "Try it in the viewer" }).click()), "josh");
     await page.locator(".study-button").nth(5).waitFor();
     await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
     await context.close();
   });
 
-  test("a server that can't be reached brings the landing page back with the error", async () => {
+  test("a server that can't be reached says which request failed, what that usually means, and how to check it", async () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     await viewerOn(page, await enterSandbox(page));
     await page.route("**/.well-known/smart-configuration", route => route.abort());
     await page.getByRole("button", { name: "Connect", exact: true }).click();
-    await page.locator("#connect-error").waitFor({ state: "visible" });
+    const failed = page.locator("#connect-error");
+    await failed.waitFor({ state: "visible" });
     expect(await page.locator("#landing").isVisible()).toBe(true);
+    await failed.getByText("Discover the servers").first().waitFor();
+    await failed.getByText(/access-control-allow-origin/).first().waitFor();
+    await failed.locator(".failed-check", { hasText: "curl -i" }).waitFor();
+    expect(await failed.getByRole("link", { name: "Check this server, step by step" }).getAttribute("href")).toMatch(/^\/check\?server=/);
+    // The steps it took are there too, the failed request open.
+    await failed.locator("details.call[open]", { hasText: "Discover the servers" }).waitFor();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
     await context.close();
   });
 
@@ -583,6 +591,58 @@ describe("the demo client", () => {
     await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
     await shot(page, "phone-app");
+    await context.close();
+  });
+
+  test("the server check passes every step against a sandbox, pausing for the sign-in", async () => {
+    const context = await newContext({ viewport: { width: 1280, height: 900 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    const base = await enterSandbox(page);
+    await page.goto(`${ORIGIN}/check?server=${encodeURIComponent(`${ORIGIN}${base}/fhir|demo-client`)}`);
+    await page.locator("#check-summary", { hasText: "Waiting at step 4 of 8: sign in to continue." }).waitFor();
+    expect(await page.locator(".check-step[data-state=pass]").count()).toBe(3);
+    expect(await page.locator(".check-step[data-state=todo]").count()).toBe(4);
+    await approveIn(await signInTab(page, () => page.getByRole("button", { name: "Sign in to continue" }).click()), "josh");
+    await page.locator("#check-summary", { hasText: "All 8 steps passed." }).waitFor({ timeout: 30000 });
+    expect(await page.locator(".check-step[data-state=pass]").count()).toBe(8);
+    await page.locator(".check-step[data-step='8']", { hasText: "Refused with 401" }).waitFor();
+    await shot(page, "server-check");
+    // Nothing the check did is kept for the viewer, so it isn't left thinking it's connected.
+    expect(await page.evaluate(() => sessionStorage.getItem("smart-imaging-viewer"))).toBeNull();
+    await context.close();
+  });
+
+  test.skipIf(!!process.env.BASE_URL)("the server check runs a backend service end to end with no sign-in tab", async () => {
+    const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    const base = await enterSandbox(page);
+    await page.goto(`${ORIGIN}${base}/connect`);
+    await page.getByLabel("App name").fill("Referral service");
+    await page.getByRole("radio", { name: /Backend service/ }).check();
+    await page.getByRole("button", { name: "Register" }).click();
+    // Trying it saves it as one of your servers, which the check then offers.
+    await page.getByRole("button", { name: "Try it in the viewer" }).click();
+    await page.waitForURL(/\/viewer$/);
+    await page.goto(`${ORIGIN}/check`);
+    await page.getByRole("link", { name: /Referral service/ }).click();
+    await page.waitForURL(u => u.pathname === "/check" && u.searchParams.has("server"));
+    await page.locator("#check-summary", { hasText: "All 8 steps passed." }).waitFor({ timeout: 30000 });
+    expect(context.pages().length).toBe(1);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+    await context.close();
+  });
+
+  test("the server check stops at discovery for a server that can't be reached, and says why", async () => {
+    const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    const iss = "https://127.0.0.1:1/fhir";
+    await page.route(`${iss}/**`, route => route.abort());
+    await page.goto(`${ORIGIN}/`);
+    await page.evaluate(iss => localStorage.setItem("smart-imaging-client:servers", JSON.stringify([{ label: "Nowhere", iss, clientId: "app" }])), iss);
+    await page.goto(`${ORIGIN}/check?server=${encodeURIComponent(`${iss}|app`)}`);
+    await page.locator("#check-summary", { hasText: "Stopped at step 1 of 8" }).waitFor();
+    await page.locator(".check-step[data-step='1'] .call-diagnosis", { hasText: "CORS" }).waitFor();
+    expect(await page.locator(".check-step[data-state=unreached]").count()).toBe(7);
     await context.close();
   });
 });

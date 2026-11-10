@@ -16,7 +16,7 @@ export interface Page {
 }
 
 export type PageId =
-  | "home" | "build-an-app" | "run-a-server" | "how-it-works" | "why-it-matters" | "viewer" | "servers"
+  | "home" | "build-an-app" | "run-a-server" | "how-it-works" | "why-it-matters" | "viewer" | "servers" | "check"
   | "sandbox" | "tours" | "explore" | "build" | "connect" | "activity" | "trace" | "trace-span" | "trace-log" | "config" | "checks";
 
 const pages: Page[] = [
@@ -27,6 +27,7 @@ const pages: Page[] = [
   { id: "why-it-matters", level: "site", path: "/why-it-matters", name: "Why It Matters", blurb: "What patients, caregivers and health systems get from imaging interoperability." },
   { id: "viewer", level: "site", path: "/viewer", name: "Viewer", blurb: "Our SMART app, signed in to one of your sandboxes or to your own server." },
   { id: "servers", level: "site", path: "/servers", name: "Your servers", blurb: "Describe your server for the viewer, and how it signs in." },
+  { id: "check", level: "site", path: "/check", name: "Server check", blurb: "Every step of the guide, run against your server, saying how far it got and why it stopped." },
   { id: "sandbox", level: "sandbox", path: "/", name: "Home", blurb: "This sandbox: its name, sharing, and its pages." },
   { id: "tours", level: "sandbox", path: "/tours", name: "Tour", blurb: "Sharing, guardians and referrals, played out step by step." },
   { id: "explore", level: "sandbox", path: "/explore", name: "Explore", blurb: "What each sample person and service can reach, and why." },
@@ -47,7 +48,7 @@ export const PAGES = Object.fromEntries(pages.map(p => [p.id, p])) as Record<Pag
 export const MENU: PageId[] = ["build-an-app", "run-a-server", "how-it-works", "why-it-matters"];
 
 /** The site's own pages beyond the guides. */
-export const SITE_TOOLS: PageId[] = ["viewer", "servers"];
+export const SITE_TOOLS: PageId[] = ["servers", "check", "viewer"];
 
 /** A sandbox's pages, by what they're for. The viewer is the site's, opened on the sandbox. */
 export const SANDBOX_GROUPS: { title: string; pages: (PageId)[] }[] = [

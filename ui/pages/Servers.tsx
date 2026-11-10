@@ -1,13 +1,14 @@
 // Describing a server of your own for the viewer: what it is, how the viewer signs in, and what to
 // register there. Discovery is checked here, from the browser, the way the viewer itself will read it.
 import { Fragment, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { Link, useNavigate } from "react-router";
+import { launchViewer } from "../lib/launch";
 import type { PrivateJwk } from "../lib/api";
 import { announce, CopyButton, plural } from "../lib/format";
 import {
-  APP_LAUNCH, BACKEND_CAPABILITY, checkServer, generateKey, imagingOf, openViewer, parseServers, putServer,
+  APP_LAUNCH, BACKEND_CAPABILITY, checkServer, generateKey, imagingOf, parseServers, putServer,
   savedServers, saveServers, serverKey, VIEWER_URL, type ServerEntry,
 } from "../lib/servers";
-import { CONFORMANCE_PLAN } from "../sitemap";
 import { PageLink } from "../shell/Shell";
 
 type How = "public" | "confidential" | "backend";
@@ -107,6 +108,9 @@ function RegisterFacts({ how, keyPair }: { how: How; keyPair: PrivateJwk | null 
   );
 }
 
+/** The server check, run on one saved server. */
+const checkOf = (s: ServerEntry) => `/check?${new URLSearchParams({ server: serverKey(s) })}`;
+
 function Saved({ list, onEdit, onRemove }: { list: ServerEntry[]; onEdit: (s: ServerEntry) => void; onRemove: (s: ServerEntry) => void }) {
   if (!list.length) return <p className="note">None yet. Servers you save here are offered in the viewer, beside your sandboxes.</p>;
   return <>{list.map(s => (
@@ -120,7 +124,8 @@ function Saved({ list, onEdit, onRemove }: { list: ServerEntry[]; onEdit: (s: Se
         {s.imaging && <><dt>Imaging</dt><dd><code>{s.imaging}</code></dd></>}
       </dl>
       <div className="configure-actions">
-        <button type="button" className="primary" onClick={() => openViewer(s)}>Connect</button>
+        <Link className="button" to={checkOf(s)}>Check it</Link>
+        <button type="button" className="secondary" onClick={() => launchViewer(s, { connect: true })}>Open in the viewer</button>
         <button type="button" className="secondary" onClick={() => onEdit(s)}>Edit</button>
         <button type="button" className="tool quiet-danger" aria-label={`Remove ${s.label}`} onClick={() => onRemove(s)}>Remove</button>
       </div>
@@ -212,13 +217,14 @@ export default function Servers() {
   };
 
   /** The form as a server entry, checked. */
-  const entryOfForm = (): ServerEntry => {
+  /** The entry the form describes, or what's wrong with it. Only `keep` takes a pasted key as the one to sign with. */
+  const entryOfForm = (keep = true): ServerEntry => {
     const v = (k: keyof Fields) => fields[k].trim();
     let jwk = keyPair;
     if (signs && v("pasted") && v("pasted") !== JSON.stringify(jwk)) {
       let k: unknown; try { k = JSON.parse(v("pasted")); } catch { throw new Error("The pasted key isn't valid JSON."); }
       if (!isPrivateKey(k)) throw new Error("The pasted key must be a private EC P-256 JWK (with \"d\") and a \"kid\".");
-      jwk = k; setKeyPair(k);
+      jwk = k; if (keep) setKeyPair(k);
     }
     if (signs && !jwk) throw new Error("Generate a key pair, or paste a private key, so the viewer can sign its assertions.");
     if (how === "backend" && !v("patient")) throw new Error("A backend service needs the patient's FHIR id.");
@@ -239,17 +245,20 @@ export default function Servers() {
       return entry;
     } catch (e) { setError((e as Error).message); return null; }
   };
-  const saveAndOpen = (e: FormEvent) => { e.preventDefault(); const entry = save(); if (entry) openViewer(entry); };
+  const navigate = useNavigate();
+  // What the form still needs, worked out as it's filled in: Save stays off, and says why, until there's nothing.
+  const missing = (() => { try { entryOfForm(false); return undefined; } catch (e) { return (e as Error).message.replace(/ \("\w+"\)/, ""); } })();
+  const saveAndCheck = (e: FormEvent) => { e.preventDefault(); const entry = save(); if (entry) navigate(checkOf(entry)); };
 
   return (
     <main className="landing servers-page">
       <h1>Your servers</h1>
-      <p className="lead">Point our viewer at your own FHIR server. It connects exactly as it does to a sandbox, so you can see whether your discovery, sign-in and imaging endpoints work for a SMART Imaging app.</p>
+      <p className="lead">Describe your server once, then check it step by step, or open it in our viewer. The viewer and the server check both use this list.</p>
       <ol className="steps-line" aria-label="Steps">
-        <li>Describe your server</li><li>Register the viewer with it</li><li>Connect</li>
+        <li>Describe your server</li><li>Register the viewer with it</li><li>Check it, step by step</li>
       </ol>
 
-      <form id="server-form" className="panel form" noValidate onSubmit={saveAndOpen}>
+      <form id="server-form" className="panel form" noValidate onSubmit={saveAndCheck}>
         <h2 id="form-title">{editing ? `Edit ${editing.label}` : "Add a server"}</h2>
         <label htmlFor="srv-iss">FHIR base URL</label>
         <div className="inline-field">
@@ -306,10 +315,11 @@ export default function Servers() {
         </details>
 
         <div className="form-actions">
-          <button type="submit" className="primary" id="save-try">Save and open the viewer</button>
-          <button type="button" className="secondary" id="save" onClick={save}>Save</button>
+          <button type="submit" className="primary" id="save-try" disabled={!!missing} aria-describedby="form-missing">Save and check</button>
+          <button type="button" className="secondary" id="save" disabled={!!missing} aria-describedby="form-missing" onClick={save}>Save</button>
           {editing && <button type="button" className="tool" id="cancel-edit" onClick={clearForm}>Cancel</button>}
         </div>
+        {missing && <p className="form-missing" id="form-missing">Before saving: {missing.replace(/^This server needs/, "it needs")}</p>}
         {error && <p className="error" id="form-error" role="alert">{error}</p>}
       </form>
 
@@ -317,7 +327,6 @@ export default function Servers() {
 
       <ServersJson list={list} replaced={reload} />
 
-      <p className="note">Planned: conformance checks run against your server. <a href={CONFORMANCE_PLAN}>Vote or comment on GitHub</a>.</p>
 
       <p className="note agents">Working with an AI agent? Give it <a href="/llms.txt">llms.txt</a>. It describes this page's settings and what the viewer expects from a server, so the agent can work out your server's values, or why discovery fails, with you.</p>
     </main>

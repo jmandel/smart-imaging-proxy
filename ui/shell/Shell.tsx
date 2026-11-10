@@ -6,7 +6,7 @@ import { Link } from "react-router";
 import { BASE, sandboxName } from "../lib/api";
 import { enterSandbox, rememberName, useLinkedSandbox, useSandboxes, type KnownSandbox } from "../lib/store";
 import { openViewer, sandboxServer } from "../lib/servers";
-import { CONFORMANCE_PLAN, hrefOf, MENU, PAGES, REFERENCES, REPO, SANDBOX_GROUPS, SITE_TOOLS, type PageId } from "../sitemap";
+import { hrefOf, MENU, PAGES, REFERENCES, REPO, SANDBOX_GROUPS, SITE_TOOLS, type PageId } from "../sitemap";
 
 /** A link to a page of the map. The viewer, from a sandbox, opens on that sandbox. */
 export function PageLink({ id, base = BASE, current, children, className }: { id: PageId; base?: string; current?: PageId; children?: ReactNode; className?: string }) {
@@ -91,7 +91,6 @@ function Footer({ sandbox }: { sandbox: KnownSandbox | undefined }) {
           <h2>Test your server</h2>
           <ul>
             {SITE_TOOLS.map(id => <li key={id}><PageLink id={id} base="" /></li>)}
-            <li><a href={CONFORMANCE_PLAN}>Conformance checks: the plan</a></li>
           </ul>
         </section>
         {base ? (

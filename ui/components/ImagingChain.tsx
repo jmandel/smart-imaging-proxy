@@ -1,27 +1,30 @@
-// The home page's diagram: what SMART Imaging adds to a SMART sign-in. An app is given one FHIR address, in a
-// group of servers that always includes an imaging FHIR server, and may include clinical ones or be just the one.
-// From there it follows pointers to a patient's images: discovery names the imaging server, each study names its
-// Endpoint, and the Endpoint's address is where the images are. Every hop carries the one token from sign-in.
-const HOPS: { server: string; ask: string; answer: string; leads: string }[] = [
-  { server: "The FHIR address you're given", ask: "GET .well-known/smart-configuration", answer: "capabilities, associated_endpoints[]", leads: "say which server answers imaging searches: this one, or another the group includes" },
-  { server: "Its imaging FHIR server", ask: "GET ImagingStudy?patient=…", answer: "ImagingStudy.endpoint → Endpoint", leads: "each study says where its images are" },
-  { server: "A DICOMweb server", ask: "GET {Endpoint.address}/studies/{uid}/…", answer: "DICOM instances", leads: "the images, for the viewer to decode" },
+// The home page's diagram: what SMART Imaging adds to a SMART sign-in. An app is given one FHIR address, which
+// belongs to a group of servers, drawn as a stack: an imaging FHIR server always, and perhaps clinical and other
+// FHIR servers behind it, separate or the same one. The group shares one discovery, one sign-in and one token.
+// Each study the imaging server finds names an Endpoint, whose address is where its images are: a DICOMweb
+// server, anywhere, which takes the same token.
+const SHARED: [string, string][] = [
+  ["One discovery", "smart-configuration names each server"],
+  ["One sign-in", "the patient approves once"],
+  ["One token", "accepted by every server, and by DICOMweb"],
 ];
 
 export function ImagingChain() {
   return (
-    <figure className="chain-map" aria-labelledby="chain-map-title">
-      <h2 id="chain-map-title">From one FHIR address to a patient's images</h2>
-      <ol className="chain-hops">
-        {HOPS.map(h => (
-          <li key={h.server} className="chain-hop">
-            <b className="chain-server">{h.server}</b>
-            <code>{h.ask}</code>
-            <span className="chain-answer"><code>{h.answer}</code> {h.leads}</span>
-          </li>
-        ))}
-      </ol>
-      <p className="chain-token"><span>One access token, from the patient's sign-in, at every step</span></p>
+    <figure className="stack-map" aria-label="The servers behind one SMART Imaging FHIR address, and where a patient's images are">
+      <div className="stack-row">
+        <div className="stack-behind" aria-hidden="true">
+          <div className="stack-card behind b2"><span>Other FHIR servers</span></div>
+          <div className="stack-card behind b1"><span>Clinical FHIR server</span></div>
+        </div>
+        <div className="stack-card front"><b>Imaging FHIR server</b><code>ImagingStudy?patient=…</code></div>
+        <div className="stack-link" aria-hidden="true"><code>Endpoint.address</code></div>
+        <div className="stack-card images"><b>DICOMweb server</b><code>/studies/{"{uid}"}/…</code></div>
+        <p className="stack-note">One server, or several</p>
+      </div>
+      <ul className="stack-shared" aria-label="What the servers share">
+        {SHARED.map(([what, how]) => <li key={what}><b>{what}</b> {how}</li>)}
+      </ul>
     </figure>
   );
 }
