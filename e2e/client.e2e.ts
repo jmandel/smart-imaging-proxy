@@ -171,7 +171,7 @@ describe("the demo client", () => {
     // Through the menu: Run a Server, whose links go to this sandbox, then Your servers.
     await page.locator("nav.pages").getByRole("link", { name: "Run a Server", exact: true }).click();
     await page.waitForURL(u => u.pathname === "/run-a-server");
-    await page.getByRole("link", { name: "Your servers" }).click();
+    await page.locator("main").getByRole("link", { name: "Your servers" }).click();
     await page.waitForURL(u => u.pathname === "/servers");
     await page.getByText("None yet.").waitFor();
     await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -317,7 +317,7 @@ describe("the demo client", () => {
     await page.goto(`${ORIGIN}${base}/build`);
     await page.locator("#endpoints").getByText(`${ORIGIN}${base}/fhir`, { exact: true }).waitFor();
     await page.goto(`${ORIGIN}/`);
-    expect(await page.locator("a", { hasText: "For agents" }).getAttribute("href")).toBe("/llms.txt");
+    expect(await page.locator("nav.pages a", { hasText: "For agents" }).getAttribute("href")).toBe("/llms.txt");
     await context.close();
   });
   test("an app registered on /connect shows what its developer needs", async () => {
