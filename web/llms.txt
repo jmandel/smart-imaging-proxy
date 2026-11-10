@@ -169,6 +169,22 @@ Create a new sandbox with `POST {{ORIGIN}}/api/sandboxes`. The response has `bas
 
 Starting a guided tour resets a sandbox's policy, but keeps its registered apps, and other apps' tokens and approvals.
 
+### Running a tour step yourself
+
+Everything the Tours page does, you can do with these calls. `begin` returns `{plan, session, trace}`. Send every request for the step with `traceparent: 00-{trace}-{16 hex}-01` and `baggage: demo.session={session}`, so the step's events land in its activity. Then `finish` with `{"seen": ...}`, using the fields below.
+
+| `plan.do` | What to do | `seen` |
+|---|---|---|
+| `sign-in` | An authorization code flow with PKCE as `plan.app`, with `plan.redirectUri`, `plan.scope` and `aud=plan.aud`, signing in as `plan.user`, choosing `plan.patient`, and approving `plan.sites` (all sites if absent). See "Sign in without a browser". Keep the token for later steps | `{"token":true,"patient":...,"expiresIn":...,"state":...}`, or `{"token":false,"error":...}` |
+| `search` | Search `{imaging}/ImagingStudy?{plan.query}` with `plan.as`'s token, following `next` links | `{"status":200,"studies":[{"id","uid","base"}]}`, with `base` the study's WADO-RS address; or `{"status":N}` |
+| `retrieve` | `GET plan.url` with `plan.as`'s token, and read the body | `{"status":N}` |
+| `service-search`, `service-retrieve` | As above, with a Backend Services token for `plan.client`, from its key in `GET /api/sandbox/keys` | As above |
+| `management` | Each of `plan.calls` against `$SANDBOX/api/sandbox/policy{path}`, with the admin token | `{"statuses":[...]}` |
+| `referral-check` | Whether `plan.patientRef` is under `plan.clinicalFhir/Patient/` | `{"ok":true}` |
+| `none` | Nothing: the sandbox did it, such as moving its clock | `{}` |
+
+The protocol checks on the Tours page have no step API. Each is a scenario a client runs against a fresh sandbox, using the calls above, `POST /api/sandbox/faults`, and `GET /api/sandbox/catalog`. The page's source, `{{ORIGIN}}/checks.js`, is the reference for each one.
+
 ## Pages
 
 - [Overview]({{SITE}}/): the sandbox, its viewer, and the two ways in.
