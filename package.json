@@ -32,6 +32,7 @@
   "dependencies": {
     "@smart-imaging-proxy/core": "workspace:*",
     "react": "19",
-    "react-dom": "19"
+    "react-dom": "19",
+    "react-router": "7"
   }
 }

@@ -38,7 +38,7 @@ function reshape(kind: string, b: any, url: URL) {
 beforeAll(async () => {
   const root = join(import.meta.dir, "..");
   stack = await startStack(root);
-  demo = Bun.serve({ port: PORTS.demo, hostname: "127.0.0.1", fetch: createDemoServer(stack, registerClients(stack), root).fetch });
+  demo = Bun.serve({ port: PORTS.demo, hostname: "127.0.0.1", ...createDemoServer(stack, registerClients(stack), root) });
   sandbox = stack.sandboxes.mint();
   clientId = (addClient(sandbox.store, { name: "Spec test", redirectUris: [`${new URL(sandbox.urls.demo).origin}/viewer`] }) as any).id;
   fixture = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) {

@@ -22,8 +22,8 @@ import { loadViewerKit, VIEWER_KIT_FILES } from "./vendor";
 import { panelOf } from "./stores";
 import type { Sandbox } from "./sandbox";
 import { ADMIN_SCOPE, SANDBOX_ADMIN } from "./sandbox-keys";
-import { shellHtml, uiBundle, uiFile } from "./ui";
-import { pageAt } from "../ui/sitemap";
+import app from "../ui/index.html";
+import { pageAt, PAGES } from "../ui/sitemap";
 import { PORTED } from "../ui/ported";
 
 const json = (b: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(b, { status, headers });
@@ -134,9 +134,6 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     async function fetch(req: Request): Promise<Response> {
       const url = new URL(req.url);
       const p = url.pathname;
-      // A page of the site map: the site's own at the root, or a sandbox's. The React app draws it.
-      const page = (sandbox.id ? undefined : pageAt("site", p)) ?? pageAt("sandbox", p);
-      if (page && (req.method === "GET" || req.method === "HEAD") && PORTED.includes(page.id)) return shellHtml(page.id);
       if (p === "/") return file("client.html");
       // The site's own pages, at its root only: the guides, the viewer, and the servers it knows.
       const sitePage = !sandbox.id && SITE_PAGES[p];
@@ -262,19 +259,30 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     const type = name.endsWith(".wasm") ? "application/wasm" : name.endsWith(".js") ? "text/javascript; charset=utf-8" : "text/plain; charset=utf-8";
     return new Response(bytes, { headers: { "content-type": type, "cache-control": "public, max-age=86400" } });
   };
-  // Built now, so the first page doesn't wait, and a build error shows at startup.
-  uiBundle(root).catch(e => console.error(e));
   const routed = stack.route(w => req => serverOf(w).fetch(req));
   async function fetch(req: Request): Promise<Response> {
     const foreign = refuseHost(req);
     if (foreign) return foreign;
     const p = new URL(req.url).pathname;
-    const built = await uiFile(root, p);
-    if (built) return built;
     if (STATIC[p]) return file(STATIC[p]!);
     const vendored = p.match(/^\/vendor\/viewer-kit\/([^/]+)$/);
     if (vendored) return vendor(vendored[1]!);
     return routed(req);
   }
-  return { fetch };
+  return { fetch, routes: uiRoutes() };
+}
+
+/**
+ * The React app at every page's address: the site's own at the root, a sandbox's under /s/{id}, and on a
+ * local root, a sandbox's too. Bun bundles it from ui/index.html, and serves its scripts and styles itself.
+ */
+export function uiRoutes(): Record<string, typeof app> {
+  const routes: Record<string, typeof app> = {};
+  for (const p of PORTED.map(id => PAGES[id])) {
+    if (p.level === "site") { routes[p.path] = app; continue; }
+    if (p.path === "/") { routes["/s/:sandbox"] = app; routes["/s/:sandbox/"] = app; continue; }
+    routes[`/s/:sandbox${p.path}`] = app;
+    if (!pageAt("site", p.path)) routes[p.path] = app;
+  }
+  return routes;
 }

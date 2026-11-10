@@ -13,7 +13,7 @@ import { createCollector } from "../src/trace-collector";
 let stack: Stack; let server: ReturnType<typeof Bun.serve>;
 beforeAll(async () => {
   stack = await startStack(join(import.meta.dir, ".."));
-  server = Bun.serve({ port: PORTS.demo, hostname: "127.0.0.1", fetch: createDemoServer(stack, registerClients(stack), join(import.meta.dir, "..")).fetch });
+  server = Bun.serve({ port: PORTS.demo, hostname: "127.0.0.1", ...createDemoServer(stack, registerClients(stack), join(import.meta.dir, "..")) });
 });
 afterAll(() => { server.stop(true); stack.stop(); });
 

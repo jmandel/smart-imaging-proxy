@@ -1,5 +1,5 @@
-@font-face { font-family:"Atkinson Next"; src:url(/fonts/atkinson-next.woff2) format("woff2"); font-weight:200 800; font-display:swap; }
-@font-face { font-family:"Atkinson Mono"; src:url(/fonts/atkinson-mono.woff2) format("woff2"); font-weight:200 800; font-display:swap; }
+@font-face { font-family:"Atkinson Next"; src:url(fonts/atkinson-next.woff2) format("woff2"); font-weight:200 800; font-display:swap; }
+@font-face { font-family:"Atkinson Mono"; src:url(fonts/atkinson-mono.woff2) format("woff2"); font-weight:200 800; font-display:swap; }
 :root { color-scheme:light dark; --bg:#e9f0f5; --panel:#fbfdfe; --ink:#13242f; --muted:#4f6675; --line:#cfdbe3; --code:#e3ebf0; --film:#0f2a3d; --film-raised:#183a52; --film-line:#2c4c63; --on-film:#e8f1f6; --on-film-dim:#a3bbc9; --good:#0b7560; --bad:#ad2f28; --warn:#845800; --bar:#7f9db0; --user:#6b3fa0; --app:#0a6a9c; --as:#8a4b08; --fhir:#0f6b6b; --policy:#a0307a; --proxy:#2c6e1f; --backend:#55606b; --demo:#5f6f7a; --sans:"Atkinson Next",system-ui,sans-serif; --mono:"Atkinson Mono",ui-monospace,monospace; }
 @media (prefers-color-scheme: dark) { :root { --bg:#0a1822; --panel:#10232f; --ink:#e4edf2; --muted:#9ab0bd; --line:#27404f; --code:#1b3241; --film:#17354a; --film-raised:#21465f; --film-line:#3a5f78; --good:#63e0c3; --bad:#ff9d92; --warn:#f2c55c; --bar:#4d7087; --user:#c3a3ea; --app:#6cbfe8; --as:#e5a964; --fhir:#6cd0d0; --policy:#ea8fc8; --proxy:#94d67e; --backend:#a9b4be; --demo:#9ab0bd; } }
 * { box-sizing:border-box; }

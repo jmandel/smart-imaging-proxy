@@ -46,7 +46,7 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) process.on(signal, () => { 
 if (whole) {
   const stack = await startStack(root, { store: storeConfigFromEnv(), traces: traceStoreConfigFromEnv(), catalog: process.env.CATALOG_DB || DEFAULT_CATALOG_DB });
   const demo = createDemoServer(stack, registerClients(stack), root);
-  const demoServers = serveOn(PORTS.demo, { idleTimeout: 240, fetch: demo.fetch });
+  const demoServers = serveOn(PORTS.demo, { idleTimeout: 240, routes: demo.routes, fetch: demo.fetch });
   stopping = () => { demoServers.forEach(s => s.stop(true)); stack.stop(); };
   const info = stack.store.info();
   console.log(`SMART Imaging Proxy: ${CONFIG.demoUrl}${TAILNET ? " (tailnet)" : ""}`);

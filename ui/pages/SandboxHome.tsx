@@ -7,9 +7,8 @@ import { VIEWER_SESSION } from "../lib/servers";
 import { PAGES, SANDBOX_GROUPS } from "../sitemap";
 import { PageLink } from "../shell/Shell";
 
-const shareLink = `${location.origin}${BASE}/`;
-
 export default function SandboxHome() {
+  const shareLink = `${location.origin}${BASE}/`;
   const mine = useSandboxes().find(w => w.base === BASE);
   // What the server says: its name, `null` when it's gone, `undefined` while asking or when it can't be reached.
   const [name, setName] = useState<string | null | undefined>(), [asked, setAsked] = useState(false);

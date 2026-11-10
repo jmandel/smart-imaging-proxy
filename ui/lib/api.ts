@@ -1,8 +1,13 @@
 // The sandbox a page is in, and calls to it. The management API, under /api/sandbox, takes the sandbox's admin
 // token, which the page gets itself, with the sandbox's own admin key, as SMART Backend Services.
 
-/** The sandbox this page is in, if any: every request it makes stays there. "" is the site's root. */
-export const BASE = location.pathname.match(/^\/s\/[^/]+/)?.[0] ?? "";
+/**
+ * The sandbox the page shown is in, if any: every request it makes stays there. "" is the site's root. It follows
+ * the address as the app moves between pages, so read it when it's used, never into a constant at load.
+ */
+export let BASE = location.pathname.match(/^\/s\/[^/]+/)?.[0] ?? "";
+/** Set by the app as each page's route is drawn. */
+export const setBase = (base: string) => { BASE = base; };
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }

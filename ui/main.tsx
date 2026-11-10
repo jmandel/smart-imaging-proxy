@@ -1,21 +1,40 @@
-// The site's pages, one bundle. The address says which page: the site's own at the root, or a sandbox's.
+// The site's pages, one app. React Router draws the page each address names, from the site map: the site's own
+// pages at the root, and a sandbox's under /s/{id}. The server serves this same shell at every page's address,
+// so a reload anywhere draws the same page, and moving between pages happens in place.
 import { createRoot } from "react-dom/client";
-import type { ComponentType } from "react";
-import { api, BASE } from "./lib/api";
-import { pageAt, type PageId } from "./sitemap";
+import { BrowserRouter, Route, Routes, useLocation, useParams } from "react-router";
+import { api, setBase } from "./lib/api";
+import { pageAt, PAGES, type PageId } from "./sitemap";
 import { Shell } from "./shell/Shell";
 import { UI_PAGES } from "./pages";
+import { PORTED } from "./ported";
+
+/** A page of the map, in its sandbox when the route names one. A new address starts the page afresh. */
+function PageAt({ id }: { id: PageId }) {
+  const { sandbox } = useParams(), { pathname, search } = useLocation();
+  setBase(sandbox ? `/s/${sandbox}` : "");
+  const Page = UI_PAGES[id]!;
+  return <Shell key={sandbox ?? ""} page={id}><Page key={`${pathname}${search}`} /></Shell>;
+}
+
+const ported = PORTED.map(id => PAGES[id]);
+function App() {
+  return (
+    <Routes>
+      {ported.filter(p => p.level === "site").map(p => <Route key={`site-${p.id}`} path={p.path} element={<PageAt id={p.id} />} />)}
+      {ported.filter(p => p.level === "sandbox").map(p => <Route key={`sandbox-${p.id}`} path={`/s/:sandbox${p.path === "/" ? "" : p.path}`} element={<PageAt id={p.id} />} />)}
+      {/* A local root is a sandbox too, for development: its pages, except where the site has its own. */}
+      {ported.filter(p => p.level === "sandbox" && !pageAt("site", p.path)).map(p => <Route key={`root-${p.id}`} path={p.path} element={<PageAt id={p.id} />} />)}
+    </Routes>
+  );
+}
 
 // A sign-in tab the viewer opened hands its address back to the viewer, and closes.
-const signInReturn = location.pathname === "/viewer" && /[?&](code|error)=/.test(location.search) && window.opener;
-if (signInReturn) {
+if (location.pathname === "/viewer" && /[?&](code|error)=/.test(location.search) && window.opener) {
   window.opener.postMessage({ signedIn: location.href }, location.origin);
   window.close();
 } else {
-  // For automation and the browser console: the management API, with this page's sandbox and its admin token.
+  // For automation and the browser console: the management API, with the shown page's sandbox and its admin token.
   Object.assign(window, { sandboxApi: api });
-  const rest = location.pathname.slice(BASE.length) || "/";
-  const page = (BASE ? pageAt("sandbox", rest) : pageAt("site", rest) ?? pageAt("sandbox", rest))?.id;
-  const Page: ComponentType | undefined = page && UI_PAGES[page];
-  if (page && Page) createRoot(document.getElementById("root")!).render(<Shell page={page as PageId}><Page /></Shell>);
+  createRoot(document.getElementById("root")!).render(<BrowserRouter><App /></BrowserRouter>);
 }

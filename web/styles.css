@@ -1,6 +1,6 @@
 /* The page is a viewbox, and a study is a dark film sheet placed on it. */
-@font-face { font-family:"Atkinson Next"; src:url(/fonts/atkinson-next.woff2) format("woff2"); font-weight:200 800; font-display:swap; }
-@font-face { font-family:"Atkinson Mono"; src:url(/fonts/atkinson-mono.woff2) format("woff2"); font-weight:200 800; font-display:swap; }
+@font-face { font-family:"Atkinson Next"; src:url(fonts/atkinson-next.woff2) format("woff2"); font-weight:200 800; font-display:swap; }
+@font-face { font-family:"Atkinson Mono"; src:url(fonts/atkinson-mono.woff2) format("woff2"); font-weight:200 800; font-display:swap; }
 :root {
   color-scheme:light dark;
   --box:#e9f0f5; --plate:#fbfdfe; --ink:#13242f; --muted:#4f6675; --line:#cfdbe3; --code:#e3ebf0;

@@ -21,7 +21,7 @@ const problems: string[] = [];
 
 beforeAll(async () => {
   stack = await startStack(root);
-  server = Bun.serve({ port: PORTS.demo, hostname: "127.0.0.1", fetch: createDemoServer(stack, registerClients(stack), root).fetch });
+  server = Bun.serve({ port: PORTS.demo, hostname: "127.0.0.1", ...createDemoServer(stack, registerClients(stack), root) });
   browser = await chromium.launch({ executablePath: process.env.CHROMIUM ?? "/usr/bin/chromium", headless: true });
 });
 afterAll(async () => { await browser?.close(); server?.stop(true); stack?.stop(); });

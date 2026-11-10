@@ -152,7 +152,7 @@ const exported = async (session: string) => (await fetch(`${CONFIG.traceUrl}/api
 test("no raw secret reaches a span, including a code that only ever travels in a browser redirect", async () => {
   const rec = recordRawSecrets();
   const demo = createDemoServer(stack, clients, join(import.meta.dir, ".."));
-  const server = Bun.serve({ port: PORTS.demo, hostname: "127.0.0.1", fetch: demo.fetch, idleTimeout: 60 });
+  const server = Bun.serve({ port: PORTS.demo, hostname: "127.0.0.1", routes: demo.routes, fetch: demo.fetch, idleTimeout: 60 });
   try {
     // A browser's sign-in, as a page makes it in a window: the code comes back only in the redirect to the app's page.
     const session = `redirect-${Date.now()}`, baggage = { baggage: `demo.session=${encodeURIComponent(session)}` };

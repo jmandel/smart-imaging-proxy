@@ -2,6 +2,8 @@
 // its pages, and the footer with the whole map. A sandbox's name comes from the shared store, so a rename shows
 // in all three at once, in every tab.
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Link } from "react-router";
+import { PORTED } from "../ported";
 import { BASE, sandboxName } from "../lib/api";
 import { enterSandbox, rememberName, useSandboxes, linkedSandbox, type KnownSandbox } from "../lib/store";
 import { openViewer, sandboxServer } from "../lib/servers";
@@ -13,6 +15,8 @@ export function PageLink({ id, base = BASE, current, children, className }: { id
   if (id === "viewer" && base) {
     return <a href="/viewer" className={className} {...here} onClick={e => { e.preventDefault(); openViewer(sandboxServer(base)); }}>{children ?? PAGES.viewer.name}</a>;
   }
+  // A page the app draws opens in place; the rest, until each is ported, load as their own pages.
+  if (PORTED.includes(id)) return <Link to={hrefOf(id, base)} className={className} {...here}>{children ?? PAGES[id].name}</Link>;
   return <a href={hrefOf(id, base)} className={className} {...here}>{children ?? PAGES[id].name}</a>;
 }
 
@@ -135,7 +139,7 @@ export function Shell({ page, children }: { page: PageId; children: ReactNode })
     enterSandbox();
     // The server has the name as it is now, which may have changed in another browser.
     sandboxName(BASE).then(name => { if (name) { setServed(name); rememberName(BASE, name); } });
-  }, [page, inSandbox]);
+  }, [page, inSandbox, BASE]);
   return (
     <>
       <Header page={page} />

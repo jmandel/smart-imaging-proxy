@@ -26,7 +26,7 @@ const services = (store: { policiesOf(type: "service-access"): unknown[] }) => s
 let stack: Stack; let demo: Bun.Server;
 beforeAll(async () => {
   stack = await startStack(root);
-  demo = Bun.serve({ port: PORTS.demo, hostname: "127.0.0.1", fetch: createDemoServer(stack, registerClients(stack), root).fetch });
+  demo = Bun.serve({ port: PORTS.demo, hostname: "127.0.0.1", ...createDemoServer(stack, registerClients(stack), root) });
 });
 afterAll(() => { demo.stop(true); stack.stop(); });
 beforeEach(async () => { await stack.resetAll(); resetClock(); stack.setBackend("static-files"); });

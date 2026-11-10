@@ -18,19 +18,20 @@ const TYPES: [ClientType, string, string][] = [
   ["backend", "Backend service", "No sign-in. Access is granted when you register."],
 ];
 const PATIENTS = ["josh-example", "sam-example", "riley-example", "robin-example"];
-const fhirBase = `${location.origin}${BASE}/fhir`;
+/** This sandbox's FHIR base, for the page shown. */
+const fhirBaseOf = () => `${location.origin}${BASE}/fhir`;
 
 /** Whether the viewer can act as this client: it holds the key, and for sign-in, the viewer's address is registered. */
 const canTry = (c: Client) => (c.type === "public" || !!savedKeys()[c.id]) && (c.type === "backend" || c.redirectUris.includes(VIEWER_URL));
 function tryInViewer(c: Client) {
   const jwk = savedKeys()[c.id];
-  const entry: ServerEntry = { label: c.name, iss: fhirBase, clientId: c.id, ...(c.type === "backend" ? { mode: "backend" as const, jwk, patient: c.patients === "any" ? "josh-example" : c.patients, scope: "system/ImagingStudy.rs" } : c.type === "confidential" ? { auth: "private_key_jwt" as const, jwk } : {}) };
+  const entry: ServerEntry = { label: c.name, iss: fhirBaseOf(), clientId: c.id, ...(c.type === "backend" ? { mode: "backend" as const, jwk, patient: c.patients === "any" ? "josh-example" : c.patients, scope: "system/ImagingStudy.rs" } : c.type === "confidential" ? { auth: "private_key_jwt" as const, jwk } : {}) };
   saveServers([...savedServers().filter(s => s.clientId !== c.id), entry]);
   openViewer(entry);
 }
 
 function Registered({ c, removed }: { c: Client; removed: () => void }) {
-  const key = savedKeys()[c.id];
+  const key = savedKeys()[c.id], fhirBase = fhirBaseOf();
   const remove = async () => { await api("DELETE", `/api/sandbox/clients/${encodeURIComponent(c.id)}`); removed(); };
   return (
     <article className="panel registered">

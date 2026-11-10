@@ -4,7 +4,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import { join } from "node:path";
 import { startStack, type Stack } from "../src/stack";
 import { registerClients } from "../src/flows";
-import { createDemoServer } from "../src/demo-server";
+import { PORTED } from "../ui/ported";
+import { PAGES } from "../ui/sitemap";
+import { createDemoServer, uiRoutes } from "../src/demo-server";
 import { scriptedLaunch } from "../src/flows/oauth";
 import { now, resetClock } from "../src/clock";
 import { CONFIG, PORTS } from "../src/config";
@@ -43,25 +45,16 @@ const setSaved = (x: { rules?: any[]; shares?: any[]; approvals?: any[] }) => {
 };
 
 describe("pages", () => {
-  test("the demo client is the home page, and Tours, Explore and the activity log are served, each with the header's links and the client builder's, and the old pages are gone", async () => {
-    expect(await (await call("GET", "/")).text()).toContain("<title>SMART Imaging Demo");
-    const MENU = /<nav class="pages" aria-label="Pages"><a href="\/build-an-app" data-root[^>]*>Build an App<\/a><a href="\/run-a-server" data-root[^>]*>Run a Server<\/a><a href="\/how-it-works" data-root[^>]*>How It Works<\/a><a href="\/why-it-matters" data-root[^>]*>Why It Matters<\/a><a href="\/llms.txt">For Agents<\/a><\/nav>/;
-    // The site's own pages, at its root only.
-    for (const [path, title] of [["/build-an-app", "Build an App"], ["/run-a-server", "Run a Server"], ["/how-it-works", "How It Works"], ["/why-it-matters", "Why It Matters"], ["/viewer", "Viewer"], ["/servers", "Your servers"]] as const) {
-      const html = await (await call("GET", path)).text();
-      expect(html).toContain(`<title>${title}`);
-      expect(html).toMatch(MENU);
+  test("the React app is served at every page's address on the site map, the site's at the root and a sandbox's under /s/{id}, and the old pages are gone", async () => {
+    const routes = Object.keys(uiRoutes());
+    for (const p of PORTED.map(id => PAGES[id])) {
+      if (p.level === "site") { expect(routes).toContain(p.path); continue; }
+      expect(routes).toContain(p.path === "/" ? "/s/:sandbox/" : `/s/:sandbox${p.path}`);
     }
-    for (const [path, title, crumb] of [["/tours", "Tours", "Tour"], ["/explore", "Explore", "Explore"], ["/activity", "Logs", "Logs"], ["/checks", "Conformance", "Conformance"]] as const) {
-      const html = await (await call("GET", path)).text();
-      expect(html).toContain(`<title>${title}`);
-      expect(html).toMatch(MENU);
-      expect(html).toContain(`<span aria-current="page">${crumb}</span></nav>`);
-      expect(html).not.toContain("store-badge");
-    }
+    // The site's own pages are the site's alone: no sandbox has a copy.
+    for (const p of PORTED.map(id => PAGES[id]).filter(p => p.level === "site")) expect(routes.some(r => r.startsWith("/s/:sandbox") && r.endsWith(p.path) && p.path !== "/")).toBe(false);
     const base = await mint();
     for (const path of ["/viewer", "/servers", "/build-an-app", "/run-a-server", "/how-it-works", "/why-it-matters"]) expect([path, (await call("GET", `${base}${path}`)).status]).toEqual([path, 404]);
-    for (const path of ["/server-list.js", "/servers.js", "/explore.js", "/tours.js", "/activity.js", "/event-words.js", "/layers.js", "/page.js", "/thumbs.js", "/guides.js", "/styles.css"]) expect((await call("GET", path)).status).toBe(200);
     for (const path of ["/browse", "/admin", "/app.js", "/admin.js", "/browse.js", "/cards.js", "/api/explore/events", "/api/browse/options", "/api/admin/status"]) expect([path, (await call("GET", path)).status]).toEqual([path, 404]);
   });
 });
@@ -248,7 +241,7 @@ describe("writes from another web origin", () => {
 
 describe("writes naming another Host, over real HTTP", () => {
   let server: ReturnType<typeof Bun.serve>;
-  beforeAll(() => { server = Bun.serve({ port: PORTS.demo, hostname: "127.0.0.1", fetch: demo.fetch }); });
+  beforeAll(() => { server = Bun.serve({ port: PORTS.demo, hostname: "127.0.0.1", routes: demo.routes, fetch: demo.fetch }); });
   afterAll(() => server.stop(true));
   const send = async (path: string, host: string | undefined, init: RequestInit = { method: "POST", body: "{}" }) => fetch(`http://127.0.0.1:${PORTS.demo}${path}`, { ...init, headers: { "content-type": "application/json", ...(await adminFor(demo, path)), ...(host ? { host } : {}) } });
 
