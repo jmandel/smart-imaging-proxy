@@ -74,6 +74,10 @@ button.secondary:hover:not(:disabled) { border-color:var(--muted); background:va
 .pages a { display:inline-flex; align-items:center; min-height:2.75rem; color:var(--on-film-dim); text-decoration:none; padding:0 .8rem; border-radius:5px; }
 .pages a:hover { color:var(--on-film); background:var(--film-raised); }
 .pages a[aria-current=page] { color:var(--on-film); background:var(--film-raised); font-weight:700; }
+/* A menu item is as wide as its bold self, current or not, so the items beside it never move: an invisible,
+   unspoken bold copy of its words, of no height, under them. */
+.pages a[data-label], .sandbox-bar-group a[data-label] { flex-direction:column; justify-content:center; }
+.pages a[data-label]::after, .sandbox-bar-group a[data-label]::after { content:attr(data-label) / ""; font-weight:700; height:0; overflow:hidden; visibility:hidden; pointer-events:none; user-select:none; }
 /* Under the bar, on a sandbox's pages: which sandbox, and which of its pages. */
 .crumbs { display:flex; align-items:center; gap:.5rem; min-height:2.6rem; padding:.2rem 1.5rem; background:var(--plate); border-bottom:1px solid var(--line); color:var(--muted); overflow-x:auto; white-space:nowrap; }
 .crumbs a { color:var(--ink); font-weight:600; }

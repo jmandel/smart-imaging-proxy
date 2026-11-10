@@ -6,12 +6,16 @@ import { pageAt, PAGES, type PageId } from "./sitemap";
 import { Shell } from "./shell/Shell";
 import { UI_PAGES } from "./pages";
 
+/** Pages that follow their own query as it changes (a story, a wizard's step, a form), and so keep what they've
+ *  loaded when only the query changes. Every other page reads its query once, when it starts. */
+const FOLLOWS_QUERY = new Set<PageId>(["tours", "build-an-app", "servers"]);
+
 /** A page of the map, in its sandbox when the route names one. A new address starts the page afresh. */
 function PageAt({ id }: { id: PageId }) {
   const { sandbox } = useParams(), { pathname, search } = useLocation();
   setBase(sandbox ? `/s/${sandbox}` : "");
   const Page = UI_PAGES[id]!;
-  return <Shell key={sandbox ?? ""} page={id}><Page key={`${pathname}${search}`} /></Shell>;
+  return <Shell key={sandbox ?? ""} page={id}><Page key={FOLLOWS_QUERY.has(id) ? pathname : `${pathname}${search}`} /></Shell>;
 }
 
 const pages = Object.values(PAGES);

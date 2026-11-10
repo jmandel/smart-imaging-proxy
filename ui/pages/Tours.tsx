@@ -147,6 +147,11 @@ export default function Tours() {
       } catch (e) { setError((e as Error).message); }
     })();
   }, []);
+  // Back and Forward between stories in a sandbox: the page follows the address to the story it names.
+  const named = params.get("tour");
+  useEffect(() => {
+    if (BASE && list && named && state?.tour && named !== state.tour.id) { client.current = undefined; load(named).catch(e => setError((e as Error).message)); }
+  }, [named]);
   useEffect(() => {
     // Focus waits for what it goes to: the title once the page has loaded, the next step's button once it's enabled.
     const to = focus.current === "title" ? document.getElementById("tour-title") : focus.current === "step" && !running ? nextButton.current : undefined;
@@ -163,9 +168,12 @@ export default function Tours() {
         : await fetch(`/api/tours/${encodeURIComponent(id)}/start`, { method: "POST" }).then(async x => { const b = await x.json(); if (!x.ok) throw new Error(b.error ?? `HTTP ${x.status}`); return b; });
       client.current = undefined;
       const to = `${r.sandbox.base}/tours?tour=${encodeURIComponent(id)}`;
-      // Starting this same story over stays on its page, and its history.
-      if (to === `${pathname}${search}`) { setError(undefined); await load(id); focus.current = "title"; }
-      else navigate(to);
+      if (to.split("?")[0] === pathname) {
+        // In this sandbox: the story loads first, then the address follows, so the page goes straight from one
+        // story to the next. Starting the same one over stays on its history entry.
+        setError(undefined); await load(id); focus.current = "title";
+        if (to !== `${pathname}${search}`) navigate(to, { preventScrollReset: true });
+      } else navigate(to);
     } catch (e) { setError((e as Error).message); }
   }
 
@@ -205,7 +213,7 @@ export default function Tours() {
   // One layout throughout: the stories on the left, the chosen one on the right, as a preview until it runs.
   const chosen = inRunner ? state!.tour!.id : params.get("tour") ?? list?.tours[0]?.id;
   const preview = list?.tours.find(t => t.id === chosen) ?? list?.tours[0];
-  const choose = (id: string) => inRunner ? start(id) : navigate(`?tour=${encodeURIComponent(id)}`);
+  const choose = (id: string) => inRunner ? start(id) : navigate(`?tour=${encodeURIComponent(id)}`, { preventScrollReset: true });
   return (
     <main className="tours" id="tours-main">
       <nav className="tour-list" aria-label="Stories" id="tour-list">
