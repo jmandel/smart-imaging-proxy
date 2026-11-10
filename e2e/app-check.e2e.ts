@@ -92,7 +92,7 @@ describe("the app check", () => {
     await check.locator("#requirements").waitFor();
     const states = await check.locator(".check-step").evaluateAll(els => els.map(e => `${e.querySelector(".what b")!.textContent}: ${e.getAttribute("data-state")}`));
     expect(states).toEqual([
-      "Signed in as josh for josh-example: pass", "Approved every site: pass", "Searched for josh-example's studies: pass", "Found every study the server released: pass", "Opened every study it found: pass",
+      "Signed in as josh for josh-example: pass", "Approved everything offered: pass", "Searched for josh-example's studies: pass", "Found every study the server released: pass", "Opened every study it found: pass",
       "Each retrieval sends the token of the search that gave its address: pass", "Each retrieval uses its study's Endpoint.address as given: pass", "Endpoints in every form are resolved: pass", "Each retrieval sends an Accept header: pass",
     ]);
     expect(await check.locator("#check-summary").innerText()).toBe("All 4 requirements checked were met. The app did what the script asked.");

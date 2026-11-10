@@ -37,7 +37,6 @@ An app starts at the clinical FHIR base. `GET $SANDBOX/fhir/.well-known/smart-co
 - It's saved to disk, and lasts until its owner deletes it.
 - **Its URL is the access.** Anyone with it can read and change the sandbox, so treat it as a secret. The name is only a label.
 - Access is a union of grants. There are no deny rules: every grant only adds access.
-- **Sites are a stand-in.** Each sample study is filed under a site (Lakeside Imaging, Northside Pathology, Riverside Hospital), and approvals and shares name sites. That's this sandbox's way of modelling a choice a patient might make about what to share. It isn't part of SMART Imaging, an app never sees it, and `ImagingStudy` doesn't carry it.
 - The site root is read-only on public deployments. Work in a sandbox.
 
 ## Sample accounts
@@ -50,13 +49,13 @@ Sign-in has no passwords.
 | `sam-caregiver` | `sam-example` | Two synthetic studies, and guardian of Riley |
 | `robin` | `robin-example` | No studies: a real empty result |
 
-What a correct app sees, signed in with a public client and approving every site, as this sandbox's policy stands (a new sandbox's is the default):
+What a correct app sees, signed in with a public client and approving everything offered, as this sandbox's policy stands (a new sandbox's is the default):
 
 {{EXPECTED_TABLE}}
 
-The same, as data, with study ids, UIDs and titles, the sites, the people and the kinds of client: `GET $SANDBOX/contract.json`, no token. Assert against it rather than this table. Its `state` says whether the sandbox answers as a new one: `clean` is false while a fault is set, an app check is running, or the demo clock has moved.
+The same, as data, with study ids, UIDs and titles, the people and the kinds of client: `GET $SANDBOX/contract.json`, no token. Assert against it rather than this table. Its `state` says whether the sandbox answers as a new one: `clean` is false while a fault is set, an app check is running, or the demo clock has moved.
 
-Approving fewer sites leaves those sites' studies and reports out. `GET /api/sandbox/policy/explain` says why each study is or isn't released.
+Approving less at sign-in leaves those studies and their reports out. `GET /api/sandbox/policy/explain` says why each study is or isn't released.
 
 `riley-example` is Sam's 15-year-old child. One of Riley's studies is confidential adolescent care, which Sam can't see. Clinical entries are invented.
 
@@ -74,7 +73,7 @@ The binding part, for an app or a client library. Each rule is explained, with e
 6. **Retrieve only under `Endpoint.address`**, as given, with the same token as the search, and an `Accept` header. A study's UID is its `urn:dicom:uid` identifier, less `urn:oid:` ("Read data").
 7. **Wait out a 503 with `Retry-After`**, then repeat the identical request: searches and retrievals may both answer it ("Read data").
 8. **Fetch images on demand.** A first instance can be several MB, and a whole study far more: josh's six first instances come to about 46 MB.
-9. **Expect less than everything.** A study can be withheld by policy, with its report, and an empty result is correct for some people ("Sample accounts", and `contract.json`).
+9. **Learn what you may see only from search.** Access can be narrowed in ways the token doesn't show: the person's choices at sign-in, the health system's policy, a guardian's limits. The `scope` reads the same either way. A study can be withheld, with its report, and a small or empty result is correct for some people ("Sample accounts", and `contract.json`).
 
 The App check ("App check: run one for someone") grades an app against the rules that are spec requirements, from the sandbox's side.
 
@@ -110,14 +109,10 @@ An agent can walk the forms a person would:
 
 1. `GET $SANDBOX/authorize?response_type=code&client_id=...&redirect_uri=...&scope=...&aud=...&state=...&code_challenge=...&code_challenge_method=S256`. The response is a form. Take its `action`.
 2. `POST` that action with the form field `username=josh`. Follow the 303 to the consent page, and take its form `action`.
-3. `POST` that action with `decision=approve` and `patient=josh-example`. The 302 `Location` has the `code`.
+3. `POST` that action with `decision=approve` and `patient=josh-example`, approving everything offered. The 302 `Location` has the `code`.
 4. `POST $SANDBOX/token` with `grant_type=authorization_code`, `code`, `redirect_uri`, `client_id` and `code_verifier`. The response has `access_token`, `patient` (a bare FHIR id, such as `josh-example`), `scope` (as requested), and `expires_in` in seconds of the demo clock.
 
-To limit what's approved to some sites, add `sites_shown=1` and a `sites` field per site, with the site's name exactly: `Northside Pathology`, `Lakeside Imaging` or `Riverside Hospital`. Sites left out aren't approved. A name that isn't a site at all is refused: the redirect carries `error=invalid_request` and an `error_description` listing the sites. A real site the person doesn't hold for that patient is dropped.
-
-To approve only some studies at a site, as the consent page's study boxes do: add `study_listed` with the site's name, and a `study` field with the id of each study to approve there. A site with `study_listed` approves just the studies named; one without it approves the whole site, including studies that arrive later. A study id is `ImagingStudy.id`, and `contract.json` lists them. When the person can act for more than one patient, the page names each field for its patient instead: `sites@{patient}`, `study@{patient}`, `study@{patient}_listed` and `sites_shown@{patient}`.
-
-Each sign-in's choice replaces that app's approval for that patient, so a later sign-in that approves fewer sites narrows what earlier tokens' searches return.
+A person can approve less on the consent page, and so can an agent driving it: see "Approving less at sign-in" under "The management API". An app can't tell from its token which it got.
 
 ## Read data
 
@@ -135,7 +130,7 @@ Reports link to their images by accession number, and each has a PDF and a text 
 curl "$SANDBOX/fhir/DiagnosticReport?patient=Patient/josh-example" -H "authorization: Bearer $TOKEN"
 ```
 
-Each study names its `Endpoint` in `endpoint`, in any of three forms the guide allows, and an app must resolve all three by FHIR's Bundle rules: `#wado` is in the study's own `contained`; `urn:uuid:…` is the entry with that exact `fullUrl`; and a relative `Endpoint/{id}` resolves against the base of the study's own `fullUrl` (`{imaging}/fhir/`), to the entry whose `fullUrl` is `{imaging}/fhir/Endpoint/{id}`. The smoke test below does exactly this. Its `address` is that study's own DICOMweb base: retrieve under it, never under an address you build. A search with no results has no `entry` at all, only `total: 0`, so read `entry ?? []`. Sites aren't part of SMART Imaging, and aren't on `ImagingStudy`: they're this sandbox's stand-in for a sharing choice a patient might make, so an app shouldn't depend on them. `contract.json` names each study's site only so a test can predict what a sign-in's choice releases. `$STUDY_UID` is the study's `identifier` with system `urn:dicom:uid`, less its `urn:oid:` prefix (not `ImagingStudy.id`); series and instance UIDs are `series[].uid` and `series[].instance[].uid`. Still send the token:
+Each study names its `Endpoint` in `endpoint`, in any of three forms the guide allows, and an app must resolve all three by FHIR's Bundle rules: `#wado` is in the study's own `contained`; `urn:uuid:…` is the entry with that exact `fullUrl`; and a relative `Endpoint/{id}` resolves against the base of the study's own `fullUrl` (`{imaging}/fhir/`), to the entry whose `fullUrl` is `{imaging}/fhir/Endpoint/{id}`. The smoke test below does exactly this. Its `address` is that study's own DICOMweb base: retrieve under it, never under an address you build. A search with no results has no `entry` at all, only `total: 0`, so read `entry ?? []`.  `$STUDY_UID` is the study's `identifier` with system `urn:dicom:uid`, less its `urn:oid:` prefix (not `ImagingStudy.id`); series and instance UIDs are `series[].uid` and `series[].instance[].uid`. Still send the token:
 
 ```sh
 curl "$ADDRESS/studies/$STUDY_UID/series/$SERIES_UID/instances/$INSTANCE_UID" \
@@ -172,12 +167,12 @@ curl -s {{ORIGIN}}/api/checks/$ID               # an AppCheckRun; while it runs,
 
 | `script` | The person | A correct app |
 |---|---|---|
-| `josh` | Signs in as `josh`, approves every site, opens every study | Finds and opens all 6 |
+| `josh` | Signs in as `josh`, approves everything offered, opens every study | Finds and opens all 6 |
 | `riley` | Signs in as `sam-caregiver` and chooses Riley | Finds 1 of Riley's 2, and opens it |
 | `robin` | Signs in as `robin` | Finds none, with no error |
 | `service` | Runs the backend service for `josh-example` | Finds and retrieves all 6 |
 
-`conditions` are what's staged, all four by default: `small-pages` (`pageSize: 2`), `search-503` and `retrieval-503` (`Retry-After: 2`), and `endpoint-forms`, as in the faults table under "Manage a sandbox". Give the person the `url`, or start the run and tell them: "Point your app at `$SANDBOX/fhir` with client ID `…`, sign in as josh, approve every site, open every study, then press End the run and grade on the page." It grades the sandbox's log, not a screen, so a headless app is graded exactly as a browser app is. Only that client's requests while the run is on count: its tokens from `token.issued`, its searches by `client`, and its retrievals by `tokenHash`, or with no token, by the address a search issued to one of its tokens.
+`conditions` are what's staged, all four by default: `small-pages` (`pageSize: 2`), `search-503` and `retrieval-503` (`Retry-After: 2`), and `endpoint-forms`, as in the faults table under "Manage a sandbox". Give the person the `url`, or start the run and tell them: "Point your app at `$SANDBOX/fhir` with client ID `…`, sign in as josh, approve everything offered, open every study, then press End the run and grade on the page." It grades the sandbox's log, not a screen, so a headless app is graded exactly as a browser app is. Only that client's requests while the run is on count: its tokens from `token.issued`, its searches by `client`, and its retrievals by `tokenHash`, or with no token, by the address a search issued to one of its tokens.
 
 The result has three parts. `steps` with `group: "script"` say whether the app did what the script asked, against what the server itself released, so an app that stopped early fails where one that correctly found 1 or none passes. `steps` with `group: "requirement"` are clear requirements on apps, each with its `sources`, quoted: `pass`, `fail` with the requests behind it, or `note` when the app made no request it covers. `notes` are where the app relied on something the spec doesn't promise, such as one page of results or `/rendered`: not failures, each with why. The requirements and their sources are in [docs/app-check.md](https://github.com/jmandel/smart-imaging-proxy/blob/main/docs/app-check.md).
 
@@ -323,6 +318,14 @@ Everything the Tours page does, you can do with these calls. `begin` returns `{p
 
 The checks only a sandbox can run, at the foot of the Server check page when it checks a sandbox (`{{ORIGIN}}/check?sandbox=/s/{id}`), have no step API. Each is a scenario a client runs against a fresh sandbox, using the calls above, `POST /api/sandbox/faults`, `POST /api/sandbox/clock` and `GET /api/sandbox/catalog`.
 
+## Approving less at sign-in
+
+To approve less than everything at sign-in, as a person can on the consent page: this sandbox models that choice by site, a stand-in for whatever a real health system lets a person choose, and not part of SMART Imaging. To limit the approval to some sites, add `sites_shown=1` and a `sites` field per site, with the site's name exactly: `Northside Pathology`, `Lakeside Imaging` or `Riverside Hospital`. Sites left out aren't approved. A name that isn't a site at all is refused: the redirect carries `error=invalid_request` and an `error_description` listing the sites. A real site the person doesn't hold for that patient is dropped.
+
+To approve only some studies at a site, as the consent page's study boxes do: add `study_listed` with the site's name, and a `study` field with the id of each study to approve there. A site with `study_listed` approves just the studies named; one without it approves the whole site, including studies that arrive later. A study id is `ImagingStudy.id`, and `contract.json` lists them. When the person can act for more than one patient, the page names each field for its patient instead: `sites@{patient}`, `study@{patient}`, `study@{patient}_listed` and `sites_shown@{patient}`.
+
+Each sign-in's choice replaces that app's approval for that patient, so a later sign-in that approves fewer sites narrows what earlier tokens' searches return.
+
 ## API types
 
 The shapes the management API takes and gives, as TypeScript. A `Ref` is a kind and an id: `user:josh`, `patient:josh-example`, `app:portal-app`, `service:hand-referral-service`.
@@ -332,15 +335,15 @@ type Ref = string;
 
 // GET $SANDBOX/contract.json, no token: the sandbox's ground truth, worked out from its policy now.
 interface Contract {
-  about: string; sites: string[];
+  about: string;
   users: { username: string; name: string; fhirUser: string; patient?: string }[];
   patients: { id: string; name: string; studies: number }[];
   clientTypes: { type: "public" | "confidential" | "backend"; auth: string; grant: string; scope: string }[];
   state: { clean: boolean; faults: Faults; clockOffsetSeconds: number; appCheck: { script: string; staged: string[]; endsAt: string } | null };
   expected: { user: string; patient: string; via: "self" | "related";
-    studies: { id: string; uid: string; site?: string; title: string }[];   // what an app approved for every site finds
+    studies: { id: string; uid: string; title: string }[];   // what an app approving everything offered finds
     reports: number;
-    withheld: { id: string; site?: string; title: string; labels: string[] }[] }[];
+    withheld: { id: string; title: string; labels: string[] }[] }[];
 }
 
 // GET /api/sandbox/keys-shared-on-purpose: the one call with no token.

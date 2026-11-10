@@ -29,9 +29,9 @@ export const SOURCES = {
 export interface Script { id: string; title: string; kind: "launch" | "backend"; user?: string; patient: string; steps: string[]; newSandbox: { released: number; of: number } }
 export const SCRIPTS: Script[] = [
   { id: "josh", title: "Josh's own studies", kind: "launch", user: "josh", patient: "josh-example", newSandbox: { released: 6, of: 6 },
-    steps: ["Sign in as josh, and approve every site.", "Find every study: a new sandbox has 6, at three sites.", "Open every study."] },
+    steps: ["Sign in as josh, and approve everything offered.", "Find every study: a new sandbox has 6.", "Open every study."] },
   { id: "riley", title: "Riley, by her guardian", kind: "launch", user: "sam-caregiver", patient: "riley-example", newSandbox: { released: 1, of: 2 },
-    steps: ["Sign in as sam-caregiver, choose Riley, and approve every site.", "Find Riley's studies: a correct app gets 1 of her 2, since the other is confidential care that Sam can't see.", "Open the study it finds."] },
+    steps: ["Sign in as sam-caregiver, choose Riley, and approve everything offered.", "Find Riley's studies: a correct app gets 1 of her 2, since the other is confidential care that Sam can't see.", "Open the study it finds."] },
   { id: "robin", title: "Robin, with no studies", kind: "launch", user: "robin", patient: "robin-example", newSandbox: { released: 0, of: 0 },
     steps: ["Sign in as robin, and approve.", "Search for Robin's studies: there are none.", "Show that there are none, without an error."] },
   { id: "service", title: "A backend service, for Josh", kind: "backend", patient: "josh-example", newSandbox: { released: 6, of: 6 },
@@ -133,11 +133,11 @@ export function grade(input: GradeInput): Graded {
     reached = false;
     add({ group: "script", title: signedTitle, state: "fail", result: mine.length ? `The tokens issued to ${input.client} were for ${[...new Set(mine.map(e => [d(e).user, d(e).patient].filter(Boolean).join(" for ")))].join("; ")}, not what the script asked` : `No token was issued to ${input.client} during the run`, requests: lines(mine, tokenRequest) });
   }
-  const approvedTitle = "Approved every site";
+  const approvedTitle = "Approved everything offered";
   if (script.kind === "launch") {
     const withheld = [...new Set(answered.flatMap(e => (d(e).withheld ?? []).map((w: any) => w.study as string)))];
     if (!reached || !answered.length) add({ group: "script", title: approvedTitle, state: "unreached", result: "No search answered, so this can't be told", requests: [] });
-    else if (withheld.length) add({ group: "script", title: approvedTitle, state: "fail", result: `The approval left out ${plural(withheld.length, "study", "studies")} the person can see (${withheld.join(", ")}): sign in again and approve every site`, requests: lines(answered, searchLine) });
+    else if (withheld.length) add({ group: "script", title: approvedTitle, state: "fail", result: `The approval left out ${plural(withheld.length, "study", "studies")} the person can see (${withheld.join(", ")}): sign in again and approve everything offered`, requests: lines(answered, searchLine) });
     else add({ group: "script", title: approvedTitle, state: "pass", result: "Nothing the person can see was withheld from the app", requests: [] });
   }
   const searchedTitle = `Searched for ${script.patient}'s studies`;

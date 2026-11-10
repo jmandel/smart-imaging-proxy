@@ -1,5 +1,5 @@
 // contract.json, checked against what the sandbox actually does: for every person and patient it lists, an app
-// signed in through the forms and approved for every site finds exactly the studies and reports it says, and the
+// signed in through the forms and approving everything offered finds exactly the studies and reports it says, and the
 // studies it says are withheld read as 404 for that app.
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { createHash, randomBytes } from "node:crypto";
@@ -18,7 +18,7 @@ const REDIRECT = "http://localhost:8123/callback";
 const S = () => `${CONFIG.demoUrl}${base}`;
 const formAction = async (r: Response) => new URL((await r.text()).match(/<form[^>]*action="([^"]+)"/)![1]!.replaceAll("&amp;", "&"), r.url);
 
-/** A token as an app gets one: the forms walked as `user`, choosing `patient`, approving every site. */
+/** A token as an app gets one: the forms walked as `user`, choosing `patient`, approving everything offered. */
 async function signIn(user: string, patient: string, choices: [string, string][] = []) {
   const conf: any = await (await fetch(`${S()}/fhir/.well-known/smart-configuration`)).json();
   const verifier = b64(randomBytes(32)), auth = new URL(conf.authorization_endpoint);
@@ -40,8 +40,8 @@ beforeAll(async () => {
 });
 afterAll(() => { demo?.stop(true); stack?.stop(); });
 
-test("contract.json lists the four views llms.txt describes, and the sites", () => {
-  expect(contract.sites).toEqual(["Lakeside Imaging", "Northside Pathology", "Riverside Hospital"]);
+test("contract.json lists the four views llms.txt describes, with no sites: an app never sees them", () => {
+  expect(JSON.stringify(contract)).not.toMatch(/"sites?"/);
   expect(contract.expected.map(v => [v.user, v.patient, v.studies.length, v.withheld.length])).toEqual([
     ["josh", "josh-example", 6, 0], ["robin", "robin-example", 0, 0], ["sam-caregiver", "sam-example", 2, 0], ["sam-caregiver", "riley-example", 1, 1],
   ]);
@@ -79,7 +79,9 @@ test("llms.txt's table of expected answers is drawn from it", async () => {
 });
 
 test("approving one study at a site, as llms.txt describes, gives the app that study and no other", async () => {
-  const josh = contract.expected.find(v => v.user === "josh")!, riverside = josh.studies.filter(s => s.site === "Riverside Hospital"), chosen = riverside[0]!;
+  // Sites are the sandbox's own: its catalog, through the management API, says which studies are at one.
+  const catalog: any = await (await fetch(`${S()}/api/sandbox/catalog?patient=josh-example`, { headers: await adminHeaders({ fetch: r => fetch(r) }, base) })).json();
+  const riverside = catalog.studies.filter((s: any) => s.site === "Riverside Hospital"), chosen = riverside[0]!;
   expect(riverside.length).toBeGreaterThan(1);
   const { token, imaging } = await signIn("josh", "josh-example", [["sites_shown", "1"], ["sites", "Riverside Hospital"], ["study_listed", "Riverside Hospital"], ["study", chosen.id]]);
   const page: any = await (await fetch(`${imaging}/ImagingStudy?patient=Patient/josh-example`, { headers: { authorization: `Bearer ${token}` } })).json();

@@ -187,7 +187,7 @@ describe("app check runs in a sandbox", () => {
     expect(made.body.url).toBe(`${new URL(CONFIG.demoUrl).origin}${w.prefix}/app-check?run=${made.body.id}`);
     const read = await call("GET", `/api/checks/${made.body.id}`);
     expect(read.body).toMatchObject({ status: "waiting", app: { sandbox: w.prefix, clientId: c.id, script: "josh", conditions: CONDITIONS.map(x => x.id), name: "My app", type: "public" }, steps: [], notes: [] });
-    expect(read.body.script.steps[0]).toBe("Sign in as josh, and approve every site.");
+    expect(read.body.script.steps[0]).toBe("Sign in as josh, and approve everything offered.");
   });
 
   test("starting stages the conditions, one run at a time, and ending puts the sandbox back exactly", async () => {
@@ -244,7 +244,7 @@ describe("app check runs in a sandbox", () => {
     expect(live.body.progress.retrievals).toBeGreaterThanOrEqual(12);
     const done = (await call("POST", `/api/checks/${run}/end`)).body;
     expect(done.steps.map((s: any) => `${s.title}: ${s.state}`)).toEqual([
-      "Signed in as josh for josh-example: pass", "Approved every site: pass", "Searched for josh-example's studies: pass", "Found every study the server released: pass", "Opened every study it found: pass",
+      "Signed in as josh for josh-example: pass", "Approved everything offered: pass", "Searched for josh-example's studies: pass", "Found every study the server released: pass", "Opened every study it found: pass",
       "Each retrieval sends the token of the search that gave its address: pass", "Each retrieval uses its study's Endpoint.address as given: pass", "Endpoints in every form are resolved: pass", "Each retrieval sends an Accept header: pass",
     ]);
     expect(done.notes).toEqual([]);

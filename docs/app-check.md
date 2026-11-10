@@ -20,7 +20,7 @@ Not graded, because the server side can't see them or can't tie them to the app:
 Not spec requirements: whether the app did what the run asked. Each step depends on the one before.
 
 1. Signed in as the script's user for its patient (or, for `service`, a `client_credentials` token).
-2. Approved every site: no search's `withheld` names a study the person can see but the app wasn't approved for.
+2. Approved everything offered: no search's `withheld` names a study the person can see but the app wasn't approved for.
 3. Searched for the patient: a search answered 200.
 4. Found every study the server released: the studies across the app's searches cover the search's `total`. So Riley's 1 of 2 and Robin's 0 pass; an app that stopped at page one fails. If `total` differs from a new sandbox's (6, 1 of 2, 0, 6), the result says the sandbox's policy was changed.
 5. Opened every study it found: a complete image retrieval (study, series, instance or bulk) from each study with an Endpoint.

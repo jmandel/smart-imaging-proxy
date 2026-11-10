@@ -23,7 +23,7 @@ interface AppRun {
 }
 /** The scripts and conditions a run can have, as the API names them. Kept here so the form needs no call to draw. */
 const SCRIPTS = [
-  { id: "josh", title: "Josh's own studies", kind: "launch", line: "Sign in as josh, approve every site, and open all 6 studies." },
+  { id: "josh", title: "Josh's own studies", kind: "launch", line: "Sign in as josh, approve everything offered, and open all 6 studies." },
   { id: "riley", title: "Riley, by her guardian", kind: "launch", line: "Sign in as sam-caregiver and choose Riley: a correct app gets 1 of her 2 studies." },
   { id: "robin", title: "Robin, with no studies", kind: "launch", line: "Sign in as robin: a correct app finds none, and shows that without an error." },
   { id: "service", title: "A backend service, for Josh", kind: "backend", line: "Get a token as the service, search for josh-example, and retrieve every study." },
