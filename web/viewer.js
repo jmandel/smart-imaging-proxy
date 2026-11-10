@@ -347,6 +347,7 @@ async function run(session) {
   if (results.some(r => r.reason?.status === 401)) { save({ session: undefined }); announce("Your session ended. Connect again."); note("Your session ended. Disconnect, then connect again."); }
 }
 renderServers();
+document.addEventListener("sandboxes-changed", renderServers);
 $("#connect").addEventListener("click", connect);
 $("#disconnect").addEventListener("click", disconnect);
 

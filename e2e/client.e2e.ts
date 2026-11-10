@@ -361,8 +361,15 @@ describe("the demo client", () => {
     const page = await owner.newPage();
     page.on("dialog", d => d.accept("Team demo"));
     const base = await enterSandbox(page);
+    // Open in a second tab: its trail and footer follow the rename, as this page's footer does.
+    const second = await owner.newPage();
+    await second.goto(`${ORIGIN}${base}/build`);
     await page.getByRole("button", { name: "Rename" }).click();
     await page.locator("#sandbox-name", { hasText: "Team demo" }).waitFor();
+    await page.locator(".site-footer h2", { hasText: "Sandbox “Team demo”" }).waitFor();
+    await second.locator(".crumb-sandbox", { hasText: "Sandbox “Team demo”" }).waitFor();
+    await second.locator(".site-footer h2", { hasText: "Sandbox “Team demo”" }).waitFor();
+    await second.close();
     await page.getByRole("button", { name: "Share" }).click();
     const link = await page.locator("#share-link").inputValue();
     expect(link).toBe(`${ORIGIN}${base}/`);

@@ -64,4 +64,4 @@ addEventListener("pageshow", e => {
   if (!BASE) { $("#create").disabled = false; renderHome(); }
   else renderSandbox();
 });
-if (!BASE) renderHome(); else renderSandbox();
+if (!BASE) { renderHome(); document.addEventListener("sandboxes-changed", () => paintHome(knownSandboxes())); } else renderSandbox();

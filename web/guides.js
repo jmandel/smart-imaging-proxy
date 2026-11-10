@@ -15,3 +15,4 @@ document.addEventListener("click", async e => {
   catch (err) { $("#guide-sandbox").textContent = err.message; }
 });
 paintGuide();
+document.addEventListener("sandboxes-changed", paintGuide);

@@ -132,7 +132,15 @@ async function renderSettings(message = "") {
 // The sandboxes this browser has made or joined, and the one it was last in.
 const SANDBOXES_KEY = "smart-imaging-client:sandboxes", CURRENT_KEY = "smart-imaging-client:current";
 function knownSandboxes() { try { return JSON.parse(localStorage.getItem(SANDBOXES_KEY) ?? "[]"); } catch { return []; } }
-const saveSandboxes = list => { try { localStorage.setItem(SANDBOXES_KEY, JSON.stringify(list)); } catch {} };
+/** Saves the list, and tells the page, so every name on it follows: the trail, the footer, the guides. */
+const saveSandboxes = list => { try { localStorage.setItem(SANDBOXES_KEY, JSON.stringify(list)); } catch {} document.dispatchEvent(new CustomEvent("sandboxes-changed")); };
+/** A sandbox's name as the server gave it, remembered, if this browser knows the sandbox. */
+function rememberName(base, name) {
+  const list = knownSandboxes();
+  if (name && list.some(w => w.base === base && w.name !== name)) saveSandboxes(list.map(w => w.base === base ? { ...w, name } : w));
+}
+// Another tab renamed, made or left a sandbox.
+addEventListener("storage", e => { if (e.key === SANDBOXES_KEY) document.dispatchEvent(new CustomEvent("sandboxes-changed")); });
 /** The sandbox that links outside one go to: the one you were last in, or the newest you know. */
 function linkedSandbox() {
   const list = knownSandboxes(); let current;
@@ -187,7 +195,11 @@ function initHeader() {
   if (!BASE) return;
   try { localStorage.setItem(CURRENT_KEY, BASE); } catch {}
   const crumb = $(".crumb-sandbox");
-  if (crumb) sandboxName(BASE).then(name => { if (name) crumb.textContent = `Sandbox “${name}”`; });
+  const paintCrumb = () => { const name = knownSandboxes().find(w => w.base === BASE)?.name; if (crumb && name) crumb.textContent = `Sandbox “${name}”`; };
+  paintCrumb();
+  document.addEventListener("sandboxes-changed", paintCrumb);
+  // The server has the name as it is now, which may have changed in another browser.
+  sandboxName(BASE).then(name => rememberName(BASE, name));
 }
 initHeader();
 

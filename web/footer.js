@@ -1,24 +1,30 @@
 // The site map at the foot of every page, the trace pages too, so it reads nothing but the address and what
 // this browser remembers: the guides, the viewer, your sandbox's pages, and the specifications and source.
+// It's drawn again whenever that changes, here or in another tab: a sandbox renamed, made or left.
 (() => {
   const here = location.pathname.match(/^\/s\/[^/]+/)?.[0];
-  let known = [], current;
-  try { known = JSON.parse(localStorage.getItem("smart-imaging-client:sandboxes") ?? "[]"); current = localStorage.getItem("smart-imaging-client:current"); } catch {}
-  const sandbox = known.find(w => w.base === (here ?? current)) ?? (here ? { base: here } : known.at(-1));
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const REPO = "https://github.com/jmandel/smart-imaging-proxy";
-  const column = (title, links) => `<section><h2>${title}</h2><ul>${links.map(([href, label]) => `<li><a href="${esc(href)}" data-root>${esc(label)}</a></li>`).join("")}</ul></section>`;
-  const sb = sandbox?.base;
-  const columns = [
-    column("Guides", [["/build-an-app", "Build an App"], ["/run-a-server", "Run a Server"], ["/how-it-works", "How It Works"], ["/why-it-matters", "Why It Matters"], [`${sb ?? ""}/llms.txt`, "For Agents (llms.txt)"]]),
-    column("Test your server", [["/viewer", "Viewer"], ["/servers", "Your servers"], [`${REPO}/issues/1`, "Conformance checks: the plan"]]),
-    sb ? column(`Sandbox${sandbox.name ? ` “${esc(sandbox.name)}”` : ""}`, [[`${sb}/`, "Home"], [`${sb}/build`, "Start here"], [`${sb}/connect`, "Register an app"], [`${sb}/activity`, "Logs"], [`${sb}/trace/`, "Live trace"], [`${sb}/tours`, "Tour"], [`${sb}/explore`, "Explore"], [`${sb}/checks`, "Conformance"], ["/", "All your sandboxes"]])
-      : column("Sandboxes", [["/", "Your sandboxes"]]),
-    column("Reference", [["https://build.fhir.org/ig/argonautproject/smart-imaging/", "SMART Imaging Access"], ["https://build.fhir.org/ig/HL7/smart-app-launch/", "SMART App Launch"], ["https://build.fhir.org/imagingstudy.html", "FHIR ImagingStudy"], ["https://www.dicomstandard.org/using/dicomweb/retrieve-wado-rs-and-wado-uri", "DICOMweb WADO-RS"], [REPO, "Source on GitHub"], [`${REPO}/issues`, "Issues and ideas"]]),
-  ];
+  const column = (title, links) => `<section><h2>${esc(title)}</h2><ul>${links.map(([href, label]) => `<li><a href="${esc(href)}" data-root>${esc(label)}</a></li>`).join("")}</ul></section>`;
+  /** The map, from what this browser remembers now. */
+  function map() {
+    let known = [], current;
+    try { known = JSON.parse(localStorage.getItem("smart-imaging-client:sandboxes") ?? "[]"); current = localStorage.getItem("smart-imaging-client:current"); } catch {}
+    const sandbox = known.find(w => w.base === (here ?? current)) ?? (here ? { base: here } : known.at(-1)), sb = sandbox?.base;
+    return [
+      column("Guides", [["/build-an-app", "Build an App"], ["/run-a-server", "Run a Server"], ["/how-it-works", "How It Works"], ["/why-it-matters", "Why It Matters"], [`${sb ?? ""}/llms.txt`, "For Agents (llms.txt)"]]),
+      column("Test your server", [["/viewer", "Viewer"], ["/servers", "Your servers"], [`${REPO}/issues/1`, "Conformance checks: the plan"]]),
+      sb ? column(`Sandbox${sandbox.name ? ` “${sandbox.name}”` : ""}`, [[`${sb}/`, "Home"], [`${sb}/build`, "Start here"], [`${sb}/connect`, "Register an app"], [`${sb}/activity`, "Logs"], [`${sb}/trace/`, "Live trace"], [`${sb}/tours`, "Tour"], [`${sb}/explore`, "Explore"], [`${sb}/checks`, "Conformance"], ["/", "All your sandboxes"]])
+        : column("Sandboxes", [["/", "Your sandboxes"]]),
+      column("Reference", [["https://build.fhir.org/ig/argonautproject/smart-imaging/", "SMART Imaging Access"], ["https://build.fhir.org/ig/HL7/smart-app-launch/", "SMART App Launch"], ["https://build.fhir.org/imagingstudy.html", "FHIR ImagingStudy"], ["https://www.dicomstandard.org/using/dicomweb/retrieve-wado-rs-and-wado-uri", "DICOMweb WADO-RS"], [REPO, "Source on GitHub"], [`${REPO}/issues`, "Issues and ideas"]]),
+    ].join("");
+  }
   const footer = document.createElement("footer");
   footer.className = "site-footer";
-  footer.innerHTML = `<nav aria-label="Site map">${columns.join("")}</nav><p>A public sandbox of SMART Imaging Access, with sample data only. <a href="${REPO}" data-root>Open source on GitHub</a>.</p>`;
+  const paint = () => { footer.innerHTML = `<nav aria-label="Site map">${map()}</nav><p>A public sandbox of SMART Imaging Access, with sample data only. <a href="${REPO}" data-root>Open source on GitHub</a>.</p>`; };
+  paint();
+  document.addEventListener("sandboxes-changed", paint);
+  addEventListener("storage", e => { if (e.key === "smart-imaging-client:sandboxes") paint(); });
   // Its own look, so it's the same on pages with other stylesheets.
   const style = document.createElement("style");
   style.textContent = `
