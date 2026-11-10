@@ -2,7 +2,7 @@
 // condition an app check stages. llms.txt shows the same file, so the doc can't drift from the code.
 import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import { join } from "node:path";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createDemoServer } from "../src/demo-server";
 import { registerClients } from "../src/flows";
 import { CONFIG, PORTS } from "../src/config";
@@ -22,6 +22,7 @@ afterAll(() => { demo?.stop(true); stack?.stop(); });
 async function smoke(stage?: (base: string) => Promise<void>) {
   const { base } = await (await fetch(`${CONFIG.demoUrl}/api/sandboxes`, { method: "POST" })).json() as { base: string };
   await stage?.(base);
+  mkdirSync(join(root, ".run"), { recursive: true });
   const dir = mkdtempSync(join(root, ".run", "smoke-"));
   try {
     writeFileSync(join(dir, "smoke.mjs"), await (await fetch(`${CONFIG.demoUrl}${base}/smoke.mjs`)).text());
