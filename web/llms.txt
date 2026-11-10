@@ -153,6 +153,12 @@ All paths below are under `$SANDBOX`. Bodies are JSON.
 | `GET /api/sandbox/explore/view?session=&user=&patient=` or `?session=&client=&referral=` | A view explained from policy: headline, the studies its viewer may know of with why each is or isn't released, the layer chain, and what could change it. `session` names the trace session your requests carry |
 | `GET /api/sandbox/explore/happened?session=&study=` | One line for what a session did with a study, from the activity log |
 | `GET /api/sandbox/explore/rule-sets?service=` | The imaging network's named rule sets for a service, with their rules to `PUT` |
+| `GET /api/sandbox/catalog?patient=` | A patient's studies as the catalog holds them, with UIDs, sites, dates and image counts, in the order search returns them |
+| `POST /api/sandbox/faults` `{"decisionOutage":true}` or `{"truncateAfter":N}` | Injects a fault: the Imaging Server's decision API down, or the image store stopping after `N` instances. `false` and `null` clear them |
+| `POST /api/sandbox/tours/{id}/start` | Starts a guided tour here, putting policy back to what's on file |
+| `GET /api/sandbox/tours/state?tour=` | A tour's steps, what the model expects of the next, and each finished step's result |
+| `POST /api/sandbox/tours/{id}/steps/{step}/begin` | Begins a step: the sandbox decides what the model expects, and returns a `plan` for you to carry out, with the `session` and `trace` to send it under |
+| `POST /api/sandbox/tours/{id}/steps/{step}/finish` `{"seen":{...}}` | Finishes it with what you saw, judged against the model |
 | `POST /api/sandbox/clock` `{"advanceSeconds":N}` or `{"reset":true}` | Moves the demo clock. `N` must be one of the choices in `GET /api/sandbox` |
 | `POST /api/sandbox/reset` `{"confirm":true}` | Puts policy back to what's on file |
 | `POST /api/sandbox/tokens/revoke-all` | Revokes every token |

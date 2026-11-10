@@ -10,6 +10,7 @@ import { createDemoServer } from "../src/demo-server";
 import { registerClients } from "../src/flows";
 import { CONFIG } from "../src/config";
 import { APPROVALS_ON_FILE } from "../src/stores";
+import { adminFor } from "./admin-token";
 
 const dir = mkdtempSync(join(tmpdir(), "sandboxes-"));
 let stack: Stack;
@@ -57,7 +58,7 @@ test("a tour started in someone's sandbox resets it and stays there", async () =
   w.clock.advance(7200);
   w.store.setNote("mine", "kept");
   const before = stack.sandboxes.size;
-  const r = await demo.fetch(new Request(`${CONFIG.demoUrl}${w.prefix}/api/tours/own/start`, { method: "POST", body: "{}", headers: { "content-type": "application/json" } }));
+  const r = await demo.fetch(new Request(`${CONFIG.demoUrl}${w.prefix}/api/sandbox/tours/own/start`, { method: "POST", body: "{}", headers: { ...(await adminFor(demo, `${w.prefix}/api/sandbox`)), "content-type": "application/json" } }));
   expect(r.status).toBe(201);
   expect((await r.json() as any).sandbox.base).toBe(w.prefix);
   expect(stack.sandboxes.size).toBe(before);
@@ -72,7 +73,7 @@ test("a tour leaves other apps' tokens and approvals alone, and resets its own",
   const exp = w.clock.now() + 3600;
   w.store.putToken("mine", "access", { client_id: "my-own-app", scope: "patient/*.rs", patient: "josh-example" } as any, exp);
   w.store.putToken("tours", "access", { client_id: "portal-app", scope: "patient/*.rs", patient: "josh-example" } as any, exp);
-  const r = await demo.fetch(new Request(`${CONFIG.demoUrl}${w.prefix}/api/tours/own/start`, { method: "POST", body: "{}", headers: { "content-type": "application/json" } }));
+  const r = await demo.fetch(new Request(`${CONFIG.demoUrl}${w.prefix}/api/sandbox/tours/own/start`, { method: "POST", body: "{}", headers: { ...(await adminFor(demo, `${w.prefix}/api/sandbox`)), "content-type": "application/json" } }));
   expect(r.status).toBe(201);
   expect(w.store.getToken("mine", "access")).toBeDefined();
   expect(w.store.getToken("tours", "access")).toBeUndefined();
@@ -107,4 +108,17 @@ test("one address can't create sandboxes without end", () => {
   expect(allowMint("9.9.9.9", t)).toBe(false);
   expect(allowMint("8.8.8.8", t)).toBe(true);
   expect(allowMint("9.9.9.9", t + 3601_000)).toBe(true);
+});
+test("a store saved before approvals were on file gets them once, and a change made after stays", async () => {
+  const { PolicyStore } = await import("@smart-imaging-proxy/core");
+  const { ON_FILE, withApprovalsOnFile, accountPatient } = await import("../src/stores");
+  // As a store saved before: everything on file but the approvals.
+  const store = new PolicyStore({ mode: "memory", onFile: { ...ON_FILE, approvals: [] }, patientOf: accountPatient });
+  expect(store.approvals()).toEqual([]);
+  withApprovalsOnFile(store);
+  const rows = () => store.approvals().map(a => `${a.by} ${a.patient}`).sort();
+  expect(rows()).toEqual(APPROVALS_ON_FILE.map(a => `${a.by} ${a.patient}`).sort());
+  store.removeApprovals({ by: "user:josh", app: "app:portal-app", patient: "patient:josh-example" });
+  withApprovalsOnFile(store);
+  expect(rows()).not.toContain("user:josh patient:josh-example");
 });

@@ -98,87 +98,23 @@ function render() {
 
 async function refresh() { state = await api("GET", `/api/sandbox/tours/state?tour=${encodeURIComponent(chosen() ?? "")}`); state.start ??= state.chain; }
 
-// What the page holds for the run: each person's token, and the service's. Nothing else keeps them.
-const tokens = {}, serviceTokens = {};
-const hexOf = n => [...crypto.getRandomValues(new Uint8Array(n))].map(b => b.toString(16).padStart(2, "0")).join("");
-let discovered;
-const discovery = () => discovered ??= fetch(`${BASE}/fhir/.well-known/smart-configuration`).then(r => r.json()).catch(e => { discovered = undefined; throw e; });
-/** A search, every page of it, with a token: the studies it found, each with its WADO-RS address, or the refusal. */
-async function searchWith(token, query, headers, capability) {
-  const config = await discovery(), imaging = imagingOf(config, `${location.origin}${BASE}/fhir`, capability)?.url;
-  let refused;
-  const { entries } = await searchAll(`${imaging}/ImagingStudy?${query}`, async url => {
-    const r = await patientFetch(url, { headers: { ...fhirHeaders(token), ...headers } });
-    if (!r.ok) { refused = r.status; return {}; }
-    return r.json();
-  });
-  return refused ? { status: refused, studies: [] } : { status: 200, studies: studiesFrom(entries).map(st => ({ id: st.id, uid: st.uid, base: st.address })) };
-}
-/** A retrieval with a token, read to the end. */
-async function retrieveWith(token, url, headers) {
-  const r = await patientFetch(url, { headers: { authorization: `Bearer ${token}`, accept: WADO_ACCEPT, ...headers } });
-  await r.arrayBuffer().catch(() => {});
-  return { status: r.status };
-}
-const formAction = (html, at) => { const f = new DOMParser().parseFromString(html, "text/html").querySelector("form[action]"); if (!f) throw new Error("The sign-in page had no form."); return new URL(f.getAttribute("action"), at).toString(); };
-const postForm = (url, form) => fetch(url, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: form.toString() });
-/**
- * A person signs in and approves, on the Authorization Server's own pages: walked here as a browser would,
- * or by the person in the window `popup`. Gives where it redirected back to.
- */
-async function authorize(url, plan, popup) {
-  const back = u => u.startsWith(plan.redirectUri);
-  if (popup) {
-    popup.location = url;
-    return new Promise((done, fail) => {
-      const closed = setInterval(() => { if (popup.closed) { clearInterval(closed); removeEventListener("message", heard); fail(new Error("The sign-in window closed before it finished.")); } }, 400);
-      function heard(e) { if (e.origin !== location.origin || typeof e.data?.signedIn !== "string" || !back(e.data.signedIn)) return; clearInterval(closed); removeEventListener("message", heard); done(new URL(e.data.signedIn)); }
-      addEventListener("message", heard);
-    });
-  }
-  let r = await fetch(url);
-  if (back(r.url)) return new URL(r.url);
-  r = await postForm(formAction(await r.text(), r.url), new URLSearchParams({ username: plan.user }));
-  if (back(r.url)) return new URL(r.url);
-  const form = new URLSearchParams({ decision: "approve", patient: plan.patient });
-  if (plan.sites) { form.set("sites_shown", "1"); for (const site of plan.sites) form.append("sites", site); }
-  r = await postForm(formAction(await r.text(), r.url), form);
-  if (!back(r.url)) throw new Error(`The sign-in didn't come back to the app (HTTP ${r.status}).`);
-  return new URL(r.url);
-}
-/** The authorization code flow with PKCE, as the app: discovery, sign-in and approval, then the code for a token. */
-async function signIn(plan, headers, popup) {
-  const config = await discovery();
-  const verifier = b64url(crypto.getRandomValues(new Uint8Array(32))), state = b64url(crypto.getRandomValues(new Uint8Array(16)));
-  const challenge = b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
-  // A redirect can't carry trace headers, so the demo's own fields name the session, as the server's flows do.
-  const traceparent = headers.traceparent, session = decodeURIComponent(headers.baggage.replace(/^demo\.session=/, ""));
-  const q = new URLSearchParams({ response_type: "code", client_id: plan.app, redirect_uri: plan.redirectUri, scope: plan.scope, state, aud: plan.aud, code_challenge: challenge, code_challenge_method: "S256", login_hint: plan.user, demo_patient: plan.patient, demo_traceparent: traceparent, demo_session: session });
-  const back = await authorize(`${config.authorization_endpoint}?${q}`, plan, popup);
-  if (back.searchParams.get("state") !== state) return { token: false, error: "state_mismatch" };
-  const code = back.searchParams.get("code");
-  if (!code) return { token: false, error: back.searchParams.get("error") ?? "no code", state };
-  const r = await fetch(config.token_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", ...headers }, body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: plan.redirectUri, client_id: plan.app, code_verifier: verifier }) });
-  const t = await r.json().catch(() => ({}));
-  if (!t.access_token) return { token: false, error: t.error ?? `HTTP ${r.status}`, state };
-  tokens[plan.user] = t.access_token;
-  return { token: true, patient: t.patient, expiresIn: t.expires_in, state };
-}
-/** What this page does for a step, as planned: everything under the tour's session, and the step's trace. */
+// The tour's client: it holds each person's token, and the service's, and nothing else keeps them.
+let client;
+/** What this page does for a step, as planned, under the tour's session and the step's trace. */
 async function perform(plan, session, trace, popup) {
-  const headers = { traceparent: `00-${trace}-${hexOf(8)}-01`, baggage: `demo.session=${encodeURIComponent(session)}` };
-  const tokenOf = user => { if (!tokens[user]) throw new Error("An earlier step has to sign in first."); return tokens[user]; };
-  const serviceToken = async client => serviceTokens[client] ??= (async () => { const keys = await keysOf(), mine = keys.services.find(x => x.client_id === client); return (await backendToken(mine, keys.tokenEndpoint, { scope: mine.scope }, keys.now, headers)).access_token; })();
+  if (client?.session !== session) client = sandboxClient(BASE, session);
+  const tokenOf = user => { if (!client.tokens[user]) throw new Error("An earlier step has to sign in first."); return client.tokens[user]; };
+  const found = s => ({ status: s.status, studies: s.studies.map(({ id, uid, base }) => ({ id, uid, base })) });
   switch (plan.do) {
-    case "sign-in": return signIn(plan, headers, popup);
-    case "search": return searchWith(tokenOf(plan.as), plan.query, headers, APP_LAUNCH);
-    case "retrieve": return retrieveWith(tokenOf(plan.as), plan.url, headers);
-    case "service-search": return searchWith(await serviceToken(plan.client), plan.query, headers, BACKEND_CAPABILITY);
-    case "service-retrieve": return retrieveWith(await serviceToken(plan.client), plan.url, headers);
+    case "sign-in": { const t = await client.signIn({ ...plan, popup }, trace); delete t.accessToken; return t; }
+    case "search": return found(await client.search(tokenOf(plan.as), plan.query, trace, APP_LAUNCH));
+    case "retrieve": return { status: (await client.retrieve(tokenOf(plan.as), plan.url, trace)).status };
+    case "service-search": return found(await client.search(await client.serviceToken(plan.client, trace), plan.query, trace, BACKEND_CAPABILITY));
+    case "service-retrieve": return { status: (await client.retrieve(await client.serviceToken(plan.client, trace), plan.url, trace)).status };
     case "referral-check": return { ok: !!plan.patientRef?.startsWith(`${plan.clinicalFhir}/Patient/`) };
     case "management": {
       const statuses = [];
-      for (const c of plan.calls) { try { await api(c.method, `/api/sandbox/policy${c.path}`, c.body, BASE, headers); statuses.push(200); } catch (e) { statuses.push(e.status ?? 0); } }
+      for (const c of plan.calls) { try { await client.manage(c.method, `/api/sandbox/policy${c.path}`, c.body, trace); statuses.push(200); } catch (e) { statuses.push(e.status ?? 0); } }
       return { statuses };
     }
     default: return {};
@@ -207,8 +143,7 @@ async function start(id) {
   try {
     // In a sandbox, the tour starts it over; from the root, the tour gets a sandbox of its own.
     const r = BASE ? await api("POST", `/api/sandbox/tours/${encodeURIComponent(id)}/start`, {}) : await fetch(`/api/tours/${encodeURIComponent(id)}/start`, { method: "POST" }).then(x => x.json());
-    for (const k of Object.keys(tokens)) delete tokens[k];
-    for (const k of Object.keys(serviceTokens)) delete serviceTokens[k];
+    client = undefined;
     location.href = `${r.sandbox.base}/tours?tour=${encodeURIComponent(id)}`;
   } catch (e) { pageError = e.message; render(); }
 }
@@ -216,7 +151,7 @@ async function runChecks() {
   for (const c of list.checks) checks[c.id] = { running: true };
   render();
   for (const c of list.checks) {
-    try { checks[c.id] = await fetch(`/api/checks/${encodeURIComponent(c.id)}`, { method: "POST" }).then(r => r.json()); }
+    try { checks[c.id] = await runPageCheck(c.id, c.title); }
     catch (e) { checks[c.id] = { ok: false, failures: [{ step: c.title, label: e.message }] }; }
     render();
   }

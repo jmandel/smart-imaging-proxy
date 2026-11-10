@@ -38,7 +38,7 @@ test("a registered app can start sign-in in its own sandbox, and only with its o
 test("a tour leaves registrations alone, and removal ends them", async () => {
   const w = stack.sandboxes.mint();
   const c = addClient(w.store, { name: "Kept", redirectUris: [REDIRECT] }) as any;
-  expect((await call("POST", `${w.prefix}/api/tours/own/start`, {})).status).toBe(201);
+  expect((await call("POST", `${w.prefix}/api/sandbox/tours/own/start`, {})).status).toBe(201);
   expect(listClients(w.store).map(x => x.id)).toEqual([c.id]);
   expect(removeClient(w.store, c.id)).toBe(true);
   expect((await authorize(w, c.id)).status).toBe(400);
@@ -128,7 +128,7 @@ test("a backend service reaches only what it was granted, and its grant outlasts
   expect(t.scope).toBe("system/ImagingStudy.rs");
   expect(((await (await search(t.access_token, "josh-example")).json()) as any).entry.filter((e: any) => e.resource.resourceType === "ImagingStudy").length).toBe(6);
   expect((await search(t.access_token, "sam-example")).status).toBe(403);
-  await call("POST", `${w.prefix}/api/tours/own/start`, {});
+  await call("POST", `${w.prefix}/api/sandbox/tours/own/start`, {});
   const again: any = await (await tokenCall(w, c.id, jwt())).json();
   expect((await search(again.access_token, "josh-example")).status).toBe(200);
   await call("DELETE", `${w.prefix}/api/sandbox/clients/${c.id}`);

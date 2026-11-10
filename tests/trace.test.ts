@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { startStack, type Stack } from "../src/stack";
 import { CONFIG, PORTS } from "../src/config";
 import { createDemoServer } from "../src/demo-server";
-import { submitConsent } from "../src/flows/oauth";
+import { buildAuthorization, submitConsent, tokenRequestBody } from "../src/flows/oauth";
 import { defaultsFor, FLOWS, registerClients, runStep, startFlow } from "../src/flows";
 import { createCollector, MAX_SPANS_BODY } from "../src/trace-collector";
 
@@ -109,33 +109,6 @@ test("the stream carries summaries, and the full exchange loads on demand", asyn
   for (const page of ["/span.html", "/log.html", "/trace-view.js", "/span.js", "/log.js"]) expect((await fetch(base + page)).status).toBe(200);
 });
 
-test("a window's redirect back to the app joins the flow waiting on it, with nothing added to the redirect", async () => {
-  const demo = createDemoServer(stack, clients, join(import.meta.dir, ".."));
-  const server = Bun.serve({ port: PORTS.demo, hostname: "127.0.0.1", fetch: demo.fetch, idleTimeout: 60 });
-  try {
-    const post = (path: string, body: unknown = {}) => fetch(`${CONFIG.demoUrl}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-    const started: any = await (await post("/api/flows/patient-sites/start")).json();
-    const stepping = post(`${started.sandbox.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "window", sites: [] } });
-    let url: string | null = null;
-    while (!url) { url = ((await (await fetch(`${CONFIG.demoUrl}${started.sandbox.base}/api/pending-authorization`)).json()) as any).url; await Bun.sleep(5); }
-    const back = await submitConsent(url, { user: "josh" });
-    expect([...back.searchParams.keys()].sort()).toEqual(["code", "state"]);
-    const before = stack.collector.sessions.get("unattributed")?.spans.size ?? 0;
-    expect((await fetch(back)).status).toBe(200);
-    expect((await stepping).status).toBe(200);
-    await Bun.sleep(200);
-    const spans = [...stack.collector.sessions.get(started.session)!.spans.values()];
-    const callback = spans.find(s => s.name === "Redirect back to the app: /oauth/callback")!;
-    expect(callback).toBeDefined();
-    const step = spans.find(s => s.kind === "action" && s.attrs.step === "consent")!;
-    expect(callback.trace).toBe(step.trace);
-    expect(callback.parent).toBe(step.span);
-    const stray = [...(stack.collector.sessions.get("unattributed")?.spans.values() ?? [])].filter(s => s.name.startsWith("Redirect back"));
-    expect(stray).toEqual([]);
-    expect(stack.collector.sessions.get("unattributed")?.spans.size ?? 0).toBe(before);
-  } finally { server.stop(true); }
-});
-
 test("everything a flow does appears in its session", async () => {
   await Bun.sleep(200);
   for (const flow of FLOWS) {
@@ -181,20 +154,17 @@ test("no raw secret reaches a span, including a code that only ever travels in a
   const demo = createDemoServer(stack, clients, join(import.meta.dir, ".."));
   const server = Bun.serve({ port: PORTS.demo, hostname: "127.0.0.1", fetch: demo.fetch, idleTimeout: 60 });
   try {
-    const post = (path: string, body: unknown = {}) => fetch(`${CONFIG.demoUrl}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-    const started: any = await (await post("/api/flows/patient-sites/start")).json();
-    const stepping = post(`${started.sandbox.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "window", sites: [] } });
-    let url: string | null = null;
-    while (!url) { url = ((await (await fetch(`${CONFIG.demoUrl}${started.sandbox.base}/api/pending-authorization`)).json()) as any).url; await Bun.sleep(5); }
-    const back = await submitConsent(url, { user: "josh" });
+    // A browser's sign-in, as a page makes it in a window: the code comes back only in the redirect to the app's page.
+    const session = `redirect-${Date.now()}`, baggage = { baggage: `demo.session=${encodeURIComponent(session)}` };
+    const a = buildAuthorization(`${CONFIG.authUrl}/authorize`, "portal-app", undefined, { traceparent: `00-${"1".repeat(32)}-${"2".repeat(16)}-01`, session }, "josh");
+    const back = await submitConsent(a.url, { user: "josh" });
     const code = back.searchParams.get("code")!, state = back.searchParams.get("state")!;
     expect(code.length).toBeGreaterThan(20);
-    expect((await fetch(back)).status).toBe(200);
-    expect((await stepping).status).toBe(200);
-    await post(`${started.sandbox.base}/api/flows/patient-sites/steps/search`, { inputs: {} });
+    expect((await fetch(back, { headers: baggage })).status).toBe(200);
+    expect((await fetch(`${CONFIG.authUrl}/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", ...baggage }, body: tokenRequestBody(a, code) })).status).toBe(200);
     await Bun.sleep(250);
-    const text = await exported(started.session);
-    const callback = stack.collector.sessions.get(started.session)!.spans;
+    const text = await exported(session);
+    const callback = stack.collector.sessions.get(session)!.spans;
     const hop = [...callback.values()].find(s => s.name === "Redirect back to the app: /oauth/callback")!;
     expect(hop.http!.url).toContain("code=sha256");
     expect(text).not.toContain(code);
@@ -203,7 +173,7 @@ test("no raw secret reaches a span, including a code that only ever travels in a
     expect(text).toContain(state);
 
     // A decision call, a backend client's assertion, and a related person's cookie.
-    const sessions = [started.session as string];
+    const sessions = [session];
     for (const id of ["token-refresh", "backend-referral", "caregiver"]) sessions.push((await run(id))[0]!.session);
     await Bun.sleep(250);
     const all = (await Promise.all(sessions.map(exported))).join("\n");

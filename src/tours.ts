@@ -7,7 +7,7 @@ import { randomBytes } from "node:crypto";
 import { restoreGrants } from "./clients";
 import { ref, type PolicyDocument } from "@smart-imaging-proxy/core";
 import { PATIENT_NAMES, USERS, type BackendClient } from "./auth-server";
-import { defaultsFor, FLOWS, runStep, startFlowIn } from "./flows";
+import { FLOWS } from "./flows";
 import { StepStopped } from "./flows/runtime";
 import { DEFAULT_SCOPE } from "./flows/oauth";
 import { cascade, referenceModel, type RefStudy } from "./reference-model";
@@ -516,7 +516,7 @@ function startOver(sandbox: Sandbox) {
   sandbox.clearRuntime();
 }
 
-export function createTours(sandbox: Sandbox, clients: Record<string, BackendClient>, stack: Stack) {
+export function createTours(sandbox: Sandbox, stack: Stack) {
   /** The run in progress here: the step the page is doing, if any, with what was decided before it began. */
   let run: { tour: Tour; r: Run; results: Record<string, any>; session: string; pending?: { step: string; trace: string; intended?: PolicyDocument; expected: Answer } } | undefined;
   const json = (b: unknown, status = 200) => Response.json(b, { status });
@@ -631,22 +631,6 @@ export function createTours(sandbox: Sandbox, clients: Record<string, BackendCli
     run!.pending = undefined;
   }
 
-  /** One protocol flow in a sandbox of its own, every step with its defaults, as one line. */
-  async function check(flowId: string) {
-    const flow = PROTOCOL_CHECKS.find(f => f.id === flowId)!;
-    const w = stack.sandboxes.mint();
-    const c = await startFlowIn(w, clients, flow);
-    const failures: { step: string; label: string; detail?: string }[] = [];
-    let passed = 0;
-    for (const s of flow.steps) {
-      try {
-        const res = await runStep(c, flow, s.id, defaultsFor(c, flow, s.id));
-        for (const k of res.checks) k.ok ? passed++ : failures.push({ step: s.title, label: k.label, detail: k.detail });
-      } catch (e) { failures.push({ step: s.title, label: String((e as Error).message ?? e) }); }
-    }
-    return { id: flow.id, title: flow.title, ok: failures.length === 0, passed, failures, sandbox: w.id, activityUrl: activityUrl(c.session, w) };
-  }
-
   return {
     knownIn,
     async fetch(req: Request, url: URL): Promise<Response> {
@@ -665,11 +649,6 @@ export function createTours(sandbox: Sandbox, clients: Record<string, BackendCli
         // A sandbox shows a tour's steps, and what the model expects of the first, before any runs. Reading it starts nothing.
         const want = tourById(url.searchParams.get("tour") ?? "");
         return json(want && (!run || run.tour.id !== want.id) ? preview(want) : state());
-      }
-      const checked = p.match(/^\/api\/checks\/([^/]+)$/);
-      if (checked) {
-        if (!PROTOCOL_CHECKS.some(f => f.id === checked[1])) return json({ error: "unknown check" }, 404);
-        return json(await check(checked[1]!));
       }
       if (req.method !== "POST" || !p.startsWith("/api/sandbox/tours/")) return new Response("not found", { status: 404 });
       if (!sandbox.id) return json({ error: "a tour runs in a sandbox of its own: start one at /api/tours/{id}/start" }, 409);

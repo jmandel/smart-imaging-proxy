@@ -59,7 +59,7 @@ export function settingsStatus(stack: Stack, sandbox: Sandbox) {
 }
 
 const NO_INPUT = ["/tokens/revoke-all", "/proxy/flush", "/signing-key/rotate"];
-const WITH_INPUT = ["/reset", "/clock"];
+const WITH_INPUT = ["/reset", "/clock", "/faults"];
 const NAME_LIMIT = 40;
 
 export async function settingsApi(stack: Stack, sandbox: Sandbox, req: Request, url: URL): Promise<Response> {
@@ -91,6 +91,15 @@ export async function settingsApi(stack: Stack, sandbox: Sandbox, req: Request, 
     const extra = only("confirm"); if (extra) return extra;
     if (b.confirm !== true) return bad("resetting policy needs confirm: true");
     await sandbox.resetPolicy();
+    return status();
+  }
+  // Faults a check injects, and clears: the Imaging Server's decision API down, or the image store stopping partway through a study.
+  if (p === "/faults") {
+    const extra = only("decisionOutage", "truncateAfter"); if (extra) return extra;
+    if (b.decisionOutage !== undefined && typeof b.decisionOutage !== "boolean") return bad("decisionOutage is true or false");
+    if (b.truncateAfter !== undefined && b.truncateAfter !== null && !(Number.isInteger(b.truncateAfter) && b.truncateAfter > 0 && b.truncateAfter <= 10000)) return bad("truncateAfter is a number of instances, or null");
+    if (b.decisionOutage !== undefined) sandbox.imaging.setOutage(b.decisionOutage);
+    if (b.truncateAfter !== undefined) sandbox.setTruncateAfter(b.truncateAfter ?? undefined);
     return status();
   }
   if (p === "/clock") {

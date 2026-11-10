@@ -105,60 +105,6 @@ describe("resetting saved policy", () => {
   });
 });
 
-describe("flows and saved policy, over HTTP", () => {
-  test("starting a flow mints a sandbox that starts from the guardians on file, and saved policy is untouched", async () => {
-    setSaved({ rules: [RULE], shares: [SHARE] });
-    const started = await ok("POST", "/api/flows/patient-sites/start");
-    expect(started.sandbox.base).toBe(`/s/${started.sandbox.id}`);
-    expect(services(started.policy)).toEqual([]);
-    expect(started.policy.shares).toEqual([]);
-    // The same facts on file; each sandbox gives its rows its own ids.
-    const fact = ({ id: _, recordedAt: __, ...r }: any) => r;
-    expect(started.policy.relationships.map(fact)).toEqual(stack.store.relationships().map(fact));
-    expect(started.policy.policies).toEqual(stack.store.policiesOf("guardian-access").concat(stack.store.policiesOf("sharing") as any));
-    expect(services(await ok("GET", "/api/sandbox/policy"))).toEqual([RULE]);
-    expect(services(await ok("GET", `${started.sandbox.base}/api/sandbox/policy`))).toEqual([]);
-    const again = await ok("POST", "/api/flows/patient-sites/start");
-    expect(again.sandbox.id).not.toBe(started.sandbox.id);
-  });
-  test("a flow's steps run in its sandbox, and a step at the root is refused", async () => {
-    setSaved({ rules: [RULE] });
-    const { sandbox } = await ok("POST", "/api/flows/patient-sites/start");
-    expect((await call("POST", "/api/flows/patient-sites/steps/consent", { inputs: { mode: "scripted" } })).status).toBe(409);
-    const r = await ok("POST", `${sandbox.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
-    expect(r.sandbox).toEqual(sandbox);
-    expect(r.policy.approvals.find((a: any) => a.by === "Josh" || a.by === "user:josh")).toBeTruthy();
-    expect(stack.sandboxes.resolve(sandbox.id)).toMatchObject({ sandbox: { id: sandbox.id } });
-    // The root's approvals are still those on file, with no one's choice of sites.
-    expect(stack.store.approvals().every(a => !a.sites)).toBe(true);
-    expect(services(stack.store.snapshot())).toEqual([RULE]);
-    // Another flow's steps don't run in this sandbox.
-    expect((await call("POST", `${sandbox.base}/api/flows/caregiver/steps/delegate`, {})).status).toBe(409);
-  });
-  test("the flow state is the sandbox's, so a reload there comes back to the run", async () => {
-    const { sandbox } = await ok("POST", "/api/flows/patient-sites/start");
-    await ok("POST", `${sandbox.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted" } });
-    const state = await ok("GET", `${sandbox.base}/api/flow-state`);
-    expect(state.flow).toBe("patient-sites");
-    expect(Object.keys(state.completed)).toEqual(["consent"]);
-    expect((await ok("GET", "/api/flow-state")).flow).toBeNull();
-    expect(await (await call("GET", `${sandbox.base}/explore`)).text()).toContain('src="/explore.js"');
-    expect(await (await call("GET", `${sandbox.base}/tours`)).text()).toContain('src="/tours.js"');
-  });
-  test("a minted sandbox, and an unknown one", async () => {
-    const r = await call("POST", "/api/sandboxes", {});
-    expect(r.status).toBe(201);
-    const made: any = await r.json();
-    expect(made.sandbox).toMatch(/^[A-Za-z0-9_-]{22}$/);
-    expect(made.urls.auth).toBe(`${new URL(CONFIG.authUrl).origin}/s/${made.sandbox}${new URL(CONFIG.authUrl).pathname.replace(/\/$/, "")}`);
-    expect((await ok("GET", `/s/${made.sandbox}/api/flow-state`)).sandbox.id).toBe(made.sandbox);
-    const gone = await call("GET", "/s/AAAAAAAAAAAAAAAAAAAAAA/api/flow-state");
-    expect(gone.status).toBe(404);
-    expect(((await gone.json()) as any).error).toContain("doesn't exist");
-    expect((await call("POST", "/api/sandboxes", { anything: 1 })).status).toBe(400);
-  });
-});
-
 describe("rule sets", () => {
   const ids = (rules: any[] | undefined) => rules?.map(r => r.id);
   test("each named set resolves against the catalog, for the service it names", () => {
@@ -325,23 +271,18 @@ describe("writes naming another Host, over real HTTP", () => {
 });
 
 describe("loading pages", () => {
-  test("nothing a page loads changes saved policy or the flow", async () => {
-    const { sandbox } = await ok("POST", "/api/flows/patient-sites/start");
-    await ok("POST", `${sandbox.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
-    const saved = JSON.stringify([stack.store.snapshot(), stack.store.getSettings()]);
-    for (const path of ["/", "/tours", "/activity", "/explore.js", "/styles.css", "/api/flows", "/api/flow-state", "/api/session", "/api/sandbox", "/api/sandbox/policy", "/api/sandbox/explore/cast", "/api/sandbox/explore/referrals", "/api/tours", "/api/activity"]) {
-      expect((await call("GET", path)).status).toBe(200);
+  test("nothing a page loads changes policy, at the root or in a sandbox", async () => {
+    const base = await mint(), sandbox = (stack.sandboxes.resolve(base.slice(3)) as any).sandbox;
+    const policyOf = (store: any) => JSON.stringify([store.snapshot(), store.getSettings()]);
+    const saved = policyOf(stack.store), its = policyOf(sandbox.store);
+    // The files are the same for every sandbox, at the root.
+    for (const path of ["/explore.js", "/tours.js", "/styles.css"]) expect([path, (await call("GET", path)).status]).toEqual([path, 200]);
+    for (const path of ["/", "/tours", "/activity", "/api/sandbox", "/api/sandbox/policy", "/api/sandbox/explore/cast", "/api/sandbox/explore/referrals", "/api/tours", "/api/activity"]) {
+      expect([path, (await call("GET", path)).status]).toEqual([path, 200]);
+      expect([path, (await call("GET", `${base}${path}`)).status]).toEqual([path, 200]);
     }
-    for (const path of ["/", "/tours", "/api/flows", "/api/flow-state", "/api/session", "/api/sandbox/policy", "/api/sandbox", "/api/tours/state"]) expect((await call("GET", `${sandbox.base}${path}`)).status).toBe(200);
-    expect(JSON.stringify([stack.store.snapshot(), stack.store.getSettings()])).toBe(saved);
-    const state = await ok("GET", `${sandbox.base}/api/flow-state`);
-    expect(state.flow).toBe("patient-sites");
-    expect(Object.keys(state.completed)).toEqual(["consent"]);
-    expect(state.completed.consent.result.checks.every((c: any) => c.ok)).toBe(true);
-    expect(state.completed.consent.inputs.sites).toEqual(["Lakeside Imaging"]);
-    // What's on file, with Josh's consent narrowing his own to Lakeside.
-    expect(state.policy.approvals.length).toBe(APPROVALS_ON_FILE.length);
-    expect(state.sandbox).toEqual(sandbox);
+    expect((await call("GET", `${base}/api/sandbox/tours/state?tour=own`)).status).toBe(200);
+    expect([policyOf(stack.store), policyOf(sandbox.store)]).toEqual([saved, its]);
   });
   test("each page's script sends nothing on load except reads", async () => {
     for (const file of ["/explore.js", "/tours.js", "/activity.js"]) {
@@ -350,41 +291,5 @@ describe("loading pages", () => {
       const onLoad = js.slice(js.lastIndexOf("(async () => {"));
       expect([file, /"POST"|method: "POST"/.test(onLoad)]).toEqual([file, false]);
     }
-  });
-  test("a flow carries on from its sandbox after the root was used", async () => {
-    const { sandbox } = await ok("POST", "/api/flows/patient-sites/start");
-    await ok("POST", `${sandbox.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
-    await scriptedLaunch("josh");
-    await stack.policy.putPolicy(RULE_SETS.find(s => s.id === "research-donation")!.rules(stack.catalog)![0]!);
-    const search = await ok("POST", `${sandbox.base}/api/flows/patient-sites/steps/search`, {});
-    expect(search.sandbox).toEqual(sandbox);
-    expect(search.result.checks.every((c: any) => c.ok)).toBe(true);
-  });
-});
-
-describe("a second tab", () => {
-  test("can't rerun a finished step, or disturb a flow by running a step of another", async () => {
-    const { sandbox } = await ok("POST", "/api/flows/patient-sites/start");
-    await ok("POST", `${sandbox.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
-    expect((await call("POST", `${sandbox.base}/api/flows/patient-sites/steps/consent`, { inputs: {} })).status).toBe(409);
-    expect((await call("POST", `${sandbox.base}/api/flows/caregiver/steps/delegate`, { inputs: {} })).status).toBe(409);
-    const state = await ok("GET", `${sandbox.base}/api/flow-state`);
-    expect(state.flow).toBe("patient-sites");
-    expect(state.policy.approvals[0].sites).toEqual(["Lakeside Imaging"]);
-  });
-  test("can't start a step while another is running", async () => {
-    const { sandbox } = await ok("POST", "/api/flows/patient-sites/start");
-    const first = call("POST", `${sandbox.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
-    const second = await call("POST", `${sandbox.base}/api/flows/patient-sites/steps/search`, {});
-    expect(second.status).toBe(409);
-    expect((await first).status).toBe(200);
-  });
-  test("starting the same flow again gets a new sandbox, and the first run keeps its own", async () => {
-    const a = (await ok("POST", "/api/flows/patient-sites/start")).sandbox;
-    await ok("POST", `${a.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
-    const b = (await ok("POST", "/api/flows/patient-sites/start")).sandbox;
-    expect(b.id).not.toBe(a.id);
-    expect(Object.keys((await ok("GET", `${a.base}/api/flow-state`)).completed)).toEqual(["consent"]);
-    expect((await ok("GET", `${b.base}/api/flow-state`)).completed).toEqual({});
   });
 });

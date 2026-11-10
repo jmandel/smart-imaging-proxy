@@ -10,7 +10,7 @@ import { existsSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { deflateRawSync, inflateRawSync } from "node:zlib";
 import { PolicyStore } from "@smart-imaging-proxy/core";
-import { accountPatient, ON_FILE, splitPanel, type Panel } from "./stores";
+import { accountPatient, ON_FILE, splitPanel, withApprovalsOnFile, type Panel } from "./stores";
 import { createDemoClock } from "./clock";
 import { createSandbox, type Shared, type Sandbox } from "./sandbox";
 
@@ -73,6 +73,8 @@ export function createSandboxes(shared: Shared, opts: { idleMs?: number; max?: n
       if (document.shares || document.approvals) store.setDocument({ ...(document.shares ? { shares: document.shares } : {}), ...(document.approvals ? { approvals: document.approvals } : {}) });
       if (Object.keys(settings).length) store.setSettings(settings);
     }
+    // A seed brings its own choices; a sandbox saved before approvals were on file gets them now, once.
+    if (!seed) withApprovalsOnFile(store);
     const clock = createDemoClock(Number(store.note("clock") ?? 0), offset => { if (persist) store.setNote("clock", String(offset)); });
     const sandbox = createSandbox({ id, store, clock, shared });
     const pool = poolOf(id);

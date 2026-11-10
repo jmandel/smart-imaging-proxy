@@ -96,54 +96,7 @@ describe("a redirect back to the app", () => {
     expect(c.checks.find(k => k.label === "Redirect's state matches the request")!.ok).toBe(false);
     expect(c.exchanges.map(x => x.title)).not.toContain("Exchange the code, with the PKCE verifier");
   });
-  test("a forged one is refused and changes nothing, and the real sign-in still finishes", async () => {
-    stack.setBackend("static-files");
-    const demo = createDemoServer(stack, clients, join(import.meta.dir, ".."));
-    const server = Bun.serve({ port: PORTS.demo, hostname: "127.0.0.1", fetch: demo.fetch, idleTimeout: 60 });
-    try {
-      const post = (path: string, body: unknown = {}) => fetch(`${CONFIG.demoUrl}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-      const started: any = await (await post("/api/flows/patient-sites/start")).json();
-      // The run is in its own scope, and so is everything after.
-      const base = started.sandbox.base;
-      expect(base).toMatch(/^\/s\/[A-Za-z0-9_-]{22}$/);
-      const stepping = post(`${base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "window" } });
-      const pending = async () => ((await (await fetch(`${CONFIG.demoUrl}${base}/api/pending-authorization`)).json()) as any).url as string | null;
-      let url: string | null = null;
-      while (!url) { url = await pending(); await Bun.sleep(5); }
-      expect(url.startsWith(`${CONFIG.authUrl}${base}/authorize`)).toBe(true);
-      for (const q of ["state=attacker&code=attacker-code", "code=attacker-code", "state=attacker&error=access_denied", "account=done"]) {
-        expect([q, (await fetch(`${CONFIG.demoUrl}${base}/oauth/callback?${q}`)).status]).toEqual([q, 400]);
-        expect(await pending()).toBe(url);
-      }
-      // The root's callback isn't the scope's: the run's real redirect can't land there.
-      expect((await fetch(`${CONFIG.demoUrl}/oauth/callback?state=attacker&code=attacker-code`)).status).toBe(400);
-      const back = await submitConsent(url, { user: "josh" });
-      expect((await fetch(back)).status).toBe(200);
-      const done: any = await (await stepping).json();
-      expect(done.result.checks.every((k: any) => k.ok)).toBe(true);
-      await Bun.sleep(200);
-      const spans = [...stack.collector.sessions.get(started.session)!.spans.values()];
-      expect(spans.filter(s => s.kind === "server" && s.http?.url.endsWith("/token")).length).toBe(1);
-      const forged = spans.filter(s => s.name.startsWith("Redirect back") && s.status === "denied");
-      expect(forged.length).toBe(4);
-      expect(spans.every(s => s.sandbox === started.sandbox.id)).toBe(true);
-      expect(JSON.stringify(spans)).not.toContain("attacker-code");
-    } finally { server.stop(true); }
-  });
-  test("a denied sign-in reaches the page as a plain explanation", async () => {
-    stack.setBackend("static-files");
-    const demo = createDemoServer(stack, clients, join(import.meta.dir, ".."));
-    const call = (path: string, body: unknown = {}) => demo.fetch(new Request(`${CONFIG.demoUrl}${path}`, { method: "POST", headers: { host: new URL(CONFIG.demoUrl).host, "content-type": "application/json" }, body: JSON.stringify(body) }));
-    const { sandbox: scope } = await (await call("/api/flows/patient-sites/start")).json() as any;
-    const stepping = call(`${scope.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "window" } });
-    let url: string | null = null;
-    while (!url) { url = ((await (await demo.fetch(new Request(`${CONFIG.demoUrl}${scope.base}/api/pending-authorization`, { headers: { host: new URL(CONFIG.demoUrl).host } }))).json()) as any).url; await Bun.sleep(5); }
-    const back = await submitConsent(url, { user: "josh", approve: false });
-    expect((await demo.fetch(new Request(back, { headers: { host: new URL(CONFIG.demoUrl).host } }))).status).toBe(200);
-    const res = await stepping;
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ error: "Josh chose not to approve the app, so it has no token" });
-  });
+
   test("with nothing waiting, it's refused, and an account page's own redirect still ends its wait", async () => {
     const flow = flowOf("caregiver");
     const c = await startFlow(stack, clients, flow);

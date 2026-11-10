@@ -22,7 +22,7 @@ afterAll(() => stack.stop());
 
 const call = async (method: string, path: string, body?: unknown) => {
   const r = await demo.fetch(new Request(`${CONFIG.demoUrl}${path}`, { method, headers: { host: new URL(CONFIG.demoUrl).host, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }));
-  return { status: r.status, body: await r.json() as any };
+  return { status: r.status, body: await r.json().catch(() => undefined) as any };
 };
 const TOURS = ["own", "guardian", "caregiver", "revoke", "backend", "turns-18"];
 async function start(tour: string) {
@@ -151,15 +151,11 @@ describe("each tour", () => {
 });
 
 describe("checks", () => {
-  test("each protocol flow is one line, run in a sandbox of its own, that opens its activity", async () => {
+  test("the page lists the protocol checks it runs, and the server runs none itself", async () => {
     const list = (await call("GET", "/api/tours")).body.checks.map((c: any) => c.id);
     expect(list).toEqual(["token-refresh", "viewer", "decision-outage", "attacks", "transfer-syntax", "truncation", "metadata", "paged-search"]);
-    const r = await call("POST", "/api/checks/token-refresh", {});
-    expect(r.body).toMatchObject({ id: "token-refresh", ok: true, failures: [] });
-    expect(r.body.passed).toBeGreaterThan(0);
-    expect(r.body.activityUrl).toMatch(new RegExp(`^/s/${r.body.sandbox}/activity\\?session=`));
-    expect((await call("POST", "/api/checks/patient-sites", {})).status).toBe(404);
-  }, 60000);
+    expect((await call("POST", "/api/checks/token-refresh", {})).status).toBe(404);
+  });
 });
 
 describe("the layer chain", () => {

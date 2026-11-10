@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { deflateRawSync } from "node:zlib";
 import { createCatalog } from "@smart-imaging-proxy/core";
 import { startStack, type Stack } from "../src/stack";
-import { registerClients } from "../src/flows";
+import { defaultsFor, FLOWS, registerClients, runStep, startFlow } from "../src/flows";
 import { createDemoServer } from "../src/demo-server";
 import { buildAuthorization, scriptedLaunch, submitConsent, tokenRequestBody } from "../src/flows/oauth";
 import { CONFIG, localUrl, ONE_ORIGIN, PORTS, urlsFor } from "../src/config";
@@ -135,7 +135,7 @@ describe("the backend", () => {
     expect([stack.backend, stack.catalogSource, stack.root.backend]).toEqual(["static-files", "archive", "static-files"]);
     expect(((await (await managed(`${w.urls.demo}/api/sandbox/storage`)).json()) as any).current).toBe("orthanc");
     expect(((await (await managed(`${CONFIG.demoUrl}/api/sandbox/storage`)).json()) as any).current).toBe("static-files");
-    expect(((await (await get(`${w.urls.demo}/api/flows`)).json()) as any).backend).toBe("orthanc");
+    expect(((await (await managed(`${w.urls.demo}/api/sandbox`)).json()) as any).storage.current).toBe("orthanc");
     stack.setBackend("s3");
     expect(stack.sandboxes.mint().backend).toBe("s3");
     expect(w.backend).toBe("orthanc");
@@ -308,11 +308,11 @@ describe("sandbox lifetimes", () => {
     expect((sandboxes.resolve(kept) as { sandbox: Sandbox }).sandbox).not.toBe(w);
     sandboxes.close();
   });
-  test("a flow run survives a page full of seeds", async () => {
-    const r = await get(`${CONFIG.demoUrl}/api/flows/patient-sites/start`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
-    const { sandbox } = (await r.json()) as any;
+  test("a minted sandbox survives a page full of seeds", async () => {
+    const r = await get(`${CONFIG.demoUrl}/api/sandboxes`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    const { base } = (await r.json()) as any;
     for (let i = 0; i < 70; i++) expect(await get(`${urlsFor(`/s/${encodeSeed({ contextLifetimeSeconds: 100 + i })}`).clinicalFhir}/.well-known/smart-configuration`).then(x => x.status)).toBe(200);
-    expect(((await (await get(`${CONFIG.demoUrl}${sandbox.base}/api/flow-state`)).json()) as any).flow).toBe("patient-sites");
+    expect((await get(`${CONFIG.demoUrl}${base}/api/sandbox/keys`)).status).toBe(200);
   }, 60000);
   test("an idle sandbox is dropped", async () => {
     const sandboxes = createSandboxes(shared, { idleMs: 40 });
@@ -389,8 +389,10 @@ describe("trace sessions belong to the sandbox that recorded them", () => {
 
 describe("the trace, filtered to a sandbox", () => {
   test("a sandbox's live trace lists only its sessions, and won't show another's", async () => {
-    const r = await get(`${CONFIG.demoUrl}/api/flows/patient-sites/start`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
-    const { sandbox, session } = (await r.json()) as any;
+    // A flow's session, in a sandbox of its own.
+    const flow = FLOWS.find(f => f.id === "patient-sites")!, c = await startFlow(stack, registerClients(stack), flow);
+    await runStep(c, flow, "consent", defaultsFor(c, flow, "consent"));
+    const sandbox = { id: c.sandbox.id, base: c.sandbox.prefix }, session = c.session;
     const other = stack.sandboxes.mint();
     await scriptedLaunch("josh", "portal-app", { at: other.urls });
     await scriptedLaunch("josh");

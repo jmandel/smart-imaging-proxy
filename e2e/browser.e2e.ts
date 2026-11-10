@@ -339,10 +339,15 @@ describe("Tours", () => {
     expect(await launch.innerText()).toBe("Sign in");
     const [popup] = await Promise.all([context!.waitForEvent("page"), launch.click()]);
     await popup.waitForURL(/\/authorize/, { timeout: 30000 });
+    // A redirect for some other sign-in, with a state this page didn't send, ends nothing: the page keeps waiting.
+    await page.evaluate(() => postMessage({ signedIn: `${location.origin}${location.pathname.replace(/\/tours$/, "")}/oauth/callback?state=forged&code=forged-code` }, location.origin));
+    await page.waitForTimeout(300);
+    expect(await page.locator(".step .verdict").count()).toBe(0);
     await popup.locator("input[name=username][value=josh]").check();
     await popup.getByRole("button", { name: "Continue" }).click();
     await popup.getByRole("button", { name: "Approve" }).click();
     await page.locator(".step .verdict").first().waitFor({ timeout: 30000 });
+    expect(await page.locator(".step .verdict").first().innerText()).toBe("As expected");
     expect(problems).toEqual([]);
   });
   test("automated runs open no window", async () => {
@@ -364,7 +369,8 @@ describe("Tours", () => {
     await link.click();
     await page.waitForURL(/\/activity\?session=/);
     await page.locator("tr.ev").first().waitFor();
-    expect(problems).toEqual([]);
+    // The checks provoke refusals on purpose, which the browser logs as failed loads: no script error is the test.
+    expect(problems.filter(p => !/Failed to load resource/.test(p))).toEqual([]);
   });
 });
 

@@ -39,43 +39,21 @@ admin key controls. No server endpoint does protocol work on a page's behalf.
    runner where nothing uses it.
 6. Tests at each step, then one deploy.
 
-## Progress
+## Status
 
-Done, committed locally, not yet deployed:
+All of it is done:
 
-1. Per-sandbox keys and the admin client (`src/sandbox-keys.ts`).
-2. The admin token on everything under `/api/sandbox`, the policy API at `/api/sandbox/policy/*`, and `GET /api/sandbox/keys`. Documented in llms.txt.
-3. `web/smart-imaging.js`, shared by the demo app and Explore.
-4. Explore in the browser. Its reads are under `/api/sandbox/explore/*`. `/api/explore/*` is gone.
-- App approvals on file: Josh, and Sam for Sam and Riley, at every site.
-- `traceSettled` waits for sends already in flight.
+- Each sandbox's keys, and its admin client.
+- The admin token on everything under `/api/sandbox`, with the policy API behind it.
+- `web/smart-imaging.js` and `web/sandbox-client.js`.
+- Explore, the tour stories, and the eight protocol checks, all run in the browser.
 
-## Tours, in the browser
+The server's Explore sessions, tour actions, check runner and HTTP flow runner are gone. `src/flows` stays as the tests' own harness.
 
-Each step is split three ways:
+Stores saved before app approvals were on file get them once, the first time they're opened.
 
-- **begin**, `POST /api/sandbox/tours/{id}/steps/{step}/begin`. The server computes the intended policy and the model's expected answer before anything happens. It does what only the sandbox does, such as moving the demo clock, and returns a **plan** and a trace id.
-- **the action**, in the page, under the tour's trace session and that trace id. Plans:
-  - `sign-in`: a real authorization code flow with PKCE as portal-app. Automatic mode walks the sign-in and consent forms. Window mode uses a popup, and the callback page posts its URL to the opener.
-  - `search`, `retrieve`
-  - `service-search` and `service-retrieve`, with the service's own key
-  - `management`: policy API calls
-  - `referral-check`
-- **finish**, `POST .../finish {observed}`. The server turns what the page saw into the step's answer, as `act` did. It checks the store against the intended policy, and counts the step's events by its trace.
+What changed for people using the site:
 
-Tokens live only in the page. The server's run state keeps only what checks need: token expiry, which studies search found with their signed addresses, when it signed them, and each step's pick.
-
-## Run checks, in the browser
-
-Each of the eight protocol checks becomes a page-side scenario in its own new sandbox. Faults are management calls that set and clear them:
-
-- `POST /api/sandbox/faults` `{"decisionOutage":true}`
-- `POST /api/sandbox/faults` `{"truncateAfter":N}`
-
-## Cleanup still to do
-
-- Remove the HTTP flow runner: `/api/flows`, `/api/flow-state`, `/api/session`. No page uses them. `src/flows` stays as the tests' own harness.
-- Remove the server-side tour runner and window callbacks once Tours runs in the page.
-- Browser tests for Tours and checks.
-- Screenshots at desktop, 390 px and 320 px. Then one deploy.
-- Explain on the deployed site that saved sandboxes made before this have no app approvals on file until Reset.
+- Explore no longer shows a sign-in. Its tokens come from the admin key. Tours and the demo app still sign in for real.
+- In a window sign-in, the redirect page hands its address back to the page that opened it. That page checks the state, so a forged redirect is ignored.
+- The redirect's own request isn't tied to a trace session, because no server flow is waiting for it any more.

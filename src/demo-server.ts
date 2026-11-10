@@ -5,10 +5,9 @@ import { join } from "node:path";
 import { fetchJwks } from "./jwks";
 import { PUBLIC_DEMO } from "./config";
 import { addClient, listClients, removeClient } from "./clients";
-import { traced } from "./trace";
+import { traced, traceSettled } from "./trace";
 import type { BackendName, Stack } from "./stack";
-import { FLOWS, flowById, runStep, startFlowIn, BadStepInput } from "./flows";
-import { StepStopped, type Ctx } from "./flows/runtime";
+import { flowById } from "./flows";
 import { extraField, readJson, refuseHost, refuseWrite, settingsApi, BACKEND_NAMES } from "./settings-api";
 import type { BackendClient } from "./auth-server";
 import { createExplore } from "./explore";
@@ -62,24 +61,12 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
   }
   const sandboxOf = (w: Sandbox) => w.id ? { id: w.id, base: w.prefix } : null;
 
-  /** Mints a sandbox and starts `flowId` there. */
-  async function startRun(flowId: string) {
-    const flow = flowById(flowId);
-    if (!flow) return undefined;
-    const sandbox = stack.sandboxes.mint();
-    const run = await serverOf(sandbox).start(flow.id);
-    return { sandbox, run: run! };
-  }
-
   function sandboxServer(sandbox: Sandbox) {
-    const services = { proxy: sandbox.urls.proxy, imaging: sandbox.urls.imaging, authorization: sandbox.urls.auth, "live trace": sandbox.urls.trace };
-    // What a reload needs to show this sandbox's flow run again, and what stops another tab from disturbing it.
-    let session: { flowId: string; ctx: Ctx; completed: Record<string, { inputs: unknown; result: unknown }>; running?: string } | undefined;
 
     // The redirect URI the demo app registered. Whoever is waiting takes only its own redirect, by `state`.
     // The redirect is a real protocol message with no trace fields, so its span joins the flow waiting on it.
     const explore = createExplore(sandbox, clients, stack);
-    const tours = createTours(sandbox, clients, stack);
+    const tours = createTours(sandbox, stack);
     /** A session's events as its viewer may see them: an Explore view's person or service, a tour's taker, or whoever a flow acts as. */
     const idOfUid = (uid: string) => sandbox.catalog.studyByUid(uid)?.id;
     const viewerEvents = (session: string, events: EventRecord[]) => {
@@ -136,25 +123,9 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         return { ...e, ...(study ? { study } : {}), ...(took !== undefined ? { ms: took } : {}) };
       });
     };
-    const callback = traced("app", async req => {
-      const back = new URL(req.url);
-      // A sign-in a page made in a window of its own: this page hands its address back to that page, which checks its state.
-      if (!session?.ctx.receiveCallback(back)) return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Back in the app</title></head><body style="font:15px system-ui;padding:2rem"><p>Back in the app. You can close this window.</p><script>if (window.opener) { window.opener.postMessage({ signedIn: location.href }, location.origin); window.close(); }</script></body></html>`, { headers: { "content-type": "text/html" } });
-      return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Back in the app</title></head><body style="font:15px system-ui;padding:2rem"><p>Back in the app. You can close this window.</p><script>window.close()</script></body></html>`, { headers: { "content-type": "text/html" } });
-    }, (_req, url) => `Redirect back to the app: ${url.pathname}`, (_req, url) => session?.ctx.callbackContext ?? (session ? { session: session.ctx.session } : undefined));
-
-    const stepInfo = (flow: any, c: Ctx) => flow.steps.map((s: any) => {
-      let inputs: unknown[] = [];
-      try { inputs = s.inputs?.(c) ?? []; } catch { inputs = []; }
-      return { id: s.id, title: s.title, actor: s.actor, doc: s.doc, inputs };
-    });
-
-    async function start(flowId: string) {
-      const flow = flowById(flowId);
-      if (!flow) return undefined;
-      session = { flowId, ctx: await startFlowIn(sandbox, clients, flow), completed: {} };
-      return { flow, ctx: session.ctx, session };
-    }
+    // The redirect URI the demo's apps registered. A page that signed someone in in a window of its own gets
+    // this page's address back, and checks its state. A sign-in a page walks itself reads the address it ended at.
+    const callback = traced("app", async () => new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Back in the app</title></head><body style="font:15px system-ui;padding:2rem"><p>Back in the app. You can close this window.</p><script>if (window.opener) { window.opener.postMessage({ signedIn: location.href }, location.origin); window.close(); }</script></body></html>`, { headers: { "content-type": "text/html" } }), (_req, url) => `Redirect back to the app: ${url.pathname}`);
 
     async function fetch(req: Request): Promise<Response> {
       const url = new URL(req.url);
@@ -173,18 +144,26 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         const denied = adminDenied(sandbox, req);
         if (denied) return denied;
         if (p.startsWith("/api/sandbox/explore/")) return explore.fetch(req, url);
+        // A patient's studies as the sandbox's catalog holds them, in the order search returns them: newest first, then as filed.
+        if (p === "/api/sandbox/catalog" && req.method === "GET") {
+          const patient = url.searchParams.get("patient") ?? "josh-example";
+          const rows = sandbox.catalog.allStudies().filter(st => st.patient === patient).sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "") || b.pk - a.pk);
+          return json({ patient, studies: rows.map(st => ({ id: st.id, uid: st.uid, site: st.site, date: st.date, instances: st.instanceCount, series: (sandbox.catalog.hierarchies([st.pk]).get(st.pk)?.series ?? []).map(x => ({ uid: x.uid, modality: x.modality, instances: x.instanceCount })) })) });
+        }
         if (p.startsWith("/api/sandbox/tours/")) { if (req.method !== "GET") { const refused = refuseWrite(req, url); if (refused) return refused; } return tours.fetch(req, url); }
         if (p.startsWith("/api/sandbox/policy/")) {
           if (req.method !== "GET") { const refused = refuseWrite(req, url); if (refused) return refused; }
           return policyThrough(sandbox, req, `${p.slice("/api/sandbox/policy".length)}${url.search}`);
         }
       }
-      if (p === "/api/tours" || p.startsWith("/api/tours/") || p.startsWith("/api/checks/")) {
+      if (p === "/api/tours" || p.startsWith("/api/tours/")) {
         if (req.method === "POST") { const refused = refuseWrite(req, url); if (refused) return refused; }
         return tours.fetch(req, url);
       }
       if ((p === "/api/sandbox" && req.method !== "DELETE") || (p.startsWith("/api/sandbox/") && !p.startsWith("/api/sandbox/clients") && p !== "/api/sandbox/policy")) return settingsApi(stack, sandbox, req, url);
       if (p === "/api/activity" && req.method === "GET") {
+        // What a page did a moment ago is in the log when it asks.
+        await traceSettled();
         // One page of events, oldest first, ending at `before`. One session's is what its viewer may
         // see; every session's at once is the operator's, which alone links to the live trace.
         const q = activityQuery(url);
@@ -219,21 +198,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         return r ? json(r) : json({ error: "not found" }, 404);
       }
       if (p === "/oauth/callback") return callback(req);
-      if (p === "/api/pending-authorization") return json({ url: session?.ctx.pendingAuthUrl ?? null });
-      if (p === "/api/pending-authorization/cancel" && req.method === "POST") {
-        const refused = refuseWrite(req, url);
-        if (refused) return refused;
-        session?.ctx.cancelWindow?.("The sign-in window closed before it finished. Run the step again.");
-        return json({ ok: true });
-      }
-      if (p === "/api/session") return json({ session: session?.ctx.session ?? null, flow: session?.flowId ?? null, traceUrl: sandbox.urls.trace, sandbox: sandboxOf(sandbox) });
-      if (p === "/api/flow-state") {
-        const flow = session && flowById(session.flowId);
-        if (!session || !flow) return json({ sandbox: sandboxOf(sandbox), flow: null });
-        return json({ sandbox: sandboxOf(sandbox), flow: session.flowId, running: session.running ?? null, steps: stepInfo(flow, session.ctx), completed: session.completed, policy: panelOf(sandbox.store) });
-      }
-      if (p === "/api/flows") return json({ services, backend: sandbox.backend, sandbox: sandboxOf(sandbox), flows: FLOWS.map(f => ({ id: f.id, number: f.number, group: f.group, title: f.title, summary: f.summary, shows: f.shows, steps: f.steps.length })) });
-      if ((p === "/api/sandboxes" || p.startsWith("/api/flows/")) && req.method === "POST") {
+      if (p === "/api/sandboxes" && req.method === "POST") {
         const refused = refuseWrite(req, url);
         if (refused) return refused;
       }
@@ -268,41 +233,13 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         return json({ deleted: true });
       }
       if (p === "/api/sandbox/policy" && req.method === "GET") return json(panelOf(sandbox.store));
-      const started = p.match(/^\/api\/flows\/([^/]+)\/start$/);
-      if (started && req.method === "POST") {
-        const r = await startRun(started[1]!);
-        if (!r) return json({ error: "unknown flow" }, 404);
-        return json({ sandbox: sandboxOf(r.sandbox), steps: stepInfo(r.run.flow, r.run.ctx), policy: panelOf(r.sandbox.store), session: r.run.ctx.session });
-      }
-      const step = p.match(/^\/api\/flows\/([^/]+)\/steps\/([^/]+)$/);
-      if (step && req.method === "POST") {
-        if (!sandbox.id) return json({ error: "a flow runs in its own sandbox: start it, and run its steps at that sandbox's URLs" }, 409);
-        const text = await req.text();
-        let b: any = {};
-        if (text.trim()) { try { b = JSON.parse(text) ?? {}; } catch { return json({ error: "the request body isn't JSON" }, 400); } }
-        if (b.inputs !== undefined && (typeof b.inputs !== "object" || b.inputs === null || Array.isArray(b.inputs))) return json({ error: "inputs must be an object" }, 400);
-        if (session && session.flowId !== step[1]) return json({ error: "this sandbox runs another flow: start this one to get its own sandbox" }, 409);
-        if (session?.running) return json({ error: `the step "${session.running}" is still running` }, 409);
-        if (session && Object.hasOwn(session.completed, step[2]!)) return json({ error: "this step has already run: reload to see its result" }, 409);
-        if (session) session.running = step[2]!; // Set before anything can yield, so a second tab sees it.
-        // A sandbox minted with no run takes the first flow asked of it.
-        const s = session ? { flow: flowById(session.flowId)!, ctx: session.ctx, session } : await start(step[1]!);
-        if (!s) return json({ error: "unknown flow" }, 404);
-        s.session.running = step[2]!;
-        try {
-          const result = await runStep(s.ctx, s.flow, step[2]!, b.inputs ?? {});
-          s.session.completed[step[2]!] = { inputs: b.inputs ?? {}, result };
-          return json({ result, steps: stepInfo(s.flow, s.ctx), policy: panelOf(sandbox.store), events: sandbox.proxy.events.slice(-12), sandbox: sandboxOf(sandbox) });
-        } catch (e) { return json({ error: String((e as Error).message ?? e) }, e instanceof StepStopped ? 409 : e instanceof BadStepInput ? 400 : /^no step /.test((e as Error).message) ? 404 : 500); }
-        finally { s.session.running = undefined; }
-      }
       return new Response("not found", { status: 404 });
     }
-    return { fetch, start };
+    return { fetch };
   }
 
   // The same files in every sandbox: the pages work out their sandbox from their own URL.
-  const STATIC: Record<string, string> = Object.fromEntries(["styles.css", "page.js", "event-words.js", "layers.js", "explore.js", "tours.js", "activity.js", "thumbs.js", "client.js", "server-list.js", "servers.js", "image-viewer.js", "image-viewer.css", "smart-imaging.js", "client.css", "connect.js", "fonts/atkinson-next.woff2", "fonts/atkinson-mono.woff2"].map(f => [`/${f}`, f]));
+  const STATIC: Record<string, string> = Object.fromEntries(["styles.css", "page.js", "event-words.js", "layers.js", "explore.js", "tours.js", "activity.js", "thumbs.js", "client.js", "server-list.js", "servers.js", "image-viewer.js", "image-viewer.css", "smart-imaging.js", "sandbox-client.js", "checks.js", "client.css", "connect.js", "fonts/atkinson-next.woff2", "fonts/atkinson-mono.woff2"].map(f => [`/${f}`, f]));
   /**
    * viewer-kit's files, from the pinned download, never from the repository: checked once, here at
    * startup, and served only as the bytes that were checked. With none that check out, every one is a

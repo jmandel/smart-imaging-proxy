@@ -152,7 +152,7 @@ test("a refused sandbox mint makes no sandbox", async () => {
 
 test("the demo's pages and read APIs answer only at its own addresses", async () => {
   const demo = (path: string, headers: Record<string, string> = {}) => fetch(`http://127.0.0.1:${PORTS.demo}${path}`, { headers });
-  for (const path of ["/", "/tours", "/explore", "/activity", "/api/activity", "/api/activity/summary", "/api/sandbox/policy", "/api/sandbox/storage", "/api/flows", "/api/sandbox/explore/cast", "/api/sandbox", "/api/sandbox/keys"]) {
+  for (const path of ["/", "/tours", "/explore", "/activity", "/api/activity", "/api/activity/summary", "/api/sandbox/policy", "/api/sandbox/storage", "/api/sandbox/explore/cast", "/api/sandbox", "/api/sandbox/keys"]) {
     expect((await demo(path, { host: "evil.example" })).status).toBe(403);
     // The management API wants the admin token, and refuses before anything else.
     expect([path, (await demo(path)).status]).toEqual([path, path.startsWith("/api/sandbox") && path !== "/api/sandbox/keys" ? 401 : 200]);
@@ -183,14 +183,6 @@ test("the Bearer scheme is case-insensitive on the Clinical FHIR Server, and an 
   expect("entry" in empty).toBe(false);
 });
 
-test("a malformed step request isn't a server error", async () => {
-  const { sandbox } = await (await fetch(`http://127.0.0.1:${PORTS.demo}/api/flows/patient-sites/start`, { method: "POST" })).json() as any;
-  const step = (name: string, body: string) => fetch(`http://127.0.0.1:${PORTS.demo}${sandbox.base}/api/flows/patient-sites/steps/${name}`, { method: "POST", headers: { "content-type": "application/json" }, body });
-  expect((await step("constructor", "{}")).status).toBe(404);
-  const nulled = await step("consent", "null");
-  expect(nulled.status).toBeLessThan(500);
-});
-
 test("the proxy answers odd Hosts and request targets without a 500", async () => {
   const { port, hostname } = new URL(`http://127.0.0.1:${PORTS.proxy}`);
   const raw = (head: string) => new Promise<string>((resolve, reject) => {
@@ -207,15 +199,3 @@ test("the proxy answers odd Hosts and request targets without a 500", async () =
   expect(status(await raw(`GET /wado/-/studies/1 HTTP/1.1\r\nHost: ${own}\r\nHost: evil.example\r\nConnection: close\r\n\r\n`))).not.toBe(401);
 });
 
-test("a step's input has to be one of its choices", async () => {
-  const start = await fetch(`http://127.0.0.1:${PORTS.demo}/api/flows/caregiver/start`, { method: "POST" });
-  expect(start.status).toBe(200);
-  const { sandbox } = await start.json() as any;
-  const step = (name: string, inputs: unknown) => fetch(`http://127.0.0.1:${PORTS.demo}${sandbox.base}/api/flows/caregiver/steps/${name}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ inputs }) });
-  for (const inputs of [{ sites: null }, { sites: "notalist" }, "text", null]) expect((await step("delegate", inputs)).status).toBeLessThan(500);
-  expect((await step("sam-launch", { whose: ["x"] })).status).toBe(400);
-  expect((await step("sam-launch", { whose: "robin-example" })).status).toBe(400);
-  expect((await step("delegate", { sites: ["Not A Site"] })).status).toBe(400);
-  const broken = await fetch(`http://127.0.0.1:${PORTS.demo}${sandbox.base}/api/flows/caregiver/steps/delegate`, { method: "POST", headers: { "content-type": "application/json" }, body: "{" });
-  expect(broken.status).toBe(400);
-});
