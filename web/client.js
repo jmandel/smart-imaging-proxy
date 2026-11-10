@@ -3,8 +3,7 @@
 // shows. Images come one instance at a time, the search result already naming them: the middle one
 // first, then outward, so the first picture doesn't wait for the rest of the study.
 const CLIENT_ID = "demo-client", SCOPE = "launch/patient patient/*.rs";
-const REDIRECT = `${location.origin}${BASE}/`, VIEWER = `${BASE}/viewer`;
-const onViewer = () => location.pathname === VIEWER;
+const REDIRECT = `${location.origin}${BASE}/`;
 const SANDBOX = { id: "sandbox", label: "SMART Imaging sandbox", detail: "Your own sandbox of sample patients", own: true };
 const allServers = () => [SANDBOX, ...savedServers().map(s => ({ ...s, id: serverKey(s), detail: new URL(s.iss).host }))];
 function chosenServer() { const all = allServers(); return all.find(s => s.id === stored(CHOICE_KEY)) ?? all[0]; }
@@ -186,7 +185,6 @@ async function connectBackend(server) {
   const token = await traced({ id: "backend-token", kind: "backend-token", title: "Authenticate and get a token" }, config.token_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body }, t => ({ Granted: t.scope, "Token lasts": `${Math.round(t.expires_in / 60)} min` }));
   const session = { token: token.access_token, patient: server.patient, imaging: imaging.replace(/\/$/, ""), iss: server.iss, own: false, label: server.label, backend: true };
   save({ session });
-  history.pushState(null, "", VIEWER);
   await run(session);
 }
 async function finishSignIn(params) {
@@ -202,8 +200,6 @@ async function finishSignIn(params) {
   if (!token.patient) throw new Error("The token response didn't name a patient.");
   const session = { token: token.access_token, patient: token.patient, imaging, iss: pending.iss, own: pending.own, label: pending.label };
   save({ session });
-  // The viewer has an address of its own, so Back from it returns to the overview.
-  history.replaceState(null, "", VIEWER);
   return session;
 }
 function disconnect() {
@@ -406,29 +402,18 @@ $("#disconnect").addEventListener("click", disconnect);
 addEventListener("pageshow", e => {
   if (!e.persisted) return;
   if (!BASE) { $("#create").disabled = false; renderHome(); return; }
-  if (onViewer()) { if (!saved().session) location.replace(`${BASE}/`); return; }
-  // The overview, as it was left on the way to sign-in: ready to connect again, or to go back to the viewer.
-  connecting(false); $("#connect").disabled = false;
-  showResume();
+  if (!saved().session) { connecting(false); $("#connect").disabled = false; }
   renderSandbox();
 });
-/** On the overview, a way back to the viewer while this tab is still connected. */
-function showResume() {
-  const s = saved().session, el = $("#resume");
-  el.hidden = !s;
-  if (s) el.innerHTML = `Still connected${s.own ? "" : ` to ${esc(s.label)}`}. <a href="${esc(VIEWER)}" data-root>Back to the viewer</a>`;
-}
 (async function start() {
   const params = new URLSearchParams(location.search);
   if (!BASE) { renderHome(); return; }
   renderSandbox();
   try {
     if (params.has("code") || params.has("error")) { const s = await finishSignIn(params); await run(s); return; }
-    // The viewer's own address shows the viewer, for a tab that's connected, and otherwise the overview.
-    if (onViewer()) { if (saved().session) await run(saved().session); else location.replace(`${BASE}/`); return; }
+    if (saved().session) { await run(saved().session); return; }
     if (params.get("connect") === "1") { history.replaceState(null, "", REDIRECT); await connect(); return; }
     connecting(false);
-    showResume();
   } catch (e) {
     connecting(false);
     $("#landing").hidden = false; $("#app").hidden = true;

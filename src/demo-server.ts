@@ -130,7 +130,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     async function fetch(req: Request): Promise<Response> {
       const url = new URL(req.url);
       const p = url.pathname;
-      if (p === "/" || p === "/viewer") return file("client.html");
+      if (p === "/") return file("client.html");
       if (p === "/tours") return file("tours.html");
       if (p === "/explore") return file("index.html");
       if (p === "/activity") return file("activity.html");

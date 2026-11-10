@@ -32,7 +32,7 @@ for (const [label, viewport] of [["desktop", { width: 1440, height: 900 }], ["ph
   await p.locator(".study-button", { hasText: "BRAIN" }).click(); await p.locator("#slice:enabled").waitFor(); await p.locator("#stage-note:empty").waitFor({ state: "attached" }); await report(`${label} open study with series`, p);
   await p.evaluate(() => { (window as any).__s = []; });
   await p.locator(".study-button", { hasText: "Histopath" }).click(); await p.waitForTimeout(600); await report(`${label} back to one-series study`, p);
-  const base = new URL(p.url()).pathname.match(/^\/s\/[^/]+/)![0];
+  const base = new URL(p.url()).pathname.replace(/\/$/, "");
   await p.evaluate(() => sessionStorage.clear()); await p.goto(`${O}${base}/`); await report(`${label} landing again`, p);
   await p.goto(`${O}${base}/connect`); await report(`${label} connect page`, p);
   await p.evaluate(() => { (window as any).__s = []; }); await p.getByRole("radio", { name: /Backend service/ }).check(); await report(`${label} connect switch type`, p);
