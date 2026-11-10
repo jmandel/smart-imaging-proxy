@@ -21,7 +21,7 @@ a.tool { display:inline-flex; align-items:center; justify-content:center; color:
 .tool.quiet-danger { color:var(--bad); margin-left:auto; }
 .sandbox-label { margin:0 0 .1rem; font-size:.78rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); }
 .sandbox-actions { align-items:center; }
-html.at-home nav.pages a:not([href$="llms.txt"]), html.at-home .subpages, html.at-home .bar-end { display:none; }
+html.at-home .bar-end { display:none; }
 .invite h2, .sandbox h2 { margin:0 0 .3rem; font-size:1.05rem; }
 .sandbox-head { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem .6rem; }
 .sandbox-name { font-size:1.2rem; font-weight:700; margin:0; flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
@@ -161,9 +161,7 @@ html.at-home nav.pages a:not([href$="llms.txt"]), html.at-home .subpages, html.a
 
 /* A phone: who, the picture, what else there is to see, then the chart and the protocol, at the full width. */
 @media (max-width:44rem) {
-  .topbar { flex-wrap:nowrap; padding:.2rem .6rem; gap:.4rem; }
-  .pages { flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; }
-  .pages a { min-height:2.5rem; white-space:nowrap; }
+  .topbar { padding:.2rem .6rem; gap:.4rem; }
   .workspace { grid-template-columns:minmax(0, 1fr); padding:.5rem; gap:.5rem; }
   .chart { display:contents; }
   #studies { min-height:14rem; }
@@ -270,3 +268,13 @@ a.path p:not(.path-kicker) { color:var(--muted); }
   #try .preview li { padding:.45rem .6rem; }
   #try .preview span { display:none; }
 }
+
+/* The site's home: who you are, then your sandboxes. A sandbox's home: its pages, by what they're for. */
+.audiences { margin-bottom:1.2rem; }
+.your-sandboxes { margin-top:2.2rem; padding-top:1.4rem; border-top:1px solid var(--line); }
+.your-sandboxes h2, .sandbox-group h2 { font-size:1.1rem; margin:0 0 .3rem; }
+.sandbox-group { margin-top:1.6rem; }
+.guide-step { margin:0 0 .9rem; }
+.guide-step h2 { font-size:1.15rem; margin:0 0 .4rem; }
+.guide-links { display:flex; flex-wrap:wrap; gap:.4rem 1.2rem; align-items:center; margin:.6rem 0 0; }
+.guide-sandbox:empty { display:none; }

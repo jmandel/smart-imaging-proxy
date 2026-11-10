@@ -45,17 +45,20 @@ const setSaved = (x: { rules?: any[]; shares?: any[]; approvals?: any[] }) => {
 describe("pages", () => {
   test("the demo client is the home page, and Tours, Explore and the activity log are served, each with the header's links and the client builder's, and the old pages are gone", async () => {
     expect(await (await call("GET", "/")).text()).toContain("<title>SMART Imaging Demo");
-    const SANDBOX = /<nav class="subpages" aria-label="Sandbox"><a href="\/"[^>]*>Data<\/a><a href="\/explore"[^>]*>Explore<\/a><a href="\/tours"[^>]*>Tour<\/a><a href="\/activity"[^>]*>Activity<\/a><\/nav>/;
-    const SERVER = /<nav class="subpages" aria-label="Test a Server"><a href="\/viewer"[^>]*>Viewer<\/a><a href="\/servers"[^>]*>Your servers<\/a><a href="\/checks"[^>]*>Conformance<\/a><\/nav>/;
-    for (const [path, title, sub] of [["/tours", "Tours", SANDBOX], ["/explore", "Explore", SANDBOX], ["/activity", "Activity", SANDBOX], ["/checks", "Conformance", SERVER], ["/viewer", "Viewer", SERVER]] as const) {
+    const MENU = /<nav class="pages" aria-label="Pages"><a href="\/build-an-app" data-root[^>]*>Build an App<\/a><a href="\/run-a-server" data-root[^>]*>Run a Server<\/a><a href="\/how-it-works" data-root[^>]*>How It Works<\/a><a href="\/why-it-matters" data-root[^>]*>Why It Matters<\/a><a href="\/llms.txt">For Agents<\/a><\/nav>/;
+    for (const [path, title] of [["/build-an-app", "Build an App"], ["/run-a-server", "Run a Server"], ["/how-it-works", "How It Works"], ["/why-it-matters", "Why It Matters"]] as const) {
       const html = await (await call("GET", path)).text();
       expect(html).toContain(`<title>${title}`);
-      expect(html).toMatch(/<nav class="pages" aria-label="Pages"><a href="\/"[^>]*>Sandbox<\/a><a href="\/build"[^>]*>Build an App<\/a><a href="\/viewer"[^>]*>Test a Server<\/a><a href="\/llms.txt"[^>]*>For Agents<\/a><\/nav>/);
-      expect(html).toMatch(sub);
-      if (sub === SANDBOX) expect(html).toContain('id="settings-button"');
+      expect(html).toMatch(MENU);
+    }
+    for (const [path, title, crumb] of [["/tours", "Tours", "Tour"], ["/explore", "Explore", "Explore"], ["/activity", "Logs", "Logs"], ["/checks", "Conformance", "Conformance"], ["/viewer", "Viewer", "Viewer"]] as const) {
+      const html = await (await call("GET", path)).text();
+      expect(html).toContain(`<title>${title}`);
+      expect(html).toMatch(MENU);
+      expect(html).toContain(`<span aria-current="page">${crumb}</span></nav>`);
       expect(html).not.toContain("store-badge");
     }
-    for (const path of ["/server-list.js", "/servers.js", "/explore.js", "/tours.js", "/activity.js", "/event-words.js", "/layers.js", "/page.js", "/thumbs.js", "/styles.css"]) expect((await call("GET", path)).status).toBe(200);
+    for (const path of ["/server-list.js", "/servers.js", "/explore.js", "/tours.js", "/activity.js", "/event-words.js", "/layers.js", "/page.js", "/thumbs.js", "/guides.js", "/styles.css"]) expect((await call("GET", path)).status).toBe(200);
     for (const path of ["/browse", "/admin", "/app.js", "/admin.js", "/browse.js", "/cards.js", "/api/explore/events", "/api/browse/options", "/api/admin/status"]) expect([path, (await call("GET", path)).status]).toEqual([path, 404]);
   });
 });

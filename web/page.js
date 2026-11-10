@@ -129,8 +129,40 @@ async function renderSettings(message = "") {
   }).catch(() => {});
 }
 
+/** Makes a sandbox, remembered in this browser. Gives its base path. */
+async function createSandbox() {
+  const r = await fetch("/api/sandboxes", { method: "POST" });
+  if (!r.ok) throw new Error(r.status === 429 ? "Too many sandboxes from this address. Try again in a while." : `The sandbox couldn't be created (HTTP ${r.status})`);
+  const { base } = await r.json();
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem("smart-imaging-client:sandboxes") ?? "[]"); } catch {}
+  try { localStorage.setItem("smart-imaging-client:sandboxes", JSON.stringify([...list, { base, joined: false }])); } catch {}
+  return base;
+}
+/** The sandbox you were last in, which the guides at the root link into. */
+const CURRENT_KEY = "smart-imaging-client:current";
+const currentSandbox = () => { try { return localStorage.getItem(CURRENT_KEY) || undefined; } catch { return undefined; } };
+/** On a narrow screen, the menu is behind a button, so the header stays one row and the page starts high. */
+function initMenu() {
+  const bar = $(".topbar"), pages = $(".topbar nav.pages");
+  if (!bar || !pages) return;
+  const button = document.createElement("button");
+  Object.assign(button, { type: "button", className: "menu-button", textContent: "Menu" });
+  button.setAttribute("aria-expanded", "false");
+  pages.id ||= "menu";
+  button.setAttribute("aria-controls", pages.id);
+  pages.before(button);
+  const show = open => { bar.classList.toggle("menu-open", open); button.setAttribute("aria-expanded", String(open)); };
+  button.addEventListener("click", () => show(!bar.classList.contains("menu-open")));
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && bar.classList.contains("menu-open")) { show(false); button.focus(); } });
+}
 function initHeader() {
   initSettings();
+  initMenu();
+  if (!BASE) return;
+  try { localStorage.setItem(CURRENT_KEY, BASE); } catch {}
+  const crumb = $(".crumb-sandbox");
+  if (crumb) sandboxName(BASE).then(name => { if (name) crumb.textContent = `Sandbox “${name}”`; });
 }
 initHeader();
 

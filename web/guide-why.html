@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Why It Matters · SMART Imaging</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Crect width='20' height='20' rx='3' fill='%230f2a3d'/%3E%3Ccircle cx='10' cy='10' r='4' fill='%23e8f1f6'/%3E%3C/svg%3E">
+<link rel="preload" href="/fonts/atkinson-next.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/atkinson-mono.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/client.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="mark" href="/" data-root title="Home"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2" y="2" width="16" height="16" rx="3"/><circle cx="10" cy="10" r="3.2"/></svg><span class="name">SMART Imaging</span></a>
+  <nav class="pages" aria-label="Pages"><a href="/build-an-app" data-root>Build an App</a><a href="/run-a-server" data-root>Run a Server</a><a href="/how-it-works" data-root>How It Works</a><a href="/why-it-matters" data-root aria-current="page">Why It Matters</a><a href="/llms.txt">For Agents</a></nav>
+</header>
+<main class="landing guide">
+  <h1>Why imaging interoperability matters</h1>
+  <p class="lead">Patients carry their records between health systems, but rarely their images. SMART Imaging lets any app a patient chooses fetch both, with one sign-in and the health system's own rules.</p>
+  <p class="guide-sandbox note" id="guide-sandbox"></p>
+  <section class="panel guide-step" aria-labelledby="h-1">
+    <h2 id="h-1"><span class="step-no">1</span> What it makes possible</h2>
+    <ul class="how">
+      <li>A patient opens their scans in an app of their choice, next to their reports.</li>
+      <li>A parent or caregiver reaches what they're allowed to, and no more.</li>
+      <li>A referral service finds the one study it needs, not the whole record.</li>
+      <li>Images stay where they are. Nothing is copied ahead of time.</li>
+    </ul>
+    <p class="guide-links"><a href="/tours" data-sandbox>See these as stories →</a></p>  </section>
+  <section class="panel guide-step" aria-labelledby="h-2">
+    <h2 id="h-2"><span class="step-no">2</span> Watch it work</h2>
+    <p>A sample patient signs in, and their images open in the viewer.</p>
+    <p class="guide-links"><a class="button" href="/viewer" data-sandbox>Open the viewer</a></p>  </section>
+  <section class="panel guide-step" aria-labelledby="h-3">
+    <h2 id="h-3"><span class="step-no">3</span> What it takes</h2>
+    <ul class="how">
+      <li><strong>A health system</strong> adds an imaging FHIR server and a DICOMweb endpoint behind the sign-in it already has for SMART apps.</li>
+      <li><strong>An app</strong> uses the SMART App Launch it may already support, asking for imaging too.</li>
+    </ul>
+    <p class="guide-links"><a href="/run-a-server" data-root>For server teams →</a> <a href="/build-an-app" data-root>For app teams →</a></p>  </section>
+  <p class="note agents">Working with an AI agent? Give it <a href="/llms.txt">llms.txt</a>. Everything on these pages has an API, and it's all described there.</p>
+</main>
+<script src="/page.js"></script>
+<script src="/guides.js"></script>
+</body>
+</html>

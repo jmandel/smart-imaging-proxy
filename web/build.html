@@ -11,10 +11,10 @@
 </head>
 <body>
 <header class="topbar">
-  <a class="mark" href="/" data-root title="Your sandboxes"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2" y="2" width="16" height="16" rx="3"/><circle cx="10" cy="10" r="3.2"/></svg><span class="name">SMART Imaging</span></a>
-  <nav class="pages" aria-label="Pages"><a href="/">Sandbox</a><a href="/build" aria-current="page">Build an App</a><a href="/viewer">Test a Server</a><a href="/llms.txt">For Agents</a></nav>
+  <a class="mark" href="/" data-root title="Home"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2" y="2" width="16" height="16" rx="3"/><circle cx="10" cy="10" r="3.2"/></svg><span class="name">SMART Imaging</span></a>
+  <nav class="pages" aria-label="Pages"><a href="/build-an-app" data-root aria-current="page">Build an App</a><a href="/run-a-server" data-root>Run a Server</a><a href="/how-it-works" data-root>How It Works</a><a href="/why-it-matters" data-root>Why It Matters</a><a href="/llms.txt">For Agents</a></nav>
 </header>
-<nav class="subpages" aria-label="Build an App"><a href="/build" aria-current="page">Start here</a><a href="/connect">Register an app</a></nav>
+<nav class="crumbs" aria-label="Where you are"><a href="/" class="crumb-sandbox">Sandbox</a><span aria-hidden="true">›</span><span aria-current="page">Start here</span></nav>
 <div id="announce" class="sr-only" role="status" aria-live="polite"></div>
 <main class="landing build-page">
   <h1>Build a client</h1>
@@ -55,12 +55,12 @@
     <div class="paths">
       <a class="path panel" href="/tours"><h3>Tours</h3><p>Guided stories about sharing, guardians and organization policy, each played out on this sandbox's servers.</p></a>
       <a class="path panel" href="/explore"><h3>Explore</h3><p>What each person and service can reach right now, and which grant allows it.</p></a>
-      <a class="path panel" href="/activity"><h3>Activity</h3><p>Every request your app made, and each decision the servers took, with the reason.</p></a>
+      <a class="path panel" href="/activity"><h3>Logs</h3><p>Every request your app made, and each decision the servers took, with the reason.</p></a>
     </div>
   </section>
 
   <p class="note agents">Working with an AI agent? Give it <a href="/llms.txt">this sandbox's llms.txt</a>. It has the endpoints, the registration API and a sign-in walk-through, so the agent can register your app and test it against this sandbox for you.</p>
-  <p class="note">Testing your own server instead? <a href="/servers">Point this sandbox's viewer at it</a>.</p>
+  <p class="note">Testing your own server instead? <a href="/run-a-server" data-root>Run a Server</a>.</p>
 </main>
 <script src="/page.js"></script>
 <script>if (!BASE) location.replace("/");</script>

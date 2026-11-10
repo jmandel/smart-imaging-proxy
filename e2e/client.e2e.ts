@@ -163,10 +163,10 @@ describe("the demo client", () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     const base = await enterSandbox(page);
-    // Through the menus: Test a Server, then Your servers.
-    await page.locator("nav.pages").getByRole("link", { name: "Test a Server", exact: true }).click();
-    await page.waitForURL(u => u.pathname === `${base}/viewer`);
-    await page.locator("nav.subpages").getByRole("link", { name: "Your servers" }).click();
+    // Through the menu: Run a Server, whose links go to this sandbox, then Your servers.
+    await page.locator("nav.pages").getByRole("link", { name: "Run a Server", exact: true }).click();
+    await page.waitForURL(u => u.pathname === "/run-a-server");
+    await page.getByRole("link", { name: "Your servers" }).click();
     await page.waitForURL(u => u.pathname === `${base}/servers`);
     await page.getByText("None yet.").waitFor();
     await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -239,7 +239,10 @@ describe("the demo client", () => {
     page.on("dialog", d => d.accept());
     await page.goto(`${ORIGIN}/`);
     await page.getByText("You don't have any yet.").waitFor();
-    expect(await page.locator("nav.pages a:visible").count()).toBe(1);
+    // On a phone the menu is behind a button.
+    expect(await page.locator("nav.pages a:visible").count()).toBe(0);
+    await page.getByRole("button", { name: "Menu" }).click();
+    expect(await page.locator("nav.pages a:visible").allInnerTexts()).toEqual(["Build an App", "Run a Server", "How It Works", "Why It Matters", "For Agents"]);
     const first = await enterSandbox(page), second = await enterSandbox(page);
     await page.goto(`${ORIGIN}/`);
     await page.locator(`.sandbox-list a[href="${first}/"]`).waitFor();
@@ -294,13 +297,14 @@ describe("the demo client", () => {
     expect(await page.locator("#connect").isEnabled()).toBe(true);
     await context.close();
   });
-  test("inside a sandbox every menu link stays in it, and the old pages at the root go home", async () => {
+  test("inside a sandbox the menu goes to the guides at the root, and every other link stays in it, and the old pages at the root go home", async () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     const base = await enterSandbox(page);
     for (const path of [`${base}/`, `${base}/build`, `${base}/servers`, `${base}/checks`, `${base}/tours`, `${base}/explore`, `${base}/activity`, `${base}/connect`]) {
       await page.goto(`${ORIGIN}${path}`);
-      const hrefs = await page.locator("nav.pages a, nav.subpages a, a.path").evaluateAll(as => as.map(a => a.getAttribute("href")));
+      expect(await page.locator("nav.pages a[data-root]").evaluateAll(as => as.map(a => a.getAttribute("href")))).toEqual(["/build-an-app", "/run-a-server", "/how-it-works", "/why-it-matters"]);
+      const hrefs = await page.locator("nav.pages a:not([data-root]), nav.crumbs a, a.path:not([data-root])").evaluateAll(as => as.map(a => a.getAttribute("href")));
       expect(hrefs.every(h => h!.startsWith(`${base}/`))).toBe(true);
       expect(hrefs).toContain(`${base}/llms.txt`);
       expect(await page.locator("a.mark").getAttribute("href")).toBe("/");

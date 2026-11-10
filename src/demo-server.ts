@@ -132,6 +132,10 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       const p = url.pathname;
       if (p === "/") return file("client.html");
       if (p === "/viewer") return file("viewer.html");
+      if (p === "/build-an-app") return file("guide-app.html");
+      if (p === "/run-a-server") return file("guide-server.html");
+      if (p === "/how-it-works") return file("guide-how.html");
+      if (p === "/why-it-matters") return file("guide-why.html");
       if (p === "/tours") return file("tours.html");
       if (p === "/explore") return file("index.html");
       if (p === "/activity") return file("activity.html");
@@ -241,7 +245,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
   }
 
   // The same files in every sandbox: the pages work out their sandbox from their own URL.
-  const STATIC: Record<string, string> = Object.fromEntries(["styles.css", "page.js", "event-words.js", "layers.js", "explore.js", "tours.js", "activity.js", "thumbs.js", "viewer.js", "sandbox.js", "server-list.js", "servers.js", "image-viewer.js", "image-viewer.css", "smart-imaging.js", "sandbox-client.js", "checks.js", "client.css", "connect.js", "fonts/atkinson-next.woff2", "fonts/atkinson-mono.woff2"].map(f => [`/${f}`, f]));
+  const STATIC: Record<string, string> = Object.fromEntries(["styles.css", "page.js", "event-words.js", "layers.js", "explore.js", "tours.js", "activity.js", "thumbs.js", "viewer.js", "sandbox.js", "guides.js", "server-list.js", "servers.js", "image-viewer.js", "image-viewer.css", "smart-imaging.js", "sandbox-client.js", "checks.js", "client.css", "connect.js", "fonts/atkinson-next.woff2", "fonts/atkinson-mono.woff2"].map(f => [`/${f}`, f]));
   /**
    * viewer-kit's files, from the pinned download, never from the repository: checked once, here at
    * startup, and served only as the bytes that were checked. With none that check out, every one is a

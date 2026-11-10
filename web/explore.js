@@ -250,7 +250,7 @@ function viewHtml() {
     ${pageError ? `<p class="error" role="alert">${esc(pageError)}</p>` : ""}
     ${view.sheets?.length ? `<ul class="sheets" aria-label="Studies">${view.sheets.map(sheetHtml).join("")}</ul>` : ""}
     ${empty}${formHtml()}
-    <div class="actions">${(view.actions ?? []).map((a, i) => actionButton(a, i, false)).join("")}<a class="log-link" href="${esc(view.activityUrl)}">Activity log</a></div>`;
+    <div class="actions">${(view.actions ?? []).map((a, i) => actionButton(a, i, false)).join("")}<a class="log-link" href="${esc(view.activityUrl)}">Logs</a></div>`;
 }
 
 function studyHtml() {
@@ -266,7 +266,7 @@ function studyHtml() {
       ${r ? `<div class="retrieval"><h3>${r.running ? "Retrieving" : r.status === 200 && r.complete ? "Retrieved" : `Not retrieved (HTTP ${esc(r.status ?? "none")})`}</h3><dl>
         <dt>Parts</dt><dd>${esc(r.parts)}</dd><dt>Received</dt><dd>${esc(bytes(r.bytes))}</dd>${r.wire ? `<dt>On the wire</dt><dd>${esc(bytes(r.wire))}</dd>` : ""}
         ${r.ms !== undefined ? `<dt>Took</dt><dd>${esc(r.ms)} ms</dd>` : ""}${r.error ? `<dt>Problem</dt><dd class="error">${esc(r.error)}</dd>` : ""}</dl></div>` : ""}
-    <p class="chain" id="chain">${chain ? `${esc(chain.line)} <a href="${esc(chain.activityUrl)}">Activity log</a>` : `<span class="spinner" aria-hidden="true"></span>Loading…`}</p>
+    <p class="chain" id="chain">${chain ? `${esc(chain.line)} <a href="${esc(chain.activityUrl)}">Logs</a>` : `<span class="spinner" aria-hidden="true"></span>Loading…`}</p>
   </div>`;
 }
 

@@ -9,14 +9,14 @@
 </head>
 <body>
 <header class="topbar">
-  <a class="mark" href="/" data-root title="Your sandboxes"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2" y="2" width="16" height="16" rx="3"/><circle cx="10" cy="10" r="3.2"/></svg><span class="name">SMART Imaging</span></a>
-  <nav class="pages" aria-label="Pages"><a href="/" aria-current="page">Sandbox</a><a href="/build">Build an App</a><a href="/viewer">Test a Server</a><a href="/llms.txt">For Agents</a></nav>
+  <a class="mark" href="/" data-root title="Home"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2" y="2" width="16" height="16" rx="3"/><circle cx="10" cy="10" r="3.2"/></svg><span class="name">SMART Imaging</span></a>
+  <nav class="pages" aria-label="Pages"><a href="/build-an-app" data-root>Build an App</a><a href="/run-a-server" data-root>Run a Server</a><a href="/how-it-works" data-root aria-current="page">How It Works</a><a href="/why-it-matters" data-root>Why It Matters</a><a href="/llms.txt">For Agents</a></nav>
   <div class="bar-end"><span class="where" id="where"></span>
     <button type="button" id="settings-button" aria-label="Settings" aria-expanded="false" aria-controls="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg><span class="label">Settings</span></button>
   </div>
   <div class="settings" id="settings" role="region" aria-label="Settings" hidden></div>
 </header>
-<nav class="subpages" aria-label="Sandbox"><a href="/">Data</a><a href="/explore" aria-current="page">Explore</a><a href="/tours">Tour</a><a href="/activity">Activity</a></nav>
+<nav class="crumbs" aria-label="Where you are"><a href="/" class="crumb-sandbox">Sandbox</a><span aria-hidden="true">›</span><span aria-current="page">Explore</span></nav>
 <main class="explore">
   <aside class="who" aria-label="Who's looking" id="who"><p class="note">Loading…</p></aside>
   <section class="view" id="view" aria-labelledby="headline"></section>

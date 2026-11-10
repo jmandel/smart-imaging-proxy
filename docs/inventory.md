@@ -68,43 +68,78 @@ A setting chooses automatic or window sign-in, and it affects only Tours.
 5. **Drop seeded sandboxes,** unless you want shareable policy-in-a-URL.
 6. **Hide or drop the Settings for image store and topology.** Keep them as management API calls for agents, but off the menu.
 
+## Purpose: who it's for, and what each part is for
+
+Agreed with Josh, November 2026. The structure follows from this.
+
+**Who it's for.** Equally, from the start:
+
+- Connectathon participants, testing together.
+- Vendors, app or server, on their own.
+- People reading the spec, who want to see it work.
+- Policy makers deciding whether to invest in imaging interoperability.
+- AI agents, through llms.txt.
+
+**The viewer** is both a reference client, so a server developer can tell a server bug from a client bug, and a demo of what an imaging app looks like. Neither role comes first.
+
+**The sandbox** gives an app developer a realistic health system. The policy exists to make refusals, expiry and guardians behave like a real hospital's. It isn't a goal, and most visitors won't care about it. It's there for the curious, and for whoever runs a sandbox.
+
+**Server developers** don't need our servers. But they're offered, from the pages they're already on:
+
+- implementation advice and gotchas;
+- what happened, in the logs.
+
+**Agents** can use, and combine, everything the site does: build an app, test a server, explain the spec, drive the sandbox. Ordinary purposes and new ones alike. So every capability is an API first, and llms.txt documents it.
+
 ## Decided: the simpler site
 
 Settled with Josh, November 2026. This replaces earlier plans.
 
-### Menu inside a sandbox: Sandbox · Build an App · Test a Server · For Agents
+### A guide for each audience
 
-The two sides are named by what the visitor is doing, so neither reads backwards.
+The home page asks who you are. Each audience has a short guide at the site's root, listing what matters for
+its jobs, most important first, and linking to the pages that do them. The menu is just the guides, plus For
+Agents: **Build an App · Run a Server · How It Works · Why It Matters · For Agents**.
 
-**Sandbox** is what the sandbox is, and its first page is the landing page, where Back lands.
+- **Build an App:** get a sandbox; endpoints and sample logins; register; logs; the hard cases.
+- **Run a Server:** what the server needs (advice and gotchas); register our viewer; add the server and
+  connect; compare with a working sandbox and its logs; conformance (planned, issue #1).
+- **How It Works:** the viewer on a sandbox; the parts; the Tour's stories; the live trace.
+- **Why It Matters:** what it makes possible; watch it work; what it takes to implement.
 
-- **Data:** every patient, study and image, with no sign-in, as the operator sees them. The admin token can search and retrieve every study: a built-in rule for the admin client only.
-- **Policy:** the rules, relationships, shares and app approvals, in plain words. Each part is editable through the policy API, and named scenarios set the whole document.
-- **Settings:** the demo clock, image storage, topology, resets, ending access, and key rotation. There's no Settings button in the header.
-- **Explore:** see what a person's app or a service sees, and why. Kept apart from Data: Data is what exists, Explore is one viewpoint on it. Revisit once Data is built.
-- **Tour:** the guided stories. They always walk the sign-in forms themselves.
-- **Activity:** everything that happened in the sandbox.
+Connectathon participants use the app and server guides. A registry of external test environments, and
+connectathon support, come later.
 
-**Build an App** is for people building a client, against our servers: **Start here** (endpoints, sample logins) and **Register an app**.
+A guide's links go to the sandbox you were last in. With none, the first link makes one.
 
-**Test a Server** is for people with a server, using our client:
+### Inside a sandbox
 
-- **Viewer:** our general SMART app, against this sandbox or any server. Sign-in opens in a new tab. The redirect page posts its address back, and the viewer redeems the code, so its tab never navigates.
-- **Your servers:** adding and editing servers for the viewer.
-- **Conformance:** the checks, run by our client against a server. This sandbox now; yours later (issue #1).
+A sandbox's pages show a trail, "Sandbox “name” › page", instead of sub-menus. The sandbox's home lists its
+pages by what they're for: **Your app** (Start here, Register an app, Logs), **Try it** (Viewer, Tour, Explore),
+**Your server** (Your servers, Conformance). Activity is called **Logs**.
+
+**Sandbox Config** holds what makes the sandbox realistic, for the curious: the full policy editor, and the
+settings (clock, storage, topology, resets, keys), out of the header.
+
+### The viewer
+
+Quiet and clean, with small annotations and details; it does this well already. It's both a reference client
+and a demo.
+
+It stays in a sandbox for now. A root viewer, with one fixed redirect URI to register with your server, needs
+sign-in to work at the public root, which refuses it today.
 
 ### Cuts
 
 - The Tours sign-in setting.
 - `src/flows` moves into the tests.
 - URL-seeded sandboxes.
-- Sub-menus stay, one per area.
 
 ### Order
 
-1. Menu, the viewer page and its sign-in tab, and Test a Server. Done.
-2. Data, with the admin client's rule.
-3. Settings, out of the header.
-4. Policy, with scenarios.
+1. The guides, the home page, the menu and the trail. Done, for Josh to look at.
+2. Sandbox Config: the policy editor and settings, out of the header.
+3. The sample-logins table shows each login's patients and studies.
+4. The viewer at the root, with one redirect URI.
 5. Cuts.
 6. llms.txt, tests updated to the design, a screenshot review, then a deploy when Josh says so.

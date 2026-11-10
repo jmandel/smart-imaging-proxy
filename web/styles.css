@@ -56,14 +56,15 @@ button.secondary:hover:not(:disabled) { background:var(--code); }
 .mark { display:inline-flex; align-items:center; gap:.55rem; color:inherit; text-decoration:none; font-size:1.06rem; font-weight:700; white-space:nowrap; min-height:2.75rem; }
 .mark svg { width:20px; height:20px; flex:none; }
 .pages { display:flex; gap:.25rem; }
+.menu-button { display:none; align-items:center; min-height:2.75rem; padding:0 .9rem; border:1px solid var(--film-raised); border-radius:5px; background:transparent; color:var(--on-film); font:inherit; cursor:pointer; }
+.menu-button[aria-expanded=true] { background:var(--film-raised); }
 .pages a { display:inline-flex; align-items:center; min-height:2.75rem; color:var(--on-film-dim); text-decoration:none; padding:0 .8rem; border-radius:5px; }
 .pages a:hover { color:var(--on-film); background:var(--film-raised); }
 .pages a[aria-current=page] { color:var(--on-film); background:var(--film-raised); font-weight:700; }
-/* Under the bar, on the pages for people building a client: the pages that belong together. */
-.subpages { display:flex; gap:.2rem; padding:.3rem 1.5rem; background:var(--plate); border-bottom:1px solid var(--line); overflow-x:auto; scrollbar-width:none; }
-.subpages a { display:inline-flex; align-items:center; min-height:2.5rem; padding:0 .7rem; border-radius:5px; color:var(--muted); text-decoration:none; white-space:nowrap; }
-.subpages a:hover { color:var(--ink); background:var(--code); }
-.subpages a[aria-current=page] { color:var(--ink); font-weight:700; box-shadow:inset 0 -3px 0 var(--accent); border-radius:5px 5px 0 0; }
+/* Under the bar, on a sandbox's pages: which sandbox, and which of its pages. */
+.crumbs { display:flex; align-items:center; gap:.5rem; min-height:2.6rem; padding:.2rem 1.5rem; background:var(--plate); border-bottom:1px solid var(--line); color:var(--muted); overflow-x:auto; white-space:nowrap; }
+.crumbs a { color:var(--ink); font-weight:600; }
+.crumbs [aria-current=page] { color:var(--ink); }
 .bar-end { margin-left:auto; display:flex; align-items:center; gap:.6rem; }
 .where { color:var(--on-film-dim); font-size:.88rem; }
 #settings-button { display:inline-flex; align-items:center; gap:.45rem; min-height:2.75rem; background:transparent; color:var(--on-film-dim); border:1px solid var(--film-line); border-radius:6px; padding:0 .85rem; }
@@ -519,10 +520,15 @@ tr.detail > td { background:var(--box); max-width:none; padding:.6rem .8rem .8re
   .fl-cell.in::before, .fl-cell.out::after { top:calc(.35rem + 8px - 1px); }
 }
 @media (max-width:720px) {
-  .topbar { padding:.4rem 1rem; gap:.25rem; flex-wrap:nowrap; }
-  .subpages { padding:.25rem .6rem; }
-  .pages { flex:1 1 auto; min-width:0; flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; }
-  .pages a { white-space:nowrap; }
+  .topbar { padding:.4rem 1rem; gap:.25rem; }
+  .crumbs { padding:.2rem .9rem; }
+  /* The menu is behind a button, and opens as a list under the bar: nothing scrolls out of sight. */
+  .menu-button { display:inline-flex; margin-left:auto; order:2; }
+  .bar-end { order:1; margin-left:auto; }
+  .topbar:has(.bar-end) .menu-button { margin-left:0; }
+  .pages { display:none; order:3; flex:1 0 100%; flex-direction:column; gap:0; padding:.2rem 0 .4rem; }
+  .menu-open .pages { display:flex; }
+  .pages a { white-space:normal; min-height:2.75rem; }
   .bar-end { flex:none; }
   .mark { font-size:.95rem; gap:.4rem; }
   .pages a { padding:0 .5rem; }

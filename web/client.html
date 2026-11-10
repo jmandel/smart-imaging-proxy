@@ -17,29 +17,55 @@
 </head>
 <body>
 <header class="topbar">
-  <a class="mark" href="/" data-root title="Your sandboxes"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2" y="2" width="16" height="16" rx="3"/><circle cx="10" cy="10" r="3.2"/></svg><span class="name">SMART Imaging</span></a>
-  <nav class="pages" aria-label="Pages"><a href="/" aria-current="page">Sandbox</a><a href="/build">Build an App</a><a href="/viewer">Test a Server</a><a href="/llms.txt">For Agents</a></nav>
+  <a class="mark" href="/" data-root title="Home"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="2" y="2" width="16" height="16" rx="3"/><circle cx="10" cy="10" r="3.2"/></svg><span class="name">SMART Imaging</span></a>
+  <nav class="pages" aria-label="Pages"><a href="/build-an-app" data-root>Build an App</a><a href="/run-a-server" data-root>Run a Server</a><a href="/how-it-works" data-root>How It Works</a><a href="/why-it-matters" data-root>Why It Matters</a><a href="/llms.txt">For Agents</a></nav>
 </header>
-<nav class="subpages" aria-label="Sandbox"><a href="/" aria-current="page">Data</a><a href="/explore">Explore</a><a href="/tours">Tour</a><a href="/activity">Activity</a></nav>
 <div id="announce" class="sr-only" role="status" aria-live="polite"></div>
 
 <p class="connecting-note" id="back-note" role="status">Signed in. Returning to the viewer…</p>
 <main id="home" class="landing">
-  <h1>Your sandboxes</h1>
-  <p class="lead">A sandbox is a private copy of a SMART Imaging health system, with sample patients, studies and reports. Everything you do in one stays there until you delete it, and you can share one by its link.</p>
-  <ul class="sandbox-list" id="sandbox-list"></ul>
-  <button type="button" class="primary" id="create">Create a sandbox</button>
-  <p class="error" id="create-error" role="alert" hidden></p>
-  <p class="note">Someone sent you a link to theirs? Just open it.</p>
+  <h1>SMART Imaging, working</h1>
+  <p class="lead">One sign-in that gives an app a patient's records and their medical images. This site runs it end to end: a health system's servers with sample patients, and an imaging app that connects to them.</p>
+  <div class="paths audiences">
+    <a class="path panel" href="/build-an-app" data-root><h2>Build an App</h2><p>Connect your SMART app to a sandbox health system with sample patients and studies.</p></a>
+    <a class="path panel" href="/run-a-server" data-root><h2>Run a Server</h2><p>Connect our known-good viewer to your server, and see what it needs.</p></a>
+    <a class="path panel" href="/how-it-works" data-root><h2>How It Works</h2><p>Watch one sign-in reach a patient's records and images, part by part.</p></a>
+    <a class="path panel" href="/why-it-matters" data-root><h2>Why It Matters</h2><p>What patients, caregivers and health systems get from imaging interoperability.</p></a>
+  </div>
+  <p class="note agents">Working with an AI agent? Give it <a href="/llms.txt">llms.txt</a>. It describes everything here, and its API.</p>
+  <section class="your-sandboxes" aria-labelledby="h-sandboxes">
+    <h2 id="h-sandboxes">Your sandboxes</h2>
+    <p class="note">A sandbox is a private copy of the health system. What you do in one stays there until you delete it, and you can share one by its link.</p>
+    <ul class="sandbox-list" id="sandbox-list"></ul>
+    <button type="button" class="secondary" id="create">Create a sandbox</button>
+    <p class="error" id="create-error" role="alert" hidden></p>
+  </section>
 </main>
 <main id="landing" class="landing overview">
   <section class="sandbox panel" id="sandbox"></section>
-  <h1>What's in this sandbox</h1>
-  <p class="lead">A whole SMART Imaging setup: a health system's servers with sample patients, studies and reports, the policy that decides who sees what, and a viewer app that connects to them.</p>
-  <div class="paths">
-    <a class="path panel" href="/build"><p class="path-kicker">Build an App</p><h2>Connect your app</h2><p>Register your SMART app and point it at this sandbox's servers.</p><span class="path-go">Start here →</span></a>
-    <a class="path panel" href="/viewer"><p class="path-kicker">Test a Server</p><h2>Open the viewer</h2><p>Our SMART app, signed in to this sandbox or to any other server.</p><span class="path-go">Viewer →</span></a>
-  </div>
+  <section class="sandbox-group" aria-labelledby="h-app">
+    <h2 id="h-app">Your app</h2>
+    <div class="paths">
+      <a class="path panel" href="/build"><h3>Start here</h3><p>Endpoints, scopes, and sample people to sign in as.</p></a>
+      <a class="path panel" href="/connect"><h3>Register an app</h3><p>A public app, a confidential app, or a backend service.</p></a>
+      <a class="path panel" href="/activity"><h3>Logs</h3><p>Every request, and why each was allowed or refused.</p></a>
+    </div>
+  </section>
+  <section class="sandbox-group" aria-labelledby="h-try">
+    <h2 id="h-try">Try it</h2>
+    <div class="paths">
+      <a class="path panel" href="/viewer"><h3>Viewer</h3><p>Our SMART app, signed in to this sandbox or to your server.</p></a>
+      <a class="path panel" href="/tours"><h3>Tour</h3><p>Sharing, guardians and referrals, played out step by step.</p></a>
+      <a class="path panel" href="/explore"><h3>Explore</h3><p>What each sample person and service can reach, and why.</p></a>
+    </div>
+  </section>
+  <section class="sandbox-group" aria-labelledby="h-server">
+    <h2 id="h-server">Your server</h2>
+    <div class="paths">
+      <a class="path panel" href="/servers"><h3>Your servers</h3><p>Describe your server for the viewer, and connect.</p></a>
+      <a class="path panel" href="/checks"><h3>Conformance</h3><p>Checks against the guide, run in the page.</p></a>
+    </div>
+  </section>
   <p class="note agents">Working with an AI agent? Give it <a href="/llms.txt">this sandbox's llms.txt</a>. It explains the whole sandbox and its API.</p>
 </main>
 <script src="/page.js"></script>

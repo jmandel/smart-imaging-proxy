@@ -37,7 +37,7 @@ function stepHtml(s, i, steps) {
     ${r ? `<span class="verdict ${r.ok ? "ok" : "bad"}">${r.ok ? "As expected" : r.stopped ? "Stopped" : "Not as expected"}</span>` : next ? `<button type="button" class="primary" data-step="${esc(s.id)}" ${running ? "disabled" : ""}>${running ? "Running…" : label}</button>` : "<span></span>"}
     ${r ? `<dl class="compare">${r.expected ? `<dt>Expected</dt><dd>${r.expectedItems ? studyList(r.expectedItems, r.expected) : esc(r.expected)}</dd>` : ""}<dt>Got</dt><dd>${r.actualItems ? studyList(r.actualItems, r.actual) : esc(r.actual)}</dd>${r.detail ? `<dt>Technical detail</dt><dd class="tech">${esc(r.detail)}</dd>` : ""}${r.write ? `<dt>Policy written</dt><dd>${esc(r.write)}</dd>` : ""}</dl>
       ${changed ? `<div class="step-chain"><p class="ly-pane-label">After this step</p>${Layers.chain(r.chain, { label: "After this step: why the app sees what it sees" })}</div>` : ""}
-      ${r.eventCount ? `<p class="result"><a href="${esc(r.activityUrl)}">Activity log</a>, ${esc(plural(r.eventCount, "event"))}</p>` : r.quiet ? `<p class="result note">${esc(r.quiet)}</p>` : ""}` : ""}
+      ${r.eventCount ? `<p class="result"><a href="${esc(r.activityUrl)}">Logs</a>, ${esc(plural(r.eventCount, "event"))}</p>` : r.quiet ? `<p class="result note">${esc(r.quiet)}</p>` : ""}` : ""}
   </li>`;
 }
 
@@ -65,7 +65,7 @@ function runnerHtml() {
     <div class="tour-buttons">
       ${left ? `<button type="button" class="secondary" id="run-rest" ${running ? "disabled" : ""}>Run the rest</button>` : `<span class="verdict ${steps.every(s => s.result.ok) ? "ok" : "bad"}" role="status">${steps.every(s => s.result.ok) ? "Every step went as expected" : "Some steps didn't go as expected"}</span>`}
       <button type="button" class="secondary" id="start">Start over</button>
-      ${state.activityUrl ? `<a href="${esc(state.activityUrl)}">Activity log</a>` : ""}</div>`;
+      ${state.activityUrl ? `<a href="${esc(state.activityUrl)}">Logs</a>` : ""}</div>`;
 }
 
 function listHtml() {

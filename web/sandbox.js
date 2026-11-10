@@ -24,13 +24,7 @@ async function renderHome() {
 $("#create").addEventListener("click", async () => {
   const button = $("#create"), err = $("#create-error");
   button.disabled = true;
-  try {
-    const r = await fetch("/api/sandboxes", { method: "POST" });
-    if (!r.ok) throw new Error(r.status === 429 ? "Too many sandboxes from this address. Try again in a while." : `The sandbox couldn't be created (HTTP ${r.status})`);
-    const { base } = await r.json();
-    saveSandboxes([...knownSandboxes(), { base, joined: false }]);
-    location.assign(`${base}/`);
-  } catch (e) { err.hidden = false; err.textContent = e.message; button.disabled = false; }
+  try { location.assign(`${await createSandbox()}/`); } catch (e) { err.hidden = false; err.textContent = e.message; button.disabled = false; }
 });
 /** Inside a sandbox: its name, and what can be done with it. A browser that hasn't joined it is asked first. */
 async function renderSandbox() {

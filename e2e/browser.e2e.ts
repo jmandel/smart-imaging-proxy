@@ -86,8 +86,8 @@ describe("every page, on desktop and phone, in light and dark", () => {
         await page.waitForLoadState("networkidle");
         expect([path, await overflow(page)]).toEqual([path, 0]);
         if (!path.startsWith("http") && path !== "/") {
-          expect(await page.locator(".pages a").allInnerTexts()).toEqual(["Sandbox", "Build an App", "Test a Server", "For Agents"]);
-          expect(await page.locator(".subpages a").allInnerTexts()).toEqual(["Data", "Explore", "Tour", "Activity"]);
+          expect(await page.locator(".pages a").allInnerTexts()).toEqual(["Build an App", "Run a Server", "How It Works", "Why It Matters", "For Agents"]);
+          expect(await page.locator(".crumbs a").innerText()).toMatch(/^Sandbox/);
           const box = await page.locator("#settings-button").boundingBox();
           expect(box!.y).toBeLessThan(60);
           expect(box!.height).toBeGreaterThanOrEqual(44);
@@ -243,7 +243,7 @@ describe("Explore", () => {
     await page.keyboard.press("Enter");
     await page.locator(".retrieval h3", { hasText: "Retrieved" }).waitFor({ timeout: 60000 });
     await page.locator("#chain", { hasText: "3 parts" }).waitFor();
-    expect(await page.locator("#chain").innerText()).toMatch(/^Searched, signed link made, checked by the proxy with no policy call; 3 parts, [\d.]+ [KMG]?B\. Activity log$/);
+    expect(await page.locator("#chain").innerText()).toMatch(/^Searched, signed link made, checked by the proxy with no policy call; 3 parts, [\d.]+ [KMG]?B\. Logs$/);
     const href = await page.locator("#chain a").getAttribute("href");
     expect(href).toMatch(new RegExp(`^/activity\\?session=explore-josh-[0-9a-f]{6}&study=${SHEETS.xr}$`));
     await page.locator("#back").focus();
