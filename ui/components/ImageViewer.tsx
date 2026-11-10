@@ -33,12 +33,30 @@ interface Controls {
   at: number;
   count: number;
   slidable: boolean;
-  overlay: string;
+  /** What the corners of the image say, as a scanner's overlay does, once a picture is shown. */
+  overlay?: Overlay;
   note: string;
   invert: boolean;
   open: boolean;
 }
-const CLOSED: Controls = { series: [], at: 0, count: 0, slidable: false, overlay: "", note: "Choose a study.", invert: false, open: false };
+/** The tools' marks, drawn on a 20-unit grid with a 1.6 stroke. */
+const ICONS = {
+  window: "M10 3a7 7 0 1 0 0 14a7 7 0 1 0 0-14Zm0 0v14",
+  pan: "M10 2.5v15M2.5 10h15M10 2.5 7.8 4.7M10 2.5l2.2 2.2M10 17.5l-2.2-2.2M10 17.5l2.2-2.2M2.5 10l2.2-2.2M2.5 10l2.2 2.2M17.5 10l-2.2-2.2M17.5 10l-2.2 2.2",
+  zoomOut: "M8.5 3a5.5 5.5 0 1 0 0 11a5.5 5.5 0 1 0 0-11ZM12.6 12.6 17 17M6 8.5h5",
+  zoomIn: "M8.5 3a5.5 5.5 0 1 0 0 11a5.5 5.5 0 1 0 0-11ZM12.6 12.6 17 17M6 8.5h5M8.5 6v5",
+  invert: "M4.5 3.5h11a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1ZM10 3.5v13",
+  reset: "M4.2 8.5a6 6 0 1 1 .4 4.6M4 3.8v4.7h4.7",
+};
+/** The filled halves of the marks for contrast and for a negative. */
+const FILLS: Partial<Record<keyof typeof ICONS, string>> = { window: "M10 3a7 7 0 0 0 0 14Z", invert: "M10 3.5h-5.5a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1H10Z" };
+function Icon({ name }: { name: keyof typeof ICONS }) {
+  const fill = FILLS[name];
+  return <svg className="iv-icon" viewBox="0 0 20 20" aria-hidden="true"><path d={ICONS[name]} />{fill && <path className="iv-fill" d={fill} />}</svg>;
+}
+
+interface Overlay { series: string; size: string; window: number; center: number; zoom: number }
+const CLOSED: Controls = { series: [], at: 0, count: 0, slidable: false, note: "Choose a study.", invert: false, open: false };
 
 interface Slice { instance: string; frame: number }
 interface WindowLevel { center: number; width: number }
@@ -99,7 +117,7 @@ class Engine {
     }
     return p;
   }
-  private overlayOf = (v: View, img: any) => `${v.series.description ?? v.series.modality ?? ""}\n${img.columns} × ${img.rows}  W ${Math.round(v.window!.width)} C ${Math.round(v.window!.center)}  Zoom ${Math.round(v.zoom * 100)}%`;
+  private overlayOf = (v: View, img: any): Overlay => ({ series: v.series.description ?? v.series.modality ?? "", size: `${img.columns} × ${img.rows}`, window: Math.round(v.window!.width), center: Math.round(v.window!.center), zoom: Math.round(v.zoom * 100) });
   private applyView(kit: any, v: View) {
     this.renderer.setView({ ...kit.defaultView(), windowCenter: v.window!.center, windowWidth: v.window!.width, zoom: v.zoom, panX: v.panX, panY: v.panY, invert: v.invert });
     if (v.shown) this.emit({ overlay: this.overlayOf(v, v.shown) });
@@ -142,7 +160,7 @@ class Engine {
     const source = this.source!;
     this.view?.abort.abort();
     const v: View = this.view = { source, series, slices: [], images: new Map(), abort: new AbortController(), at: 0, zoom: 1, panX: 0, panY: 0, invert: false, started: performance.now(), reported: false };
-    this.emit({ selected: series.uid, invert: false, overlay: "", note: "Retrieving…", slidable: false, open: true });
+    this.emit({ selected: series.uid, invert: false, overlay: undefined, note: "Retrieving…", slidable: false, open: true });
     try {
       if (series.modality === "SM") {
         const instance = await source.slideInstance(series, v.abort.signal);
@@ -169,7 +187,7 @@ class Engine {
   }
   close() {
     this.view?.abort.abort(); this.view = undefined;
-    this.emit({ series: [], selected: undefined, overlay: "", at: 0, count: 0, slidable: false, open: false });
+    this.emit({ series: [], selected: undefined, overlay: undefined, at: 0, count: 0, slidable: false, open: false });
   }
 
   go(i: number) { if (this.view?.slices.length) this.show(this.view, Math.min(this.view.slices.length - 1, Math.max(0, i))); }
@@ -283,31 +301,45 @@ export const ImageViewer = forwardRef<ImageViewerHandle, { onShown?: (ms: number
   }), []);
   const id = (name: string) => withIds ? name : undefined;
   const choose = (t: Tool) => { setTool(t); engine.current?.setTool(t); };
-  const slider = <input type="range" id={id("slice")} data-v="slider" min={0} max={Math.max(0, c.count - 1)} value={c.at} disabled={!c.slidable} onInput={e => engine.current?.go(Number(e.currentTarget.value))} />;
+  const o = c.overlay;
   return (
-    <>
+    <div className="iv">
       <div className="stage" id={id("stage")} data-v="stage" ref={stage} tabIndex={0} aria-label="Image. Arrow keys change the image.">
         <canvas id={id("canvas")} data-v="canvas" ref={canvas} />
-        <p className="overlay" id={id("overlay")} data-v="overlay">{c.overlay}</p>
+        {/* The corners say what a scanner's overlay would: the series, the image's size, window and level, and zoom. */}
+        <div className="overlay" id={id("overlay")} data-v="overlay">
+          {o && <>
+            <span className="ov-tl">{o.series}</span>
+            <span className="ov-tr">{o.size}</span>
+            <span className="ov-bl">W {o.window} C {o.center}</span>
+            <span className="ov-br">Zoom {o.zoom}%</span>
+          </>}
+        </div>
         <p className="stage-note" id={id("stage-note")} data-v="note">{c.note}</p>
       </div>
-      <div className="controls">
-        {withIds ? <><label htmlFor="slice">Image</label>{slider}</> : <label>Image {slider}</label>}
+      <div className="iv-scrub">
+        <input type="range" id={id("slice")} data-v="slider" aria-label="Image" min={0} max={Math.max(0, c.count - 1)} value={c.at} disabled={!c.slidable} onInput={e => engine.current?.go(Number(e.currentTarget.value))} />
         <output id={id("slice-out")} htmlFor={id("slice")} data-v="count">{c.count ? `${c.at + 1} / ${c.count}` : ""}</output>
       </div>
-      <div className="controls tools" role="group" aria-label="Image tools">
-        <button type="button" className="tool" id={id("tool-window")} data-v="tool-window" aria-pressed={tool === "window"} onClick={() => choose("window")}>Window</button>
-        <button type="button" className="tool" id={id("tool-pan")} data-v="tool-pan" aria-pressed={tool === "pan"} onClick={() => choose("pan")}>Pan</button>
-        <button type="button" className="tool" id={id("zoom-out")} data-v="zoom-out" aria-label="Zoom out" onClick={() => engine.current?.zoomBy(1 / ZOOM_STEP)}>−</button>
-        <button type="button" className="tool" id={id("zoom-in")} data-v="zoom-in" aria-label="Zoom in" onClick={() => engine.current?.zoomBy(ZOOM_STEP)}>+</button>
-        <button type="button" className="tool" id={id("invert")} data-v="invert" aria-pressed={c.invert} onClick={() => engine.current?.toggleInvert()}>Invert</button>
-        <button type="button" className="tool" id={id("reset-view")} data-v="reset" aria-label="Reset view" disabled={!c.open} onClick={() => engine.current?.reset()}>Reset</button>
+      <div className="iv-bar" role="toolbar" aria-label="Image tools">
+        <div className="iv-group iv-switch" role="group" aria-label="Dragging the image">
+          <button type="button" className="iv-btn" id={id("tool-window")} data-v="tool-window" aria-pressed={tool === "window"} title="Drag to change brightness and contrast" onClick={() => choose("window")}><Icon name="window" /><span>Window</span></button>
+          <button type="button" className="iv-btn" id={id("tool-pan")} data-v="tool-pan" aria-pressed={tool === "pan"} title="Drag to move the image" onClick={() => choose("pan")}><Icon name="pan" /><span>Pan</span></button>
+        </div>
+        <div className="iv-group" role="group" aria-label="Zoom">
+          <button type="button" className="iv-btn" id={id("zoom-out")} data-v="zoom-out" aria-label="Zoom out" title="Zoom out (−)" onClick={() => engine.current?.zoomBy(1 / ZOOM_STEP)}><Icon name="zoomOut" /></button>
+          <span className="iv-zoom" aria-hidden="true">{o ? `${o.zoom}%` : "–"}</span>
+          <button type="button" className="iv-btn" id={id("zoom-in")} data-v="zoom-in" aria-label="Zoom in" title="Zoom in (+)" onClick={() => engine.current?.zoomBy(ZOOM_STEP)}><Icon name="zoomIn" /></button>
+        </div>
+        <div className="iv-group" role="group" aria-label="View">
+          <button type="button" className="iv-btn" id={id("invert")} data-v="invert" aria-pressed={c.invert} title="Show the image as a negative" onClick={() => engine.current?.toggleInvert()}><Icon name="invert" /><span>Invert</span></button>
+          <button type="button" className="iv-btn" id={id("reset-view")} data-v="reset" aria-label="Reset view" title="Put brightness, contrast, zoom and position back" disabled={!c.open} onClick={() => engine.current?.reset()}><Icon name="reset" /><span>Reset</span></button>
+        </div>
       </div>
-      <p className="touch-hint">Pinch to zoom and move the image. One finger uses the tool above.</p>
-      <p className={withIds ? "note hint" : "hint"}>Scroll or use arrow keys to change images. Drag to adjust brightness and contrast, or to pan. Ctrl-scroll zooms.</p>
-      <div className="series" id={id("series")} data-v="series" role="group" aria-label="Series">
-        {c.series.map(s => <button type="button" key={s.uid} data-uid={s.uid} aria-pressed={s.uid === c.selected} onClick={() => engine.current?.openSeries(s)}>{s.description || `Series ${s.number ?? ""}`} <span>({s.count})</span></button>)}
-      </div>
-    </>
+      {c.series.length > 0 && <div className="series" id={id("series")} data-v="series" role="group" aria-label="Series">
+        {c.series.map(s => <button type="button" key={s.uid} data-uid={s.uid} aria-pressed={s.uid === c.selected} onClick={() => engine.current?.openSeries(s)}><span className="series-name">{s.description || `Series ${s.number ?? ""}`}</span> <span className="series-count">{s.count}</span></button>)}
+      </div>}
+      <p className="iv-hint"><span className="touch-hint">Pinch to zoom and move the image. One finger uses the tool chosen.</span><span className="pointer-hint">Scroll or use the arrow keys to change images. Drag to adjust brightness and contrast, or to pan. Ctrl-scroll zooms.</span></p>
+    </div>
   );
 });

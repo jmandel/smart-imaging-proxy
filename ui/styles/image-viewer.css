@@ -1,18 +1,72 @@
-/* The image viewer the demo app and Explore share. */
-.stage { position:relative; background:#000; border-radius:8px; height:min(68vh, 44rem); min-height:18rem; overflow:hidden; touch-action:none; cursor:ns-resize; }
-.stage:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
+/* The image viewer the demo app and Explore share: one dark viewing frame, like a reading room's, holding the
+   image, the image scrubber, the tools and the series. Its colours are the film's, so it reads the same in a
+   light or a dark page. */
+.iv {
+  --iv-base:#0a1823; --iv-raised:#132c3e; --iv-line:#21405a; --iv-ink:#e6eff5; --iv-dim:#93abbc; --iv-glow:#7cc4ee;
+  display:grid; gap:.55rem; padding:.55rem; background:var(--iv-base); color:var(--iv-ink); border-radius:10px;
+}
+.iv :focus-visible { outline:2px solid var(--iv-glow); outline-offset:2px; }
+
+.stage { position:relative; background:#000; border-radius:6px; height:min(66vh, 44rem); min-height:18rem; overflow:hidden; touch-action:none; cursor:ns-resize; }
 .stage canvas { width:100%; height:100%; display:block; }
-.overlay { position:absolute; left:.6rem; top:.5rem; margin:0; color:#fff; font:.82rem/1.4 var(--mono); text-shadow:0 1px 2px #000; pointer-events:none; white-space:pre-line; max-width:calc(100% - 1.2rem); overflow-wrap:anywhere; }
-.stage-note { position:absolute; inset:0; margin:0; display:flex; align-items:center; justify-content:center; text-align:center; padding:1rem; color:#e8f1f6; pointer-events:none; }
+/* The overlay's four corners, as a scanner draws them. */
+.overlay { position:absolute; inset:0; pointer-events:none; font:.78rem/1.35 var(--mono); color:#f2f7fa; text-shadow:0 1px 2px #000, 0 0 1px #000; }
+.overlay span { position:absolute; max-width:calc(50% - 1rem); overflow-wrap:anywhere; }
+.ov-tl { left:.6rem; top:.5rem; font-weight:700; }
+.ov-tr { right:.6rem; top:.5rem; text-align:right; }
+.ov-bl { left:.6rem; bottom:.5rem; }
+.ov-br { right:.6rem; bottom:.5rem; text-align:right; }
+.stage-note { position:absolute; inset:0; margin:0; display:flex; align-items:center; justify-content:center; text-align:center; padding:1rem; color:var(--iv-dim); pointer-events:none; }
 .stage-note:empty { display:none; }
-.controls { display:flex; flex-wrap:wrap; align-items:center; gap:.3rem .6rem; margin-top:.5rem; }
-.controls input[type=range] { flex:1 1 10rem; min-width:0; accent-color:var(--accent); }
-.controls output { font:.85rem var(--mono); min-width:5ch; }
-.touch-hint { display:none; color:var(--muted); font-size:.82rem; margin:.3rem 0 0; }
-@media (pointer:coarse) { .touch-hint { display:block; } }
-.hint { color:var(--muted); font-size:.88rem; margin:.3rem 0 .5rem; }
-.series { display:flex; flex-wrap:wrap; gap:.35rem; }
-.series button { background:var(--plate); border:1px solid var(--line); border-radius:6px; padding:.3rem .55rem; max-width:100%; overflow-wrap:anywhere; text-align:left; }
-.series button[aria-pressed=true] { border:2px solid var(--accent); background:var(--accent-soft); font-weight:700; }
-.tool { min-height:2.25rem; min-width:2.25rem; background:var(--plate); border:1px solid var(--line); border-radius:6px; padding:.25rem .6rem; }
-.tool[aria-pressed=true] { border:2px solid var(--accent); background:var(--accent-soft); font-weight:700; }
+
+/* Which image of the series: a thin scrubber, and its count. */
+.iv-scrub { display:flex; align-items:center; gap:.75rem; padding:0 .2rem; }
+.iv-scrub input[type=range] { flex:1 1 auto; min-width:0; height:1.6rem; margin:0; background:transparent; appearance:none; -webkit-appearance:none; cursor:pointer; }
+.iv-scrub input[type=range]:disabled { cursor:default; opacity:.45; }
+.iv-scrub input[type=range]::-webkit-slider-runnable-track { height:4px; border-radius:2px; background:var(--iv-line); }
+.iv-scrub input[type=range]::-moz-range-track { height:4px; border-radius:2px; background:var(--iv-line); }
+.iv-scrub input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:14px; height:14px; margin-top:-5px; border-radius:50%; background:var(--iv-ink); box-shadow:0 0 0 3px var(--iv-base); }
+.iv-scrub input[type=range]::-moz-range-thumb { width:14px; height:14px; border:0; border-radius:50%; background:var(--iv-ink); box-shadow:0 0 0 3px var(--iv-base); }
+.iv-scrub output { min-width:6ch; font:.82rem var(--mono); color:var(--iv-dim); text-align:right; font-variant-numeric:tabular-nums; }
+
+/* The tools, in groups: what dragging does, zoom, and the view. */
+.iv-bar { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem; }
+.iv-group { display:flex; align-items:center; gap:1px; padding:2px; background:var(--iv-raised); border-radius:7px; }
+.iv-group + .iv-group:last-child { margin-left:auto; }
+.iv-btn { display:inline-flex; align-items:center; justify-content:center; gap:.4rem; min-height:2.25rem; min-width:2.25rem; padding:0 .65rem; border:0; border-radius:5px; background:transparent; color:var(--iv-dim); font:inherit; font-size:.88rem; cursor:pointer; }
+.iv-btn:hover:not(:disabled) { color:var(--iv-ink); background:#ffffff12; }
+.iv-btn[aria-pressed=true] { color:var(--iv-base); background:var(--iv-ink); font-weight:700; }
+.iv-btn:disabled { opacity:.4; cursor:default; }
+.iv-icon { width:18px; height:18px; flex:none; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+.iv-icon .iv-fill { fill:currentColor; stroke:none; }
+.iv-zoom { min-width:4.5ch; text-align:center; font:.8rem var(--mono); color:var(--iv-dim); font-variant-numeric:tabular-nums; }
+
+/* The series, as a compact list of choices: name, then its image count. */
+.series { display:flex; flex-wrap:wrap; gap:.3rem; padding-top:.15rem; border-top:1px solid var(--iv-line); padding-top:.55rem; }
+.series button { display:inline-flex; align-items:baseline; gap:.45rem; max-width:100%; padding:.3rem .6rem; border:1px solid var(--iv-line); border-radius:5px; background:transparent; color:var(--iv-ink); font:inherit; font-size:.82rem; text-align:left; cursor:pointer; }
+.series button:hover { border-color:var(--iv-dim); }
+.series button[aria-pressed=true] { background:var(--iv-ink); border-color:var(--iv-ink); color:var(--iv-base); font-weight:700; }
+.series-name { overflow-wrap:anywhere; }
+.series-count { font:.75rem var(--mono); opacity:.75; }
+
+.iv-hint { margin:0; padding:0 .2rem; font-size:.78rem; color:var(--iv-dim); }
+.touch-hint { display:none; }
+@media (pointer:coarse) { .touch-hint { display:inline; } .pointer-hint { display:none; } }
+
+/* A phone: the tools keep their marks and drop their words, all on one row; the series scroll in a row. */
+@media (max-width:44rem) {
+  .iv { padding:.4rem; gap:.45rem; border-radius:8px; }
+  .stage { height:56vh; min-height:15rem; }
+  .overlay { font-size:10.5px; }
+  .iv-bar { flex-wrap:nowrap; gap:.3rem; }
+  /* The groups share the row, however narrow it is or large the text: each button keeps its mark, and shrinks. */
+  .iv-group { flex:1 1 0; min-width:0; }
+  .iv-group + .iv-group:last-child { margin-left:0; }
+  .iv-btn { flex:1 1 0; min-width:0; padding:0 .2rem; min-height:2.6rem; }
+  .iv-btn span { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+  .iv-zoom { display:none; }
+  .series { flex-wrap:nowrap; overflow-x:auto; scrollbar-width:thin; }
+  .series button { flex:none; max-width:70vw; white-space:nowrap; }
+  .series-name { overflow:hidden; text-overflow:ellipsis; }
+}
+@media (prefers-reduced-motion:no-preference) { .iv-btn, .series button { transition:background-color .12s, color .12s; } }

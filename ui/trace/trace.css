@@ -9,7 +9,8 @@
   --svc-user:#c3a3ea; --svc-app:#6cbfe8; --svc-as:#e5a964; --svc-fhir:#6cd0d0; --svc-policy:#ea8fc8; --svc-proxy:#94d67e; --svc-backend:#a9b4be; --svc-demo:#9ab0bd;
   --bar:#4d7087;
 } }
-.trace-page select, .trace-page button { font:inherit; color:inherit; background:var(--plate); border:1px solid var(--line); border-radius:5px; padding:.25rem .5rem; min-height:0; }
+.trace-page select, .trace-page button { font:inherit; color:inherit; background-color:var(--plate); border:1px solid var(--line); border-radius:5px; padding:.25rem .5rem; min-height:0; }
+.trace-page select { padding-right:2rem; }
 
 /* The controls, on film, held at the top of the window while the trace scrolls under them. */
 .trace-page .trace-head { display:flex; justify-content:space-between; gap:.4rem 1rem; flex-wrap:wrap; align-items:center; padding:.55rem 1.5rem; background:var(--film-raised); color:var(--on-film); position:sticky; top:0; z-index:2; }

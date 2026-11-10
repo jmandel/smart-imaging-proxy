@@ -19,9 +19,8 @@ html.connecting #landing, html.connecting #app { display:none; }
 .sandbox-list .none { color:var(--muted); }
 a.tool { display:inline-flex; align-items:center; justify-content:center; color:inherit; text-decoration:none; }
 .tool.quiet-danger { color:var(--bad); margin-left:auto; }
-.sandbox-label { margin:0 0 .1rem; font-size:.78rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); }
+.sandbox-label { margin:0 0 .1rem; font-size:.9rem; font-weight:700; color:var(--muted); }
 .sandbox-actions { align-items:center; }
-html.at-home .bar-end { display:none; }
 .invite h2, .sandbox h2 { margin:0 0 .3rem; font-size:1.05rem; }
 .sandbox-head { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem .6rem; }
 .sandbox-name { font-size:1.2rem; font-weight:700; margin:0; flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
@@ -78,15 +77,19 @@ html.at-home .bar-end { display:none; }
 .clinical-group h3 { font-size:.92rem; margin:0; }
 .clinical-group ul { margin:.15rem 0 0; padding-left:1.1rem; }
 .clinical-group .none { color:var(--muted); margin:.15rem 0 0; }
-.study-list-client { list-style:none; margin:0; padding:0; display:grid; gap:.4rem; }
-.study-button { width:100%; text-align:left; background:transparent; border:1px solid var(--line); border-radius:6px; padding:.5rem .6rem; }
-.study-button[aria-pressed=true] { border:2px solid var(--accent); padding:calc(.5rem - 1px) calc(.6rem - 1px); background:var(--accent-soft); }
+.study-list-client { list-style:none; margin:0; padding:0; display:grid; gap:.15rem; }
+/* The studies, as a list to choose from: the one open is marked down its edge. */
+.study-button { width:100%; text-align:left; background:transparent; border:0; border-left:3px solid transparent; border-radius:0 6px 6px 0; padding:.5rem .65rem .5rem calc(.65rem - 3px); }
+.study-button:hover:not(:disabled) { background:var(--code); }
+.study-button[aria-pressed=true] { border-left-color:var(--accent); background:var(--accent-soft); }
 .study-button strong { display:block; overflow-wrap:anywhere; }
 .study-button span { color:var(--muted); font-size:.9rem; }
 .study-button:disabled span { font-style:italic; }
 
-.tool { min-height:2.25rem; min-width:2.25rem; background:var(--plate); border:1px solid var(--line); border-radius:6px; padding:.25rem .6rem; }
-.tool[aria-pressed=true] { border:2px solid var(--accent); background:var(--accent-soft); font-weight:700; }
+/* A small control beside what it acts on: copy, rename, share, remove. */
+.tool { display:inline-flex; align-items:center; justify-content:center; gap:.35rem; min-height:2.25rem; min-width:2.25rem; background:var(--plate); border:1px solid var(--line); border-radius:6px; padding:.25rem .7rem; font-size:.92rem; font-weight:600; }
+.tool:hover:not(:disabled) { border-color:var(--muted); background:var(--code); }
+.tool[aria-pressed=true] { background:var(--ink); border-color:var(--ink); color:var(--plate); }
 
 /* The protocol, as five stages on one line of travel. A stage's state is its glyph as well as its colour. */
 #trail { list-style:none; margin:.2rem 0 0; padding:0; }
@@ -178,15 +181,6 @@ html.at-home .bar-end { display:none; }
   #reports-panel { order:4; }
   .protocol { order:5; }
   .panel + .panel { margin-top:0; }
-  .stage { height:56vh; min-height:15rem; }
-  .overlay { font-size:11px; left:.45rem; top:.35rem; }
-  .viewer .hint { display:none; }
-  .controls { flex-wrap:nowrap; }
-  .viewer .controls label { display:none; }
-  .tools { display:grid; grid-template-columns:repeat(6, minmax(0, 1fr)); gap:.25rem; }
-  .tools .tool { padding:.25rem .1rem; font-size:.78rem; min-width:0; overflow-wrap:anywhere; }
-  .series { flex-wrap:nowrap; overflow-x:auto; margin-top:.4rem; padding-bottom:.2rem; }
-  .series button { flex:none; max-width:70vw; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .stage-row { padding-bottom:.9rem; column-gap:.5rem; align-items:center; }
   .stage-row::before { display:none; }
   .stage-body { display:contents; }
@@ -197,14 +191,13 @@ html.at-home .bar-end { display:none; }
   .fact.long dd { font-size:.75rem; }
   .fact dd { font-size:1.05rem; }
 }
-@media (max-width:44rem) and (max-width:22rem) { .tools { grid-template-columns:repeat(3, minmax(0, 1fr)); } }
 
 /* A sandbox's overview: the three ways to use it. */
 .overview h1 { margin-top:1.4rem; }
 .path { display:block; }
 .path h2, .path h3 { font-size:1.2rem; margin:0 0 .35rem; }
 .path p { margin:0 0 .6rem; }
-.path-kicker { font-size:.78rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--accent); margin:0 0 .2rem !important; }
+.path-kicker { font-size:.9rem; font-weight:700; color:var(--accent); margin:0 0 .2rem !important; }
 #try { padding:1rem 1.1rem; }
 #try .preview { margin:1.2rem 0 0; }
 .paths { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap:.75rem; margin:.75rem 0 0; }

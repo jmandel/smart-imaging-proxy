@@ -46,7 +46,6 @@ export default function SandboxHome() {
     <main id="landing" className="landing overview">
       <section className="sandbox panel" id="sandbox">
         {mine ? <>
-          <p className="sandbox-label">Sandbox</p>
           <div className="sandbox-head"><p className="sandbox-name" id="sandbox-name">{shown}</p><button type="button" className="tool" onClick={rename}>Rename</button></div>
           <div className="sandbox-actions">
             <button type="button" className="tool" onClick={share}>Share</button>
