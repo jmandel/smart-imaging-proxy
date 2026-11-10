@@ -154,8 +154,7 @@ button.sheet:hover { background:var(--film-raised); }
 .study-hero { background:var(--film); color:var(--on-film); border-radius:12px; padding:1.3rem; display:flex; flex-direction:column; gap:.8rem; }
 .study-hero h2 { margin:0; font-size:1.7rem; font-weight:800; line-height:1.15; overflow-wrap:anywhere; }
 .study-hero .meta { color:var(--on-film-dim); font-size:.92rem; }
-.study-hero .thumb { aspect-ratio:16/9; max-height:26rem; }
-.series-list { list-style:none; margin:0; padding:0; font-size:.9rem; color:var(--on-film-dim); columns:3 14rem; }
+.explore-viewer { min-width:0; }
 .retrieval { background:var(--plate); border:1px solid var(--line); border-radius:10px; padding:.9rem 1rem; }
 .retrieval h3 { margin:0 0 .3rem; font-size:1rem; }
 .retrieval dl { display:grid; grid-template-columns:max-content minmax(0,1fr); gap:.15rem 1rem; margin:.3rem 0 0; font-size:.93rem; }

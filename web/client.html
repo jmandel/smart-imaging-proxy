@@ -13,6 +13,7 @@
 <link rel="preload" href="/fonts/atkinson-mono.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/styles.css">
 <link rel="stylesheet" href="/client.css">
+<link rel="stylesheet" href="/image-viewer.css">
 </head>
 <body>
 <header class="topbar">
@@ -73,27 +74,27 @@
     <div id="reports-panel" class="panel"><h2>Reports</h2><div id="reports"><p class="note">Loading…</p></div></div>
   </section>
   <section class="viewer" aria-label="Image viewer">
-    <div class="stage" id="stage" tabindex="0" aria-label="Image. Arrow keys change the image.">
-      <canvas id="canvas"></canvas>
-      <p class="overlay" id="overlay"></p>
-      <p class="stage-note" id="stage-note">Choose a study.</p>
+    <div class="stage" id="stage" data-v="stage" tabindex="0" aria-label="Image. Arrow keys change the image.">
+      <canvas id="canvas" data-v="canvas"></canvas>
+      <p class="overlay" id="overlay" data-v="overlay"></p>
+      <p class="stage-note" id="stage-note" data-v="note">Choose a study.</p>
     </div>
     <div class="controls">
       <label for="slice">Image</label>
-      <input type="range" id="slice" min="0" max="0" value="0" disabled>
-      <output id="slice-out" for="slice"></output>
+      <input type="range" id="slice" data-v="slider" min="0" max="0" value="0" disabled>
+      <output id="slice-out" for="slice" data-v="count"></output>
     </div>
     <div class="controls tools" role="group" aria-label="Image tools">
-      <button type="button" class="tool" id="tool-window" aria-pressed="true">Window</button>
-      <button type="button" class="tool" id="tool-pan" aria-pressed="false">Pan</button>
-      <button type="button" class="tool" id="zoom-out" aria-label="Zoom out">−</button>
-      <button type="button" class="tool" id="zoom-in" aria-label="Zoom in">+</button>
-      <button type="button" class="tool" id="invert" aria-pressed="false">Invert</button>
-      <button type="button" class="tool" id="reset-view" aria-label="Reset view" disabled>Reset</button>
+      <button type="button" class="tool" id="tool-window" data-v="tool-window" aria-pressed="true">Window</button>
+      <button type="button" class="tool" id="tool-pan" data-v="tool-pan" aria-pressed="false">Pan</button>
+      <button type="button" class="tool" id="zoom-out" data-v="zoom-out" aria-label="Zoom out">−</button>
+      <button type="button" class="tool" id="zoom-in" data-v="zoom-in" aria-label="Zoom in">+</button>
+      <button type="button" class="tool" id="invert" data-v="invert" aria-pressed="false">Invert</button>
+      <button type="button" class="tool" id="reset-view" data-v="reset" aria-label="Reset view" disabled>Reset</button>
     </div>
     <p class="touch-hint">Pinch to zoom and move the image. One finger uses the tool above.</p>
     <p class="note hint">Scroll or use arrow keys to change images. Drag to adjust brightness and contrast, or to pan. Ctrl-scroll zooms.</p>
-    <div class="series" id="series" role="group" aria-label="Series"></div>
+    <div class="series" id="series" data-v="series" role="group" aria-label="Series"></div>
   </section>
   <section class="protocol panel" aria-labelledby="protocol-title">
     <h2 id="protocol-title">How this app connected</h2>
@@ -102,6 +103,7 @@
 </main>
 <script src="/page.js"></script>
 <script src="/server-list.js"></script>
+<script src="/image-viewer.js"></script>
 <script src="/client.js"></script>
 </body>
 </html>

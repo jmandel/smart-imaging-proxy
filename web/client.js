@@ -17,10 +17,6 @@ const STORE = `smart-imaging-client:${BASE}`;
 const WADO_ACCEPT = 'multipart/related; type="application/dicom"; transfer-syntax=*, multipart/related; type="application/dicom"; transfer-syntax=1.2.840.10008.1.2.1; q=0.5';
 /** How long the app will wait, in all, on servers that say to retry. */
 const MOST_RETRIES = 5, LONGEST_WAIT_SECONDS = 30;
-const KIT = "/vendor/viewer-kit/";
-/** Non-image series a viewer has no picture for. */
-const NOT_IMAGES = new Set(["SR", "PR", "KO", "SEG", "RTSTRUCT", "DOC"]);
-const NEAR = 3, FETCHES_AT_ONCE = 4;
 
 const saved = () => { try { return JSON.parse(sessionStorage.getItem(STORE) ?? "{}"); } catch { return {}; } };
 const save = patch => { try { sessionStorage.setItem(STORE, JSON.stringify({ ...saved(), ...patch })); } catch {} };
@@ -356,21 +352,9 @@ async function loadStudies(s) {
 }
 
 // The viewer.
-let kitPromise, renderer;
-const decoder = () => kitPromise ??= import(`${KIT}viewer-kit.js`).then(async kit => ({ kit, pool: await kit.DecoderPool.create({ wasm: `${KIT}shl_dicom_decode.wasm`, workerUrl: `${KIT}decoder-worker.js` }) }));
-/** What's open: a study, one of its series, and that series' images. Replaced whole, so late answers can tell they're stale. */
-let view;
-const stats = { images: 0, bytes: 0, firstMs: undefined, started: 0 };
-
-const canvas = $("#canvas"), stage = $("#stage"), slider = $("#slice");
-function note(text) { $("#stage-note").textContent = text; }
-function sizeCanvas() {
-  if (!renderer) return;
-  const r = canvas.getBoundingClientRect(), dpr = devicePixelRatio || 1;
-  canvas.width = Math.max(1, Math.round(r.width * dpr)); canvas.height = Math.max(1, Math.round(r.height * dpr));
-  renderer.draw?.();
-}
-new ResizeObserver(sizeCanvas).observe(canvas);
+const viewer = ImageViewer.create($(".viewer"), { onShown: ms => { if (stats.firstMs === undefined) stats.firstMs = ms; } });
+const note = text => viewer.note(text);
+const stats = { images: 0, bytes: 0, firstMs: undefined };
 
 /** The one part of a single-instance retrieval, as bytes for the decoder. */
 function onlyPart(buffer, contentType) {
@@ -387,206 +371,41 @@ function onlyPart(buffer, contentType) {
   for (let i = bytes.length - close.length; i >= start; i--) if (close.every((c, k) => bytes[i + k] === c)) return buffer.slice(start, i);
   throw new Error("The response had no closing boundary.");
 }
-const seriesBase = v => v.series.address ?? v.study.address;
-async function retrieve(v, instance, signal, url = `${seriesBase(v)}/studies/${v.study.uid}/series/${v.series.uid}/instances/${instance}`) {
-  const t0 = performance.now();
-  const res = await patientFetch(url, { headers: { authorization: `Bearer ${v.session.token}`, accept: WADO_ACCEPT }, signal }, seconds => { if (v === view) note(`The server is preparing these images. Trying again in ${seconds} s…`); });
-  if (!res.ok) { await res.body?.cancel(); addStep({ id: "wado", kind: "wado", title: "Retrieve images", failed: true, request: requestLine("GET", url, { authorization: "x", accept: WADO_ACCEPT }), response: `HTTP ${res.status}` }); throw new Error(res.status === 406 ? "The image server can't send this image in a form this viewer accepts." : `The image server answered ${res.status}.`); }
-  const buffer = await res.arrayBuffer();
-  stats.images++; stats.bytes += buffer.byteLength;
-  addStep({ id: "wado", kind: "wado", title: "Latest image retrieved", ms: Math.round(performance.now() - t0), request: requestLine("GET", url, { authorization: "x", accept: WADO_ACCEPT }), response: `HTTP ${res.status}\ncontent-type: ${res.headers.get("content-type")}`, curl: curlOf(url, { authorization: "x", accept: WADO_ACCEPT }), facts: { Images: stats.images, Data: bytes(stats.bytes), ...(stats.firstMs === undefined ? {} : { "First image": `${stats.firstMs} ms` }) } });
-  return onlyPart(buffer, res.headers.get("content-type"));
-}
-/** An image, decoded once however many times it's asked for. */
-function imageAt(v, i, priority) {
-  const slice = v.slices[i];
-  let p = v.images.get(slice.instance);
-  if (!p) {
-    p = (async () => {
-      const [{ pool }, data] = await Promise.all([decoder(), retrieve(v, slice.instance, v.abort.signal)]);
-      return pool.decode(data, { key: `${v.series.uid}/${slice.instance}${v.scale ? `@${v.scale}` : ""}`, priority, signal: v.abort.signal, ...(v.scale ? { scale: v.scale } : {}) });
-    })();
-    v.images.set(slice.instance, p);
-    p.catch(() => v.images.delete(slice.instance));
-  }
-  return p;
-}
-async function show(v, i) {
-  const { kit } = await decoder();
-  v.at = i;
-  slider.value = String(i);
-  $("#slice-out").textContent = `${i + 1} / ${v.slices.length}`;
-  let img;
-  try { img = await imageAt(v, i, kit.Priority.Visible); }
-  catch (e) { if (v === view && v.at === i && e.name !== "AbortError") note(e.decoderMessage ?? e.message); return; }
-  if (v !== view || v.at !== i) return;
-  renderer ??= (sizeCanvasFirst(), kit.createRenderer(canvas));
-  if (!v.window) { const w = kit.defaultWindow(img); v.window = v.defaultWindow = { center: w.center, width: w.width }; }
-  renderer.setFrame(kit.frameOf(img, v.slices[i].frame), { windowCenter: v.window.center, windowWidth: v.window.width });
-  v.shown = img;
-  applyView(kit, v);
-  note("");
-  if (stats.firstMs === undefined) stats.firstMs = Math.round(performance.now() - stats.started);
-  // A single multi-frame instance: its frames become the images.
-  if (img.frames > 1 && v.slices.length === 1) {
-    v.slices = Array.from({ length: img.frames }, (_, frame) => ({ instance: v.slices[0].instance, frame }));
-    slider.max = String(v.slices.length - 1); slider.disabled = false;
-    $("#slice-out").textContent = `${i + 1} / ${v.slices.length}`;
-  }
-  writeOverlay(v, img);
-}
-function sizeCanvasFirst() { const r = canvas.getBoundingClientRect(), dpr = devicePixelRatio || 1; canvas.width = Math.max(1, Math.round(r.width * dpr)); canvas.height = Math.max(1, Math.round(r.height * dpr)); }
-function applyView(kit, v) {
-  renderer.setView({ ...kit.defaultView(), windowCenter: v.window.center, windowWidth: v.window.width, zoom: v.zoom, panX: v.panX, panY: v.panY, invert: v.invert });
-  if (v.shown) writeOverlay(v, v.shown);
-}
-function writeOverlay(v, img) {
-  $("#overlay").textContent = `${v.series.description ?? v.series.modality?.code ?? ""}\n${img.columns} × ${img.rows}  W ${Math.round(v.window.width)} C ${Math.round(v.window.center)}  Zoom ${Math.round(v.zoom * 100)}%`;
-}
-/** Everything else in the series, nearest first, a few at a time. The first few wait for the picture on screen. */
-async function prefetch(v, kit) {
-  const order = v.slices.map((_, i) => i).filter(i => i !== v.at).sort((a, b) => Math.abs(a - v.at) - Math.abs(b - v.at));
-  let next = 0;
-  const worker = async () => {
-    while (v === view && next < order.length) {
-      const i = order[next++];
-      try { await imageAt(v, i, Math.abs(i - v.at) <= NEAR ? kit.Priority.Near : kit.Priority.Prefetch); } catch {}
-    }
+/** How the viewer gets a study's images: from the WADO-RS address search gave, with this app's token. */
+function wadoSource(session, study) {
+  const base = series => series.address ?? study.address;
+  return {
+    async retrieve(series, instance, signal, waiting) {
+      const url = `${base(series)}/studies/${study.uid}/series/${series.uid}/instances/${instance}`, t0 = performance.now();
+      const res = await patientFetch(url, { headers: { authorization: `Bearer ${session.token}`, accept: WADO_ACCEPT }, signal }, waiting);
+      if (!res.ok) { await res.body?.cancel(); addStep({ id: "wado", kind: "wado", title: "Retrieve images", failed: true, request: requestLine("GET", url, { authorization: "x", accept: WADO_ACCEPT }), response: `HTTP ${res.status}` }); throw new Error(res.status === 406 ? "The image server can't send this image in a form this viewer accepts." : `The image server answered ${res.status}.`); }
+      const buffer = await res.arrayBuffer();
+      stats.images++; stats.bytes += buffer.byteLength;
+      addStep({ id: "wado", kind: "wado", title: "Latest image retrieved", ms: Math.round(performance.now() - t0), request: requestLine("GET", url, { authorization: "x", accept: WADO_ACCEPT }), response: `HTTP ${res.status}\ncontent-type: ${res.headers.get("content-type")}`, curl: curlOf(url, { authorization: "x", accept: WADO_ACCEPT }), facts: { Images: stats.images, Data: bytes(stats.bytes), ...(stats.firstMs === undefined ? {} : { "First image": `${stats.firstMs} ms` }) } });
+      return onlyPart(buffer, res.headers.get("content-type"));
+    },
+    /** A slide's small picture: the pyramid's THUMBNAIL, or its smallest single-frame level. Never OVERVIEW, which can show the label. */
+    async slideInstance(series, signal) {
+      const res = await patientFetch(`${base(series)}/studies/${study.uid}/series/${series.uid}/metadata`, { headers: { authorization: `Bearer ${session.token}`, accept: "application/dicom+json" }, signal });
+      if (!res.ok) throw new Error(`The image server answered ${res.status} for this slide's details.`);
+      const items = await res.json(), get = (o, t) => o?.[t]?.Value;
+      const typeOf = o => get(o, "00080008") ?? [], uid = o => get(o, "00080018")?.[0];
+      const thumb = items.find(o => typeOf(o)[2] === "THUMBNAIL");
+      if (thumb) return uid(thumb);
+      const area = o => Number(get(o, "00280010")?.[0] ?? 0) * Number(get(o, "00280011")?.[0] ?? 0);
+      const smallest = items.filter(o => typeOf(o)[2] === "VOLUME" && Number(get(o, "00280008")?.[0] ?? 1) === 1).sort((a, b) => area(a) - area(b))[0];
+      return smallest && uid(smallest);
+    },
   };
-  await Promise.all(Array.from({ length: FETCHES_AT_ONCE }, worker));
-}
-/** A slide's small picture: the pyramid's THUMBNAIL, or its smallest single-frame level. Never OVERVIEW, which can show the label. */
-async function slideInstance(v) {
-  const res = await patientFetch(`${seriesBase(v)}/studies/${v.study.uid}/series/${v.series.uid}/metadata`, { headers: { authorization: `Bearer ${v.session.token}`, accept: "application/dicom+json" }, signal: v.abort.signal });
-  if (!res.ok) throw new Error(`The image server answered ${res.status} for this slide's details.`);
-  const items = await res.json(), get = (o, t) => o?.[t]?.Value;
-  const typeOf = o => get(o, "00080008") ?? [], uid = o => get(o, "00080018")?.[0];
-  const thumb = items.find(o => typeOf(o)[2] === "THUMBNAIL");
-  if (thumb) return uid(thumb);
-  const area = o => Number(get(o, "00280010")?.[0] ?? 0) * Number(get(o, "00280011")?.[0] ?? 0);
-  return items.filter(o => typeOf(o)[2] === "VOLUME" && Number(get(o, "00280008")?.[0] ?? 1) === 1).sort((a, b) => area(a) - area(b))[0] && uid(items.filter(o => typeOf(o)[2] === "VOLUME" && Number(get(o, "00280008")?.[0] ?? 1) === 1).sort((a, b) => area(a) - area(b))[0]);
-}
-async function openSeries(session, study, series) {
-  view?.abort.abort();
-  const v = view = { session, study, series, slices: [], images: new Map(), abort: new AbortController(), at: 0, window: undefined, defaultWindow: undefined, scale: 0, zoom: 1, panX: 0, panY: 0, invert: false };
-  syncInvert();
-  stats.started = performance.now(); stats.firstMs = undefined;
-  $$("#series button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.uid === series.uid)));
-  $("#overlay").textContent = ""; note("Retrieving…");
-  slider.disabled = true; $("#reset-view").disabled = false;
-  try {
-    if (series.modality?.code === "SM") {
-      const instance = await slideInstance(v);
-      if (!instance) { note("This slide has no small picture to show."); return; }
-      v.slices = [{ instance, frame: 0 }];
-    } else {
-      v.slices = [...(series.instance ?? [])].sort((a, b) => (a.number ?? 0) - (b.number ?? 0)).map(i => ({ instance: i.uid, frame: 0 }));
-    }
-  } catch (e) { if (v === view && e.name !== "AbortError") note(e.message); return; }
-  if (v !== view) return;
-  if (!v.slices.length) { note("This server didn't list this series' images, which SMART Imaging requires."); return; }
-  slider.max = String(v.slices.length - 1);
-  slider.disabled = v.slices.length < 2;
-  const { kit } = await decoder();
-  if (v !== view) return;
-  await show(v, Math.floor((v.slices.length - 1) / 2));
-  if (v === view && v.slices.length > 1) prefetch(v, kit);
 }
 function openStudy(session, study, button) {
   $$(".study-button").forEach(b => b.setAttribute("aria-pressed", String(b === button)));
-  const images = (study.series ?? []).filter(s => !NOT_IMAGES.has(s.modality?.code));
-  $("#series").innerHTML = images.length > 1 ? images.map(s => `<button type="button" data-uid="${esc(s.uid)}" aria-pressed="false">${esc(s.description || `Series ${s.number ?? ""}`)} <span>(${s.numberOfInstances ?? s.instance?.length ?? 0})</span></button>`).join("") : "";
-  $$("#series button").forEach(b => b.addEventListener("click", () => openSeries(session, study, images.find(s => s.uid === b.dataset.uid))));
-  if (!images.length) { view?.abort.abort(); view = undefined; note("This study has no images to show."); return; }
-  // The series with the most images is usually the one to look at first.
-  openSeries(session, study, [...images].sort((a, b) => (b.numberOfInstances ?? 0) - (a.numberOfInstances ?? 0))[0]);
+  stats.firstMs = undefined;
+  viewer.openStudy((study.series ?? []).map(s => ({
+    uid: s.uid, number: s.number, modality: s.modality?.code, description: s.description, address: s.address, count: s.numberOfInstances ?? s.instance?.length ?? 0,
+    instances: [...(s.instance ?? [])].sort((a, b) => (a.number ?? 0) - (b.number ?? 0)).map(i => i.uid),
+  })), wadoSource(session, study));
 }
-function step(delta) { if (view?.slices.length) show(view, Math.min(view.slices.length - 1, Math.max(0, view.at + delta))); }
-slider.addEventListener("input", () => { if (view) show(view, Number(slider.value)); });
-stage.addEventListener("wheel", e => {
-  if (!view) return;
-  if (e.ctrlKey || e.metaKey) { e.preventDefault(); zoomBy(e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP); return; }
-  if (view.slices.length < 2) return;
-  e.preventDefault(); step(Math.sign(e.deltaY));
-}, { passive: false });
-stage.addEventListener("keydown", e => {
-  const d = { ArrowUp: -1, ArrowLeft: -1, ArrowDown: 1, ArrowRight: 1 }[e.key];
-  if (d) { e.preventDefault(); step(d); }
-  if (e.key === "+" || e.key === "=") zoomBy(ZOOM_STEP);
-  if (e.key === "-") zoomBy(1 / ZOOM_STEP);
-});
-let drag, tool = "window";
-const ZOOM_STEP = 1.25;
-async function refreshView() { if (!view?.window || !renderer) return; const { kit } = await decoder(); applyView(kit, view); }
-function zoomBy(factor) { if (!view) return; view.zoom = Math.min(16, Math.max(0.25, view.zoom * factor)); refreshView(); }
-function setTool(name) { tool = name; $("#tool-window").setAttribute("aria-pressed", String(name === "window")); $("#tool-pan").setAttribute("aria-pressed", String(name === "pan")); stage.style.cursor = name === "pan" ? "move" : ""; }
-function syncInvert() { $("#invert").setAttribute("aria-pressed", String(!!view?.invert)); }
-$("#tool-window").addEventListener("click", () => setTool("window"));
-$("#tool-pan").addEventListener("click", () => setTool("pan"));
-$("#zoom-in").addEventListener("click", () => zoomBy(ZOOM_STEP));
-$("#zoom-out").addEventListener("click", () => zoomBy(1 / ZOOM_STEP));
-$("#invert").addEventListener("click", () => { if (!view) return; view.invert = !view.invert; syncInvert(); refreshView(); });
-// One finger or the mouse uses the chosen tool. Two fingers pinch to zoom and move the image together.
-const pointers = new Map();
-let pinch;
-/** Where a pointer is, in canvas pixels from the canvas's centre, which is what the renderer's pan is measured from. */
-function fromCentre(e) {
-  const r = canvas.getBoundingClientRect(), dpr = devicePixelRatio || 1;
-  return { x: (e.clientX - r.left - r.width / 2) * dpr, y: (e.clientY - r.top - r.height / 2) * dpr };
-}
-function startPinch() {
-  const [a, b] = [...pointers.values()];
-  pinch = { distance: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), middle: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, zoom: view.zoom, panX: view.panX, panY: view.panY };
-  drag = undefined;
-}
-function startDrag(e) { drag = { x: e.clientX, y: e.clientY, panX: view.panX, panY: view.panY, ...view.window }; }
-stage.addEventListener("pointerdown", e => {
-  if (!view?.window) return;
-  try { stage.setPointerCapture(e.pointerId); } catch {}
-  pointers.set(e.pointerId, fromCentre(e));
-  if (pointers.size === 2) startPinch();
-  else if (pointers.size === 1) startDrag(e);
-});
-stage.addEventListener("pointermove", e => {
-  if (!view?.window || !renderer || !pointers.has(e.pointerId)) return;
-  pointers.set(e.pointerId, fromCentre(e));
-  if (pinch && pointers.size === 2) {
-    const [a, b] = [...pointers.values()];
-    const middle = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    const zoom = Math.min(16, Math.max(0.25, pinch.zoom * Math.hypot(a.x - b.x, a.y - b.y) / pinch.distance));
-    // The point between the fingers stays under them.
-    const ratio = zoom / pinch.zoom;
-    view.zoom = zoom;
-    view.panX = middle.x - (pinch.middle.x - pinch.panX) * ratio;
-    view.panY = middle.y - (pinch.middle.y - pinch.panY) * ratio;
-    refreshView();
-    return;
-  }
-  if (!drag) return;
-  if (tool === "pan") {
-    const dpr = devicePixelRatio || 1;
-    view.panX = drag.panX + (e.clientX - drag.x) * dpr; view.panY = drag.panY + (e.clientY - drag.y) * dpr;
-  } else {
-    const gain = Math.max(drag.width, 1) / 400;
-    view.window = { width: Math.max(1, drag.width + (e.clientX - drag.x) * gain), center: drag.center + (e.clientY - drag.y) * gain };
-  }
-  refreshView();
-});
-function endPointer(e) {
-  pointers.delete(e.pointerId);
-  pinch = undefined;
-  drag = undefined;
-  // A finger left after a pinch carries on from where the image is, without a jump.
-  if (pointers.size === 1 && view?.window) { const rest = [...pointers.values()][0], r = canvas.getBoundingClientRect(), dpr = devicePixelRatio || 1; startDrag({ clientX: rest.x / dpr + r.left + r.width / 2, clientY: rest.y / dpr + r.top + r.height / 2 }); }
-}
-stage.addEventListener("pointerup", endPointer); stage.addEventListener("pointercancel", endPointer);
-$("#reset-view").addEventListener("click", async () => {
-  if (!view?.defaultWindow) return;
-  view.window = view.defaultWindow;
-  view.zoom = 1; view.panX = 0; view.panY = 0; view.invert = false;
-  syncInvert();
-  refreshView();
-});
 
 // The sandboxes this browser knows. The list is the only thing kept: the URL says which one a page is in.
 const SANDBOXES_KEY = "smart-imaging-client:sandboxes";

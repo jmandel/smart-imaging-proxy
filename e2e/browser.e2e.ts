@@ -125,6 +125,41 @@ describe("every page, on desktop and phone, in light and dark", () => {
 
 describe("Explore", () => {
   for (const [name, viewport] of [["desktop", DESKTOP], ["phone", PHONE]] as const) {
+    test(`${name}: an opened study shows its images in the viewer, a series at a time, through this session`, async () => {
+      const page = await open("/explore", { viewport });
+      await pick(page, "josh");
+      const asked: string[] = [];
+      page.on("request", r => { const u = new URL(r.url()); if (u.pathname.endsWith("/api/explore/instance")) asked.push(u.searchParams.get("instance")!); });
+      await page.locator(`[data-open="${SHEETS.mri}"]`).click();
+      const stage = page.locator(".explore-viewer [data-v=stage]");
+      await page.locator(".explore-viewer [data-v=note]:empty").waitFor({ state: "attached", timeout: 30000 });
+      await page.locator(".explore-viewer [data-v=slider]:enabled").waitFor();
+      // How much of the canvas isn't black, read through a screenshot, since a WebGL canvas can't be read back afterwards.
+      const png = (await page.locator(".explore-viewer [data-v=canvas]").screenshot()).toString("base64");
+      const lit = await page.evaluate(async b64 => {
+        const img = await createImageBitmap(await (await fetch(`data:image/png;base64,${b64}`)).blob());
+        const c = new OffscreenCanvas(img.width, img.height), x = c.getContext("2d")!;
+        x.drawImage(img, 0, 0);
+        const d = x.getImageData(0, 0, img.width, img.height).data;
+        let on = 0; for (let i = 0; i < d.length; i += 4) if (d[i]! > 24 || d[i + 1]! > 24 || d[i + 2]! > 24) on++;
+        return on / (d.length / 4);
+      }, png);
+      expect(lit).toBeGreaterThan(0.05);
+      const count = await page.locator(".explore-viewer [data-v=count]").innerText();
+      await stage.focus(); await page.keyboard.press("ArrowDown");
+      await page.waitForFunction(was => document.querySelector(".explore-viewer [data-v=count]")!.textContent !== was, count);
+      expect(await page.locator(".explore-viewer [data-v=series] button").count()).toBeGreaterThan(5);
+      await page.locator(".explore-viewer [data-v=series] button").nth(2).click();
+      await page.locator(".explore-viewer [data-v=series] button[aria-pressed=true]").nth(0).waitFor();
+      await page.locator(".explore-viewer [data-v=note]:empty").waitFor({ state: "attached", timeout: 30000 });
+      expect(asked.length).toBeGreaterThan(2);
+      // A re-render, from the chain line arriving, leaves the viewer where it was.
+      await page.locator("#chain a").waitFor();
+      expect(await page.locator(".explore-viewer [data-v=note]").innerText()).toBe("");
+      await page.getByRole("button", { name: /^Back to/ }).click();
+      expect(await page.locator(".explore-viewer").count()).toBe(0);
+      expect(problems).toEqual([]);
+    });
     test(`${name}: Josh's CT, X-ray and slide thumbnails are drawn from real pixels, decoded in the page`, async () => {
       const page = await open("/explore", { viewport });
       await pick(page, "josh");

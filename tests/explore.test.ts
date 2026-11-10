@@ -477,6 +477,41 @@ describe("thumbnails", () => {
   }, 60000);
 });
 
+describe("the viewer", () => {
+  test("a study's series come from the search result, and each image it lists is retrieved through the proxy", async () => {
+    const b = browser();
+    await b.pick("josh");
+    const { series } = await (await b.call("GET", "/api/explore/series?study=mri-brain-2020")).json();
+    const study = stack.catalog.allStudies().find(x => x.id === "mri-brain-2020")!;
+    const known = stack.catalog.hierarchies([study.pk]).get(study.pk)!.series;
+    expect(series.length).toBe(known.length);
+    const one = series.find((x: any) => x.count > 10);
+    const truth = known.find(x => x.uid === one.uid)!;
+    expect(one.instances).toEqual([...truth.instances].sort((a, z) => a.number - z.number).map(i => i.uid));
+    const before = stack.proxy.events.length;
+    const r = await b.call("GET", `/api/explore/instance?study=mri-brain-2020&series=${one.uid}&instance=${one.instances[3]}`);
+    expect([r.status, r.headers.get("content-type")]).toEqual([200, "application/dicom"]);
+    expect(new TextDecoder().decode(r.bytes.slice(128, 132))).toBe("DICM");
+    expect(stack.proxy.events.slice(before).some((e: any) => e.path?.endsWith(`/instances/${one.instances[3]}`))).toBe(true);
+  }, 60000);
+  test("it retrieves nothing the search result didn't list, nor anything from a withheld study", async () => {
+    setSaved({ shares: [share(SHARE)] });
+    const b = browser();
+    await b.pick("sam-caregiver", { patient: "josh-example" });
+    await b.post("/approve", { sites: ["Lakeside Imaging"] });
+    const before = stack.proxy.events.length;
+    expect((await b.call("GET", `/api/explore/series?study=${SMALL}`)).status).toBe(404);
+    const small = stack.catalog.allStudies().find(x => x.id === SMALL)!, its = stack.catalog.hierarchies([small.pk]).get(small.pk)!.series[0]!;
+    expect((await b.call("GET", `/api/explore/instance?study=${SMALL}&series=${its.uid}&instance=${its.instances[0]!.uid}`)).status).toBe(404);
+    const mri = await (await b.call("GET", "/api/explore/series?study=mri-brain-2020")).json();
+    const [a, z] = [mri.series[0], mri.series[1]];
+    // An instance from another series, or a made-up one, isn't fetched.
+    expect((await b.call("GET", `/api/explore/instance?study=mri-brain-2020&series=${a.uid}&instance=${z.instances[0]}`)).status).toBe(404);
+    expect((await b.call("GET", `/api/explore/instance?study=mri-brain-2020&series=${a.uid}&instance=1.2.3`)).status).toBe(404);
+    expect(stack.proxy.events.length).toBe(before);
+  }, 60000);
+});
+
 describe("a real window", () => {
   test("the page gets the sign-in URL, and the redirect back finishes the launch", async () => {
     const b = browser();

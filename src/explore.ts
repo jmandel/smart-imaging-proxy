@@ -409,7 +409,7 @@ export function createExplore(sandbox: Sandbox, clients: Record<string, BackendC
     return levels[0] && uidOf(levels[0]);
   }
 
-  /** One instance's bytes, retrieved through the proxy with this session's token, in its stored form. */
+  /** A sheet's thumbnail: one instance, chosen from the search result, or a slide's small picture. */
   async function thumbnail(s: Session, study: string, signal: AbortSignal): Promise<Response> {
     const ep = s.endpoints.get(study);
     const pick = ep && thumbOf(ep.series);
@@ -417,27 +417,49 @@ export function createExplore(sandbox: Sandbox, clients: Record<string, BackendC
     return runInSession(s.name, () => withSpan("user", "action", `Explore: draw the thumbnail for ${study}`, { study }, async () => {
       const instance = pick.slide ? await slideInstance(s, study, pick.series) : pick.instance;
       if (!instance) return json({ error: "the server offers no thumbnail image for this slide" }, 404);
-      const res = await tfetch("app", "GET WADO-RS instance (thumbnail)", `${ep.address}/studies/${ep.uid}/series/${pick.series}/instances/${instance}`, { headers: { Authorization: `Bearer ${s.token}`, Accept: STORED_ANY, "Accept-Encoding": "zstd" }, decompress: false, signal } as any, { study });
-      const boundary = boundaryOf(res.headers.get("content-type"));
-      if (!res.ok || !boundary || !res.body) { await res.body?.cancel(); return json({ error: `the proxy answered ${res.status}` }, res.status === 200 ? 502 : res.status); }
-      const decoded: ReadableStream<Uint8Array> = res.headers.get("content-encoding") === "zstd" ? res.body.pipeThrough(new DecompressionStream("zstd" as any) as any) : res.body;
-      // The one part's bytes, as the page's decoder takes them.
-      const parts = readMultipart(decoded as any, boundary)[Symbol.asyncIterator]();
-      const body = new ReadableStream<Uint8Array>({
-        async pull(c) {
-          for (;;) {
-            const n = await parts.next();
-            if (n.done || n.value.type === "complete") { c.close(); return; }
-            if (n.value.type === "truncated") { c.error(new Error("the response ended early")); return; }
-            if (n.value.type === "data") { c.enqueue(n.value.bytes); return; }
-          }
-        },
-        // The page went away: stop reading. The upstream fetch is aborted with it, so closing the
-        // reader can reject, and that is the expected end, not an error.
-        async cancel() { await parts.return?.(undefined)?.catch(() => {}); },
-      });
-      return new Response(body, { headers: { "content-type": "application/dicom", "cache-control": "no-store", "x-instance": instance, "x-modality": ep.series.find(x => x.uid === pick.series)?.modality ?? ep.modality } });
+      return instanceBytes(s, study, pick.series, instance, "GET WADO-RS instance (thumbnail)", signal);
     }, { session: s.name, trace: hex(16) }));
+  }
+  /** A study's image series as the page's viewer takes them, each with its instances in order. */
+  function seriesOf(s: Session, study: string) {
+    return s.endpoints.get(study)?.series.map(x => ({
+      uid: x.uid, number: x.number, modality: x.modality, description: x.description, count: x.instances.length,
+      instances: [...x.instances].sort((a: any, b: any) => (a.number ?? 0) - (b.number ?? 0)).map((i: any) => i.uid),
+    }));
+  }
+  /** One image for the viewer: only an instance the search result listed, or a slide's own small picture. */
+  async function viewerImage(s: Session, study: string, series: string, instance: string, signal: AbortSignal): Promise<Response> {
+    const x = s.endpoints.get(study)?.series.find(y => y.uid === series);
+    if (!x || !s.token) return json({ error: "that series isn't in this study's search result" }, 404);
+    return runInSession(s.name, () => withSpan("user", "action", `Explore: view an image from ${study}`, { study }, async () => {
+      const listed = x.instances.some((i: any) => i.uid === instance) || (x.modality === "SM" && instance === await slideInstance(s, study, series));
+      if (!listed) return json({ error: "that instance isn't in this series" }, 404);
+      return instanceBytes(s, study, series, instance, "GET WADO-RS instance", signal);
+    }, { session: s.name, trace: hex(16) }));
+  }
+  /** One instance's bytes, retrieved through the proxy with this session's token, in its stored form. */
+  async function instanceBytes(s: Session, study: string, series: string, instance: string, what: string, signal: AbortSignal): Promise<Response> {
+    const ep = s.endpoints.get(study)!;
+    const res = await tfetch("app", what, `${ep.address}/studies/${ep.uid}/series/${series}/instances/${instance}`, { headers: { Authorization: `Bearer ${s.token}`, Accept: STORED_ANY, "Accept-Encoding": "zstd" }, decompress: false, signal } as any, { study });
+    const boundary = boundaryOf(res.headers.get("content-type"));
+    if (!res.ok || !boundary || !res.body) { await res.body?.cancel(); return json({ error: `the proxy answered ${res.status}` }, res.status === 200 ? 502 : res.status); }
+    const decoded: ReadableStream<Uint8Array> = res.headers.get("content-encoding") === "zstd" ? res.body.pipeThrough(new DecompressionStream("zstd" as any) as any) : res.body;
+    // The one part's bytes, as the page's decoder takes them.
+    const parts = readMultipart(decoded as any, boundary)[Symbol.asyncIterator]();
+    const body = new ReadableStream<Uint8Array>({
+      async pull(c) {
+        for (;;) {
+          const n = await parts.next();
+          if (n.done || n.value.type === "complete") { c.close(); return; }
+          if (n.value.type === "truncated") { c.error(new Error("the response ended early")); return; }
+          if (n.value.type === "data") { c.enqueue(n.value.bytes); return; }
+        }
+      },
+      // The page went away: stop reading. The upstream fetch is aborted with it, so closing the
+      // reader can reject, and that is the expected end, not an error.
+      async cancel() { await parts.return?.(undefined)?.catch(() => {}); },
+    });
+    return new Response(body, { headers: { "content-type": "application/dicom", "cache-control": "no-store", "x-instance": instance, "x-modality": ep.series.find(x => x.uid === series)?.modality ?? ep.modality } });
   }
 
   /** The whole study, counted as it goes by, one chunk held at a time. */
@@ -520,6 +542,14 @@ export function createExplore(sandbox: Sandbox, clients: Record<string, BackendC
           const study = url.searchParams.get("study") ?? "";
           if (!s.sheets.some(x => x.id === study)) return json({ error: "that study isn't on this page" }, 404);
           return json({ line: chainLine(await happened(s, study)), activityUrl: `${view(s).activityUrl}&study=${encodeURIComponent(study)}` });
+        }
+        if (p === "/series" || p === "/instance" || p === "/slide") {
+          const study = url.searchParams.get("study") ?? "", series = url.searchParams.get("series") ?? "";
+          // A withheld study, or one that isn't this session's, gets nothing fetched.
+          if (!s.sheets.some(x => x.id === study && x.released && x.retrievable)) return json({ error: "this study has no images to show here" }, 404);
+          if (p === "/series") return json({ series: seriesOf(s, study) ?? [] });
+          if (p === "/slide") return json({ instance: (await runInSession(s.name, () => slideInstance(s, study, series))) ?? null });
+          return viewerImage(s, study, series, url.searchParams.get("instance") ?? "", req.signal);
         }
         if (p === "/thumbnail") {
           const study = url.searchParams.get("study") ?? "";

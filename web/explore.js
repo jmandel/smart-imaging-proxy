@@ -114,11 +114,10 @@ function studyHtml() {
   return `<button type="button" class="back" id="back">Back to ${esc(view.who.kind === "user" && view.patientName ? `${view.patientName.split(" ")[0]}'s studies` : "the studies")}</button>
   <div class="study-open">
       <div class="study-hero">
-        <div class="thumb" data-study="${esc(s.id)}" data-label="${esc(s.title)}"><span class="placeholder">${esc(s.modalities?.[0] ?? "")}</span></div>
         <span class="meta">${esc([(s.modalities ?? []).join(" "), studyDate(s.date), s.site, `${plural(s.instanceCount ?? 0, "image")} in ${plural(s.seriesCount ?? 0, "series", "series")}`, s.partial].filter(Boolean).join(", "))}</span>
         <h2 id="headline" tabindex="-1">${esc(s.title)}</h2>
-        <ul class="series-list">${s.series.map(x => `<li>${esc(x.modality)} ${esc(x.description ?? `Series ${x.number}`)}, ${plural(x.instances, "image")}</li>`).join("")}</ul>
       </div>
+      <div id="viewer-slot"></div>
       <div><button type="button" class="primary" id="retrieve" ${r?.running ? "disabled" : ""}>${r ? (r.running ? "Retrieving…" : "Retrieve again") : "Retrieve the whole study"}</button></div>
       ${r ? `<div class="retrieval"><h3>${r.running ? "Retrieving" : r.status === 200 && r.complete ? "Retrieved" : `Not retrieved (HTTP ${esc(r.status ?? "none")})`}</h3><dl>
         <dt>Parts</dt><dd>${esc(r.parts)}</dd><dt>On the wire</dt><dd>${esc(bytes(r.wireBytes))}${r.encoding === "zstd" ? ", zstd" : ""}</dd><dt>DICOM</dt><dd>${esc(bytes(r.dicomBytes))}</dd>
@@ -126,6 +125,34 @@ function studyHtml() {
         ${r.ms !== undefined ? `<dt>Took</dt><dd>${esc(r.ms)} ms</dd>` : ""}${r.error ? `<dt>Problem</dt><dd class="error">${esc(r.error)}</dd>` : ""}</dl></div>` : ""}
     <p class="chain" id="chain">${chain ? `${esc(chain.line)} <a href="${esc(chain.activityUrl)}">Activity log</a>` : `<span class="spinner" aria-hidden="true"></span>Loading…`}</p>
   </div>`;
+}
+
+// The viewer, made once and moved into each opened study, so a re-render never loses its place. Its images
+// come through this session, as the person or service it shows, the same way the thumbnails do.
+const viewerEl = Object.assign(document.createElement("section"), { className: "explore-viewer", innerHTML: ImageViewer.markup() });
+viewerEl.setAttribute("aria-label", "Image viewer");
+const viewer = ImageViewer.create(viewerEl);
+let viewing = null;
+const studyQuery = (study, more = {}) => new URLSearchParams({ study, ...more }).toString();
+const sessionSource = study => ({
+  async retrieve(series, instance, signal) {
+    const r = await fetch(`${BASE}/api/explore/instance?${studyQuery(study, { series: series.uid, instance })}`, { signal });
+    if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error(b.error ?? `HTTP ${r.status}`); }
+    return r.arrayBuffer();
+  },
+  async slideInstance(series, signal) {
+    const r = await fetch(`${BASE}/api/explore/slide?${studyQuery(study, { series: series.uid })}`, { signal });
+    return r.ok ? (await r.json()).instance : undefined;
+  },
+});
+async function showViewer() {
+  if (!open) { if (viewing) { viewer.close(); viewing = null; } return; }
+  $("#viewer-slot")?.replaceWith(viewerEl);
+  if (viewing === open) return;
+  const study = viewing = open;
+  viewer.close(); viewer.note("Retrieving…");
+  try { const { series } = await api("GET", `/api/explore/series?${studyQuery(study)}`); if (viewing === study) viewer.openStudy(series, sessionSource(study)); }
+  catch (e) { if (viewing === study) viewer.note(e.message); }
 }
 
 function render(force = false) {
@@ -136,6 +163,7 @@ function render(force = false) {
   $("#view").innerHTML = viewHtml();
   if (options) renderWho();
   Thumbs.watch($("#view"));
+  showViewer();
   if (focusedAction && document.getElementById(focusedAction)) document.getElementById(focusedAction).focus();
   if ((ready || (view && !view.running)) && wantFocus) { wantFocus = false; $("#headline")?.focus({ preventScroll: innerWidth > 720 }); announce($("#headline")?.textContent ?? ""); }
 }

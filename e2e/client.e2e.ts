@@ -449,13 +449,13 @@ describe("the demo client", () => {
     await touch("pointermove", 11, cx - 80, cy); await touch("pointermove", 12, cx + 80, cy);
     await page.locator("#overlay", { hasText: "Zoom 200%" }).waitFor();
     await touch("pointermove", 11, cx - 50, cy + 30); await touch("pointermove", 12, cx + 110, cy + 30);
-    const moved = await page.evaluate(() => { const v = (0, eval)("view"); return [v.panX, v.panY]; });
+    const moved = await page.evaluate(() => { const v = (0, eval)("viewer").state(); return [v.panX, v.panY]; });
     expect(moved[0]).toBeGreaterThan(0); expect(moved[1]).toBeGreaterThan(0);
     await touch("pointerup", 11, cx - 50, cy + 30); await touch("pointerup", 12, cx + 110, cy + 30);
     // One finger then pans, after choosing the Pan tool.
     await page.getByRole("button", { name: "Pan", exact: true }).click();
     await touch("pointerdown", 13, cx, cy); await touch("pointermove", 13, cx + 20, cy);
-    const after = await page.evaluate(() => (0, eval)("view").panX);
+    const after = await page.evaluate(() => (0, eval)("viewer").state().panX);
     expect(after).toBeGreaterThan(moved[0]!);
     await touch("pointerup", 13, cx + 20, cy);
     await shot(page, "phone-390");
