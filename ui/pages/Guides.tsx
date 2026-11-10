@@ -1,41 +1,19 @@
 // A guide for each audience: what matters for their jobs, most important first, each step linking to the page
 // that does it. Links into a sandbox go to the one you were last in; with none, following one makes one.
-import { useState, type MouseEvent, type ReactNode } from "react";
-import { createSandbox, linkedSandbox, useSandboxes } from "../lib/store";
-import { openViewer, sandboxServer, VIEWER_URL } from "../lib/servers";
-import { CONFORMANCE_PLAN, REFERENCES, type PageId } from "../sitemap";
+import type { ReactNode } from "react";
+import { VIEWER_URL } from "../lib/servers";
+import { CONFORMANCE_PLAN, REFERENCES } from "../sitemap";
 import { PageLink } from "../shell/Shell";
-
-/** A link into your sandbox's `page`, or the viewer opened on it, making a sandbox first if there's none. */
-function InSandbox({ page, button, children }: { page: PageId | "trace" ; button?: boolean; children: ReactNode }) {
-  const linked = linkedSandbox(useSandboxes());
-  const [error, setError] = useState<string>();
-  const path = page === "viewer" ? "/viewer" : page === "sandbox" ? "/" : page === "trace" ? "/trace/" : `/${page}`;
-  const go = async (e: MouseEvent) => {
-    if (linked && page !== "viewer") return;
-    e.preventDefault();
-    try {
-      const base = linked?.base ?? await createSandbox();
-      if (page === "viewer") openViewer(sandboxServer(base)); else location.assign(`${base}${path}`);
-    } catch (x) { setError((x as Error).message); }
-  };
-  return <>
-    <a className={button ? "button" : undefined} href={page === "viewer" ? "/viewer" : `${linked?.base ?? ""}${path}`} onClick={go}>{children}</a>
-    {error && <span className="error" role="alert"> {error}</span>}
-  </>;
-}
+import { InSandbox } from "../components/InSandbox";
+import { SandboxPicker } from "../components/SandboxPicker";
 
 interface Step { title: string; body: ReactNode; links?: ReactNode }
 
 function Guide({ heading, lead, steps }: { heading: string; lead: string; steps: Step[] }) {
-  const linked = linkedSandbox(useSandboxes());
   return (
     <main className="landing guide">
       <h1>{heading}</h1>
       <p className="lead">{lead}</p>
-      <p className="guide-sandbox note" id="guide-sandbox">
-        {linked ? <>Links go to your sandbox “{linked.name ?? "Sandbox"}”. <a href="/">Your sandboxes</a></> : "You don't have a sandbox yet. The first link into one makes it."}
-      </p>
       {steps.map((s, i) => (
         <section className="panel guide-step" key={s.title} aria-labelledby={`h-${i + 1}`}>
           <h2 id={`h-${i + 1}`}><span className="step-no">{i + 1}</span> {s.title}</h2>
@@ -50,7 +28,7 @@ function Guide({ heading, lead, steps }: { heading: string; lead: string; steps:
 
 export function BuildAnApp() {
   return <Guide heading="Build an imaging app" lead="Connect your SMART app to a sandbox: a private copy of a health system's servers, with sample patients, studies and reports, and sign-in with no passwords." steps={[
-    { title: "Get a sandbox", body: <p>Your sandbox keeps your registered apps, tokens and settings, until you delete it. Share its link with your team.</p>, links: <InSandbox page="sandbox" button>Open your sandbox</InSandbox> },
+    { title: "Choose a sandbox", body: <><p>A sandbox keeps its own registered apps, tokens and settings, until you delete it, and you can share its link with your team. The steps below work in the one chosen here.</p><SandboxPicker /></> },
     { title: "Point your app at it", body: <p>The FHIR base and discovery address, the scopes to ask for, and sample people to sign in as, with what each can see.</p>, links: <InSandbox page="build">Endpoints and sample logins →</InSandbox> },
     { title: "Register your app", body: <p>A public app with PKCE, a confidential app that signs with its key, or a backend service with no one signing in. You get a client ID, and can try each kind in our viewer.</p>, links: <InSandbox page="connect">Register an app →</InSandbox> },
     { title: "When a request is refused", body: <p>The logs show every request your app made, and why each was allowed or refused.</p>, links: <InSandbox page="activity">Logs →</InSandbox> },
@@ -78,7 +56,7 @@ export function RunAServer() {
 
 export function HowItWorks() {
   return <Guide heading="How SMART Imaging works" lead="One sign-in gives an app a patient's clinical records and their images. Here it runs end to end, with sample patients." steps={[
-    { title: "See it work", body: <p>Our viewer signs in as a sample patient, then shows their records and opens their images.</p>, links: <InSandbox page="viewer" button>Open the viewer</InSandbox> },
+    { title: "See it work", body: <p>Our viewer signs in as a sample patient, then shows their records and opens their images.</p>, links: <InSandbox page="viewer" className="button">Open the viewer</InSandbox> },
     { title: "The parts", body: <dl className="registered-facts">
       <dt>Clinical FHIR server</dt><dd>Discovery, and the patient's records</dd>
       <dt>Authorization server</dt><dd>Sign-in, consent and tokens</dd>
@@ -98,7 +76,7 @@ export function WhyItMatters() {
       <li>A referral service finds the one study it needs, not the whole record.</li>
       <li>Images stay where they are. Nothing is copied ahead of time.</li>
     </ul>, links: <InSandbox page="tours">See these as stories →</InSandbox> },
-    { title: "Watch it work", body: <p>A sample patient signs in, and their images open in the viewer.</p>, links: <InSandbox page="viewer" button>Open the viewer</InSandbox> },
+    { title: "Watch it work", body: <p>A sample patient signs in, and their images open in the viewer.</p>, links: <InSandbox page="viewer" className="button">Open the viewer</InSandbox> },
     { title: "What it takes", body: <ul className="how">
       <li><strong>A health system</strong> adds an imaging FHIR server and a DICOMweb endpoint behind the sign-in it already has for SMART apps.</li>
       <li><strong>An app</strong> uses the SMART App Launch it may already support, asking for imaging too.</li>

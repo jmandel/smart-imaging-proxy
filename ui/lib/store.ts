@@ -28,7 +28,7 @@ export function saveSandboxes(list: KnownSandbox[]) {
 }
 const subscribe = (f: () => void) => {
   listeners.add(f);
-  const other = (e: StorageEvent) => { if (e.key === SANDBOXES_KEY) f(); };
+  const other = (e: StorageEvent) => { if (e.key === SANDBOXES_KEY || e.key === CURRENT_KEY) f(); };
   addEventListener("storage", other);
   return () => { listeners.delete(f); removeEventListener("storage", other); };
 };
@@ -41,13 +41,21 @@ export function rememberName(base: string, name: string | null | undefined) {
   if (name && list.some(w => w.base === base && w.name !== name)) saveSandboxes(list.map(w => w.base === base ? { ...w, name } : w));
 }
 
-/** Marks the page's sandbox as the one links outside a sandbox go to. */
-export function enterSandbox() { if (BASE) store(CURRENT_KEY, BASE); }
+/** Makes `base` the sandbox you're working in: the one links outside a sandbox go to, here and in every tab. */
+export function chooseSandbox(base: string) {
+  if (stored(CURRENT_KEY) === base) return;
+  store(CURRENT_KEY, base);
+  for (const f of listeners) f();
+}
+/** Marks the page's sandbox as the one you're working in. */
+export function enterSandbox() { if (BASE) chooseSandbox(BASE); }
 /** The sandbox that links outside one go to: the one you were last in, or the newest you know. */
 export function linkedSandbox(list = knownSandboxes()): KnownSandbox | undefined {
   const current = stored(CURRENT_KEY);
   return list.find(w => w.base === current) ?? list.at(-1);
 }
+/** The sandbox you're working in, kept current as it's chosen, here or in another tab. */
+export const useLinkedSandbox = () => useSyncExternalStore(subscribe, () => linkedSandbox());
 
 /** Makes a sandbox, remembered in this browser. Gives its base path. */
 export async function createSandbox(): Promise<string> {

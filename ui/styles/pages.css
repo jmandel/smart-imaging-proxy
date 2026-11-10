@@ -11,7 +11,7 @@ html.connecting #landing, html.connecting #app { display:none; }
 .landing .error { color:var(--bad); }
 .connect-actions { display:flex; flex-wrap:wrap; gap:.5rem; }
 .sandbox { margin:0 0 1.2rem; min-height:7.2rem; }
-.sandbox-list { list-style:none; margin:1.4rem 0 1rem; padding:0; display:grid; gap:.5rem; }
+.sandbox-list { list-style:none; margin:.6rem 0 0; padding:0; display:grid; gap:.4rem; }
 .sandbox-list a { display:block; background:var(--plate); border:1px solid var(--line); border-radius:8px; padding:.7rem .9rem; color:inherit; text-decoration:none; }
 .sandbox-list a:hover { border-color:var(--accent); }
 .sandbox-list strong { display:block; font-size:1.1rem; overflow-wrap:anywhere; }
@@ -281,9 +281,52 @@ a.path p:not(.path-kicker) { color:var(--muted); }
 .sandbox-groups { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 13rem), 1fr)); gap:.5rem 1.5rem; margin-top:1.6rem; }
 .sandbox-groups .link-list li { grid-template-columns:1fr; }
 @media (max-width:34rem) { .link-list li { grid-template-columns:1fr; } }
-.your-sandboxes { margin-top:2.2rem; padding-top:1.4rem; border-top:1px solid var(--line); }
-.your-sandboxes h2, .sandbox-groups h2 { font-size:1.1rem; margin:0 0 .4rem; }
+.your-sandboxes { margin-top:2rem; }
+.your-sandboxes h2 { font-size:1.1rem; margin:0; }
+.sandbox-groups h2 { font-size:1.1rem; margin:0 0 .4rem; }
 .guide-step { margin:0 0 .9rem; }
 .guide-step h2 { font-size:1.15rem; margin:0 0 .4rem; }
 .guide-links { display:flex; flex-wrap:wrap; gap:.4rem 1.2rem; align-items:center; margin:.6rem 0 0; }
-.guide-sandbox:empty { display:none; }
+
+/* Which of your sandboxes a guide works in, chosen without leaving the guide. */
+.sandbox-picker { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem .75rem; margin:.4rem 0 0; }
+.sandbox-picker label { font-weight:700; }
+.sandbox-picker select { flex:0 1 16rem; min-width:0; }
+.sandbox-picker .error { flex-basis:100%; margin:0; }
+
+/* The home page's diagram: three servers, each pointing to the next, and the one token under all of them. */
+.chain-map { margin:1.75rem 0 1.5rem; }
+.chain-map h2 { margin:0 0 .7rem; font-size:1.05rem; }
+.chain-hops { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:1.6rem; }
+.chain-hop { position:relative; display:flex; flex-direction:column; gap:.35rem; padding:.75rem .85rem; border-radius:8px; background:var(--film); color:var(--on-film); font-size:.86rem; }
+.chain-hop code { background:none; padding:0; color:var(--fact-film); font-size:.78rem; }
+.chain-server { font-size:.95rem; }
+.chain-answer { color:var(--on-film-dim); }
+.chain-answer code { display:block; color:var(--on-film); font-weight:700; }
+/* What leads from one server to the next: an arrow in the gap. */
+.chain-hop:not(:last-child)::after { content:""; position:absolute; top:1.35rem; right:-1.45rem; width:1.1rem; height:2px; background:var(--accent); }
+.chain-hop:not(:last-child)::before { content:""; position:absolute; top:calc(1.35rem - 5px); right:-1.55rem; border:6px solid transparent; border-left:8px solid var(--accent); border-right:0; }
+/* The token, a band under all three, with a tick up to each. */
+.chain-token { position:relative; margin:.9rem 0 0; padding-top:.6rem; border-top:2px solid var(--accent); text-align:center; font-size:.86rem; font-weight:700; color:var(--accent); }
+.chain-token::before { content:""; position:absolute; top:calc(-.9rem - 2px); left:16.6%; right:16.6%; height:.9rem; background:linear-gradient(var(--accent), var(--accent)) 0 0 / 2px 100% no-repeat, linear-gradient(var(--accent), var(--accent)) 50% 0 / 2px 100% no-repeat, linear-gradient(var(--accent), var(--accent)) 100% 0 / 2px 100% no-repeat; }
+
+/* Where to start: the two ways in, two columns apart by a rule. */
+.ways { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); margin:1.75rem 0 1rem; }
+.way { display:flex; flex-direction:column; align-items:flex-start; gap:.45rem; padding:0 1.5rem; }
+.way:first-child { padding-left:0; }
+.way + .way { border-left:1px solid var(--line); padding-right:0; }
+.way h2 { margin:0; font-size:1.15rem; }
+.way p { margin:0 0 .35rem; color:var(--muted); flex:1; }
+.more-links { list-style:none; display:flex; flex-wrap:wrap; gap:.3rem 1.5rem; margin:1.4rem 0 0; padding:1rem 0 0; border-top:1px solid var(--line); }
+.your-sandboxes-head { display:flex; align-items:center; justify-content:space-between; gap:1rem; }
+@media (max-width:40rem) {
+  .chain-hops { grid-template-columns:minmax(0, 1fr); gap:1.4rem; }
+  .chain-hop:not(:last-child)::after { top:auto; bottom:-1.25rem; right:auto; left:1.4rem; width:2px; height:1rem; }
+  .chain-hop:not(:last-child)::before { top:auto; bottom:-1.35rem; right:auto; left:calc(1.4rem - 5px); border:6px solid transparent; border-top:8px solid var(--accent); border-bottom:0; }
+  .chain-token { border-top:0; padding:0; text-align:left; }
+  .chain-token::before { display:none; }
+  .chain-token span { display:inline-block; padding:.25rem .7rem; border-radius:999px; background:var(--accent); color:var(--plate); }
+  .ways { grid-template-columns:minmax(0, 1fr); gap:1.4rem; }
+  .way, .way:first-child { padding:0; }
+  .way + .way { border-left:0; border-top:1px solid var(--line); padding:1.4rem 0 0; }
+}

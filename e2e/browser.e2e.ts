@@ -437,6 +437,8 @@ describe("activity", () => {
       await page.locator("tr.ev td.t button").first().click();
       await page.locator("tr.detail .ev-links a", { hasText: /^token / }).first().click();
       await page.waitForURL(/link=token/);
+      // The address changes before the new view replaces the old one: its filter chip says it's in place.
+      await page.locator(".chosen li", { hasText: /^Shares token/ }).waitFor();
       await page.locator("tr.ev").first().waitFor();
       expect(await page.locator("tr.ev").count()).toBeGreaterThan(2);
       // Choosing a session filters the whole page to it.

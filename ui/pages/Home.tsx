@@ -2,7 +2,8 @@
 import { useEffect, useState } from "react";
 import { sandboxName } from "../lib/api";
 import { createSandbox, knownSandboxes, saveSandboxes, useSandboxes } from "../lib/store";
-import { MENU, PAGES } from "../sitemap";
+import { PAGES } from "../sitemap";
+import { ImagingChain } from "../components/ImagingChain";
 import { PageLink } from "../shell/Shell";
 
 export default function Home() {
@@ -28,19 +29,34 @@ export default function Home() {
   return (
     <main id="home" className="landing">
       <h1>{PAGES.home.name}</h1>
-      <p className="lead">A public sandbox and test client for the SMART Imaging Access guide: one sign-in that gives an app a patient's records and their medical images.</p>
-      <ul className="link-list jobs">
-        {MENU.map(id => <li key={id}><PageLink id={id} /><span>{PAGES[id].blurb}</span></li>)}
+      <p className="lead">A public sandbox and test client for the SMART Imaging Access guide.</p>
+      <ImagingChain />
+      <section className="ways" aria-label="Where to start">
+        <div className="way">
+          <h2>Building an app?</h2>
+          <p>Point it at a sandbox: a health system's servers with sample patients and studies, and sign-in with no passwords.</p>
+          <PageLink id="build-an-app" className="button">Build an App</PageLink>
+        </div>
+        <div className="way">
+          <h2>Running a server?</h2>
+          <p>Connect our known-good viewer to it, and see which step it gets wrong.</p>
+          <PageLink id="run-a-server" className="button">Run a Server</PageLink>
+        </div>
+      </section>
+      <ul className="more-links" aria-label="More">
+        <li><PageLink id="how-it-works" /></li>
+        <li><PageLink id="why-it-matters" /></li>
+        <li><a href="/llms.txt">For agents: llms.txt</a></li>
       </ul>
-      <p className="note agents">Working with an AI agent? Give it <a href="/llms.txt">llms.txt</a>. It describes everything here, and its API.</p>
       <section className="your-sandboxes" aria-labelledby="h-sandboxes">
-        <h2 id="h-sandboxes">Your sandboxes</h2>
-        <p className="note">A sandbox is a private copy of the health system. What you do in one stays there until you delete it, and you can share one by its link.</p>
+        <div className="your-sandboxes-head">
+          <h2 id="h-sandboxes">Your sandboxes</h2>
+          <button type="button" className="tool" id="create" disabled={creating} onClick={create}>Create a sandbox</button>
+        </div>
         <ul className="sandbox-list" id="sandbox-list">
           {list.length ? list.map(w => <li key={w.base}><a href={`${w.base}/`}><strong>{w.name ?? "Sandbox"}</strong><span>{w.joined ? "Shared with you" : "Made in this browser"}</span></a></li>)
             : <li className="none">You don't have any yet.</li>}
         </ul>
-        <button type="button" className="secondary" id="create" disabled={creating} onClick={create}>Create a sandbox</button>
         {error && <p className="error" id="create-error" role="alert">{error}</p>}
       </section>
     </main>

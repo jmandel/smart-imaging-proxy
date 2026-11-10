@@ -555,6 +555,22 @@ describe("the demo client", () => {
     await shot(page, "phone-390");
     await context.close();
   });
+  test("a page opened from a link starts at its top, and Back returns to where the last one was", async () => {
+    const context = await newContext({ viewport: { width: 1280, height: 700 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    await page.goto(`${ORIGIN}/`);
+    await page.locator(".site-footer").waitFor();
+    await page.evaluate(() => scrollTo(0, document.body.scrollHeight));
+    const down = await page.evaluate(() => scrollY);
+    expect(down).toBeGreaterThan(100);
+    await page.locator(".site-footer a", { hasText: "Viewer" }).click();
+    await page.waitForURL(u => u.pathname === "/viewer");
+    expect(await page.evaluate(() => scrollY)).toBe(0);
+    await page.goBack();
+    await page.waitForURL(u => u.pathname === "/");
+    await page.waitForFunction(y => Math.abs(scrollY - y) < 2, down);
+    await context.close();
+  });
   test("fits a narrow phone with large text", async () => {
     const context = await newContext({ viewport: { width: 320, height: 640 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();

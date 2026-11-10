@@ -4,7 +4,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { BASE, sandboxName } from "../lib/api";
-import { enterSandbox, rememberName, useSandboxes, linkedSandbox, type KnownSandbox } from "../lib/store";
+import { enterSandbox, rememberName, useLinkedSandbox, useSandboxes, type KnownSandbox } from "../lib/store";
 import { openViewer, sandboxServer } from "../lib/servers";
 import { CONFORMANCE_PLAN, hrefOf, MENU, PAGES, REFERENCES, REPO, SANDBOX_GROUPS, SITE_TOOLS, type PageId } from "../sitemap";
 
@@ -130,7 +130,8 @@ export function Shell({ page, children }: { page: PageId; children: ReactNode })
   const list = useSandboxes();
   const inSandbox = !!BASE;
   const [served, setServed] = useState<string>();
-  const sandbox = inSandbox ? list.find(w => w.base === BASE) ?? { base: BASE, joined: false, name: served } : linkedSandbox(list);
+  const working = useLinkedSandbox();
+  const sandbox = inSandbox ? list.find(w => w.base === BASE) ?? { base: BASE, joined: false, name: served } : working;
   useEffect(() => {
     document.title = page === "home" ? PAGES.home.name : `${PAGES[page].name} · SMART Imaging`;
     if (!inSandbox) return;
