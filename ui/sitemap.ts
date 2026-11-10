@@ -17,7 +17,7 @@ export interface Page {
 
 export type PageId =
   | "home" | "build-an-app" | "run-a-server" | "how-it-works" | "why-it-matters" | "viewer" | "servers"
-  | "sandbox" | "tours" | "explore" | "build" | "connect" | "activity" | "trace" | "config" | "checks";
+  | "sandbox" | "tours" | "explore" | "build" | "connect" | "activity" | "trace" | "trace-span" | "trace-log" | "config" | "checks";
 
 const pages: Page[] = [
   { id: "home", level: "site", path: "/", name: "SMART Imaging Access", blurb: "A public sandbox and test client for the SMART Imaging Access guide." },
@@ -34,6 +34,9 @@ const pages: Page[] = [
   { id: "connect", level: "sandbox", path: "/connect", name: "Register an app", blurb: "A public app, a confidential app, or a backend service." },
   { id: "activity", level: "sandbox", path: "/activity", name: "Logs", blurb: "Every request, and why each was allowed or refused." },
   { id: "trace", level: "sandbox", path: "/trace/", name: "Live trace", blurb: "Every request between the services, as it happens." },
+  // The trace's own sub-pages, opened from its rows: in no group, so in no menu.
+  { id: "trace-span", level: "sandbox", path: "/trace/span", name: "HTTP exchange", blurb: "One HTTP call's headers and bodies, as one side recorded it." },
+  { id: "trace-log", level: "sandbox", path: "/trace/log", name: "HTTP log", blurb: "Every HTTP call in a trace, each with its full exchange." },
   { id: "config", level: "sandbox", path: "/config", name: "Sandbox Config", blurb: "The demo clock, image storage, topology, resets, and ending access." },
   { id: "checks", level: "sandbox", path: "/checks", name: "Conformance", blurb: "This sandbox's servers, checked against the guide, in the page." },
 ];

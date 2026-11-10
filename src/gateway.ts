@@ -3,7 +3,8 @@
 //
 //   /imaging/...   Imaging Server, without the prefix
 //   /wado/...      proxy
-//   /trace/...     live trace, without the prefix
+//   /trace/, /trace/span, /trace/log   the live trace's pages, which the demo serves
+//   /trace/...     the trace service, without the prefix: its data and its stream
 //   /fhir/..., /authorize..., /token, /introspect, /revoke, /account...   Authorization Server,
 //                  which also serves the clinical FHIR base
 //   anything else  the demo's pages
@@ -13,12 +14,16 @@
 // The services keep their own ports, and add their own CORS.
 import { PORTS, PUBLIC_DEMO, PUBLIC_ORIGIN } from "./config";
 import { splitSandbox } from "./sandboxes";
+import { PAGES } from "../ui/sitemap";
 
 const at = (port: number, path: string) => `http://127.0.0.1:${port}${path}`;
+/** The trace's pages, which are the demo's like every page. The rest of `/trace/` is the trace service's. */
+const TRACE_PAGES = new Set(Object.values(PAGES).map(p => p.path).filter(p => p.startsWith("/trace/")));
 const AUTH = /^\/(fhir|authorize|account)(\/|$)|^\/(token|introspect|revoke)$/;
 function target(path: string, prefix: string): string {
   if (path.startsWith("/imaging/")) return at(PORTS.imaging, prefix + path.slice("/imaging".length));
   if (path.startsWith("/wado/")) return at(PORTS.proxy, prefix + path);
+  if (TRACE_PAGES.has(path)) return at(PORTS.demo, prefix + path);
   if (path.startsWith("/trace/")) return at(PORTS.trace, prefix + path.slice("/trace".length));
   if (AUTH.test(path)) return at(PORTS.auth, prefix + path);
   return at(PORTS.demo, prefix + path);
@@ -56,7 +61,7 @@ export async function gatewayFetch(req: Request): Promise<Response> {
   if (INTERNAL.test(rest)) return new Response(null, { status: 404 });
   if (PUBLIC_DEMO && !sandbox) { const gated = publicRootGate(req.method, rest); if (gated) return gated; }
   if (PUBLIC_DEMO && !sandbox && req.method === "POST" && rest === "/api/sandboxes" && !allowMint(req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "direct")) return Response.json({ error: "too many sandboxes from this address: try again in a while" }, { status: 429 });
-  // The trace's pages use relative links, so its root needs the slash.
+  // The live trace's page is at `/trace/`.
   if (rest === "/trace") return new Response(null, { status: 308, headers: { location: `${prefix}/trace/${url.search}` } });
   const to = target(rest, prefix);
   const headers = new Headers(req.headers);

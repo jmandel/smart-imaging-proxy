@@ -1,7 +1,7 @@
 // What every page has around it, drawn from the site map: the header with the guides, a sandbox's own bar with
 // its pages, and the footer with the whole map. A sandbox's name comes from the shared store, so a rename shows
 // in all three at once, in every tab.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { PORTED } from "../ported";
 import { BASE, sandboxName } from "../lib/api";
@@ -69,8 +69,9 @@ function SandboxBar({ page, sandbox }: { page: PageId; sandbox: KnownSandbox | u
 function Footer({ sandbox }: { sandbox: KnownSandbox | undefined }) {
   const ref = useRef<HTMLElement>(null);
   // It sits at the foot of a page at least a screen tall, so it's never on the first screen, and content that
-  // arrives later pushes it along out of sight, never across what someone is reading.
-  useEffect(() => {
+  // arrives later pushes it along out of sight, never across what someone is reading. Measured before the first
+  // paint, so it's never seen anywhere else.
+  useLayoutEffect(() => {
     const el = ref.current!;
     const measure = () => document.body.style.setProperty("--footer-h", `${el.offsetHeight}px`);
     measure();

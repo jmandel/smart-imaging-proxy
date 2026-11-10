@@ -38,6 +38,30 @@ async function litPixels(page: Page) {
     return lit / (d.length / 4);
   }, png.toString("base64"));
 }
+/**
+ * How far the picture moved between two screenshots of the canvas, in screenshot pixels: the shift that best lines
+ * the second up with the first, searched on a quarter-size greyscale copy.
+ */
+async function moved(page: Page, before: Buffer, after: Buffer) {
+  return page.evaluate(async ([a, b]) => {
+    const grey = async (b64: string) => {
+      const img = await createImageBitmap(await (await fetch(`data:image/png;base64,${b64}`)).blob());
+      const w = Math.floor(img.width / 4), h = Math.floor(img.height / 4), c = new OffscreenCanvas(w, h), x = c.getContext("2d")!;
+      x.drawImage(img, 0, 0, w, h);
+      const d = x.getImageData(0, 0, w, h).data, g = new Float32Array(w * h);
+      for (let i = 0; i < g.length; i++) g[i] = d[i * 4]! + d[i * 4 + 1]! + d[i * 4 + 2]!;
+      return { w, h, g };
+    };
+    const p = await grey(a!), q = await grey(b!), R = 40;
+    let best = { dx: 0, dy: 0, cost: Infinity };
+    for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+      let sum = 0, n = 0;
+      for (let y = Math.max(0, -dy); y < Math.min(p.h, p.h - dy); y += 2) for (let x = Math.max(0, -dx); x < Math.min(p.w, p.w - dx); x += 2) { sum += Math.abs(p.g[y * p.w + x]! - q.g[(y + dy) * p.w + x + dx]!); n++; }
+      if (n && sum / n < best.cost) best = { dx, dy, cost: sum / n };
+    }
+    return { x: best.dx * 4, y: best.dy * 4 };
+  }, [before.toString("base64"), after.toString("base64")] as const);
+}
 /** A missing element fails in seconds, not half a minute. */
 const newContext = async (o: Parameters<Browser["newContext"]>[0]) => { const c = await browser.newContext(o); c.setDefaultTimeout(10000); return c; };
 const shot = async (page: Page, name: string) => { if (SHOTS) await page.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: true }); };
@@ -226,7 +250,7 @@ describe("the demo client", () => {
     await page.locator("#discovery li", { hasText: "Signed assertions" }).waitFor();
     expect(await page.locator("#discovery li[data-state=bad]").count()).toBe(0);
     // Registered in this sandbox as a developer would at their own server: the redirect URI and public key shown.
-    const made = await page.evaluate(([b, k]) => (window as any).api("POST", "/api/sandbox/clients", { name: "Builder test", type: "confidential", redirectUris: [`${location.origin}/viewer`], jwk: k }, b), [base, jwk] as const);
+    const made = await page.evaluate(([b, k]) => (window as any).sandboxApi("POST", "/api/sandbox/clients", { name: "Builder test", type: "confidential", redirectUris: [`${location.origin}/viewer`], jwk: k }, b), [base, jwk] as const);
     await page.getByLabel("Name", { exact: true }).fill("Signed in");
     await page.getByLabel("Client ID").fill(made.id);
     await shot(page, "server-builder-confidential");
@@ -287,19 +311,49 @@ describe("the demo client", () => {
   test("a page brought back with Back shows where things are now", async () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
-    await page.goto(`${ORIGIN}/`);
-    // What Back restores: a button left disabled by the click, and the list from before.
-    await page.evaluate(() => { (document.querySelector("#create") as HTMLButtonElement).disabled = true; });
-    const base = await page.evaluate(async () => (await (await fetch("/api/sandboxes", { method: "POST" })).json()).base);
-    await page.evaluate(b => localStorage.setItem("smart-imaging-client:sandboxes", JSON.stringify([{ base: b, joined: false }])), base);
-    await page.evaluate(() => dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
+    // Create disables its button and goes to the new sandbox. Back to the home page finds the button ready again,
+    // and the new sandbox on the list, whether the browser kept the page or loaded it afresh.
+    const base = await enterSandbox(page);
+    await page.goBack();
+    await page.waitForURL(u => u.pathname === "/");
     await page.locator(`.sandbox-list a[href="${base}/"]`).waitFor();
     expect(await page.locator("#create").isEnabled()).toBe(true);
-    // And the viewer, left saying "Connecting…" while a sign-in tab was open.
-    await page.goto(`${ORIGIN}/viewer`);
-    await page.evaluate(() => { document.documentElement.classList.add("connecting"); (document.querySelector("#connect") as HTMLButtonElement).disabled = true; dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })); });
+    await context.close();
+  });
+  test("the viewer brought back with Back, its sign-in tab still open, offers Connect again", async () => {
+    const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    await viewerOn(page, await enterSandbox(page));
+    const tab = await signInTab(page, pressConnect(page));
+    await page.getByText("Connecting…").waitFor();
+    // Away to a page outside the app, then Back: whether the browser kept the page or loads it afresh.
+    await page.goto(`${ORIGIN}/llms.txt`);
+    await page.goBack();
+    await page.waitForURL(u => u.pathname === "/viewer");
     await page.locator("#landing").waitFor({ state: "visible" });
     expect(await page.locator("#connect").isEnabled()).toBe(true);
+    await tab.close();
+    await context.close();
+  });
+  test("with the sign-in tab blocked, the sign-in happens in the viewer's own tab, and Back from it offers Connect again", async () => {
+    const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
+    // A popup blocker: window.open gives no tab.
+    await context.addInitScript(() => { window.open = () => null; });
+    const page = await context.newPage();
+    await viewerOn(page, await enterSandbox(page));
+    await pressConnect(page)();
+    await page.waitForURL(/\/authorize/);
+    await page.goBack();
+    await page.waitForURL(u => u.pathname === "/viewer");
+    await page.locator("#landing").waitFor({ state: "visible" });
+    expect(await page.locator("#connect").isEnabled()).toBe(true);
+    await pressConnect(page)();
+    await page.waitForURL(/\/authorize/);
+    await approveIn(page, "josh");
+    await page.locator("#app").waitFor({ state: "visible" });
+    expect(page.url()).toBe(`${ORIGIN}/viewer`);
+    await page.locator(".study-button").nth(5).waitFor();
+    await page.locator("[data-stage=authorize][data-state=done]").waitFor();
     await context.close();
   });
   test("inside a sandbox the menu goes to the guides at the root, and every other link stays in it, and the old pages at the root go home", async () => {
@@ -308,10 +362,14 @@ describe("the demo client", () => {
     const base = await enterSandbox(page);
     for (const path of [`${base}/`, `${base}/build`, `${base}/checks`, `${base}/tours`, `${base}/explore`, `${base}/activity`, `${base}/connect`]) {
       await page.goto(`${ORIGIN}${path}`);
-      expect(await page.locator("nav.pages a[data-root]").evaluateAll(as => as.map(a => a.getAttribute("href")))).toEqual(["/build-an-app", "/run-a-server", "/how-it-works", "/why-it-matters"]);
-      const hrefs = await page.locator("nav.pages a:not([data-root]), nav.crumbs a, #landing .link-list a:not([data-root]), a.path").evaluateAll(as => as.map(a => a.getAttribute("href")));
-      expect(hrefs.every(h => h!.startsWith(`${base}/`))).toBe(true);
-      expect(hrefs).toContain(`${base}/llms.txt`);
+      await page.locator(".sandbox-bar").waitFor();
+      const hrefs = (sel: string) => page.locator(sel).evaluateAll(as => as.map(a => a.getAttribute("href")));
+      // The header is the site's: its guides, at the root, and this sandbox's guide for agents.
+      expect([path, await hrefs("nav.pages a")]).toEqual([path, ["/build-an-app", "/run-a-server", "/how-it-works", "/why-it-matters", `${base}/llms.txt`]]);
+      // The sandbox's bar, and the footer's map of it, stay in it, but for the site's one viewer, opened on it.
+      const own = [`${base}/`, "/viewer", `${base}/tours`, `${base}/explore`, `${base}/build`, `${base}/connect`, `${base}/activity`, `${base}/trace/`, `${base}/config`, `${base}/checks`];
+      expect([path, await hrefs(".sandbox-bar a")]).toEqual([path, own]);
+      expect([path, await hrefs(".site-footer-sandbox a")]).toEqual([path, [...own, "/"]]);
       expect(await page.locator("a.mark").getAttribute("href")).toBe("/");
     }
     await page.goto(`${ORIGIN}${base}/build`);
@@ -367,7 +425,7 @@ describe("the demo client", () => {
     await page.getByRole("button", { name: "Rename" }).click();
     await page.locator("#sandbox-name", { hasText: "Team demo" }).waitFor();
     await page.locator(".site-footer h2", { hasText: "Sandbox “Team demo”" }).waitFor();
-    await second.locator(".crumb-sandbox", { hasText: "Sandbox “Team demo”" }).waitFor();
+    await second.locator(".sandbox-bar-name", { hasText: "Sandbox “Team demo”" }).waitFor();
     await second.locator(".site-footer h2", { hasText: "Sandbox “Team demo”" }).waitFor();
     await second.close();
     await page.getByRole("button", { name: "Share" }).click();
@@ -393,7 +451,7 @@ describe("the demo client", () => {
     const page = await context.newPage();
     const base = await signIn(page, "josh");
     await page.locator(".study-button").first().waitFor();
-    await page.evaluate(async b => { await (window as any).api("PATCH", "/api/sandbox", { topology: "unified" }, b); }, base);
+    await page.evaluate(async b => { await (window as any).sandboxApi("PATCH", "/api/sandbox", { topology: "unified" }, b); }, base);
     await page.evaluate(() => sessionStorage.clear());
     await page.goto(`${ORIGIN}/viewer`);
     await approveIn(await signInTab(page, pressConnect(page)), "josh");
@@ -477,15 +535,22 @@ describe("the demo client", () => {
     await touch("pointerdown", 11, cx - 40, cy); await touch("pointerdown", 12, cx + 40, cy);
     await touch("pointermove", 11, cx - 80, cy); await touch("pointermove", 12, cx + 80, cy);
     await page.locator("#overlay", { hasText: "Zoom 200%" }).waitFor();
+    // Both fingers move 30 px right and 30 px down, the same distance apart: the picture follows them, at the same zoom.
+    const zoomed = await page.locator("#canvas").screenshot();
     await touch("pointermove", 11, cx - 50, cy + 30); await touch("pointermove", 12, cx + 110, cy + 30);
-    const moved = await page.evaluate(() => { const v = (0, eval)("viewer").state(); return [v.panX, v.panY]; });
-    expect(moved[0]).toBeGreaterThan(0); expect(moved[1]).toBeGreaterThan(0);
+    await page.waitForTimeout(200);
+    const pinched = await page.locator("#canvas").screenshot();
+    const byPinch = await moved(page, zoomed, pinched);
+    // Screenshots are at the phone's two pixels to the CSS pixel.
+    expect(Math.abs(byPinch.x - 60)).toBeLessThanOrEqual(8); expect(Math.abs(byPinch.y - 60)).toBeLessThanOrEqual(8);
+    await page.locator("#overlay", { hasText: "Zoom 200%" }).waitFor();
     await touch("pointerup", 11, cx - 50, cy + 30); await touch("pointerup", 12, cx + 110, cy + 30);
-    // One finger then pans, after choosing the Pan tool.
+    // One finger then pans, after choosing the Pan tool: 20 px right moves the picture right, and not down.
     await page.getByRole("button", { name: "Pan", exact: true }).click();
     await touch("pointerdown", 13, cx, cy); await touch("pointermove", 13, cx + 20, cy);
-    const after = await page.evaluate(() => (0, eval)("viewer").state().panX);
-    expect(after).toBeGreaterThan(moved[0]!);
+    await page.waitForTimeout(200);
+    const byPan = await moved(page, pinched, await page.locator("#canvas").screenshot());
+    expect(Math.abs(byPan.x - 40)).toBeLessThanOrEqual(8); expect(Math.abs(byPan.y)).toBeLessThanOrEqual(8);
     await touch("pointerup", 13, cx + 20, cy);
     await shot(page, "phone-390");
     await context.close();

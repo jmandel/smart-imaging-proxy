@@ -8,7 +8,7 @@ export type BundleEntry = { fullUrl?: string; resource: Resource };
 export type Bundle = { entry?: BundleEntry[]; link?: { relation: string; url: string }[] };
 
 // As stored, since the decoder reads every standard syntax, with uncompressed as the fallback the spec makes universal.
-const WADO_ACCEPT = 'multipart/related; type="application/dicom"; transfer-syntax=*, multipart/related; type="application/dicom"; transfer-syntax=1.2.840.10008.1.2.1; q=0.5';
+export const WADO_ACCEPT ='multipart/related; type="application/dicom"; transfer-syntax=*, multipart/related; type="application/dicom"; transfer-syntax=1.2.840.10008.1.2.1; q=0.5';
 /** How long an app will wait, in all, on servers that say to retry. */
 const MOST_RETRIES = 5, LONGEST_WAIT_SECONDS = 30;
 /** A DICOM UID: digits in dot-separated components, no leading zero in a component, at most 64 characters. */

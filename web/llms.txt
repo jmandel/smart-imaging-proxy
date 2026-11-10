@@ -262,18 +262,7 @@ interface StepResult { ok: boolean; expected: string; actual: string; detail?: s
 interface ClientRequest { name: string; type?: "public" | "confidential" | "backend"; redirectUris?: string[]; jwk?: JsonWebKey & { kid: string }; jwksUrl?: string; patients?: "any" | string }
 ```
 
-## Pages
-
-The menu is a guide for each audience, at the site's root. Each lists what matters, most important first.
-
-- [Build an App]({{ORIGIN}}/build-an-app), [Run a Server]({{ORIGIN}}/run-a-server), [How It Works]({{ORIGIN}}/how-it-works), [Why It Matters]({{ORIGIN}}/why-it-matters).
-
-A sandbox's own pages:
-
-- [Home]({{SITE}}/): its name and sharing, and its pages by what they're for.
-- **Try it:** [Viewer]({{ORIGIN}}/viewer) (our SMART app, at the site's root, signed in to this sandbox or your server), [Tour]({{SITE}}/tours) (stories about sharing, guardians and policy), [Explore]({{SITE}}/explore) (what each person and service can reach, and why).
-- **Your app:** [Start here]({{SITE}}/build) (endpoints and sample accounts), [Register an app]({{SITE}}/connect), [Logs]({{SITE}}/activity) (what happened, and why; the [live trace]({{SITE}}/trace/) has every request between the services).
-- **Your server:** [Your servers]({{ORIGIN}}/servers) (describe your FHIR server for the viewer, at the site's root), [Conformance]({{SITE}}/checks) (checks of this sandbox's servers against the guide, run in the page).
+{{PAGES_SECTION}}
 
 ## Test your server with the viewer
 

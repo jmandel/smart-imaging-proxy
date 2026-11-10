@@ -1,7 +1,7 @@
 /* The public demo client: a chart, an image, and the protocol behind them. */
 [hidden] { display:none !important; }
 .connecting-note { display:none; margin:0; padding:4rem 1rem; text-align:center; color:var(--muted); font-size:1.1rem; }
-html.connecting .connecting-note { display:block; }
+html.connecting .connecting-note, .connecting-note.shown { display:block; }
 html.connecting #landing, html.connecting #app { display:none; }
 .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 .landing { max-width:46rem; margin:0 auto; padding:clamp(1.5rem, 6vw, 4rem) 1rem 3rem; }
@@ -71,7 +71,8 @@ html.at-home .bar-end { display:none; }
 #studies { min-height:21rem; }
 .clinical-group { min-height:4.4rem; }
 .stage-row[data-state=waiting] .stage-body { min-height:7rem; }
-.who { font-size:1.25rem; font-weight:700; margin:0; overflow-wrap:anywhere; }
+/* The viewer's patient. Explore's own .who, the list of who's looking, is a different thing. */
+#patient .who { font-size:1.25rem; font-weight:700; margin:0; overflow-wrap:anywhere; }
 .facts { color:var(--muted); margin:.1rem 0 0; }
 .clinical-group { margin:.6rem 0 0; }
 .clinical-group h3 { font-size:.92rem; margin:0; }
@@ -169,7 +170,7 @@ html.at-home .bar-end { display:none; }
   #patient { min-height:0; flex:1 1 auto; }
   #patient .who, #patient .facts { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .connected { display:none; }
-  .who { font-size:1.05rem; }
+  #patient .who { font-size:1.05rem; }
   .facts { font-size:.82rem; }
   .viewer { order:2; }
   .studies-panel { order:3; }
@@ -181,7 +182,7 @@ html.at-home .bar-end { display:none; }
   .overlay { font-size:11px; left:.45rem; top:.35rem; }
   .viewer .hint { display:none; }
   .controls { flex-wrap:nowrap; }
-  .controls label { display:none; }
+  .viewer .controls label { display:none; }
   .tools { display:grid; grid-template-columns:repeat(6, minmax(0, 1fr)); gap:.25rem; }
   .tools .tool { padding:.25rem .1rem; font-size:.78rem; min-width:0; overflow-wrap:anywhere; }
   .series { flex-wrap:nowrap; overflow-x:auto; margin-top:.4rem; padding-bottom:.2rem; }
@@ -220,6 +221,15 @@ a.path p:not(.path-kicker) { color:var(--muted); }
 .step-no { display:inline-grid; place-items:center; flex:none; width:1.6rem; height:1.6rem; border-radius:50%; background:var(--accent); color:var(--plate); font-size:.85rem; }
 .build-page .paths h3 { font-size:1.05rem; }
 .build-page .registered-facts dd .tool { margin-left:.3rem; min-height:1.9rem; padding:.1rem .5rem; font-size:.85rem; }
+
+/* Sandbox Config: one panel per setting, each with what its last action did. */
+.config-page section.panel { margin-top:.9rem; }
+.config-page .panel h2 label { font:inherit; }
+.config-page .panel p { margin:.2rem 0 .6rem; }
+.config-page .row { display:flex; flex-wrap:wrap; gap:.4rem; align-items:center; }
+.config-page .row select { flex:1 1 12rem; min-width:0; }
+.config-page .msg { margin:.5rem 0 0; min-height:1.2em; font-size:.9rem; }
+.config-page .msg:empty { display:none; }
 
 /* Your servers. */
 .steps-line { list-style:none; counter-reset:n; display:flex; flex-wrap:wrap; gap:.4rem 1.2rem; margin:0 0 1.1rem; padding:0; color:var(--muted); }

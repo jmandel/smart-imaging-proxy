@@ -52,7 +52,7 @@ if (whole) {
   console.log(`SMART Imaging Proxy: ${CONFIG.demoUrl}${TAILNET ? " (tailnet)" : ""}`);
   console.log(`Explore: ${CONFIG.demoUrl}/explore`);
   console.log(`Activity: ${CONFIG.demoUrl}/activity`);
-  console.log(`Live trace: ${CONFIG.traceUrl}`);
+  console.log(`Live trace: ${CONFIG.demoUrl}/trace/`);
   console.log(`Traces: ${stack.collector.store.path ?? "in memory"}`);
   console.log(`Catalog: ${stack.catalogs.archive.stats().path}, and ${stack.catalogs.orthanc.stats().path} for Orthanc`);
   console.log(`Saved policy: ${info.mode === "file" ? `${info.path} (durability ${info.durability})` : "in memory"}`);

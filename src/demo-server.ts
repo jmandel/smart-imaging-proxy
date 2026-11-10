@@ -3,7 +3,7 @@
 // its tour, its activity, its settings and its redirects. Starting a tour or a flow mints a sandbox for it.
 import { join } from "node:path";
 import { fetchJwks } from "./jwks";
-import { PUBLIC_DEMO } from "./config";
+import { PORTS, PUBLIC_DEMO } from "./config";
 import { addClient, listClients, removeClient } from "./clients";
 import { traced, traceSettled } from "./trace";
 import type { BackendName, Stack } from "./stack";
@@ -24,6 +24,7 @@ import type { Sandbox } from "./sandbox";
 import { ADMIN_SCOPE, SANDBOX_ADMIN } from "./sandbox-keys";
 import app from "../ui/index.html";
 import { pageAt, PAGES } from "../ui/sitemap";
+import { pagesSection } from "./llms-pages";
 import { PORTED } from "../ui/ported";
 
 const json = (b: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(b, { status, headers });
@@ -59,7 +60,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     const section = sandbox.id
       ? `## This sandbox\n\n${name ? `This is "${name}". ` : ""}Everything below works here now. This link is its access, so share it only with those who should use it.\n\n\`\`\`sh\nSANDBOX=${site}\n\`\`\``
       : `## Start here\n\nCreate a sandbox, and use it for everything below:\n\n\`\`\`sh\nSANDBOX=${origin}$(curl -sX POST ${origin}/api/sandboxes | jq -r .base)\n\`\`\`\n\nOr open the site in a browser and choose Create a sandbox. Each sandbox has its own copy of this file at \`$SANDBOX/llms.txt\`, which names it.`;
-    const text = (await Bun.file(join(root, "web", "llms.txt")).text()).replaceAll("{{SANDBOX_SECTION}}", section).replaceAll("{{ORIGIN}}", origin).replaceAll("{{SITE}}", site);
+    const text = (await Bun.file(join(root, "web", "llms.txt")).text()).replaceAll("{{SANDBOX_SECTION}}", section).replaceAll("{{PAGES_SECTION}}", pagesSection(origin, site)).replaceAll("{{ORIGIN}}", origin).replaceAll("{{SITE}}", site);
     return new Response(text, { headers: { "content-type": "text/plain; charset=utf-8", ...(sandbox.id ? { "x-robots-tag": "noindex", "cache-control": "no-store" } : {}) } });
   }
   const sandboxOf = (w: Sandbox) => w.id ? { id: w.id, base: w.prefix } : null;
@@ -263,13 +264,38 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
   async function fetch(req: Request): Promise<Response> {
     const foreign = refuseHost(req);
     if (foreign) return foreign;
-    const p = new URL(req.url).pathname;
+    const url = new URL(req.url), p = url.pathname;
     if (STATIC[p]) return file(STATIC[p]!);
     const vendored = p.match(/^\/vendor\/viewer-kit\/([^/]+)$/);
     if (vendored) return vendor(vendored[1]!);
+    const trace = p.match(TRACE_DATA);
+    if (trace) return traceThrough(req, url, `${trace[1] ?? ""}${trace[2]}`);
+    if (TRACE_ROOT.test(p)) return new Response(null, { status: 308, headers: { location: `${p}/${url.search}` } });
     return routed(req);
   }
   return { fetch, routes: uiRoutes() };
+}
+
+/** The trace's data and stream, which the trace page reads at its own origin, and the trace page's address without its slash. */
+const TRACE_DATA = /^(\/s\/[^/]+)?\/trace(\/api\/.*|\/stream)$/;
+const TRACE_ROOT = /^(\/s\/[^/]+)?\/trace$/;
+/**
+ * A call to the trace service, passed on as it came, its answer streamed back as it arrives. The one origin
+ * sends these straight to the trace service; this is for the demo's own port, which serves the trace's pages.
+ */
+async function traceThrough(req: Request, url: URL, path: string): Promise<Response> {
+  const to = `http://127.0.0.1:${PORTS.trace}${path}${url.search}`;
+  const headers = new Headers(req.headers);
+  headers.delete("host");
+  // A page on this origin is same-origin to the trace service, so its write guard still holds.
+  if (headers.get("origin") === url.origin) headers.set("origin", new URL(to).origin);
+  const hasBody = req.method !== "GET" && req.method !== "HEAD";
+  try {
+    const r = await fetch(to, { method: req.method, headers, body: hasBody ? await req.arrayBuffer() : undefined, signal: req.signal, redirect: "manual", decompress: false } as RequestInit);
+    return new Response(r.body, { status: r.status, statusText: r.statusText, headers: r.headers });
+  } catch {
+    return new Response(null, { status: 502 });
+  }
 }
 
 /**

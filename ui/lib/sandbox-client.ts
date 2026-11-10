@@ -7,8 +7,9 @@ import { APP_LAUNCH, imagingOf } from "./servers";
 import { fhirHeaders, patientFetch, searchAll, studiesFrom, type Study } from "./smart-imaging";
 
 const DEFAULT_SCOPE = "launch/patient patient/ImagingStudy.rs online_access";
-const STORED_ANY = 'multipart/related; type="application/dicom"; transfer-syntax=*';
-const hexOf = (n: number) => [...crypto.getRandomValues(new Uint8Array(n))].map(b => b.toString(16).padStart(2, "0")).join("");
+/** A retrieval that takes each instance as stored. */
+export const STORED_ANY = 'multipart/related; type="application/dicom"; transfer-syntax=*';
+export const hexOf = (n: number) => [...crypto.getRandomValues(new Uint8Array(n))].map(b => b.toString(16).padStart(2, "0")).join("");
 
 export interface Parts { parts: { syntax?: string }[]; complete: boolean; failed: boolean }
 

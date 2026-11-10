@@ -47,9 +47,10 @@ test("traces can't be read under another host name", async () => {
   expect((await raw("/api/sessions", "GET", { host: `127.0.0.1:${PORTS.trace + 2}` })).status).toBe(403);
 });
 
-test("traces can be read at this service's own addresses, the viewer's pages load, and a request with no Host is fine", async () => {
+test("traces can be read at this service's own addresses, its old page goes to the demo's, and a request with no Host is fine", async () => {
   for (const host of [`127.0.0.1:${PORTS.trace}`, `localhost:${PORTS.trace}`]) {
-    for (const path of ["/", "/api/stats", "/api/sessions", "/live.js"]) expect([host, path, (await raw(path, "GET", { host })).status]).toEqual([host, path, 200]);
+    for (const path of ["/api/stats", "/api/sessions"]) expect([host, path, (await raw(path, "GET", { host })).status]).toEqual([host, path, 200]);
+    expect((await fetch(`http://127.0.0.1:${PORTS.trace}/`, { headers: { host }, redirect: "manual" })).status).toBe(302);
     const stream = await raw("/stream", "GET", { host });
     expect(stream.status).toBe(200);
     await stream.body!.cancel();
@@ -159,8 +160,8 @@ test("the demo's pages and read APIs answer only at its own addresses", async ()
   }
 });
 
-test("the pages' fonts are served locally, by the demo and by the trace viewer", async () => {
-  for (const base of [`http://127.0.0.1:${PORTS.demo}`, CONFIG.traceUrl]) for (const font of ["atkinson-next", "atkinson-mono"]) {
+test("the pages' fonts are served locally, by the demo", async () => {
+  for (const base of [`http://127.0.0.1:${PORTS.demo}`]) for (const font of ["atkinson-next", "atkinson-mono"]) {
     const r = await fetch(`${base}/fonts/${font}.woff2`);
     expect(r.status).toBe(200);
     expect(new Uint8Array(await r.arrayBuffer()).slice(0, 4)).toEqual(new Uint8Array([0x77, 0x4f, 0x46, 0x32]));

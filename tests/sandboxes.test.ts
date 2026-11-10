@@ -408,6 +408,7 @@ describe("the trace, filtered to a sandbox", () => {
     expect((await get(`${traceOf(`/s/${other.id}`)}/api/sessions/${encodeURIComponent(session)}/spans`)).status).toBe(404);
     expect((await get(`${traceOf(sandbox.base)}/api/sessions/${encodeURIComponent(session)}/spans`)).status).toBe(200);
     expect((await get(`${traceOf(sandbox.base)}/v1/spans`, { method: "POST", body: "[]" })).status).toBe(404);
-    expect((await get(`${traceOf(sandbox.base)}/`)).status).toBe(200);
+    // Its page is the demo's, in the sandbox.
+    expect((await get(`${urlsFor(sandbox.base).demo}/trace/`)).status).toBe(200);
   });
 });

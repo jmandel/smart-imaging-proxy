@@ -6,16 +6,19 @@ import { startStack, type Stack } from "../src/stack";
 import { CONFIG, PORTS } from "../src/config";
 import { gatewayFetch } from "../src/gateway";
 import { appClientsFromEnv } from "../src/auth-server";
+import { createDemoServer } from "../src/demo-server";
+import { registerClients } from "../src/flows";
 
 const SHARE = "https://share.example";
 
-let stack: Stack;
+let stack: Stack, demo: ReturnType<typeof Bun.serve>;
 const APP = `${SHARE}/share/smart-callback/`;
 beforeAll(async () => {
   process.env.DEMO_APP_CLIENTS = `share-app=${APP}`;
   stack = await startStack(join(import.meta.dir, ".."));
+  demo = Bun.serve({ port: PORTS.demo, hostname: "127.0.0.1", ...createDemoServer(stack, registerClients(stack), join(import.meta.dir, "..")) });
 });
-afterAll(() => { stack.stop(); delete process.env.DEMO_APP_CLIENTS; });
+afterAll(() => { demo?.stop(true); stack?.stop(); delete process.env.DEMO_APP_CLIENTS; });
 
 const G = `http://127.0.0.1:${PORTS.gateway}`;
 const via = (path: string, init: RequestInit = {}) => gatewayFetch(new Request(G + path, init));
@@ -88,4 +91,41 @@ test("service-to-service APIs aren't reachable through the one origin", async ()
   for (const path of ["/imaging/policy/v2/document", "/imaging/policy/v2/explain", "/imaging/policy", "/internal/keys/refresh", "/imaging//policy/v2/document", "//imaging/policy/v2/document", "/trace//v1/spans", "/internal//keys/refresh"]) {
     expect([path, (await via(path, { headers: { authorization: "Bearer anything" } })).status]).toEqual([path, 404]);
   }
+});
+
+test("the live trace's pages are the demo's, and the rest of /trace/ is the trace service's", async () => {
+  const w = stack.sandboxes.mint();
+  for (const base of ["", w.prefix]) {
+    for (const page of ["/trace/", "/trace/span", "/trace/log"]) {
+      const r = await via(`${base}${page}`);
+      expect([base, page, r.status, r.headers.get("content-type")]).toEqual([base, page, 200, "text/html;charset=utf-8"]);
+    }
+    expect((await via(`${base}/trace`)).headers.get("location")).toBe(`${base}/trace/`);
+    expect(await (await via(`${base}/trace/api/sessions`)).json()).toBeArray();
+    const stream = await via(`${base}/trace/stream`);
+    expect(stream.headers.get("content-type")).toBe("text/event-stream");
+    await stream.body!.cancel();
+    // The trace service's old page addresses go to the page.
+    expect((await via(`${base}/trace/live?session=s`)).headers.get("location")).toBe(`${CONFIG.demoUrl}${base}/trace/?session=s`);
+  }
+});
+
+test("the demo's own port passes the trace's data and stream on, so its pages work there too", async () => {
+  const D = `http://127.0.0.1:${PORTS.demo}`;
+  const w = stack.sandboxes.mint();
+  for (const base of ["", w.prefix]) {
+    expect((await fetch(`${D}${base}/trace/`)).status).toBe(200);
+    expect((await fetch(`${D}${base}/trace`, { redirect: "manual" })).headers.get("location")).toBe(`${base}/trace/`);
+    expect((await fetch(`${D}${base}/trace/api/stats`)).status).toBe(200);
+    // The stream arrives as it's sent, not once it ends.
+    const stream = await fetch(`${D}${base}/trace/stream`);
+    expect(stream.headers.get("content-type")).toBe("text/event-stream");
+    const first = await stream.body!.getReader().read();
+    expect(new TextDecoder().decode(first.value)).toStartWith("event: hello\n");
+    await stream.body!.cancel().catch(() => {});
+  }
+  // A sandbox's view changes nothing, and a page elsewhere can't clear the traces; one on this origin can.
+  expect((await fetch(`${D}${w.prefix}/trace/api/sessions`, { method: "DELETE", headers: { origin: D } })).status).toBe(404);
+  expect((await fetch(`${D}/trace/api/sessions`, { method: "DELETE", headers: { origin: SHARE } })).status).toBe(403);
+  expect((await fetch(`${D}/trace/api/sessions`, { method: "DELETE", headers: { origin: D } })).status).toBe(204);
 });

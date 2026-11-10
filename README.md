@@ -50,14 +50,14 @@ Everything is at one origin, port 4605: the demo's pages, the live trace at `/tr
 | 4601 | WADO-RS proxy | `/wado/{signed-context}/studies/...`, opaque to clients |
 | 4602 | Imaging Server | `/fhir/ImagingStudy`, `/fhir/metadata`, `/access/v1/evaluation`, `/policy/v2/...`, `/.well-known/jwks.json`, `/.well-known/authzen-configuration` |
 | 4603 | Authorization Server | `/fhir/.well-known/smart-configuration`, `/authorize`, `/token`, `/introspect`, `/revoke`, `/account`, `/fhir/Patient/{id}` (with a token for that patient) |
-| 4604 | Live trace | `/` viewer, `/span.html` full exchange, `/log.html` HTTP log, `/api/sessions/{id}/export` |
-| 4605 | One origin | `/imaging/...` Imaging Server, `/wado/...` proxy, `/trace/...` live trace, `/fhir/...`, `/authorize`, `/token`, `/introspect`, `/revoke`, and `/account` Authorization Server, and everything else the demo |
+| 4604 | Live trace | Data only: `/stream` the live stream, `/api/sessions/...` the sessions, their spans, HTTP logs and exports, and `/v1/spans` span intake. Its old page addresses redirect to the demo's `/trace/` |
+| 4605 | One origin | `/imaging/...` Imaging Server, `/wado/...` proxy, `/trace/`, `/trace/span` and `/trace/log` the live trace's pages, from the demo, and the rest of `/trace/...` the trace service, `/fhir/...`, `/authorize`, `/token`, `/introspect`, `/revoke`, and `/account` Authorization Server, and everything else the demo |
 | 4610 | S3 store (RustFS) | Loopback only |
 | 4611 | Orthanc | Loopback only |
 
 `/s/{sandbox}` in front of any of these paths, on any of these ports, reaches a [sandbox](#sandboxes) instead.
 
-- **The layer chain:** one component, `web/layers.js`, drawn from data the server computes with core's own model (`src/chain.ts`). Each row is a sentence at its level: a fact on file (a square), a rule the imaging network set (a diamond), or a person's choice (a circle), hollow when it's missing. Under it, one box per study, marked with its modality, in its site's column, filled when that row itself holds or grants the study. The last row is the outcome: what the app can see, or what a service found. A viewer's chain, in Explore, holds only the studies they may know of, never counts a patient's studies, and names no label. A narrator's, on the tours, shows a labeled study with a lock and a fact row of its own.
+- **The layer chain:** one component, `ui/components/Layers.tsx`, drawn from data the server computes with core's own model (`src/chain.ts`). Each row is a sentence at its level: a fact on file (a square), a rule the imaging network set (a diamond), or a person's choice (a circle), hollow when it's missing. Under it, one box per study, marked with its modality, in its site's column, filled when that row itself holds or grants the study. The last row is the outcome: what the app can see, or what a service found. A viewer's chain, in Explore, holds only the studies they may know of, never counts a patient's studies, and names no label. A narrator's, on the tours, shows a labeled study with a lock and a fact row of its own.
 - **Explore:** at `/explore`, pick a person or a service, and for a person holding more than one record, whose records: the ones they hold, and apart from them, others' they don't. A service picks a referral, grouped by patient. The demo server runs a real launch, or for a service the work it starts from, then a real search, holding the token itself. It opens on Josh. The headline says what they can see, and the layer chain shows why. Studies are film sheets, with thumbnails decoded in the browser. A study a route reaches and the app doesn't shows as withheld, with its reason, and one no route reaches never shows. An empty view offers one next action first: a share, an approval, a service-access policy, another referral, or someone else's records. Sign-in is automatic, or, chosen in the settings menu, in a window that only a Sign in button opens. Opening a study retrieves it on request, and says in one line what happened, from the recorded events, with a link to them in the activity log. At `/explore` it works on saved policy, and at `/s/{sandbox}/explore`, on that sandbox's.
 - **Services work from referrals:** the demo makes a consult referral for each sample study with an accession number: a `ServiceRequest` whose `subject` is the patient on the clinical FHIR server, as an absolute reference, and whose `supportingInfo` cites the imaging report, which carries the order's accession number with its system. The service checks the reference is on the FHIR base it's authorized for, searches `ImagingStudy?patient={reference}&identifier={system}|{accession}`, and retrieves. Its service-access policy decides what it sees. The page gets the referrals only once a service is chosen, from `/api/explore/referrals?service={id}`, so no person's view is sent a study's title.
 - **Tours:** the home page, at `/`. Six stories: Josh sees his own records, a guardian at 15, each link narrows, revoking a share, a service with a referral, and Riley turns 18. Each card draws the chain the story ends on, from the policy on file with the story's rows added. Choosing one runs it in a sandbox minted for it, where the chain shows as it is now, and again on a step that changes it. A step is an action. What it should come to is computed before it runs by a reference model, `src/reference-model.ts`, written apart from core's evaluation, from the sandbox's policy and catalog at that moment, or for a step that changes policy, from the policy it intends. The step passes when the system's real answer matches, and for a step that changes policy, when the store then holds the policy it intended. Run checks runs the protocol flows, each in a sandbox of its own with its usual choices, as one pass or fail list. A person can sign in in a real window, and an automated run never opens one.
@@ -66,7 +66,7 @@ Everything is at one origin, port 4605: the demo's pages, the live trace at `/tr
 - **One session's activity is its viewer's:** with a session, the log, its rollups, Explore's one line and a tour step's count show what the person or service the session acts as may see, all through one filter (`src/viewer-events.ts`). A study their routes don't reach, or one a label keeps from them, appears nowhere in it: not by id, title, site, label or reason, not in a count, and not in the exchanges its events open. Every session at once is the operator's view, which alone links to the live trace.
 - **Flows:** 15 flows in `src/flows`, run through `/api/flows`, which Run checks and the tests use. Every run mints a sandbox of its own.
 - **Account page:** at `/account`, a patient or guardian picks whose records to share, shares sites with a related person, and revokes people and apps.
-- **Live trace:** spans from every service, with inline previews. They're kept in SQLite and survive a restart.
+- **Live trace:** at `/trace/`, spans from every service as they happen, grouped by trace and nested by cause, with timings and inline previews. A row opens its full HTTP exchange at `/trace/span`, and a trace its HTTP log at `/trace/log`. They're the demo's pages, reading the trace service's data at `/trace/api/...` and `/trace/stream`: through the one origin, or with `DEMO_ONE_ORIGIN=0`, passed on by the demo's own port. Spans are kept in SQLite and survive a restart.
 
 ## Thumbnails
 
@@ -113,7 +113,7 @@ The one origin is what a host in front of the machine forwards to: give it the p
 - **Any Linux machine with systemd:** `DEMO_PUBLIC_URL=https://imaging.example.org deploy/install.sh` from a checkout. It installs DCMTK and a pinned Bun if they're missing, builds the data under `/var/lib/smart-imaging-proxy`, and runs the app, the S3 store, and Orthanc as the `smart-imaging-proxy`, `smart-imaging-proxy-s3`, and `smart-imaging-proxy-orthanc` services. Its settings go to `/etc/smart-imaging-proxy.env`. Repeating it updates the machine.
 - **An exe.dev VM:** `scripts/deploy-exe.sh <vm-name>` creates the VM if it doesn't exist, copies this checkout's committed code, runs the installer with the VM's HTTPS URL from exe.dev's own listing, and points the VM's web proxy at port 4605. The proxy stays private, behind exe.dev's login, until you run `ssh exe.dev share set-public <vm-name>`. `DEMO_APP_CLIENTS` set when you run it goes to the VM.
 
-The demo's pages, settings menu, and live trace have no login of their own. Anyone who can reach the origin can read traces and change saved policy, so choose who can reach it at the host.
+The demo's pages, Sandbox Config, and live trace have no login of their own. Anyone who can reach the origin can read traces and change saved policy, so choose who can reach it at the host.
 
 ## How it works
 
@@ -204,7 +204,7 @@ Then restart `bun run start`.
 | `src/flows/` | The flows, shared by the web page and tests, and the launch client |
 | `src/explore.ts` | Explore's sessions and API: sign-in, search, withheld studies, actions, thumbnails, and a study's chain in one line |
 | `src/tours.ts`, `src/reference-model.ts` | The tours, their cards' scenes, and checks, and the reference model the tours are checked against |
-| `src/chain.ts`, `web/layers.js` | The layer chain: computed with core's model, and drawn |
+| `src/chain.ts`, `ui/components/Layers.tsx` | The layer chain: computed with core's model, and drawn |
 | `src/viewer-events.ts` | What a session's viewer may see of its events, for Explore, the tours and the activity log |
 | `src/activity.ts` | The activity log's rollups: each type's numbers, the timeline, the sessions, and Explore's one line |
 | `src/referrals.ts` | The referrals and reports the services work from |
@@ -215,7 +215,8 @@ Then restart `bun run start`.
 | `scripts/` | Fetch, synthetic study generation, ingest, load, catalog builds, the backends, and deploying |
 | `deploy/` | The installer for a Linux machine with systemd |
 | `data/` | Source list with checksums, patient links, and Orthanc's per-study settings |
-| `web/` | All the pages |
+| `ui/` | All the pages: one React and TypeScript app. `ui/sitemap.ts` lists every page, and the server, the menus, the footer and llms.txt all read it. `ui/index.html` is the entry Bun bundles |
+| `web/` | The app's stylesheets and fonts, and llms.txt |
 | `tests/`, `e2e/` | The demo's tests, and the browser tests. Core's are in `packages/core/tests` |
 
 ## Configuration
@@ -265,7 +266,7 @@ PROXY_BACKEND=s3 bun src/main.ts --role proxy
 | `PROXY_BACKEND` | `static-files` | `static-files`, `s3`, or `orthanc`. Set `orthanc` on `imaging` too, to use Orthanc's catalog |
 | `JWKS_TTL_SECONDS` | `60` | How long a split proxy trusts its copy of the keys |
 
-Split services serve saved policy only, with no sandboxes, pages, or settings menu. `auth` registers the demo's Backend Services clients with keys derived from `SERVICE_SECRET` (`derivedBackendClient` in `src/auth-server.ts`), so anyone holding that secret can act as them.
+Split services serve saved policy only, with no sandboxes, pages, or Sandbox Config. `auth` registers the demo's Backend Services clients with keys derived from `SERVICE_SECRET` (`derivedBackendClient` in `src/auth-server.ts`), so anyone holding that secret can act as them.
 
 ## Real and simulated
 

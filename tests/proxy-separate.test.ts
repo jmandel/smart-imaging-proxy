@@ -47,7 +47,7 @@ async function retrieve(url: string, token: string) {
   else await r.body?.cancel();
   return { status: r.status, parts, complete };
 }
-const SERVICE_URLS = [`${CONFIG.authUrl}/fhir/.well-known/smart-configuration`, `${CONFIG.imagingUrl}/.well-known/jwks.json`, CONFIG.traceUrl];
+const SERVICE_URLS = [`${CONFIG.authUrl}/fhir/.well-known/smart-configuration`, `${CONFIG.imagingUrl}/.well-known/jwks.json`, `${CONFIG.traceUrl}/api/stats`];
 
 for (const others of [["imaging,auth,trace"], ["imaging", "auth", "trace"]]) {
   describe(`a proxy process, with ${others.join(" + ")}`, () => {

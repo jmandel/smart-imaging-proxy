@@ -1,12 +1,13 @@
 // The god-mode collector. It takes spans from the services, streams them live over SSE, and keeps
 // them in a TraceStore. The stream doesn't depend on the store, so a storage problem can't stop it.
-import { LISTEN_HOSTS, PORTS, TAILNET } from "./config";
-import { join } from "node:path";
+// Its pages are the demo's: this service serves only data, and sends its old page addresses there.
+import { LISTEN_HOSTS, PORTS, TAILNET, urlsFor } from "./config";
 import { sameSecret } from "@smart-imaging-proxy/core";
 import { KINDS, OUTCOMES, sandboxOfSession, SERVICES, STATUSES, type EventRecord, type SpanRecord } from "./trace";
 import { summaryOf, TraceStore, type EventQuery, type TraceStoreConfig } from "./trace-store";
 
-const PAGES: Record<string, string> = { "/live.js": "web/live.js", "/live.css": "web/live.css", "/fonts/atkinson-next.woff2": "web/fonts/atkinson-next.woff2", "/fonts/atkinson-mono.woff2": "web/fonts/atkinson-mono.woff2", "/trace-view.js": "web/trace-view.js", "/span.html": "web/span.html", "/span.js": "web/span.js", "/log.html": "web/log.html", "/log.js": "web/log.js" };
+/** The pages this service once served, and where each is now, under the demo's `/trace/`. */
+const MOVED: Record<string, string> = { "/": "/", "/live": "/", "/span.html": "/span", "/log.html": "/log" };
 
 const json = (text: string) => new Response(text, { headers: { "content-type": "application/json;charset=utf-8" } });
 const publicSession = ({ id, startedAt, lastAt, spans }: { id: string; startedAt: number; lastAt: number; spans: number }) => ({ id, startedAt, lastAt, spans });
@@ -72,9 +73,9 @@ const decodable = (path: string) => { try { decodeURIComponent(path); return tru
 /**
  * With no store config, traces are in memory: only src/main.ts reads the TRACE_* settings. Spans come in
  * only with `spanSecret`, which the services hold, and none at all without one. Served for a sandbox, it
- * shows only that sandbox's sessions, and takes no spans.
+ * shows only that sandbox's sessions, and takes no spans. It reads no files, so `_root` goes unused.
  */
-export function createCollector(root: string, config: TraceStoreConfig = { mode: "memory" }, spanSecret?: string) {
+export function createCollector(_root: string, config: TraceStoreConfig = { mode: "memory" }, spanSecret?: string) {
   const store = new TraceStore(config);
   const clients = new Set<{ session?: string; sandbox?: string; send: (s: string) => void }>();
   const sandboxOf = sandboxOfSession;
@@ -93,7 +94,6 @@ export function createCollector(root: string, config: TraceStoreConfig = { mode:
   }
   const list = (sandbox?: string) => store.sessions().filter(s => !sandbox || sandboxOf(s.id) === sandbox).map(publicSession);
 
-  const page = (file: string) => new Response(Bun.file(join(root, file)), { headers: { "cache-control": "no-cache" } });
   const fetchHandler = async (req: Request, sandbox?: string): Promise<Response> => {
     const url = new URL(req.url);
     const p = url.pathname;
@@ -131,8 +131,8 @@ export function createCollector(root: string, config: TraceStoreConfig = { mode:
       ingest(records);
       return new Response(null, { status: 202 });
     }
-    if (p === "/" || p === "/live") return page("web/live.html");
-    if (PAGES[p]) return page(PAGES[p]!);
+    const moved = MOVED[p];
+    if (moved) return new Response(null, { status: 302, headers: { location: `${urlsFor(sandbox ? `/s/${sandbox}` : "").demo}/trace${moved}${url.search}` } });
     if (p === "/api/stats") return Response.json(store.stats());
     if (p === "/api/sessions" && req.method === "DELETE") {
       if (!sameOrigin(req, url)) return new Response("cross-origin requests can't clear traces", { status: 403 });

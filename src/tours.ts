@@ -75,8 +75,6 @@ interface TourStep {
   id: string; title: Text; actor: string;
   /** What a step that makes no request did, said in place of a link to its activity. */
   quiet?: string;
-  /** A step whose action is a person signing in, which can happen in a window of their own. */
-  signsIn?: boolean;
   /** The policy as it will be once this step's action is done: the expectation comes from it, and the store's policy after the step must match it. */
   intends?: (r: Run, doc: PolicyDocument) => PolicyDocument;
   expect(r: Run, m: ReturnType<typeof modelOf>): Answer;
@@ -175,7 +173,7 @@ function launchStep(id: string, user: string, patient: string, sites: (r: Run) =
   const approved = (sites: string[] | undefined) => `${first(user)} lets the app see ${whoseOf(user, patient)} studies at ${approvalText(sites)}`;
   const refused = (error: string): Answer => ({ value: { token: false }, text: `${first(user)} can't sign in for ${patientFirst(patient)}: ${first(user)} can see none of ${patientFirst(patient)}'s studies`, detail: `The sign-in ends with ${error}, and the app gets no access token` });
   return {
-    id, title, actor: first(user), signsIn: true,
+    id, title, actor: first(user),
     quiet: `The sign-in was refused before ${first(user)} could approve anything, so no request reached the imaging services.`,
     expect(r, m) {
       if (!m.holds(user, patient)) return refused("access_denied");
@@ -187,9 +185,6 @@ function launchStep(id: string, user: string, patient: string, sites: (r: Run) =
     },
     plan: r => ({ do: "sign-in", user, patient, ...(sites(r) ? { sites: sites(r) } : {}), app: APP, redirectUri: r.sandbox.urls.callback, scope: DEFAULT_SCOPE, aud: r.sandbox.urls.clinicalFhir }),
     settle(r, seen) {
-      // In a window, a person chooses who signs in: anyone else isn't who this step is about.
-      const who = typeof seen.state === "string" ? r.sandbox.auth.signedInFor(seen.state) : undefined;
-      if (who && who !== user) return { value: { token: false, signedIn: who }, text: `${first(who)} signed in, not ${first(user)}`, detail: "Someone else signed in, in the sign-in window" };
       if (!seen.token) return refused(seen.error ?? "an error");
       r.state[`tokenExp:${user}`] = r.sandbox.clock.now() + (seen.expiresIn ?? 0);
       const a = r.sandbox.store.approvals().find(x => x.by === ref("user", user) && x.app === ref("app", APP) && x.patient === ref("patient", seen.patient));
@@ -592,7 +587,7 @@ export function createTours(sandbox: Sandbox, stack: Stack) {
       tour: { id: tour.id, title: tour.title, summary: textOf(tour.summary, sandbox), detail: tour.detail, premise: tour.premise(sandbox), ...(tour.change ? { change: { step: tour.change.step, before: tour.change.beforeLabel, after: tour.change.after } } : {}) },
       chain: chainNow(tour),
       ...(changed(tour, r, results) ? { panels: changed(tour, r, results) } : {}),
-      steps: tour.steps.map(s => ({ id: s.id, title: textOf(s.title, sandbox), actor: s.actor, ...(s.signsIn ? { signsIn: true } : {}), ...(s === next ? { expect, expectDetail, ...(expectItems ? { expectItems } : {}) } : {}), ...(results[s.id] ? { result: results[s.id] } : {}) })),
+      steps: tour.steps.map(s => ({ id: s.id, title: textOf(s.title, sandbox), actor: s.actor, ...(s === next ? { expect, expectDetail, ...(expectItems ? { expectItems } : {}) } : {}), ...(results[s.id] ? { result: results[s.id] } : {}) })),
     };
   }
   /**

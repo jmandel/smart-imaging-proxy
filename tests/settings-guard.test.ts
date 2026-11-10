@@ -196,13 +196,9 @@ describe("the trace collector's clear and export", () => {
   afterAll(() => { collector.close(); rmSync(dir, { recursive: true, force: true }); });
   const get = (path: string) => collector.fetch(new Request(`${T}${path}`));
 
-  test("the source reads only its fixed list of pages", () => {
+  test("the source reads no files: its pages are the demo's", () => {
     const source = readFileSync(join(root, "src/trace-collector.ts"), "utf8");
-    expect(source.match(/Bun\.file\(/g)?.length).toBe(1);
-    expect(source).toContain('const page = (file: string) => new Response(Bun.file(join(root, file))');
-    expect(source.match(/\bpage\(/g)?.length).toBe(2);
-    expect(source).toContain('page("web/live.html")');
-    expect(source).toContain("page(PAGES[p]!)");
+    expect(source).not.toMatch(/Bun\s*\.\s*file\b/);
     for (const pattern of [/Bun\s*\.\s*(spawn|write|\$)/, /["'](node:)?(child_process|fs)["']/, /\beval\s*\(/, /new\s+Function\b/]) expect(source).not.toMatch(pattern);
   });
   test("a session id only looks up a row: one that climbs out of a directory finds nothing", async () => {

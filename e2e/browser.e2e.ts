@@ -9,6 +9,8 @@ import { createDemoServer } from "../src/demo-server";
 import { registerClients } from "../src/flows";
 import { CONFIG, PORTS } from "../src/config";
 import { startStack, type Stack } from "../src/stack";
+import { scriptedLaunch } from "../src/flows/oauth";
+import { flushTraces } from "../src/trace";
 
 setDefaultTimeout(120000);
 const root = join(import.meta.dir, "..");
@@ -80,7 +82,7 @@ const contrast = (page: Page, selector: string) => page.locator(selector).first(
 
 describe("every page, on desktop and phone, in light and dark", () => {
   for (const [name, viewport] of [["desktop", DESKTOP], ["phone", PHONE]] as const) for (const colorScheme of ["light", "dark"] as const) {
-    test(`${name} ${colorScheme}: no script or console errors, no sideways scrolling, and the header holds the menu and the settings`, async () => {
+    test(`${name} ${colorScheme}: no script or console errors, no sideways scrolling, and the header holds the menu`, async () => {
       for (const path of ["/", "/explore", "/activity", CONFIG.traceUrl, `${CONFIG.authUrl}/account`]) {
         const page = await open(path, { viewport, colorScheme });
         await page.waitForLoadState("networkidle");
@@ -89,10 +91,8 @@ describe("every page, on desktop and phone, in light and dark", () => {
         if (!path.startsWith(CONFIG.authUrl)) expect([path, await page.locator(".site-footer a[href='https://github.com/jmandel/smart-imaging-proxy']").count()]).toEqual([path, 2]);
         if (!path.startsWith("http") && path !== "/") {
           expect(await page.locator(".pages a").allInnerTexts()).toEqual(["Build an App", "Run a Server", "How It Works", "Why It Matters", "For Agents"]);
-          expect(await page.locator(".crumbs a").innerText()).toMatch(/^Sandbox/);
-          const box = await page.locator("#settings-button").boundingBox();
-          expect(box!.y).toBeLessThan(60);
-          expect(box!.height).toBeGreaterThanOrEqual(44);
+          // The old pages' trail names the sandbox; the app's pages name it in the sandbox's bar, inside one.
+          if (await page.locator(".crumbs").count()) expect(await page.locator(".crumbs a").innerText()).toMatch(/^Sandbox/);
         }
         await context!.close(); context = undefined;
       }
@@ -189,9 +189,10 @@ describe("Explore", () => {
     stack.store.setDocument({ shares: [{ from: "user:josh", with: "user:sam-caregiver", patient: "patient:josh-example", sites: ["Lakeside Imaging", "Riverside Hospital"], label: "caregiver" }] });
     const page = await open("/explore");
     const asked: string[] = [];
-    // Each image the page retrieves, by the study UID in its WADO-RS address, named by study once the view says which is which.
+    // Each image the page retrieves, by the study UID in its WADO-RS address, named by study from the catalog.
     page.on("request", r => { const m = new URL(r.url()).pathname.match(/\/studies\/([^/]+)\/series\/[^/]+\/instances\//); if (m) asked.push(m[1]!); });
-    const named = async () => { const ids = await page.evaluate(() => Object.fromEntries(Object.values((0, eval)("view").studies).map((s: any) => [s.uid, s.id]))); return asked.map(u => ids[u] ?? u); };
+    const ids = Object.fromEntries(stack.catalog.allStudies().map(s => [s.uid, s.id]));
+    const named = () => asked.map(u => ids[u] ?? u);
     await pick(page, "sam-caregiver");
     await settle(page, () => page.locator("[data-whose=josh-example]").click());
     // Sam hasn't approved the app for Josh's records yet: the view's one next step is to.
@@ -208,7 +209,7 @@ describe("Explore", () => {
     expect(withheld.length).toBe(4);
     expect(await page.locator(".sheet.withheld .status").first().innerText()).toContain("Withheld: Sam's approval of the Health Records App doesn't include Riverside Hospital");
     expect(await page.locator(".sheet.withheld .thumb[data-study]").count()).toBe(0);
-    expect(await named()).toEqual([SHEETS.mri]);
+    expect(named()).toEqual([SHEETS.mri]);
     expect(await page.locator(".headline h1").innerText()).toBe("Josh's studies Sam can see");
     expect(await page.locator(".headline .note").innerText()).toBe("The Health Records App can see 1 of these 5.");
     expect(problems).toEqual([]);
@@ -288,24 +289,40 @@ describe("Explore", () => {
     await drawn(page, SHEETS.xr);
     expect(problems).toEqual([]);
   });
-  test("the settings menu opens and closes by keyboard, and moves the demo clock", async () => {
-    const page = await open("/explore");
-    await page.locator("#settings-button").focus();
+  test("Sandbox Config moves the demo clock and back, keeping focus on the button pressed, and says where images come from", async () => {
+    const page = await open("/config");
+    expect(await page.locator("h1").innerText()).toBe("Sandbox Config");
+    await page.locator("#backend-health", { hasText: /^Working: / }).waitFor();
+    await page.getByRole("button", { name: "Ahead 1 hour" }).focus();
     await page.keyboard.press("Enter");
-    await page.locator("#settings h2").waitFor();
-    expect(await page.evaluate(() => document.activeElement?.textContent)).toBe("Settings");
-    await page.getByRole("button", { name: "Ahead 1 hour" }).click();
-    await page.locator("#settings .msg", { hasText: "The clock moved ahead." }).waitFor();
-    expect(await page.locator("#settings").innerText()).toContain("Now +1 hours");
-    await page.keyboard.press("Escape");
-    expect(await page.locator("#settings").isHidden()).toBe(true);
-    expect(await page.evaluate(() => document.activeElement?.id)).toBe("settings-button");
+    await page.locator("#config-clock .msg", { hasText: "The clock moved ahead." }).waitFor();
+    expect(await page.locator("#config-clock").innerText()).toContain("Now +1 hour.");
+    expect(await page.evaluate(() => document.activeElement?.textContent)).toBe("Ahead 1 hour");
+    await page.getByRole("button", { name: "Back to real time" }).click();
+    await page.locator("#config-clock .msg", { hasText: "The clock is back to real time." }).waitFor();
+    expect(await page.locator("#config-clock").innerText()).toContain("Now real time.");
+    expect(await page.getByRole("button", { name: "Back to real time" }).isDisabled()).toBe(true);
+    await page.getByRole("button", { name: "Revoke every token" }).click();
+    await page.locator("#config-end .msg", { hasText: "Revoke every token: done." }).waitFor();
+    expect(problems).toEqual([]);
+  });
+  test("in a sandbox, Sandbox Config switches the imaging FHIR server to unified and back", async () => {
+    const page = await open("/");
+    const base = await page.evaluate(async () => (await (await fetch("/api/sandboxes", { method: "POST" })).json()).base);
+    await page.goto(`${DEMO}${base}/config`);
+    await page.locator("#set-topology").selectOption("unified");
+    await page.locator("#config-topology .msg", { hasText: "Imaging is now on the clinical FHIR server." }).waitFor();
+    expect((await page.evaluate(() => (window as any).sandboxApi("GET", "/api/sandbox"))).topology.current).toBe("unified");
+    await page.locator("#set-topology").selectOption("separate");
+    await page.locator("#config-topology .msg", { hasText: "Imaging is now on a separate FHIR server." }).waitFor();
+    expect(problems).toEqual([]);
   });
 });
 
 describe("Tours", () => {
   test("the home page is the stories, each a card with the chain it ends on, the guardian's shows the locked study, and the revoke's shows before and after", async () => {
     const page = await open("/tours");
+    await page.locator(".story").first().waitFor();
     expect(await page.locator(".story").count()).toBe(6);
     expect(await page.locator(".story .layers").count()).toBe(8);
     expect(await page.locator(".story", { hasText: "Sam, guardian of 15-year-old Riley" }).locator(".ly-box.locked").count()).toBeGreaterThan(0);
@@ -332,24 +349,23 @@ describe("Tours", () => {
       expect(problems).toEqual([]);
     });
   }
-  test("in window mode, a sign-in step's button says Sign in, and opens the window the person signs in in", async () => {
+  test("a sign-in step runs in the page from its own button, and Back and Forward keep the story where it stood", async () => {
     const page = await open("/tours");
-    await page.evaluate(() => localStorage.setItem("smart-imaging-signin", "window"));
     await page.locator('[data-start="own"]').first().click();
-    await page.waitForURL(/\/s\/[^/]+\/tours/);
+    await page.waitForURL(/\/s\/[^/]+\/tours\?tour=own/);
     const launch = page.locator("[data-step=launch]");
-    expect(await launch.innerText()).toBe("Sign in");
-    const [popup] = await Promise.all([context!.waitForEvent("page"), launch.click()]);
-    await popup.waitForURL(/\/authorize/, { timeout: 30000 });
-    // A redirect for some other sign-in, with a state this page didn't send, ends nothing: the page keeps waiting.
-    await page.evaluate(() => postMessage({ signedIn: `${location.origin}${location.pathname.replace(/\/tours$/, "")}/oauth/callback?state=forged&code=forged-code` }, location.origin));
-    await page.waitForTimeout(300);
-    expect(await page.locator(".step .verdict").count()).toBe(0);
-    await popup.locator("input[name=username][value=josh]").check();
-    await popup.getByRole("button", { name: "Continue" }).click();
-    await popup.getByRole("button", { name: "Approve" }).click();
+    expect(await launch.innerText()).toBe("Run");
+    await launch.click();
     await page.locator(".step .verdict").first().waitFor({ timeout: 30000 });
     expect(await page.locator(".step .verdict").first().innerText()).toBe("As expected");
+    // Focus moves on to the next step's button.
+    expect(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.step)).toBe(await page.locator("[data-step]").getAttribute("data-step"));
+    await page.goBack();
+    await page.locator(".story").first().waitFor();
+    expect(await page.locator(".story").count()).toBe(6);
+    await page.goForward();
+    await page.locator(".step .verdict").first().waitFor();
+    expect(await page.locator(".step .verdict").allInnerTexts()).toEqual(["As expected"]);
     expect(problems).toEqual([]);
   });
   test("automated runs open no window", async () => {
@@ -415,6 +431,48 @@ describe("activity", () => {
       await page.locator(".fl-row").first().locator(".fl-cell").first().click();
       await page.waitForURL(/study=.*type=searches|type=searches.*study=/);
       await page.locator("#h-events", { hasText: /^Searches$/ }).waitFor();
+      expect(await overflow(page)).toBe(0);
+      expect(problems).toEqual([]);
+    });
+  }
+});
+
+describe("live trace", () => {
+  for (const [name, viewport] of [["desktop", DESKTOP], ["phone", PHONE]] as const) {
+    test(`${name}: a sign-in appears as it happens, a row opens its preview, and its exchange and its trace's log open on pages of their own`, async () => {
+      const page = await open("/trace/?session=unattributed", { viewport });
+      await page.locator(".trace-head [role=status]", { hasText: "Live." }).waitFor();
+      expect(await page.getByLabel("Follow newest").isChecked()).toBe(false);
+      await scriptedLaunch("josh");
+      // The stream brings every span in, with no reload. The session can hold an earlier run's sign-in too, so the
+      // newest token row is only the newest once the page shows every span held.
+      await flushTraces();
+      const held: { name: string }[] = await (await fetch(`${CONFIG.traceUrl}/api/sessions/unattributed/spans`)).json();
+      await page.waitForFunction(n => document.querySelectorAll(".row").length === n, held.filter(s => !/^part \d+:/.test(s.name)).length);
+      const token = page.locator(".row[data-kind=server] .name", { hasText: "POST /token" }).last();
+      await token.waitFor();
+      await token.click();
+      expect(await token.getAttribute("aria-expanded")).toBe("true");
+      const preview = page.locator(".span-preview").last();
+      await preview.getByText("Token request").waitFor();
+      expect(await preview.innerText()).toContain("authorization_code");
+      expect(await overflow(page)).toBe(0);
+      // The full exchange, and every exchange in its trace, at the trace's own addresses.
+      const full = await preview.getByRole("link", { name: "Open full request and response ↗" }).getAttribute("href");
+      const log = await preview.getByRole("link", { name: "HTTP log for this trace ↗" }).getAttribute("href");
+      expect(full).toMatch(/^\/trace\/span\?session=unattributed&span=[0-9a-f]{16}$/);
+      expect(log).toMatch(/^\/trace\/log\?session=unattributed&trace=[0-9a-f]{32}$/);
+      await page.goto(`${DEMO}${full}`);
+      await page.getByRole("heading", { name: "POST /token", level: 1 }).waitFor();
+      expect(await page.getByRole("heading", { name: /^Response/ }).count()).toBe(1);
+      expect(await page.locator("pre").first().innerText()).toContain("grant_type = authorization_code");
+      expect(await overflow(page)).toBe(0);
+      await page.goto(`${DEMO}${log}`);
+      await page.locator("details.exchange").first().waitFor();
+      await page.getByRole("button", { name: "Expand all" }).click();
+      await page.getByRole("heading", { name: /^Request/ }).first().waitFor();
+      await page.getByLabel("Filter").fill("no such text anywhere");
+      expect(await page.locator(".toolbar [role=status]").innerText()).toMatch(/^0 of [1-9]\d* shown$/);
       expect(await overflow(page)).toBe(0);
       expect(problems).toEqual([]);
     });

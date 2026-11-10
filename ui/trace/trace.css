@@ -1,0 +1,112 @@
+/* The live trace and its two sub-pages, inside the site's shell. Everything is under .trace-page, since the app
+   bundles one stylesheet for every page. The site's own colours and fonts carry through; each service adds its own. */
+.trace-page {
+  --svc-user:#6b3fa0; --svc-app:#0a6a9c; --svc-as:#8a4b08; --svc-fhir:#0f6b6b; --svc-policy:#a0307a; --svc-proxy:#2c6e1f; --svc-backend:#55606b; --svc-demo:#5f6f7a;
+  --bar:#7f9db0;
+  font-size:15px; line-height:1.45; padding:0 0 3rem;
+}
+@media (prefers-color-scheme:dark) { .trace-page {
+  --svc-user:#c3a3ea; --svc-app:#6cbfe8; --svc-as:#e5a964; --svc-fhir:#6cd0d0; --svc-policy:#ea8fc8; --svc-proxy:#94d67e; --svc-backend:#a9b4be; --svc-demo:#9ab0bd;
+  --bar:#4d7087;
+} }
+.trace-page select, .trace-page button { font:inherit; color:inherit; background:var(--plate); border:1px solid var(--line); border-radius:5px; padding:.25rem .5rem; min-height:0; }
+
+/* The controls, on film, held at the top of the window while the trace scrolls under them. */
+.trace-page .trace-head { display:flex; justify-content:space-between; gap:.4rem 1rem; flex-wrap:wrap; align-items:center; padding:.55rem 1.5rem; background:var(--film-raised); color:var(--on-film); position:sticky; top:0; z-index:2; }
+.trace-page .trace-head h1 { font-size:1.06rem; margin:0; }
+.trace-page .trace-head p { margin:0; color:var(--on-film-dim); font-size:.85rem; }
+.trace-page .trace-head :focus-visible { outline-color:var(--on-film); }
+.trace-page .trace-head select, .trace-page .trace-head button { background:var(--film); border-color:var(--film-line); color:var(--on-film); }
+.trace-page .trace-head a { color:var(--on-film); }
+.trace-page .trace-controls { display:flex; gap:.5rem .9rem; align-items:center; flex-wrap:wrap; font-size:.85rem; }
+.trace-page .trace-controls label { display:inline-flex; gap:.3rem; align-items:center; }
+.trace-page .trace-controls select { max-width:330px; }
+
+.trace-page .legend { display:flex; gap:.4rem .85rem; flex-wrap:wrap; padding:.6rem 1.5rem 0; font-size:.8rem; }
+.trace-page .legend label { display:flex; gap:.25rem; align-items:center; cursor:pointer; }
+.trace-page .terms { margin:.4rem 1.5rem 0; font-size:.86rem; }
+.trace-page .terms summary { cursor:pointer; color:var(--muted); }
+.trace-page .terms dl { display:grid; grid-template-columns:max-content minmax(0,1fr); gap:.2rem .8rem; margin:.5rem 0; }
+.trace-page .terms dt { font-weight:600; } .trace-page .terms dd { margin:0; }
+.trace-page .terms p { color:var(--muted); margin:.3rem 0; }
+.trace-page .terms p:empty { display:none; }
+
+#traces { padding:.7rem 1.5rem 0; }
+.trace-page .trace { background:var(--plate); border:1px solid var(--line); border-radius:6px; margin-bottom:1rem; overflow:hidden; }
+.trace-page .trace > h2 { margin:0; padding:.5rem .8rem; font-size:1rem; border-bottom:1px solid var(--line); display:flex; gap:.6rem; align-items:baseline; flex-wrap:wrap; }
+.trace-page .trace h2 .title { overflow-wrap:anywhere; }
+.trace-page .trace h2 .meta { color:var(--muted); font-weight:400; font-size:.78rem; }
+.trace-page .meta a { color:inherit; }
+.trace-page .row { display:grid; grid-template-columns:minmax(0,1fr) 1.5rem 130px 58px; gap:.5rem; align-items:center; padding:.1rem .8rem; font-size:.86rem; cursor:pointer; }
+.trace-page .row:hover, .trace-page .row:has(.name[aria-expanded="true"]) { background:var(--code); }
+.trace-page .row .name { display:flex; align-items:center; gap:.35rem; min-width:0; scroll-margin:4.5rem 0 1rem; }
+.trace-page .name:focus-visible { outline:2px solid var(--accent); outline-offset:1px; border-radius:2px; }
+.trace-page .row .label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:3rem; }
+.trace-page .via { flex:none; color:var(--muted); width:.9rem; text-align:center; font-weight:700; }
+.trace-page .via:empty { display:none; }
+.trace-page .row.paired .label, .trace-page .row[data-kind=check] .label { color:var(--muted); }
+.trace-page .row[data-kind=action] { color:var(--accent); }
+.trace-page .row[data-kind=action] .label { font-weight:600; }
+.trace-page .svc { font-size:.74rem; font-weight:700; white-space:nowrap; flex:none; }
+.trace-page .dot { width:.6rem; flex:none; text-align:center; font-weight:700; }
+.trace-page .dot.ok { color:var(--good); } .trace-page .dot.denied { color:var(--warn); } .trace-page .dot.error { color:var(--bad); } .trace-page .dot.running { color:var(--muted); }
+.trace-page .hint { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); font-size:.72rem; font-variant-numeric:tabular-nums; margin-left:.3rem; }
+.trace-page .hint:empty { display:none; }
+.trace-page .full { color:var(--accent); text-decoration:none; font-weight:700; text-align:center; }
+.trace-page .full:hover { text-decoration:underline; }
+.trace-page .full[hidden] { display:block; visibility:hidden; }
+.trace-page .bar { height:6px; position:relative; border-bottom:1px solid var(--line); }
+.trace-page .bar i { position:absolute; top:0; bottom:0; background:var(--bar); border-radius:1px; min-width:2px; }
+.trace-page .dur { white-space:nowrap; text-align:right; color:var(--muted); font-variant-numeric:tabular-nums; font-size:.76rem; }
+.trace-page .trace-empty { color:var(--muted); padding:2rem 0; text-align:center; }
+
+/* A span's preview, under its row. */
+.trace-page .span-preview { padding:.45rem .9rem .7rem 1.6rem; background:var(--code); font-size:.82rem; border-bottom:1px solid var(--line); cursor:auto; overflow-wrap:anywhere; }
+.trace-page .call-line { margin:.1rem 0 .35rem; font:.78rem/1.45 var(--mono); }
+.trace-page .good { color:var(--good); } .trace-page .warn { color:var(--warn); } .trace-page .bad { color:var(--bad); }
+.trace-page .callout { margin:.1rem 0 .4rem; padding:.25rem .5rem; border:1px solid currentColor; border-radius:6px; }
+.trace-page .because { margin:.1rem 0 .3rem; padding-left:1.3rem; } .trace-page .because li { margin:.05rem 0; }
+.trace-page .scroll { overflow-x:auto; max-width:100%; }
+.trace-page .pv { margin-bottom:.45rem; }
+.trace-page .pv h4, .trace-page .span-preview h4 { margin:.2rem 0; font-size:.82rem; }
+.trace-page .kv { display:grid; grid-template-columns:max-content minmax(0,1fr); gap:.08rem .8rem; margin:0; }
+.trace-page .kv dt { color:var(--muted); }
+.trace-page .kv dd { margin:0; overflow-wrap:anywhere; font-family:var(--mono); font-size:.78rem; }
+.trace-page .span-preview table { border-collapse:collapse; margin-top:.3rem; font-size:.78rem; width:100%; }
+.trace-page .span-preview th, .trace-page .span-preview td { text-align:left; vertical-align:top; padding:.1rem .6rem .1rem 0; border-bottom:1px solid var(--line); overflow-wrap:normal; }
+.trace-page pre { margin:.25rem 0; padding:.45rem .55rem; background:var(--plate); border:1px solid var(--line); border-radius:6px; overflow:auto; font:.76rem/1.45 var(--mono); max-width:100%; white-space:pre; overflow-wrap:normal; }
+.trace-page .snippet summary { cursor:pointer; color:var(--muted); font-size:.78rem; padding:.1rem 0; }
+.trace-page .links { margin:.35rem 0 0; display:flex; flex-wrap:wrap; gap:.2rem 1rem; }
+.trace-page .muted { color:var(--muted); margin:.15rem 0; }
+.trace-page .call-line .muted { font-family:var(--sans); margin:0; }
+
+/* The exchange page and the HTTP log. */
+.trace-sub { max-width:1040px; margin:0 auto; padding:1rem 1rem 3rem; }
+.trace-sub h1 { margin:.4rem 0 .15rem; font-size:1.5rem; overflow-wrap:anywhere; }
+.trace-sub h2 { font-size:.98rem; margin:1.1rem 0 .3rem; }
+.trace-sub pre { max-height:65vh; }
+.trace-sub .exchange-line { font-family:var(--mono); overflow-wrap:anywhere; font-size:.85rem; margin:.2rem 0 .5rem; }
+.trace-sub .note { color:var(--muted); font-size:.82rem; }
+.trace-page .head-table { width:100%; border-collapse:collapse; font:.78rem/1.45 var(--mono); background:var(--plate); border:1px solid var(--line); }
+.trace-page .head-table td { padding:.1rem .5rem; border-top:1px solid var(--line); vertical-align:top; overflow-wrap:anywhere; }
+.trace-page .head-table td:first-child { color:var(--muted); white-space:nowrap; width:1%; }
+.trace-page input[type=search] { font:inherit; color:inherit; background:var(--plate); border:1px solid var(--line); border-radius:6px; padding:.2rem .4rem; max-width:100%; min-width:0; }
+.trace-page .toolbar { display:flex; gap:.6rem; align-items:center; flex-wrap:wrap; margin:.4rem 0; font-size:.85rem; }
+.trace-page .exchange { background:var(--plate); border:1px solid var(--line); border-radius:8px; margin-bottom:.5rem; padding:.3rem .7rem; }
+.trace-page .exchange > summary { cursor:pointer; font-size:.85rem; overflow-wrap:anywhere; }
+.trace-page .exchange > summary .side { color:var(--muted); font-weight:400; }
+
+@media (max-width:640px) {
+  .trace-page .trace-head { position:static; padding:.55rem 1rem; }
+  .trace-page .legend { padding:.6rem 1rem 0; } .trace-page .terms { margin:.4rem 1rem 0; }
+  #traces { padding:.5rem .5rem 0; }
+  .trace-page .row { grid-template-columns:minmax(0,1fr) 1.5rem 50px; padding:.2rem .5rem; }
+  .trace-page .bar { display:none; }
+  .trace-page .name { flex-wrap:wrap; }
+  .trace-page .row .label { white-space:normal; overflow-wrap:anywhere; flex:1 1 8rem; }
+  .trace-page .hint { flex-basis:100%; margin-left:1.2rem; white-space:normal; overflow-wrap:anywhere; }
+  .trace-page .span-preview { padding:.45rem .6rem .7rem; }
+  .trace-page .kv { grid-template-columns:minmax(0,1fr); gap:0; } .trace-page .kv dd { margin-bottom:.3rem; }
+  .trace-page .trace-controls select { max-width:100%; min-width:0; }
+  .trace-page .trace-controls label:first-child { max-width:100%; min-width:0; }
+}

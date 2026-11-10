@@ -286,11 +286,16 @@ describe("loading pages", () => {
     expect([policyOf(stack.store), policyOf(sandbox.store)]).toEqual([saved, its]);
   });
   test("each page's script sends nothing on load except reads", async () => {
-    for (const file of ["/explore.js", "/tours.js", "/activity.js"]) {
+    for (const file of ["/explore.js", "/tours.js"]) {
       const js = await (await call("GET", file)).text();
       // What runs on load is the last block, and it only reads.
       const onLoad = js.slice(js.lastIndexOf("(async () => {"));
       expect([file, /"POST"|method: "POST"/.test(onLoad)]).toEqual([file, false]);
+    }
+    // The log only reads, on load or after: every call it and its parts make is a GET.
+    for (const file of ["ui/pages/Activity.tsx", "ui/activity/Exchange.tsx"]) {
+      const calls = [...(await Bun.file(join(root, file)).text()).matchAll(/\bapi(?:<[^>]*>)?\("([A-Z]+)"/g)].map(m => m[1]);
+      expect([file, calls.length > 0 && calls.every(m => m === "GET")]).toEqual([file, true]);
     }
   });
 });

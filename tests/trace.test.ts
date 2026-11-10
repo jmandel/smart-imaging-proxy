@@ -106,7 +106,12 @@ test("the stream carries summaries, and the full exchange loads on demand", asyn
   expect(full.http.response.body).toContain("access_token");
   const log: any[] = await (await fetch(`${base}/api/sessions/${c.session}/http?trace=${one.trace}`)).json();
   expect(log.some(s => s.span === one.span)).toBe(true);
-  for (const page of ["/span.html", "/log.html", "/trace-view.js", "/span.js", "/log.js"]) expect((await fetch(base + page)).status).toBe(200);
+  // The pages are the demo's now: the trace service sends its old addresses there, and serves no files.
+  const moved = async (page: string) => (await fetch(`http://127.0.0.1:${PORTS.trace}${page}?session=s`, { redirect: "manual" })).headers.get("location");
+  expect(await moved("/span.html")).toBe(`${CONFIG.demoUrl}/trace/span?session=s`);
+  expect(await moved("/log.html")).toBe(`${CONFIG.demoUrl}/trace/log?session=s`);
+  expect(await moved("/")).toBe(`${CONFIG.demoUrl}/trace/?session=s`);
+  for (const page of ["/trace-view.js", "/span.js", "/log.js", "/live.css"]) expect((await fetch(`http://127.0.0.1:${PORTS.trace}${page}`)).status).toBe(404);
 });
 
 test("everything a flow does appears in its session", async () => {
