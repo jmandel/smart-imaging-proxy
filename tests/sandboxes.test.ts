@@ -312,7 +312,7 @@ describe("sandbox lifetimes", () => {
     const r = await get(`${CONFIG.demoUrl}/api/sandboxes`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     const { base } = (await r.json()) as any;
     for (let i = 0; i < 70; i++) expect(await get(`${urlsFor(`/s/${encodeSeed({ contextLifetimeSeconds: 100 + i })}`).clinicalFhir}/.well-known/smart-configuration`).then(x => x.status)).toBe(200);
-    expect((await get(`${CONFIG.demoUrl}${base}/api/sandbox/keys`)).status).toBe(200);
+    expect((await get(`${CONFIG.demoUrl}${base}/api/sandbox/keys-shared-on-purpose`)).status).toBe(200);
   }, 60000);
   test("an idle sandbox is dropped", async () => {
     const sandboxes = createSandboxes(shared, { idleMs: 40 });

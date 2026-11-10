@@ -45,11 +45,11 @@ export async function signAssertion(jwk: PrivateJwk, clientId: string, tokenEndp
 }
 
 export interface ServiceKey { client_id: string; jwk: PrivateJwk; scope: string; name?: string }
-export interface SandboxKeys { tokenEndpoint: string; now: number; admin: ServiceKey; services: ServiceKey[] }
+export interface SandboxKeys { why: string; tokenEndpoint: string; now: number; admin: ServiceKey; services: ServiceKey[] }
 
 /** A sandbox's sample keys, its admin client's and its services', and its time now. Anyone with the sandbox's URL may have them. */
 export async function keysOf(base = BASE): Promise<SandboxKeys> {
-  const r = await fetch(`${base}/api/sandbox/keys`);
+  const r = await fetch(`${base}/api/sandbox/keys-shared-on-purpose`);
   if (!r.ok) throw new ApiError((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`, r.status);
   return r.json();
 }

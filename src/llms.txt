@@ -42,14 +42,25 @@ Sign-in has no passwords.
 | `sam-caregiver` | `sam-example` | Two synthetic studies, and guardian of Riley |
 | `robin` | `robin-example` | No studies: a real empty result |
 
+What a correct app sees, signed in with a public client and approving every site, in a new sandbox:
+
+| Sign in as | Choose | `ImagingStudy?patient=` | `DiagnosticReport?patient=` | Why |
+|---|---|---|---|---|
+| `josh` | `josh-example` | 6 studies, at Northside Pathology, Lakeside Imaging and Riverside Hospital | A report for each | The patient's own |
+| `sam-caregiver` | `sam-example` | 2 studies | A report for each | The patient's own |
+| `sam-caregiver` | `riley-example` | 1 of Riley's 2: the knee MRI at Lakeside | Its report only | The imaging network's rule for guardians of patients 13 to 17 leaves out studies labeled confidential: the skin biopsy slide at Northside, whose report reads as 404 too |
+| `robin` | `robin-example` | None: `total` 0, no entries | None | No studies on file. Exit cleanly, not with an error |
+
+Approving fewer sites leaves those sites' studies and reports out. `GET /api/sandbox/policy/explain` says why each study is or isn't released.
+
 `riley-example` is Sam's 15-year-old child. One of Riley's studies is confidential adolescent care, which Sam can't see. Clinical entries are invented.
 
 ## Connect an app
 
-Public clients with PKCE (S256) are supported. Register one in the sandbox, or use the page at `$SANDBOX/connect`.
+Public clients with PKCE (S256) are supported. Register one in the sandbox, or use the page at `$SANDBOX/connect`. Registering, like every call under `$SANDBOX/api/sandbox`, takes the sandbox's admin token: three calls, under "Manage a sandbox" below, with a key the sandbox gives out on purpose.
 
 ```sh
-curl -X POST "$SANDBOX/api/sandbox/clients" -H 'content-type: application/json' \
+curl -X POST "$SANDBOX/api/sandbox/clients" -H "authorization: Bearer $ADMIN" -H 'content-type: application/json' \
   -d '{"name":"My app","redirectUris":["https://example.org/callback"]}'
 ```
 
@@ -64,11 +75,11 @@ Add `"type"` for the other kinds of client. Both sign a `private_key_jwt` assert
 | `backend` | `jwk` or `jwksUrl`, and `patients`: `any` or one patient id | `client_credentials` with scope `system/ImagingStudy.rs`. No one signs in |
 
 ```sh
-curl -X POST "$SANDBOX/api/sandbox/clients" -H 'content-type: application/json' \
+curl -X POST "$SANDBOX/api/sandbox/clients" -H "authorization: Bearer $ADMIN" -H 'content-type: application/json' \
   -d '{"name":"Referral service","type":"backend","patients":"josh-example","jwk":{"kty":"EC","crv":"P-256","x":"...","y":"...","kid":"key-1"}}'
 ```
 
-The assertion is a JWT with `iss` and `sub` set to the client id, `aud` set to `$SANDBOX/token`, a unique `jti`, and `exp` at most five minutes ahead. A backend service names the patient in each search, and asking about a patient outside its grant returns 403.
+The assertion is a JWT with `iss` and `sub` set to the client id, `aud` set to `$SANDBOX/token`, a unique `jti`, and `exp` at most five minutes ahead, by real time: assertions are checked by real time, whatever the sandbox's demo clock says. A backend service names the patient in each search, and asking about a patient outside its grant returns 403.
 
 ## Sign in without a browser
 
@@ -107,17 +118,17 @@ curl "$ADDRESS/studies/$STUDY_UID/series/$SERIES_UID/instances/$INSTANCE_UID" \
 
 ## Manage a sandbox
 
-Everything under `$SANDBOX/api/sandbox` is the management API, and it takes the sandbox's admin token as a bearer token. The admin is a SMART Backend Services client, `sandbox-admin`, whose key the sandbox gives out: its URL is already its access, so the key gives nothing more.
+Everything under `$SANDBOX/api/sandbox` is the management API, and it takes the sandbox's admin token as a bearer token. The admin is a SMART Backend Services client, `sandbox-admin`, whose key the sandbox gives out on purpose, at an address that says so: its URL is already its access, so the key grants nothing more. A call without the token is still refused.
 
-1. `GET $SANDBOX/api/sandbox/keys`, the one call that needs no token. It returns `tokenEndpoint`, `now` (the sandbox's time, by its demo clock), `admin` and `services`, each with `client_id` and a private ES256 `jwk`.
-2. Sign a client assertion with `admin.jwk`: a JWT with header `{"alg":"ES256","kid":...}`, and `iss` and `sub` set to `sandbox-admin`, `aud` set to `tokenEndpoint`, a unique `jti`, and `exp` at most five minutes after `now`. Use `now`, not your own clock: the demo clock may have been moved.
+1. `GET $SANDBOX/api/sandbox/keys-shared-on-purpose`, the one call that needs no token. It returns `why` (why giving these keys out is safe), `tokenEndpoint`, `now` (real time, in seconds), `admin` and `services`, each with `client_id` and a private ES256 `jwk`.
+2. Sign a client assertion with `admin.jwk`: a JWT with header `{"alg":"ES256","kid":...}`, and `iss` and `sub` set to `sandbox-admin`, `aud` set to `tokenEndpoint`, a unique `jti`, and `exp` at most five minutes ahead. Assertions are checked by real time, never the demo clock, so your own clock works.
 3. `POST` to `tokenEndpoint` with `grant_type=client_credentials`, `scope=sandbox/admin`, `client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer` and `client_assertion`.
 4. Send `authorization: Bearer $ADMIN` on every management call. A token revoked, or expired by the demo clock, gets 401: get another.
 
 ```js
 // Node 20+: an admin token for $SANDBOX.
 import { createPrivateKey, randomUUID, sign } from "node:crypto";
-const k = await (await fetch(`${SANDBOX}/api/sandbox/keys`)).json();
+const k = await (await fetch(`${SANDBOX}/api/sandbox/keys-shared-on-purpose`)).json();
 const part = o => Buffer.from(JSON.stringify(o)).toString("base64url");
 const head = `${part({ alg: "ES256", kid: k.admin.jwk.kid })}.${part({ iss: k.admin.client_id, sub: k.admin.client_id, aud: k.tokenEndpoint, jti: randomUUID(), exp: k.now + 240 })}`;
 const jwt = `${head}.${sign("sha256", Buffer.from(head), { key: createPrivateKey({ key: k.admin.jwk, format: "jwk" }), dsaEncoding: "ieee-p1363" }).toString("base64url")}`;
@@ -159,7 +170,7 @@ All paths below are under `$SANDBOX`. Bodies are JSON.
 | `GET /api/sandbox/tours/state?tour=` | A tour's steps, what the model expects of the next, and each finished step's result |
 | `POST /api/sandbox/tours/{id}/steps/{step}/begin` | Begins a step: the sandbox decides what the model expects, and returns a `plan` for you to carry out, with the `session` and `trace` to send it under |
 | `POST /api/sandbox/tours/{id}/steps/{step}/finish` `{"seen":{...}}` | Finishes it with what you saw, judged against the model |
-| `POST /api/sandbox/clock` `{"advanceSeconds":N}` or `{"reset":true}` | Moves the demo clock. `N` must be one of the choices in `GET /api/sandbox` |
+| `POST /api/sandbox/clock` `{"advanceSeconds":N}` or `{"reset":true}` | Moves the demo clock. `N` must be one of the choices in `GET /api/sandbox`. Tokens, study links and ages follow it; client assertions are checked by real time |
 | `POST /api/sandbox/reset` `{"confirm":true}` | Puts policy back to what's on file |
 | `POST /api/sandbox/tokens/revoke-all` | Revokes every token |
 | `POST /api/sandbox/proxy/flush` | Forgets cached access decisions |
@@ -178,7 +189,7 @@ Everything the Tours page does, you can do with these calls. `begin` returns `{p
 | `sign-in` | An authorization code flow with PKCE as `plan.app`, with `plan.redirectUri`, `plan.scope` and `aud=plan.aud`, signing in as `plan.user`, choosing `plan.patient`, and approving `plan.sites` (all sites if absent). See "Sign in without a browser". Keep the token for later steps | `{"token":true,"patient":...,"expiresIn":...,"state":...}`, or `{"token":false,"error":...}` |
 | `search` | Search `{imaging}/ImagingStudy?{plan.query}` with `plan.as`'s token, following `next` links | `{"status":200,"studies":[{"id","uid","base"}]}`, with `base` the study's WADO-RS address; or `{"status":N}` |
 | `retrieve` | `GET plan.url` with `plan.as`'s token, and read the body | `{"status":N}` |
-| `service-search`, `service-retrieve` | As above, with a Backend Services token for `plan.client`, from its key in `GET /api/sandbox/keys` | As above |
+| `service-search`, `service-retrieve` | As above, with a Backend Services token for `plan.client`, from its key in `GET /api/sandbox/keys-shared-on-purpose` | As above |
 | `management` | Each of `plan.calls` against `$SANDBOX/api/sandbox/policy{path}`, with the admin token | `{"statuses":[...]}` |
 | `referral-check` | Whether `plan.patientRef` is under `plan.clinicalFhir/Patient/` | `{"ok":true}` |
 | `none` | Nothing: the sandbox did it, such as moving its clock | `{}` |
@@ -192,9 +203,9 @@ The shapes the management API takes and gives, as TypeScript. A `Ref` is a kind 
 ```ts
 type Ref = string;
 
-// GET /api/sandbox/keys: the one call with no token.
+// GET /api/sandbox/keys-shared-on-purpose: the one call with no token.
 interface SampleKey { client_id: string; jwk: JsonWebKey & { kid: string; alg: "ES256" }; scope: string }
-interface Keys { tokenEndpoint: string; now: number; admin: SampleKey; services: SampleKey[] }
+interface Keys { why: string; tokenEndpoint: string; now: number; admin: SampleKey; services: SampleKey[] }
 
 // GET /api/sandbox, and what each settings call answers with.
 interface SandboxStatus {
@@ -320,6 +331,8 @@ curl -s {{ORIGIN}}/api/checks/$ID   # a CheckRun: status, summary, and each step
 The `id` is long and random, and holding it is the only access to the run: anyone with the link can open it, read it, and report to it. Runs live in this server's memory for 24 hours, a few hundred at a time, and are gone on a restart.
 
 ## Specifications
+
+IGs built on build.fhir.org publish their pages as Markdown for agents at `{ig}/ai.zip`: the narrative, each profile and example, and an `llms.txt` index. SMART Imaging Access's is at https://build.fhir.org/ig/argonautproject/smart-imaging/ai.zip. Read that rather than scraping the HTML.
 
 - [SMART Imaging Access](https://build.fhir.org/ig/argonautproject/smart-imaging/)
 - [SMART App Launch](https://build.fhir.org/ig/HL7/smart-app-launch/)

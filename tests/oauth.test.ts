@@ -453,6 +453,15 @@ describe("Backend Services", () => {
     const c = client();
     await refused(signed(c, { exp: now() - 1 }));
   });
+  test("assertions are checked by real time, so moving the demo clock doesn't break an app signing by its own", async () => {
+    const c = client(), real = () => Math.floor(Date.now() / 1000);
+    advance(2 * 86400);
+    try {
+      expect((await post(assertionBody(signed(c, { exp: real() + 240 })))).status).toBe(200);
+      // Signed by the moved clock instead, it's two days ahead of real time.
+      await refused(signed(c, { exp: now() + 240 }));
+    } finally { resetClock(); }
+  });
 });
 
 describe("Token responses can't be cached", () => {

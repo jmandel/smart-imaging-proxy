@@ -208,7 +208,7 @@ export class Ctx {
   async backendToken(clientId: string, scope = "system/ImagingStudy.rs") {
     const c = this.sandbox.clients[clientId]!;
     const conf = await this.json(clientId, "Discover the token endpoint", `${this.urls.clinicalFhir}/.well-known/smart-configuration`);
-    const assertion = withSpanSync("app", "Sign a client assertion with the client's private key (ES256)", () => clientAssertion(c, conf.body.token_endpoint, this.sandbox.clock), (j: string) => { const [h, b] = j.split("."); return { header: JSON.parse(Buffer.from(h!, "base64url").toString()), claims: JSON.parse(Buffer.from(b!, "base64url").toString()) }; });
+    const assertion = withSpanSync("app", "Sign a client assertion with the client's private key (ES256)", () => clientAssertion(c, conf.body.token_endpoint), (j: string) => { const [h, b] = j.split("."); return { header: JSON.parse(Buffer.from(h!, "base64url").toString()), claims: JSON.parse(Buffer.from(b!, "base64url").toString()) }; });
     const r = await this.json(clientId, "SMART Backend Services token request", conf.body.token_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "client_credentials", scope, client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: assertion }).toString() });
     return r.body;
   }

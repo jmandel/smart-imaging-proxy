@@ -10,7 +10,7 @@ import { traced, traceSettled } from "./trace";
 import type { BackendName, Stack } from "./stack";
 import { flowById } from "./flows";
 import { extraField, readJson, refuseHost, refuseWrite, settingsApi, BACKEND_NAMES } from "./settings-api";
-import type { BackendClient } from "./auth-server";
+import { realNow, type BackendClient } from "./auth-server";
 import { createExplore } from "./explore";
 import { createTours, tourById } from "./tours";
 import { eventQueryOf } from "./trace-collector";
@@ -31,16 +31,23 @@ import { createCheckRuns } from "./check-runs";
 const json = (b: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(b, { status, headers });
 
 /** `viewerKitDir` is where viewer-kit was downloaded, `$DEMO_STORAGE/vendor/{tag}` unless given. */
+
+/** Where a sandbox gives out its sample keys. Loud on purpose: these keys are meant to be taken. */
+export const KEYS_PATH = "/api/sandbox/keys-shared-on-purpose";
+const KEYS_WHY = "These keys are given out on purpose. A sandbox's URL is its access: anyone holding it can already read and change the sandbox, so its admin key and its services' keys grant nothing more. The management API still takes a real token, signed the way a SMART Backend Services client signs one, so a call made without one is refused, and so you can see how signing works. They are sample credentials for this sandbox only.";
+
 export function createDemoServer(stack: Stack, clients: Record<string, BackendClient>, root: string, options: { viewerKitDir?: string } = {}) {
   // Server checks agents start, at the site's root only: they belong to no sandbox.
   const checkRuns = createCheckRuns();
   const perSandbox = new WeakMap<Sandbox, ReturnType<typeof sandboxServer>>();
   const serverOf = (w: Sandbox) => { let s = perSandbox.get(w); if (!s) perSandbox.set(w, s = sandboxServer(w)); return s; };
-  /** A sandbox's keys, given out as sample credentials: its admin client's, and each demo service's. */
+  /** A sandbox's keys, given out on purpose as sample credentials: its admin client's, and each demo service's.
+   *  The address says so, and so does each answer: the management API still takes a real token, but holding
+   *  the sandbox's URL is what grants it. */
   const sampleKeys = (sandbox: Sandbox) => {
     const jwkOf = (c: BackendClient) => ({ client_id: c.client_id, jwk: { ...c.privateKey.export({ format: "jwk" }), kid: c.kid, alg: "ES256", use: "sig" } });
-    // The sandbox's time, by its demo clock, which an assertion's expiry is checked against.
-    return { tokenEndpoint: sandbox.auth.tokenUrl, now: sandbox.clock.now(), admin: { ...jwkOf(sandbox.admin), scope: ADMIN_SCOPE }, services: Object.values(sandbox.clients).map(c => ({ ...jwkOf(c), scope: "system/ImagingStudy.rs" })) };
+    // Real time, which a client assertion is signed and checked by, whatever the demo clock says.
+    return { why: KEYS_WHY, tokenEndpoint: sandbox.auth.tokenUrl, now: realNow(), admin: { ...jwkOf(sandbox.admin), scope: ADMIN_SCOPE }, services: Object.values(sandbox.clients).map(c => ({ ...jwkOf(c), scope: "system/ImagingStudy.rs" })) };
   };
   /** A management call to the policy API, passed on with the policy credential, in the caller's trace session. */
   const policyThrough = (sandbox: Sandbox, req: Request, path: string) => traced("demo", async () => {
@@ -53,7 +60,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     const token = req.headers.get("authorization")?.match(/^bearer +(.+)$/i)?.[1];
     const g: any = token && sandbox.auth.grantOf(token);
     const ok = g && !g.revoked && g.exp > sandbox.clock.now() && g.client_id === SANDBOX_ADMIN && g.scope.split(" ").includes(ADMIN_SCOPE);
-    return ok ? undefined : json({ error: "the management API takes this sandbox's admin token: get one with its admin key, from GET /api/sandbox/keys" }, 401, { "WWW-Authenticate": 'Bearer scope="sandbox/admin"' });
+    return ok ? undefined : json({ error: "the management API takes this sandbox's admin token: get one with its admin key, from GET /api/sandbox/keys-shared-on-purpose" }, 401, { "WWW-Authenticate": 'Bearer scope="sandbox/admin"' });
   };
   /** The guide for agents. A sandbox's own copy names that sandbox, so handing over its one link is enough. */
   async function llmsTxt(sandbox: Sandbox) {
@@ -143,7 +150,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       // The Conformance page's old address: its checks are part of the server check now.
       if (p === "/checks" && req.method === "GET") return new Response(null, { status: 308, headers: { location: `/check${sandbox.id ? `?sandbox=${encodeURIComponent(sandbox.prefix)}` : ""}` } });
       // The management API takes this sandbox's admin token. Its keys are the one thing open: the URL is the access.
-      if (p === "/api/sandbox/keys" && req.method === "GET") return PUBLIC_DEMO && !sandbox.id ? json({ error: "the shared sandbox gives out no keys: make a sandbox of your own with POST /api/sandboxes" }, 403) : json(sampleKeys(sandbox));
+      if (p === KEYS_PATH && req.method === "GET") return PUBLIC_DEMO && !sandbox.id ? json({ error: "the shared sandbox gives out no keys: make a sandbox of your own with POST /api/sandboxes" }, 403) : json(sampleKeys(sandbox));
       if (p === "/api/sandbox" || p.startsWith("/api/sandbox/")) {
         const denied = adminDenied(sandbox, req);
         if (denied) return denied;

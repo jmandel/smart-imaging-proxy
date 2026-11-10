@@ -13,7 +13,7 @@ export function assertion(client_id: string, jwk: any, aud: string, now = Math.f
 }
 /** A sandbox's sample keys, from its management API's one open call. */
 export async function keysOf(demo: Demo, prefix: string) {
-  const r = await demo.fetch(new Request(`${CONFIG.demoUrl}${prefix}/api/sandbox/keys`));
+  const r = await demo.fetch(new Request(`${CONFIG.demoUrl}${prefix}/api/sandbox/keys-shared-on-purpose`));
   if (!r.ok) throw new Error(`keys: HTTP ${r.status}`);
   return r.json() as Promise<{ tokenEndpoint: string; now: number; admin: { client_id: string; jwk: any; scope: string }; services: { client_id: string; jwk: any; scope: string }[] }>;
 }

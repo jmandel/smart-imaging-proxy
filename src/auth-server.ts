@@ -215,8 +215,11 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     if (!check("authorization-server", "client is registered, with its public key on file", !!reg && head.kid === reg.kid, { client: claims.iss, kid: head.kid, registered_scopes: reg?.scopes.join(" ") })) return undefined;
     if (!check("authorization-server", "assertion's algorithm suits its key, and iss equals sub", algorithmFits(head.alg, reg!.publicKey) && claims.sub === claims.iss, { alg: head.alg, iss: claims.iss, sub: claims.sub })) return undefined;
     if (!check("authorization-server", "assertion's aud is this token endpoint", claims.aud === tokenUrl, { aud: claims.aud })) return undefined;
-    if (!check("authorization-server", "assertion hasn't expired", Number.isInteger(claims.exp) && claims.exp >= now(), { exp: claims.exp, now: now() })) return undefined;
-    if (!check("authorization-server", "assertion's exp is no more than five minutes ahead", claims.exp <= now() + 300, { exp: claims.exp, now: now() })) return undefined;
+    // An assertion is checked by real time, not the demo clock: an app signs with its own clock, and can't know
+    // where this sandbox's clock was moved to. The demo clock governs what the story is about: tokens, links, ages.
+    const t = realNow();
+    if (!check("authorization-server", "assertion hasn't expired", Number.isInteger(claims.exp) && claims.exp >= t, { exp: claims.exp, now: t })) return undefined;
+    if (!check("authorization-server", "assertion's exp is no more than five minutes ahead", claims.exp <= t + 300, { exp: claims.exp, now: t })) return undefined;
     if (!check("authorization-server", "assertion's jti hasn't been used", typeof claims.jti === "string" && !!claims.jti && !usedJti.has(claims.jti), { jti: claims.jti })) return undefined;
     const algorithm = ALGORITHMS[head.alg]!;
     const ok = verify(algorithm.hash, Buffer.from(`${h}.${b}`), { key: reg!.publicKey, ...(algorithm.ieee ? { dsaEncoding: "ieee-p1363" as const } : {}) }, Buffer.from(s!, "base64url"));
@@ -598,10 +601,13 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
   };
 }
 
-/** Signed by `clock`, which is the clock of the deployment it goes to. */
-export function clientAssertion(c: BackendClient, aud: string, clock: Clock = demoClock): string {
+/** The time a client assertion is signed and checked by: real time, whatever a sandbox's demo clock says. */
+export const realNow = () => Math.floor(Date.now() / 1000);
+
+/** A client assertion, signed by real time, as any app signs one. */
+export function clientAssertion(c: BackendClient, aud: string): string {
   const head = b64url(JSON.stringify({ alg: "ES256", kid: c.kid, typ: "JWT" }));
-  const claims = b64url(JSON.stringify({ iss: c.client_id, sub: c.client_id, aud, jti: randomBytes(8).toString("hex"), exp: clock.now() + 300 }));
+  const claims = b64url(JSON.stringify({ iss: c.client_id, sub: c.client_id, aud, jti: randomBytes(8).toString("hex"), exp: realNow() + 240 }));
   const sig = sign("sha256", Buffer.from(`${head}.${claims}`), { key: c.privateKey, dsaEncoding: "ieee-p1363" });
   return `${head}.${claims}.${b64url(sig)}`;
 }
