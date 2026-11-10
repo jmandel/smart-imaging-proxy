@@ -1,7 +1,7 @@
 // What this browser remembers: the sandboxes it has made or joined, the one it was last in, and the viewer's
 // choice of server. Every read and write survives storage being unavailable, as in a private window.
 import { useSyncExternalStore } from "react";
-import { api, BASE } from "./api";
+import { api, BASE, sandboxName } from "./api";
 
 export const stored = (key: string): string | null => { try { return localStorage.getItem(key); } catch { return null; } };
 export const store = (key: string, value: string | null) => { try { value === null ? localStorage.removeItem(key) : localStorage.setItem(key, value); } catch {} };
@@ -63,6 +63,8 @@ export async function createSandbox(): Promise<string> {
   if (!r.ok) throw new Error(r.status === 429 ? "Too many sandboxes from this address. Try again in a while." : `The sandbox couldn't be created (HTTP ${r.status})`);
   const { base } = await r.json();
   saveSandboxes([...knownSandboxes(), { base, joined: false }]);
+  // Its name, as soon as the server says it, so lists show it before anyone visits the sandbox.
+  sandboxName(base).then(name => rememberName(base, name));
   return base;
 }
 
