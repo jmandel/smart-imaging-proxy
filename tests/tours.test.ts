@@ -12,7 +12,7 @@ import { patientAttributes, ON_FILE } from "../src/stores";
 import { nameOf } from "../src/sandbox";
 import { ageAt, cascade, referenceModel, type RefStudy } from "../src/reference-model";
 import { RULE_SETS } from "../src/rule-presets";
-import { Ctx } from "../src/flows/runtime";
+import { tourPage } from "./tour-page";
 import { refStudies, tourById } from "../src/tours";
 
 const root = join(import.meta.dir, "..");
@@ -30,16 +30,17 @@ async function start(tour: string) {
   expect(r.status).toBe(201);
   return r.body.sandbox.base as string;
 }
-async function runAll(tour: string) {
-  const base = await start(tour);
-  let state = (await call("GET", `${base}/api/tours/state?tour=${tour}`)).body;
+/** Runs every step of a tour as its page does. `change` alters one step's plan, or adds to it. */
+async function runAll(tour: string, change: Record<string, Parameters<ReturnType<typeof tourPage>["step"]>[2]> = {}) {
+  const base = await start(tour), page = tourPage(demo, base);
+  let state = (await page.state(tour)).body;
   const expectedFirst = state.steps[0].expect;
   for (const s of state.steps) {
-    const r = await call("POST", `${base}/api/tours/${tour}/steps/${s.id}`, { mode: "scripted" });
+    const r = await page.step(tour, s.id, change[s.id]);
     expect([s.id, r.status]).toEqual([s.id, 200]);
     state = r.body;
   }
-  return { base, state, expectedFirst };
+  return { base, state, expectedFirst, page };
 }
 
 describe("each tour", () => {
@@ -67,17 +68,17 @@ describe("each tour", () => {
     }, 120000);
   }
   test("the shown expectation comes from the sandbox's policy at that moment", async () => {
-    const base = await start("caregiver");
-    const before = (await call("GET", `${base}/api/tours/state?tour=caregiver`)).body;
+    const base = await start("caregiver"), page = tourPage(demo, base);
+    const before = (await page.state("caregiver")).body;
     expect(before.steps[0].expect).toBe("Sam can see Josh's studies at Lakeside and Northside");
-    await call("POST", `${base}/api/tours/caregiver/steps/share`, {});
-    await call("POST", `${base}/api/tours/caregiver/steps/launch`, {});
-    const now = (await call("GET", `${base}/api/tours/state`)).body;
+    await page.step("caregiver", "share");
+    await page.step("caregiver", "launch");
+    const now = (await page.state()).body;
     expect(now.steps.find((s: any) => s.id === "search")).toMatchObject({ expect: "1 study:", expectItems: ["MRI brain without contrast"] });
     // Change the sandbox's policy behind the tour's back, and the model's expectation follows it.
     const sandbox = (stack.sandboxes.resolve(base.slice(3)) as any).sandbox;
     await sandbox.policy.approveApp({ by: "user:sam-caregiver", app: "app:portal-app", patient: "patient:josh-example", sites: ["Lakeside Imaging", "Northside Pathology"] });
-    expect((await call("GET", `${base}/api/tours/state`)).body.steps.find((s: any) => s.id === "search")).toMatchObject({ expect: "2 studies:", expectItems: ["MRI brain without contrast", "Lung, digital slide, H&E"] });
+    expect((await page.state()).body.steps.find((s: any) => s.id === "search")).toMatchObject({ expect: "2 studies:", expectItems: ["MRI brain without contrast", "Lung, digital slide, H&E"] });
   }, 60000);
   test("the revoke story's panels come from its run: the links the app really held, and once they expire, nothing", async () => {
     const { state } = await runAll("revoke");
@@ -90,39 +91,32 @@ describe("each tour", () => {
     expect(outcomes(state.panels[2].chain)).toEqual([["outcome", []], ["links", []]]);
   }, 120000);
   test("a step whose real answer isn't the model's says so", async () => {
-    const base = await start("revoke");
-    for (const s of ["share", "launch", "search", "revoke", "search-again"]) expect((await call("POST", `${base}/api/tours/revoke/steps/${s}`, {})).status).toBe(200);
+    const base = await start("revoke"), page = tourPage(demo, base);
+    for (const s of ["share", "launch", "search", "revoke", "search-again"]) expect((await page.step("revoke", s)).status).toBe(200);
     // Rotating the key ends the signed URL early, which the model, reading only policy and the clock, doesn't know.
     const sandbox = (stack.sandboxes.resolve(base.slice(3)) as any).sandbox;
     await sandbox.rotateSigningKey();
-    const r = await call("POST", `${base}/api/tours/revoke/steps/signed`, {});
+    const r = await page.step("revoke", "signed");
     const step = r.body.steps.find((s: any) => s.id === "signed");
     expect(step.result.ok).toBe(false);
     expect(step.result.expected).toStartWith("The app gets");
     expect(step.result.actual).toStartWith("Refused");
     expect(step.result.detail).toStartWith("HTTP 404");
   }, 60000);
-  /** Runs a tour with one of Ctx's actions replaced, and gives each step's result. */
-  async function runWith(tour: string, method: "revokeDelegation" | "delegate", replacement: (real: any) => any) {
-    const proto = Ctx.prototype as any, real = proto[method];
-    proto[method] = replacement(real);
-    try { return (await runAll(tour)).state.steps as any[]; } finally { proto[method] = real; }
-  }
   test("a revoke that writes nothing fails its step, which says what it intended", async () => {
-    const steps = await runWith("revoke", "revokeDelegation", () => async () => {});
+    // The page skips the revoke's write.
+    const steps = (await runAll("revoke", { revoke: { plan: p => ({ ...p, calls: [] }) } })).state.steps as any[];
     const revoke = steps.find(s => s.id === "revoke");
     expect(revoke.result.ok).toBe(false);
     expect(revoke.result.expected).toBe("Sam can see none of Josh's studies");
     expect(revoke.result.write).toContain("shares: it intended none, and the store holds");
   }, 120000);
   test("a share that writes nothing, or writes more than it should, fails its step", async () => {
-    const none = await runWith("caregiver", "delegate", () => async () => 303);
-    expect(none.find(s => s.id === "share").result).toMatchObject({ ok: false, write: expect.stringContaining("shares: it intended") });
-    const more = await runWith("caregiver", "delegate", real => async function (this: any, ...args: any[]) {
-      const status = await real.apply(this, args);
-      await this.sandbox.policy.share({ from: "user:josh", with: "user:alex-neighbor", patient: "patient:josh-example", sites: ["Lakeside Imaging"], label: "neighbor" });
-      return status;
-    });
+    // The page skips the share's write, and says it went through.
+    const none = (await runAll("caregiver", { share: { plan: p => ({ ...p, calls: [] }) } })).state.steps as any[];
+    expect(none.find(s => s.id === "share").result).toMatchObject({ ok: false });
+    // The page writes the share, and one more.
+    const more = (await runAll("caregiver", { share: { after: call => call("POST", "/api/sandbox/policy/shares", { from: "user:josh", with: "user:alex-neighbor", patient: "patient:josh-example", sites: ["Lakeside Imaging"], label: "neighbor" }) } })).state.steps as any[];
     const share = more.find(s => s.id === "share").result;
     // Sam's records are what the model said, and the write still differs.
     expect(share.actual).toBe(share.expected);
@@ -130,25 +124,27 @@ describe("each tour", () => {
     expect(share.write).toContain("user:alex-neighbor");
   }, 120000);
   test("reading a tour's state starts nothing", async () => {
-    const base = await start("caregiver");
+    const base = await start("caregiver"), page = tourPage(demo, base);
     for (let i = 0; i < 2; i++) {
-      const state = (await call("GET", `${base}/api/tours/state?tour=caregiver`)).body;
+      const state = (await page.state("caregiver")).body;
       expect(state).toMatchObject({ session: null, activityUrl: null, tour: { id: "caregiver" } });
       expect(state.steps[0].expect).toBeTruthy();
     }
     expect((await call("GET", `${base}/api/tours`)).body.current).toBeNull();
     // The sandbox is still free for whichever tour runs a step first.
-    expect((await call("POST", `${base}/api/tours/revoke/steps/share`, {})).status).toBe(200);
+    expect((await page.step("revoke", "share")).status).toBe(200);
     expect((await call("GET", `${base}/api/tours`)).body.current).toBe("revoke");
   }, 60000);
   test("steps run in order, once, only in the tour's own sandbox", async () => {
-    expect((await call("POST", "/api/tours/caregiver/steps/share", {})).status).toBe(409);
+    expect((await tourPage(demo, "").step("caregiver", "share")).status).toBe(409);
     expect((await call("POST", "/api/tours/nope/start", {})).status).toBe(404);
-    const base = await start("caregiver");
-    expect((await call("POST", `${base}/api/tours/caregiver/steps/search`, {})).status).toBe(409);
-    expect((await call("POST", `${base}/api/tours/caregiver/steps/share`, {})).status).toBe(200);
-    expect((await call("POST", `${base}/api/tours/caregiver/steps/share`, {})).status).toBe(409);
-    expect((await call("POST", `${base}/api/tours/revoke/steps/share`, {})).status).toBe(409);
+    const base = await start("caregiver"), page = tourPage(demo, base);
+    expect((await page.step("caregiver", "search")).status).toBe(409);
+    expect((await page.step("caregiver", "share")).status).toBe(200);
+    expect((await page.step("caregiver", "share")).status).toBe(409);
+    expect((await page.step("revoke", "share")).status).toBe(409);
+    // A step finishes only after it begins.
+    expect((await page.call("POST", "/api/sandbox/tours/caregiver/steps/launch/finish", { seen: {} })).status).toBe(409);
     const list = (await call("GET", "/api/tours")).body;
     expect(list.tours.map((t: any) => t.id)).toEqual(TOURS);
   }, 60000);

@@ -8,7 +8,8 @@ import { restoreGrants } from "./clients";
 import { ref, type PolicyDocument } from "@smart-imaging-proxy/core";
 import { PATIENT_NAMES, USERS, type BackendClient } from "./auth-server";
 import { defaultsFor, FLOWS, runStep, startFlowIn } from "./flows";
-import { Ctx, StepStopped } from "./flows/runtime";
+import { StepStopped } from "./flows/runtime";
+import { DEFAULT_SCOPE } from "./flows/oauth";
 import { cascade, referenceModel, type RefStudy } from "./reference-model";
 import { citedBy, referralsFrom, reportTitle } from "./referrals";
 import { RULE_SETS } from "./rule-presets";
@@ -48,13 +49,28 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 /** What a check compares: a value, how it reads in plain words, any studies it lists, and its technical detail. */
 interface Answer { value: unknown; text: string; items?: string[]; detail?: string; }
 interface Run {
-  sandbox: Sandbox; c: Ctx; mode: "scripted" | "window"; state: Record<string, any>;
+  sandbox: Sandbox; state: Record<string, any>;
+  /** How the proxy decided the step's last retrieval, from its recorded events. */
+  retrieved(): string | undefined;
   model(change?: (doc: PolicyDocument) => PolicyDocument): ReturnType<typeof modelOf>;
   title(id: string): string;
 }
 /** Words that may name the sandbox's own sites. */
 type Text = string | ((sandbox: Sandbox) => string);
 const textOf = (t: Text, sandbox: Sandbox) => typeof t === "string" ? t : t(sandbox);
+/**
+ * What the page does for a step, with its own token, or with the sandbox's management API: the server
+ * plans and judges, and never does the protocol itself.
+ */
+export type Plan =
+  | { do: "sign-in"; user: string; patient: string; sites?: string[]; app: string; redirectUri: string; scope: string; aud: string }
+  | { do: "search"; as: string; query: string }
+  | { do: "retrieve"; as: string; url: string }
+  | { do: "service-search"; client: string; query: string }
+  | { do: "service-retrieve"; client: string; url: string }
+  | { do: "management"; calls: { method: string; path: string; body?: unknown }[] }
+  | { do: "referral-check"; referral: string; patientRef?: string; accession?: string; system?: string; clinicalFhir: string }
+  | { do: "none" };
 interface TourStep {
   id: string; title: Text; actor: string;
   /** What a step that makes no request did, said in place of a link to its activity. */
@@ -64,7 +80,10 @@ interface TourStep {
   /** The policy as it will be once this step's action is done: the expectation comes from it, and the store's policy after the step must match it. */
   intends?: (r: Run, doc: PolicyDocument) => PolicyDocument;
   expect(r: Run, m: ReturnType<typeof modelOf>): Answer;
-  act(r: Run): Promise<Answer>;
+  /** What the page should do, decided as the step begins. Anything only the sandbox does, such as moving its clock, happens here. */
+  plan(r: Run): Plan;
+  /** The step's answer, from what the page saw. */
+  settle(r: Run, seen: any): Promise<Answer> | Answer;
 }
 interface Tour {
   id: string; title: string; summary: Text; steps: TourStep[];
@@ -166,14 +185,16 @@ function launchStep(id: string, user: string, patient: string, sites: (r: Run) =
       const sitesApproved = narrowed && !(narrowed.length && narrowed.length === allSites(r).length) ? sorted(narrowed) : undefined;
       return { value: { token: true, patient, sites: sitesApproved ?? "all" }, text: approved(sitesApproved), detail: `An access token for patient ${patient}` };
     },
-    async act(r) {
-      const t = await r.c.launch(user, APP, { window: r.mode === "window", sites: sites(r), patient });
-      if (!t.access_token) return refused(t.error ?? "an error");
-      r.state[`token:${user}`] = t.access_token;
-      r.state[`tokenExp:${user}`] = r.sandbox.clock.now() + (t.expires_in ?? 0);
-      const a = r.sandbox.store.approvals().find(x => x.by === ref("user", user) && x.app === ref("app", APP) && x.patient === ref("patient", t.patient));
+    plan: r => ({ do: "sign-in", user, patient, ...(sites(r) ? { sites: sites(r) } : {}), app: APP, redirectUri: r.sandbox.urls.callback, scope: DEFAULT_SCOPE, aud: r.sandbox.urls.clinicalFhir }),
+    settle(r, seen) {
+      // In a window, a person chooses who signs in: anyone else isn't who this step is about.
+      const who = typeof seen.state === "string" ? r.sandbox.auth.signedInFor(seen.state) : undefined;
+      if (who && who !== user) return { value: { token: false, signedIn: who }, text: `${first(who)} signed in, not ${first(user)}`, detail: "Someone else signed in, in the sign-in window" };
+      if (!seen.token) return refused(seen.error ?? "an error");
+      r.state[`tokenExp:${user}`] = r.sandbox.clock.now() + (seen.expiresIn ?? 0);
+      const a = r.sandbox.store.approvals().find(x => x.by === ref("user", user) && x.app === ref("app", APP) && x.patient === ref("patient", seen.patient));
       const sitesApproved = a?.sites ? sorted(a.sites) : undefined;
-      return { value: { token: true, patient: t.patient, sites: sitesApproved ?? "all" }, text: approved(sitesApproved), detail: `An access token for patient ${t.patient}` };
+      return { value: { token: true, patient: seen.patient, sites: sitesApproved ?? "all" }, text: approved(sitesApproved), detail: `An access token for patient ${seen.patient}` };
     },
   };
 }
@@ -181,12 +202,13 @@ function searchStep(id: string, user: string, patient: string, title: Text): Tou
   return {
     id, title, actor: "The app",
     expect: (r, m) => reachText(r, m.appReach(user, APP, patient).map(s => s.id)),
-    async act(r) {
-      const s = await r.c.search(r.state[`token:${user}`], `patient=${patient}&_include=ImagingStudy:endpoint`);
+    plan: () => ({ do: "search", as: user, query: `patient=${patient}&_include=ImagingStudy:endpoint` }),
+    settle(r, seen) {
+      const studies: { id: string; uid: string; base: string }[] = seen.studies ?? [];
       // The signed URLs a later step uses are the last ones search gave.
-      if (Object.keys(s.studies).length) { r.state.found = s.studies; r.state.signedAt = r.sandbox.clock.now(); }
-      if (s.status !== 200) return { value: `HTTP ${s.status}`, text: "The search is refused", detail: `HTTP ${s.status}` };
-      return reachText(r, Object.keys(s.studies));
+      if (studies.length) { r.state.found = Object.fromEntries(studies.map(x => [x.id, { uid: x.uid, base: x.base }])); r.state.signedAt = r.sandbox.clock.now(); }
+      if (seen.status !== 200) return { value: `HTTP ${seen.status}`, text: "The search is refused", detail: `HTTP ${seen.status}` };
+      return reachText(r, studies.map(x => x.id));
     },
   };
 }
@@ -201,12 +223,15 @@ function plainRetrieveStep(id: string, user: string, patient: string, pick: (r: 
       if (!study) return { value: "none", text: "There's no such study here" };
       return answer(r, study, m.appReach(user, APP, patient).some(s => s.id === study) ? 200 : 404);
     },
-    async act(r) {
+    plan(r) {
       const study = chosen(r);
-      if (!study) return { value: "none", text: "There's no such study here" };
-      const uid = r.sandbox.catalog.allStudies().find(s => s.id === study)!.uid;
-      const got = await r.c.retrieve("App", `Retrieve ${study} by UID`, r.c.studyUrl(r.c.plainBase(), uid), r.state[`token:${user}`]);
-      return answer(r, study, got.status);
+      if (!study) return { do: "none" };
+      // No signed context: the proxy's address with none, which makes it ask the Imaging Server.
+      return { do: "retrieve", as: user, url: `${r.sandbox.urls.proxy}/wado/-/studies/${r.sandbox.catalog.allStudies().find(s => s.id === study)!.uid}` };
+    },
+    settle(r, seen) {
+      const study = chosen(r);
+      return study ? answer(r, study, seen.status) : { value: "none", text: "There's no such study here" };
     },
   };
 }
@@ -233,13 +258,16 @@ function signedRetrieveStep(id: string, user: string, patient: string, title: Te
       const status = now < exp ? 200 : now >= r.state[`tokenExp:${user}`] ? 401 : m.appReach(user, APP, patient).some(s => s.id === study) ? 200 : 404;
       return answer(r, study, status, now < exp ? "alone" : status === 401 ? "token" : "asked");
     },
-    async act(r) {
+    plan(r) {
       const study = smallestFound(r);
       if (!study) throw new StepStopped("An earlier search has to find a study first");
       if (after) { const lifetime = r.sandbox.store.getSettings().contextLifetimeSeconds; r.sandbox.clock.advance(lifetime + after); }
       const f = r.state.found[study];
-      const got = await r.c.retrieve("App", `Retrieve ${study} with its signed URL`, r.c.studyUrl(f.base, f.uid), r.state[`token:${user}`]);
-      return answer(r, study, got.status, got.authz === "instant" ? "alone" : got.authz === "cached" ? "cached" : got.status === 401 ? "token" : "asked");
+      return { do: "retrieve", as: user, url: `${f.base}/studies/${f.uid}` };
+    },
+    settle(r, seen) {
+      const authz = r.retrieved();
+      return answer(r, smallestFound(r)!, seen.status, authz === "instant" ? "alone" : authz === "cached" ? "cached" : seen.status === 401 ? "token" : "asked");
     },
   };
 }
@@ -252,11 +280,12 @@ const accessOf = async (r: Run, user: string, patient: string) => {
 };
 function shareStep(id: string, sites: (r: Run) => string[], title: Text): TourStep {
   return {
-    id, title, actor: first(JOSH), signsIn: true, intends: (r, doc) => withShare(sites(r))(r, doc),
+    id, title, actor: first(JOSH), intends: (r, doc) => withShare(sites(r))(r, doc),
     expect: (_r, m) => canSeeText(SAM, JOSH_PATIENT, m.approvableSites(SAM, JOSH_PATIENT)),
-    async act(r) {
-      const status = await r.c.delegate(JOSH, SAM, "caregiver", sites(r), { window: r.mode === "window", patient: JOSH_PATIENT });
-      if (status !== 303) return { value: `HTTP ${status}`, text: "Josh's account page refused the share", detail: `HTTP ${status}` };
+    plan: r => ({ do: "management", calls: [{ method: "POST", path: "/shares", body: { from: ref("user", JOSH), with: ref("user", SAM), patient: ref("patient", JOSH_PATIENT), sites: sites(r), label: "caregiver" } }] }),
+    settle(r, seen) {
+      const status = seen.statuses?.[0];
+      if (status !== 200) return { value: `HTTP ${status}`, text: "The share was refused", detail: `HTTP ${status}` };
       return accessOf(r, SAM, JOSH_PATIENT);
     },
   };
@@ -276,17 +305,20 @@ function serviceSearchStep(id: string, modality: string, title: Text): TourStep 
       const ids = m.serviceReach(SERVICE, JOSH_PATIENT).filter(s => s.id === ref.study).map(s => s.id);
       return { value: ids, text: ids.length ? `It finds the study the referral cites: ${r.title(ref.study)}` : notCovered(r.title(ref.study)), detail: ids.length ? "HTTP 200, with the study" : "HTTP 200, with no studies" };
     },
-    async act(r) {
+    plan(r) {
+      const ref = referralOf(r.sandbox, modality);
+      if (!ref) return { do: "none" };
+      const cited = citedBy(ref.bundle);
+      return { do: "service-search", client: SERVICE, query: new URLSearchParams({ patient: cited.patientRef!, identifier: `${cited.system}|${cited.accession}`, _include: "ImagingStudy:endpoint" }).toString() };
+    },
+    settle(r, seen) {
       const ref = referralOf(r.sandbox, modality);
       if (!ref) return { value: "none", text: "No referral here cites such a study" };
-      const cited = citedBy(ref.bundle);
-      r.state.service ??= (await r.c.backendToken(SERVICE)).access_token;
-      const query = new URLSearchParams({ patient: cited.patientRef!, identifier: `${cited.system}|${cited.accession}`, _include: "ImagingStudy:endpoint" }).toString();
-      const s = await r.c.search(r.state.service, query, SERVICE);
-      r.state.serviceFound = s.studies;
-      const detail = `A FHIR search by patient and the report's accession number, ${cited.accession}. HTTP ${s.status}${s.status === 200 ? `, with ${Object.keys(s.studies).length ? "the study" : "no studies"}` : ""}.`;
-      if (s.status !== 200) return { value: s.status, text: REFUSED_NO_RULE, detail };
-      const ids = Object.keys(s.studies);
+      const studies: { id: string; uid: string; base: string }[] = seen.studies ?? [];
+      r.state.serviceFound = Object.fromEntries(studies.map(x => [x.id, { uid: x.uid, base: x.base }]));
+      const detail = `A FHIR search by patient and the report's accession number, ${citedBy(ref.bundle).accession}. HTTP ${seen.status}${seen.status === 200 ? `, with ${studies.length ? "the study" : "no studies"}` : ""}.`;
+      if (seen.status !== 200) return { value: seen.status, text: REFUSED_NO_RULE, detail };
+      const ids = studies.map(x => x.id);
       return { value: ids, text: ids.length ? `It finds the study the referral cites: ${r.title(ids[0]!)}` : notCovered(r.title(ref.study)), detail };
     },
   };
@@ -335,7 +367,7 @@ const TOURS: Tour[] = [
     viewer: { user: SAM, patient: JOSH_PATIENT, app: APP },
     scene: w => ({ doc: approve(sharedScene(someSitesOf(w)), SAM, JOSH_PATIENT, ["scene-share"], someSitesOf(w).slice(0, 1)) }),
     steps: [
-      shareStep("share", someSites, w => `Josh shares his studies at ${sitesWords(someSitesOf(w))} with Sam, on his account page`),
+      shareStep("share", someSites, w => `Josh shares his studies at ${sitesWords(someSitesOf(w))} with Sam`),
       launchStep("launch", SAM, JOSH_PATIENT, r => someSites(r).slice(0, 1), w => `Sam signs in, picks Josh, and lets the app see only Josh's studies at ${sitesWords(someSitesOf(w).slice(0, 1))}`),
       searchStep("search", SAM, JOSH_PATIENT, "The app searches Josh's studies"),
       plainRetrieveStep("outside", SAM, JOSH_PATIENT, (r, m) => m.userReach(SAM, JOSH_PATIENT).find(s => !m.appReach(SAM, APP, JOSH_PATIENT).some(x => x.id === s.id))?.id ?? m.userReach(SAM, JOSH_PATIENT)[0]?.id, "The app asks for a study Sam can see but didn't let the app see"),
@@ -361,7 +393,8 @@ const TOURS: Tour[] = [
         intends: (_r, doc) => cascade({ ...doc, shares: doc.shares.filter(s => !(s.from === ref("user", JOSH) && s.with === ref("user", SAM))) }),
         expect: (_r, m) => canSeeText(SAM, JOSH_PATIENT, m.approvableSites(SAM, JOSH_PATIENT)),
         // The study links the app holds when the share goes: the ones its last search gave it.
-        async act(r) { r.state.linked = Object.keys(r.state.found ?? {}); await r.c.revokeDelegation(JOSH, SAM); return accessOf(r, SAM, JOSH_PATIENT); },
+        plan(r) { r.state.linked = Object.keys(r.state.found ?? {}); return { do: "management", calls: [{ method: "DELETE", path: `/shares?${new URLSearchParams({ from: ref("user", JOSH), with: ref("user", SAM) })}` }] }; },
+        settle: r => accessOf(r, SAM, JOSH_PATIENT),
       },
       searchStep("search-again", SAM, JOSH_PATIENT, "The app searches again, without Sam signing in again"),
       signedRetrieveStep("signed", SAM, JOSH_PATIENT, "The app opens a study link it was given before"),
@@ -380,12 +413,15 @@ const TOURS: Tour[] = [
       {
         id: "check", title: "A referral arrives, and the service checks that its patient is on the clinical records server it may use", actor: "The service",
         expect: r => ({ value: true, text: "The referral's patient is on that server", detail: r.sandbox.urls.clinicalFhir }),
-        async act(r) {
+        plan(r) {
           const ref = referralOf(r.sandbox, "CR");
           if (!ref) throw new StepStopped("No referral here cites an X-ray");
           const cited = citedBy(ref.bundle);
-          r.state.referral = ref.bundle;
-          const ok = !!cited.patientRef?.startsWith(`${r.sandbox.urls.clinicalFhir}/Patient/`);
+          return { do: "referral-check", referral: ref.id, patientRef: cited.patientRef, accession: cited.accession, system: cited.system, clinicalFhir: r.sandbox.urls.clinicalFhir };
+        },
+        settle(r, seen) {
+          const ref = referralOf(r.sandbox, "CR")!, cited = citedBy(ref.bundle), ok = seen.ok === true;
+          // What the service decided, as it says it did: the service is the page, and this is its event.
           recordEvent("app", { kind: "referral.checked", client: SERVICE, referral: ref.id, reference: cited.patientRef, authorizedBase: r.sandbox.urls.clinicalFhir, ok, accession: cited.accession, system: cited.system });
           return { value: ok, text: ok ? "The referral's patient is on that server" : "The referral's patient isn't on that server", detail: `${cited.patientRef} ${ok ? "is" : "isn't"} on ${r.sandbox.urls.clinicalFhir}` };
         },
@@ -395,8 +431,8 @@ const TOURS: Tour[] = [
         id: "policy", title: "The imaging network adds a rule: the hand referral service can see Josh's X-rays", actor: "The imaging network",
         intends: (r, doc) => { const rules = RULE_SETS.find(s => s.id === "hand-wrist-referral")!.rules(r.sandbox.catalog)!; return { ...doc, policies: [...doc.policies.filter(p => !rules.some(x => x.id === p.id)), ...rules] }; },
         expect: (r, m) => reachText(r, m.serviceReach(SERVICE, JOSH_PATIENT).map(s => s.id)),
-        async act(r) {
-          for (const rule of RULE_SETS.find(s => s.id === "hand-wrist-referral")!.rules(r.sandbox.catalog)!) await r.sandbox.policy.putPolicy(rule);
+        plan: r => ({ do: "management", calls: RULE_SETS.find(s => s.id === "hand-wrist-referral")!.rules(r.sandbox.catalog)!.map(rule => ({ method: "PUT", path: `/policies/${encodeURIComponent(rule.id)}`, body: rule })) }),
+        async settle(r) {
           const x: any = await r.sandbox.explain({ client: SERVICE, patient: JOSH_PATIENT });
           return reachText(r, x.studies.filter((s: any) => s.release !== "none").map((s: any) => s.id));
         },
@@ -405,12 +441,13 @@ const TOURS: Tour[] = [
       {
         id: "retrieve", title: "The service retrieves the X-ray", actor: "The service",
         expect: (r, m) => { const ref = referralOf(r.sandbox, "CR"); return statusText("The service", ref && m.serviceReach(SERVICE, JOSH_PATIENT).some(s => s.id === ref.study) ? 200 : 404); },
-        async act(r) {
+        plan(r) {
           const [study] = Object.keys(r.state.serviceFound ?? {});
-          if (!study) return statusText("The service", 404);
+          if (!study) return { do: "none" };
           const f = r.state.serviceFound[study];
-          return statusText("The service", (await r.c.retrieve(SERVICE, `Retrieve ${study}`, r.c.studyUrl(f.base, f.uid), r.state.service)).status);
+          return { do: "service-retrieve", client: SERVICE, url: `${f.base}/studies/${f.uid}` };
         },
+        settle: (r, seen) => statusText("The service", Object.keys(r.state.serviceFound ?? {}).length ? seen.status : 404),
       },
       serviceSearchStep("outside", "CT", "A second referral cites a CT scan of Josh's, which the rule doesn't cover"),
     ],
@@ -429,7 +466,8 @@ const TOURS: Tour[] = [
         id: "birthday", title: "The demo clock moves to the day after Riley's 18th birthday", actor: "Setting: the demo clock",
         quiet: "Only the demo clock moved. No request was made.",
         expect: r => { const m = modelOf(r.sandbox, undefined, Math.max(r.sandbox.clock.now(), eighteenth(RILEY) + 86400)); return canSeeText(SAM, RILEY, m.approvableSites(SAM, RILEY)); },
-        async act(r) { r.sandbox.clock.advance(Math.max(0, eighteenth(RILEY) + 86400 - r.sandbox.clock.now())); return accessOf(r, SAM, RILEY); },
+        plan(r) { r.sandbox.clock.advance(Math.max(0, eighteenth(RILEY) + 86400 - r.sandbox.clock.now())); return { do: "none" }; },
+        settle: r => accessOf(r, SAM, RILEY),
       },
       launchStep("again", SAM, RILEY, () => undefined, "Sam tries to sign in for Riley again"),
     ],
@@ -479,16 +517,19 @@ function startOver(sandbox: Sandbox) {
 }
 
 export function createTours(sandbox: Sandbox, clients: Record<string, BackendClient>, stack: Stack) {
-  let run: { tour: Tour; r: Run; results: Record<string, any>; running?: string; session: string } | undefined;
+  /** The run in progress here: the step the page is doing, if any, with what was decided before it began. */
+  let run: { tour: Tour; r: Run; results: Record<string, any>; session: string; pending?: { step: string; trace: string; intended?: PolicyDocument; expected: Answer } } | undefined;
   const json = (b: unknown, status = 200) => Response.json(b, { status });
   const title = (id: string) => { const s = sandbox.catalog.allStudies().find(x => x.id === id); return s ? reportTitle(s) : id; };
   const activityUrl = (session: string, w: Sandbox = sandbox) => `${w.prefix}/activity?session=${encodeURIComponent(session)}`;
 
   function begin(tour: Tour) {
-    const c = new Ctx(sandbox, clients);
     const session = sessionKey(sandbox.id, `tour-${tour.id}-${randomBytes(3).toString("hex")}`);
-    c.session = session;
-    const r: Run = { sandbox, c, mode: "scripted", state: {}, model: change => modelOf(sandbox, change ? doc => change(doc) : undefined), title };
+    const r: Run = { sandbox, state: {}, model: change => modelOf(sandbox, change ? doc => change(doc) : undefined), title, retrieved: () => {
+      const trace = run?.pending?.trace;
+      const done = trace ? stack.collector.store.events({ session, trace }).filter(e => (e.kind === "stream.done" || e.kind === "retrieval.answered") && (e.data as any).authz).at(-1) : undefined;
+      return (done?.data as any)?.authz;
+    } };
     run = { tour, r, results: {}, session };
     return run;
   }
@@ -533,7 +574,7 @@ export function createTours(sandbox: Sandbox, clients: Record<string, BackendCli
   }
   /** A tour's steps before any has run, with nothing started. */
   function preview(tour: Tour) {
-    const r: Run = { sandbox, c: undefined as unknown as Ctx, mode: "scripted", state: {}, model: change => modelOf(sandbox, change ? doc => change(doc) : undefined), title };
+    const r: Run = { sandbox, state: {}, model: change => modelOf(sandbox, change ? doc => change(doc) : undefined), title, retrieved: () => undefined };
     return stateOf(tour, r, {});
   }
   /** Once a story's change has run: the chain before it and after it, from the steps' own results, and the links the app really held. */
@@ -547,26 +588,34 @@ export function createTours(sandbox: Sandbox, clients: Record<string, BackendCli
     let expect: string | undefined, expectDetail: string | undefined, expectItems: string[] | undefined;
     if (next) { try { const e = next.expect(r, r.model(next.intends ? doc => next.intends!(r, doc) : undefined)); expect = e.text; expectDetail = e.detail; expectItems = e.items; } catch (e) { expect = String((e as Error).message ?? e); } }
     return {
-      sandbox: { id: sandbox.id, base: sandbox.prefix }, session: started?.session ?? null, activityUrl: started ? activityUrl(started.session) : null, running: started?.running ?? null, pendingAuthUrl: started ? r.c.pendingAuthUrl ?? null : null,
+      sandbox: { id: sandbox.id, base: sandbox.prefix }, session: started?.session ?? null, activityUrl: started ? activityUrl(started.session) : null,
       tour: { id: tour.id, title: tour.title, summary: textOf(tour.summary, sandbox), detail: tour.detail, premise: tour.premise(sandbox), ...(tour.change ? { change: { step: tour.change.step, before: tour.change.beforeLabel, after: tour.change.after } } : {}) },
       chain: chainNow(tour),
       ...(changed(tour, r, results) ? { panels: changed(tour, r, results) } : {}),
       steps: tour.steps.map(s => ({ id: s.id, title: textOf(s.title, sandbox), actor: s.actor, ...(s.signsIn ? { signsIn: true } : {}), ...(s === next ? { expect, expectDetail, ...(expectItems ? { expectItems } : {}) } : {}), ...(results[s.id] ? { result: results[s.id] } : {}) })),
     };
   }
-  async function step(id: string, mode: "scripted" | "window") {
-    const { tour, r } = run!;
-    const s = tour.steps.find(x => x.id === id)!;
-    r.mode = mode;
-    r.c.beginStep();
+  /**
+   * A step begins: everything is decided before its action. A step that changes policy is checked against
+   * the model of the policy it intends, and then the store's policy against that intended policy. The page
+   * does the action, under the tour's session and this step's trace.
+   */
+  function beginStep(s: TourStep) {
+    const { r } = run!;
     const trace = randomBytes(16).toString("hex");
+    const intended = s.intends?.(r, documentOf(sandbox));
+    const expected = s.expect(r, r.model(intended ? () => intended : undefined));
+    run!.pending = { step: s.id, trace, intended, expected };
+    try { return { plan: s.plan(r), trace, session: run!.session }; }
+    catch (e) { run!.pending = undefined; throw e; }
+  }
+  /** A step finishes with what the page saw: its answer, judged against what was decided as it began. */
+  async function finishStep(s: TourStep, seen: any) {
+    const { tour, r } = run!, { trace, intended, expected } = run!.pending!;
+    await traceSettled();
     let result: any;
     try {
-      // Everything is decided before the action: a step that changes policy is checked against the model
-      // of the policy it intends, and then the store's policy against that intended policy.
-      const intended = s.intends?.(r, documentOf(sandbox));
-      const expected = s.expect(r, r.model(intended ? () => intended : undefined));
-      const actual = await inSandbox(sandbox.id, () => runInSession(run!.session, () => withSpan("user", "action", `${tour.title}: ${textOf(s.title, sandbox)}`, { tour: tour.id, step: s.id, mode }, () => s.act(r), { session: run!.session, trace })));
+      const actual = await inSandbox(sandbox.id, () => runInSession(run!.session, () => withSpan("user", "action", `${tour.title}: ${textOf(s.title, sandbox)}`, { tour: tour.id, step: s.id }, async () => s.settle(r, seen ?? {}), { session: run!.session, trace })));
       const mismatch = intended && writeMismatch(intended, documentOf(sandbox));
       result = { ok: same(actual.value, expected.value) && !mismatch, expected: expected.text, actual: actual.text, ...(expected.items ? { expectedItems: expected.items } : {}), ...(actual.items ? { actualItems: actual.items } : {}), ...(actual.detail ? { detail: actual.detail } : {}), ...(mismatch ? { write: `The step didn't write what it intended. ${mismatch}` } : {}) };
     } catch (e) { result = { ok: false, expected: "", actual: String((e as Error).message ?? e), stopped: e instanceof StepStopped }; }
@@ -578,8 +627,8 @@ export function createTours(sandbox: Sandbox, clients: Record<string, BackendCli
     // A step that made no request says what it did instead.
     if (!result.eventCount) result.quiet = s.quiet ?? "This step made no requests.";
     result.chain = chainNow(tour);
-    run!.results[id] = result;
-    return result;
+    run!.results[s.id] = result;
+    run!.pending = undefined;
   }
 
   /** One protocol flow in a sandbox of its own, every step with its defaults, as one line. */
@@ -600,55 +649,59 @@ export function createTours(sandbox: Sandbox, clients: Record<string, BackendCli
 
   return {
     knownIn,
-    receiveCallback(url: URL) { if (!run?.r.c.pendingAuthUrl) return false; return run.r.c.receiveCallback(url); },
-    callbackContext() { return run?.r.c.callbackContext; },
     async fetch(req: Request, url: URL): Promise<Response> {
       const p = url.pathname;
-      if (p === "/api/tours" && req.method === "GET") return json({ tours: TOURS.map(t => ({ id: t.id, title: t.title, summary: textOf(t.summary, sandbox), premise: t.premise(sandbox), steps: t.steps.length, chains: cardChains(t) })), cast: cast(), checks: PROTOCOL_CHECKS.map(f => ({ id: f.id, title: CHECK_WORDS[f.id]?.title ?? f.title, summary: CHECK_WORDS[f.id]?.summary ?? f.summary })), current: run?.tour.id ?? null, sandbox: sandbox.id ? { id: sandbox.id, base: sandbox.prefix } : null });
-      if (p === "/api/tours/state" && req.method === "GET") {
-        // A sandbox minted for a tour shows its steps, and what the model expects of the first, before any runs. Reading it starts nothing.
-        const want = tourById(url.searchParams.get("tour") ?? "");
-        return json(!run && sandbox.id && want ? preview(want) : state());
+      if (p === "/api/tours" && req.method === "GET") return json({ tours: TOURS.map(t => ({ id: t.id, title: t.title, summary: textOf(t.summary, sandbox), premise: t.premise(sandbox), steps: t.steps.length, chains: cardChains(t) })), cast: cast(), checks: PROTOCOL_CHECKS.map(f => ({ id: f.id, ...(CHECK_WORDS[f.id] ?? { title: f.title, summary: f.summary }) })), current: run?.tour.id ?? null });
+      // Started from the root, where nobody's sandbox is, a tour gets a sandbox of its own.
+      const fromRoot = p.match(/^\/api\/tours\/([^/]+)\/start$/);
+      if (fromRoot && req.method === "POST") {
+        if (!tourById(fromRoot[1]!)) return json({ error: "unknown tour" }, 404);
+        if (sandbox.id) return json({ error: "in a sandbox, a tour starts with its admin token: POST /api/sandbox/tours/{id}/start" }, 409);
+        const w = stack.sandboxes.mint();
+        return json({ sandbox: { id: w.id, base: w.prefix }, tour: fromRoot[1] }, 201);
       }
-      if (req.method !== "POST") return new Response("not found", { status: 404 });
-      const started = p.match(/^\/api\/tours\/([^/]+)\/start$/);
+      // The rest is the sandbox's management API.
+      if (p === "/api/sandbox/tours/state" && req.method === "GET") {
+        // A sandbox shows a tour's steps, and what the model expects of the first, before any runs. Reading it starts nothing.
+        const want = tourById(url.searchParams.get("tour") ?? "");
+        return json(want && (!run || run.tour.id !== want.id) ? preview(want) : state());
+      }
+      const checked = p.match(/^\/api\/checks\/([^/]+)$/);
+      if (checked) {
+        if (!PROTOCOL_CHECKS.some(f => f.id === checked[1])) return json({ error: "unknown check" }, 404);
+        return json(await check(checked[1]!));
+      }
+      if (req.method !== "POST" || !p.startsWith("/api/sandbox/tours/")) return new Response("not found", { status: 404 });
+      if (!sandbox.id) return json({ error: "a tour runs in a sandbox of its own: start one at /api/tours/{id}/start" }, 409);
+      const started = p.match(/^\/api\/sandbox\/tours\/([^/]+)\/start$/);
       if (started) {
         const tour = tourById(started[1]!);
         if (!tour) return json({ error: "unknown tour" }, 404);
-        // In someone's own sandbox, a tour starts that sandbox over from what's on file, and runs there.
-        if (sandbox.id) {
-          if (run?.running) return json({ error: "a step is still running" }, 409);
-          startOver(sandbox);
-          run = undefined;
-          return json({ sandbox: { id: sandbox.id, base: sandbox.prefix }, tour: tour.id }, 201);
-        }
-        // Started from the root, where nobody's sandbox is, a tour gets a temporary one.
-        const w = stack.sandboxes.mint();
-        return json({ sandbox: { id: w.id, base: w.prefix }, tour: tour.id }, 201);
+        // A tour starts the sandbox over from what's on file, and runs there.
+        startOver(sandbox);
+        run = undefined;
+        return json({ sandbox: { id: sandbox.id, base: sandbox.prefix }, tour: tour.id }, 201);
       }
-      const stepped = p.match(/^\/api\/tours\/([^/]+)\/steps\/([^/]+)$/);
+      const stepped = p.match(/^\/api\/sandbox\/tours\/([^/]+)\/steps\/([^/]+)\/(begin|finish)$/);
       if (stepped) {
-        if (!sandbox.id) return json({ error: "a tour runs in its own sandbox: start it, and run its steps at that sandbox's URLs" }, 409);
         const tour = tourById(stepped[1]!);
         if (!tour) return json({ error: "unknown tour" }, 404);
-        if (run && run.tour.id !== tour.id) return json({ error: "this sandbox runs another tour: start this one to get its own sandbox" }, 409);
+        if (run && run.tour.id !== tour.id) return json({ error: "this sandbox runs another tour: start this one to run it here" }, 409);
         if (!run) begin(tour);
-        if (run!.running) return json({ error: "a step is still running" }, 409);
         const s = tour.steps.find(x => x.id === stepped[2]);
         if (!s) return json({ error: "no such step" }, 404);
         if (run!.results[s.id]) return json({ error: "this step has already run: start the tour again to rerun it" }, 409);
         const pending = tour.steps.find(x => !run!.results[x.id]);
         if (pending !== s) return json({ error: `run "${pending?.title}" first` }, 409);
+        if (stepped[3] === "begin") {
+          // Beginning again, say after a reload, replaces a step the page didn't finish.
+          try { return json(beginStep(s)); }
+          catch (e) { run!.results[s.id] = { ok: false, expected: "", actual: String((e as Error).message ?? e), stopped: e instanceof StepStopped, chain: chainNow(tour) }; return json({ state: state() }); }
+        }
+        if (run!.pending?.step !== s.id) return json({ error: "begin the step first" }, 409);
         const body: any = await req.json().catch(() => ({}));
-        run!.running = s.id;
-        try { await step(s.id, body?.mode === "window" ? "window" : "scripted"); } finally { run!.running = undefined; }
+        await finishStep(s, body?.seen);
         return json(state());
-      }
-      if (p === "/api/tours/cancel") { run?.r.c.cancelWindow?.("The sign-in window closed before it finished."); return json(state()); }
-      const checked = p.match(/^\/api\/checks\/([^/]+)$/);
-      if (checked) {
-        if (!PROTOCOL_CHECKS.some(f => f.id === checked[1])) return json({ error: "unknown check" }, 404);
-        return json(await check(checked[1]!));
       }
       return new Response("not found", { status: 404 });
     },

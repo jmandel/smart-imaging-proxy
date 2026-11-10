@@ -138,9 +138,10 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     };
     const callback = traced("app", async req => {
       const back = new URL(req.url);
-      if (!tours.receiveCallback(back) && !session?.ctx.receiveCallback(back)) return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Not expected</title></head><body style="font:15px system-ui;padding:2rem"><p>This redirect doesn't match a sign-in the app is waiting for, so the app ignored it.</p></body></html>`, { status: 400, headers: { "content-type": "text/html" } });
+      // A sign-in a page made in a window of its own: this page hands its address back to that page, which checks its state.
+      if (!session?.ctx.receiveCallback(back)) return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Back in the app</title></head><body style="font:15px system-ui;padding:2rem"><p>Back in the app. You can close this window.</p><script>if (window.opener) { window.opener.postMessage({ signedIn: location.href }, location.origin); window.close(); }</script></body></html>`, { headers: { "content-type": "text/html" } });
       return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Back in the app</title></head><body style="font:15px system-ui;padding:2rem"><p>Back in the app. You can close this window.</p><script>window.close()</script></body></html>`, { headers: { "content-type": "text/html" } });
-    }, (_req, url) => `Redirect back to the app: ${url.pathname}`, (_req, url) => tours.callbackContext() ?? session?.ctx.callbackContext ?? (session ? { session: session.ctx.session } : undefined));
+    }, (_req, url) => `Redirect back to the app: ${url.pathname}`, (_req, url) => session?.ctx.callbackContext ?? (session ? { session: session.ctx.session } : undefined));
 
     const stepInfo = (flow: any, c: Ctx) => flow.steps.map((s: any) => {
       let inputs: unknown[] = [];
@@ -172,6 +173,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
         const denied = adminDenied(sandbox, req);
         if (denied) return denied;
         if (p.startsWith("/api/sandbox/explore/")) return explore.fetch(req, url);
+        if (p.startsWith("/api/sandbox/tours/")) { if (req.method !== "GET") { const refused = refuseWrite(req, url); if (refused) return refused; } return tours.fetch(req, url); }
         if (p.startsWith("/api/sandbox/policy/")) {
           if (req.method !== "GET") { const refused = refuseWrite(req, url); if (refused) return refused; }
           return policyThrough(sandbox, req, `${p.slice("/api/sandbox/policy".length)}${url.search}`);

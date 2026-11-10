@@ -37,8 +37,8 @@ async function open(path: string, opts: { viewport?: typeof DESKTOP; colorScheme
 }
 function watch(page: Page) {
   page.on("pageerror", e => problems.push(`${page.url()}: ${e.message}`));
-  // A 404, or a 403 the protocol calls for, such as a service's refused search, is the browser logging an answer the page expects.
-  page.on("console", m => { if (m.type() === "error" && !/status of 40[34]/.test(m.text())) problems.push(`${page.url()}: ${m.text()}`); });
+  // A 404, or a 401 or 403 the protocol calls for, such as an expired link or a service's refused search, is the browser logging an answer the page expects.
+  page.on("console", m => { if (m.type() === "error" && !/status of 40[134]/.test(m.text())) problems.push(`${page.url()}: ${m.text()}`); });
 }
 const overflow = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
 const signIn = async (popup: Page, user: string, decision: "Approve" | "Deny" = "Approve") => {
