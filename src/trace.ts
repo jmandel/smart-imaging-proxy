@@ -53,18 +53,21 @@ let sinkUrl: string | undefined, sinkSecret: string | undefined;
 /** Where spans go, with the credential the collector takes them with. */
 export const setTraceSink = (url: string, secret?: string) => { sinkUrl = url; sinkSecret = secret; };
 const send = (path: string, body: string) => fetch(localUrl(`${sinkUrl}${path}`), { method: "POST", headers: { "content-type": "application/json", ...(sinkSecret ? { authorization: `Bearer ${sinkSecret}` } : {}) }, body }).then(() => {}, () => {});
+/** Sends to the collector not yet answered, including those a timed flush started. */
+const inFlight = new Set<Promise<unknown>>();
 const flush = (): Promise<void> => {
   timer = undefined;
   if (!sinkUrl) { buffer = []; events = []; return Promise.resolve(); }
-  const sent: Promise<void>[] = [];
+  const sent: Promise<unknown>[] = [];
   if (buffer.length) { sent.push(send("/v1/spans", JSON.stringify(buffer))); buffer = []; }
   if (events.length) { sent.push(send("/v1/events", JSON.stringify(events))); events = []; }
+  for (const p of sent) { inFlight.add(p); p.finally(() => inFlight.delete(p)).catch(() => {}); }
   return Promise.all(sent).then(() => {});
 };
 const emit = (s: SpanRecord) => { buffer.push({ ...s, attrs: { ...s.attrs }, http: s.http && { ...s.http } }); timer ??= setTimeout(flush, 25); };
 export const flushTraces = () => { if (timer) clearTimeout(timer); flush(); };
-/** Sends everything held, and resolves once the collector has it. */
-export const traceSettled = () => { if (timer) clearTimeout(timer); return flush(); };
+/** Sends everything held, and resolves once the collector has it, and everything sent before it too. */
+export const traceSettled = async () => { if (timer) clearTimeout(timer); await flush(); await Promise.allSettled([...inFlight]); };
 
 /** What an event's fields say about who it's about, what it links to, and how it came out. */
 function describeEvent(e: Record<string, any>): Pick<EventRecord, "outcome" | "who" | "links"> {

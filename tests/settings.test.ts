@@ -329,7 +329,7 @@ describe("loading pages", () => {
     const { sandbox } = await ok("POST", "/api/flows/patient-sites/start");
     await ok("POST", `${sandbox.base}/api/flows/patient-sites/steps/consent`, { inputs: { mode: "scripted", sites: ["Lakeside Imaging"] } });
     const saved = JSON.stringify([stack.store.snapshot(), stack.store.getSettings()]);
-    for (const path of ["/", "/tours", "/activity", "/explore.js", "/styles.css", "/api/flows", "/api/flow-state", "/api/session", "/api/sandbox", "/api/sandbox/policy", "/api/explore/options", "/api/explore/session", "/api/tours", "/api/activity"]) {
+    for (const path of ["/", "/tours", "/activity", "/explore.js", "/styles.css", "/api/flows", "/api/flow-state", "/api/session", "/api/sandbox", "/api/sandbox/policy", "/api/sandbox/explore/cast", "/api/sandbox/explore/referrals", "/api/tours", "/api/activity"]) {
       expect((await call("GET", path)).status).toBe(200);
     }
     for (const path of ["/", "/tours", "/api/flows", "/api/flow-state", "/api/session", "/api/sandbox/policy", "/api/sandbox", "/api/tours/state"]) expect((await call("GET", `${sandbox.base}${path}`)).status).toBe(200);
@@ -339,7 +339,8 @@ describe("loading pages", () => {
     expect(Object.keys(state.completed)).toEqual(["consent"]);
     expect(state.completed.consent.result.checks.every((c: any) => c.ok)).toBe(true);
     expect(state.completed.consent.inputs.sites).toEqual(["Lakeside Imaging"]);
-    expect(state.policy.approvals.length).toBe(1);
+    // What's on file, with Josh's consent narrowing his own to Lakeside.
+    expect(state.policy.approvals.length).toBe(APPROVALS_ON_FILE.length);
     expect(state.sandbox).toEqual(sandbox);
   });
   test("each page's script sends nothing on load except reads", async () => {

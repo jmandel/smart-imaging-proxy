@@ -12,6 +12,7 @@ import { accountUrl, scriptedLaunch, submitDelegation } from "../src/flows/oauth
 import { CONFIG, DEFAULT_POLICY_DB } from "../src/config";
 import { storeConfigFromEnv } from "../src/stores";
 import { resetClock, now, advance } from "../src/clock";
+import { APPROVALS_ON_FILE } from "../src/stores";
 
 const root = join(import.meta.dir, "..");
 const dirs: string[] = [];
@@ -68,10 +69,10 @@ describe("the root and scopes", () => {
       expect(c.sandbox.store.approvals().length).toBeGreaterThan(0);
       expect(dump()).toBe(before);
 
-      // A second flow gets a scope of its own, which starts empty.
+      // A second flow gets a scope of its own, which starts from what's on file: no one's choice of sites.
       const second = await startFlow(stack, clients, FLOWS.find(f => f.id === "backend-referral")!);
       expect(second.sandbox.id).not.toBe(c.sandbox.id);
-      expect(second.sandbox.store.approvals()).toEqual([]);
+      expect(second.sandbox.store.approvals().map(a => [a.by, a.patient, a.sites])).toEqual(APPROVALS_ON_FILE.map(a => [a.by, a.patient, undefined]));
       expect(second.sandbox.store.info().counts.accessTokens).toBe(0);
       expect(c.sandbox.store.approvals().length).toBeGreaterThan(0);
       expect(dump()).toBe(before);

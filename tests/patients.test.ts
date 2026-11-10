@@ -277,7 +277,7 @@ describe("the guardian", () => {
     const { html } = await accountPage(SAM_ACCOUNT);
     expect(html).toContain("Riley Example</b>: you're their guardian, on file with the Imaging Server");
     expect(html).toContain("Sam Example</b>: your own records");
-    const o: any = await (await demo.fetch(new Request(`${CONFIG.demoUrl}/api/explore/options`, { headers: { host: new URL(CONFIG.demoUrl).host } }))).json();
+    const o: any = await (await demo.fetch(new Request(`${CONFIG.demoUrl}/api/sandbox/explore/cast`, { headers: { host: new URL(CONFIG.demoUrl).host, ...(await adminFor(demo, "/api/sandbox/explore/cast")) } }))).json();
     expect(o.people.find((p: any) => p.id === SAM_ACCOUNT).role).toStartWith("Riley's parent and guardian");
   });
   test("its chain reads plainly, in the Imaging Server's view", async () => {
@@ -375,32 +375,32 @@ describe("choosing on the Authorization Server's pages", () => {
 });
 
 describe("Explore", () => {
+  /** Explore's page, as far as the sandbox's side goes: the cast, a view explained from policy, and changes through the policy API. */
   const browser = () => {
-    let cookie = "";
     const call = async (method: string, path: string, body?: unknown) => {
-      const r = await demo.fetch(new Request(`${CONFIG.demoUrl}${path}`, { method, headers: { host: new URL(CONFIG.demoUrl).host, "content-type": "application/json", ...(cookie ? { cookie } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }));
-      const set = r.headers.get("set-cookie");
-      if (set) cookie = set.split(";")[0]!;
+      const r = await demo.fetch(new Request(`${CONFIG.demoUrl}${path}`, { method, headers: { host: new URL(CONFIG.demoUrl).host, "content-type": "application/json", ...(await adminFor(demo, path)) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }));
       return r.json() as Promise<any>;
     };
-    const settle = async () => { for (let i = 0; i < 2400; i++) { const s = (await call("GET", "/api/explore/session")).session; if (!s.running) return s; await Bun.sleep(25); } throw new Error("never settled"); };
-    const pick = async (user: string, extra: any = {}) => { await call("POST", "/api/explore/start", { user, mode: "scripted", ...extra }); return settle(); };
-    return { call, pick, settle };
+    let last: any = {}, n = 0;
+    const view = async (q: Record<string, string>) => { last = q; const session = `explore-${q.user ?? q.client}-${++n}`; return { session, ...(await call("GET", `/api/sandbox/explore/view?${new URLSearchParams({ session, ...q })}`)) }; };
+    const pick = (user: string, extra: any = {}) => view({ user, ...extra });
+    const settle = () => view(last);
+    const share = (from: string, to: string, patient: string, sites: string[]) => call("POST", "/api/sandbox/policy/shares", { from: `user:${from}`, with: `user:${to}`, patient: `patient:${patient}`, sites, label: "caregiver" });
+    return { call, pick, settle, view, share };
   };
-  const ids = (s: any) => s.sheets.filter((x: any) => x.released).map((x: any) => x.id).sort();
+  const ids = (s: any) => s.rows.filter((x: any) => x.released).map((x: any) => x.id).sort();
   beforeEach(async () => { await stack.resetSaved(); });
   test("Sam's choices are who Sam holds, and Josh joins them once he shares", async () => {
     const b = browser();
-    const sam = async () => (await b.call("GET", "/api/explore/options")).people.find((p: any) => p.id === SAM_ACCOUNT);
+    const sam = async () => (await b.call("GET", "/api/sandbox/explore/cast")).people.find((p: any) => p.id === SAM_ACCOUNT);
     expect((await sam()).records.map((r: any) => [r.patient, r.via])).toEqual([["sam-example", "self"], ["riley-example", "guardian"]]);
     expect((await sam()).others.map((o: any) => o.patient)).toEqual(["josh-example"]);
     await b.pick(SAM_ACCOUNT, { patient: "josh-example" });
-    await b.call("POST", "/api/explore/share", { from: "josh", with: SAM_ACCOUNT, patient: "josh-example", sites: ["Lakeside Imaging"], relationship: "caregiver" });
-    await b.settle();
+    await b.share("josh", SAM_ACCOUNT, "josh-example", ["Lakeside Imaging"]);
     expect((await sam()).records.map((r: any) => [r.patient, r.via])).toEqual([["sam-example", "self"], ["riley-example", "guardian"], ["josh-example", "share"]]);
     expect((await sam()).others).toEqual([]);
   }, 60000);
-  test("switching whose records is a real new sign-in and search, and the headline says whose they are", async () => {
+  test("switching whose records is a new view, and the headline says whose they are", async () => {
     const b = browser();
     const own = await b.pick(SAM_ACCOUNT);
     expect(own.patient).toBe("sam-example");
@@ -420,7 +420,7 @@ describe("Explore", () => {
     for (const trace of [hidden.id, hidden.uid, hidden.title!, "Skin biopsy", "skin biopsy", "Northside", "confidential-adolescent", "keeps it from guardians"]) expect([trace, JSON.stringify(riley).includes(trace)]).toEqual([trace, false]);
     expect(riley.chain.columns.some((c: any) => c.locked)).toBe(false);
     expect(riley.chain.rows.some((r: any) => r.kind === "label" || r.kind === "records")).toBe(false);
-    expect(riley.sheets.length).toBe(1);
+    expect(riley.rows.length).toBe(1);
     const denied = await b.pick(SAM_ACCOUNT, { patient: "josh-example" });
     expect(denied.status).toBe("no-access");
     expect(denied.headline).toBe("Sam can't see Josh's studies");
@@ -428,7 +428,9 @@ describe("Explore", () => {
     expect(denied.empty.actions.map((o: any) => o.label)).toEqual(["As Josh: share his studies with Sam"]);
     // A denial draws the same diagram, with what's missing and nothing at the end.
     expect(denied.chain.rows.map((r: any) => [r.kind, r.missing ?? false, r.has.length])).toEqual([["sharing", false, 0], ["share", true, 0], ["app-rule", false, 0], ["approval", true, 0], ["outcome", false, 0]]);
-    await b.call("POST", "/api/explore/share", { from: "josh", with: SAM_ACCOUNT, patient: "josh-example", sites: ["Lakeside Imaging"], relationship: "caregiver" });
+    await b.share("josh", SAM_ACCOUNT, "josh-example", ["Lakeside Imaging"]);
+    // Sam approves the app for what Josh shares, as Sam's sign-in would.
+    await b.call("POST", "/api/sandbox/policy/app-approvals", { by: `user:${SAM_ACCOUNT}`, app: "app:portal-app", patient: "patient:josh-example" });
     const shared = await b.settle();
     expect(shared.patient).toBe("josh-example");
     expect(ids(shared)).toEqual(["mri-brain-2020"]);
@@ -444,15 +446,14 @@ describe("Explore", () => {
   }, 60000);
   test("a service reaches a patient only through its referrals, and rule sets still name only Josh", async () => {
     const b = browser();
-    const o = await b.call("GET", "/api/explore/options");
+    const o = await b.call("GET", "/api/sandbox/explore/cast");
     expect(o.services.map((x: any) => x.id)).toEqual(["hand-referral-service", "outside-release-service", "research-donation"]);
-    expect((await b.call("GET", "/api/explore/referrals?service=research-donation")).referrals.length).toBe(10);
-    await b.call("POST", "/api/explore/start", { client: "research-donation", referral: "referral-syn-riley-knee-mr-2022" });
-    const s = await b.settle();
+    expect((await b.call("GET", "/api/sandbox/explore/referrals")).referrals.length).toBe(10);
+    const s = await b.view({ client: "research-donation", referral: "referral-syn-riley-knee-mr-2022" });
     expect(s.status).toBe("forbidden");
     // No rule set reaches Riley's study for this service: the one way on is a referral one of its rule sets does reach.
     expect(s.empty.actions).toEqual([{ kind: "referral", label: expect.stringMatching(/^Open the .+ referral$/), referral: expect.any(String) }]);
-    const next = (await b.call("GET", "/api/explore/referrals?service=research-donation")).referrals.find((r: any) => r.id === s.empty.actions[0].referral);
+    const next = (await b.call("GET", "/api/sandbox/explore/referrals")).referrals.find((r: any) => r.id === s.empty.actions[0].referral);
     expect(next.patient).toBe("Josh");
     const { RULE_SETS } = await import("../src/rule-presets");
     for (const set of RULE_SETS) for (const rule of set.rules(stack.catalog) ?? []) expect(rule.patients).toBe("patient:josh-example");

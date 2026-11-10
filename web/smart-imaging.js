@@ -7,6 +7,8 @@
 const WADO_ACCEPT = 'multipart/related; type="application/dicom"; transfer-syntax=*, multipart/related; type="application/dicom"; transfer-syntax=1.2.840.10008.1.2.1; q=0.5';
 /** How long an app will wait, in all, on servers that say to retry. */
 const MOST_RETRIES = 5, LONGEST_WAIT_SECONDS = 30;
+/** A DICOM UID: digits in dot-separated components, no leading zero in a component, at most 64 characters. */
+const DICOM_UID = /^(?=.{1,64}$)(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))*$/;
 const fhirHeaders = token => ({ authorization: `Bearer ${token}`, accept: "application/fhir+json" });
 
 const sleep = (ms, signal) => new Promise((done, fail) => { const t = setTimeout(done, ms); signal?.addEventListener("abort", () => { clearTimeout(t); fail(new DOMException("aborted", "AbortError")); }, { once: true }); });
@@ -108,11 +110,12 @@ function wadoSource(token, study, { headers = {}, seen = () => {} } = {}) {
       const res = await ask(`${base(series)}/studies/${study.uid}/series/${series.uid}/metadata`, "application/dicom+json", signal);
       if (!res.ok) throw new Error(`The image server answered ${res.status} for this slide's details.`);
       const items = await res.json(), get = (o, t) => o?.[t]?.Value;
-      const typeOf = o => get(o, "00080008") ?? [], uid = o => get(o, "00080018")?.[0];
-      const thumb = items.find(o => typeOf(o)[2] === "THUMBNAIL");
+      // The UID goes into a URL path, so only a well-formed one is used.
+      const typeOf = o => get(o, "00080008") ?? [], uid = o => { const v = get(o, "00080018")?.[0]; return typeof v === "string" && DICOM_UID.test(v) ? v : undefined; };
+      const thumb = items.find(o => typeOf(o)[2] === "THUMBNAIL" && uid(o));
       if (thumb) return uid(thumb);
       const area = o => Number(get(o, "00280010")?.[0] ?? 0) * Number(get(o, "00280011")?.[0] ?? 0);
-      const smallest = items.filter(o => typeOf(o)[2] === "VOLUME" && Number(get(o, "00280008")?.[0] ?? 1) === 1).sort((a, b) => area(a) - area(b))[0];
+      const smallest = items.filter(o => typeOf(o)[2] === "VOLUME" && Number(get(o, "00280008")?.[0] ?? 1) === 1 && uid(o)).sort((a, b) => area(a) - area(b))[0];
       return smallest && uid(smallest);
     },
   };

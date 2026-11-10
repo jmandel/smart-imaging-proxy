@@ -9,6 +9,7 @@ import { startStack, type Stack } from "../src/stack";
 import { createDemoServer } from "../src/demo-server";
 import { registerClients } from "../src/flows";
 import { CONFIG } from "../src/config";
+import { APPROVALS_ON_FILE } from "../src/stores";
 
 const dir = mkdtempSync(join(tmpdir(), "sandboxes-"));
 let stack: Stack;
@@ -75,7 +76,9 @@ test("a tour leaves other apps' tokens and approvals alone, and resets its own",
   expect(r.status).toBe(201);
   expect(w.store.getToken("mine", "access")).toBeDefined();
   expect(w.store.getToken("tours", "access")).toBeUndefined();
-  expect(w.store.approvals().map(a => a.app)).toEqual(["app:my-own-app"]);
+  // The other app's approval stays, and the tour's own app is back to what's on file, with no one's choice of sites.
+  const rows = (xs: { app: string; by: string; patient: string; sites?: string[] }[]) => xs.map(a => [a.app, a.by, a.patient, a.sites ?? null].join(" ")).sort();
+  expect(rows(w.store.approvals())).toEqual(rows([{ app: "app:my-own-app", by: "user:josh", patient: "patient:josh-example" }, ...APPROVALS_ON_FILE]));
 });
 test("sandboxes saved under the directory's old name are kept", () => {
   const home = mkdtempSync(join(tmpdir(), "rename-"));

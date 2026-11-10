@@ -159,11 +159,14 @@ describe("over HTTP", () => {
     expect(await r.text()).not.toContain("store");
     expect((await status(new URL(CONFIG.demoUrl).host)).status).toBe(200);
   });
-  test("Explore's writes act only for a session, and take only the choices it offers", async () => {
+  test("Explore's reads change nothing, and take only the people, patients, services and referrals it knows", async () => {
     const before = fingerprint();
-    for (const [path, body] of [["/api/explore/share", { from: "josh", with: "sam-caregiver", patient: "josh-example", sites: [bait], relationship: canary }], ["/api/explore/apply-policy", { ruleSet: bait }], ["/api/explore/start", { user: bait }], ["/api/explore/start", { client: "../../etc/passwd" }], ["/api/explore/start", { user: "josh", patient: canary }], ["/api/explore/start", "[]"]] as const) {
-      expect([path, (await send("POST", path, body)).status]).toEqual([path, path === "/api/explore/start" ? 400 : 404]);
+    for (const q of [`user=${encodeURIComponent(String(bait))}`, `user=josh&patient=${encodeURIComponent(String(bait))}`, `client=${encodeURIComponent(String(bait))}`, `client=research-donation&referral=${encodeURIComponent(String(bait))}`]) {
+      expect([q, (await send("GET", `/api/sandbox/explore/view?session=x&${q}`)).status]).toEqual([q, 400]);
     }
+    for (const path of ["/api/sandbox/explore/cast", "/api/sandbox/explore/referrals", `/api/sandbox/explore/rule-sets?service=${encodeURIComponent(String(bait))}`]) expect([path, (await send("GET", path)).status]).toEqual([path, 200]);
+    // Explore has no writes of its own: changes go through the policy API, whose own checks apply.
+    for (const path of ["/api/sandbox/explore/view", "/api/sandbox/explore/share", "/api/explore/start"]) expect([path, (await send("POST", path, { user: bait })).status]).toEqual([path, 404]);
     expect(fingerprint()).toBe(before);
     stillIntact();
   });

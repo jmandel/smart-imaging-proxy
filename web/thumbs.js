@@ -1,13 +1,15 @@
 // Thumbnails, decoded in the browser with viewer-kit. One decoder pool for the page, a reduced decode,
 // and the CPU renderer, never a WebGL context per thumbnail. Each slot loads as it scrolls into view,
-// a few at a time, and a new view cancels what the old one was still loading. The bytes come through
-// Explore's session-scoped endpoint, which retrieves one instance through the proxy like any app.
+// a few at a time, and a new view cancels what the old one was still loading. The page says how to get a
+// study's picture: Explore retrieves one instance from WADO-RS with its own token, as any app does.
 const Thumbs = (() => {
   const KIT = "/vendor/viewer-kit/";
   const LIMIT = 3;
   /** How far to reduce: large radiographs most, CT and MR slices hardly. */
   const SCALE = { CR: 3, DX: 3, MG: 3, XA: 2, US: 1, SM: 2 };
   let poolPromise, controller = new AbortController(), active = 0;
+  /** How to get a study's picture: `(study, signal)` gives `{ data, modality }`, or nothing for a study with none. */
+  let pictureOf = async () => undefined;
   const waiting = [];
   /** Each study's thumbnail, drawn or on its way, for this view: re-rendering never fetches it twice. */
   const loads = new Map();
@@ -33,12 +35,11 @@ const Thumbs = (() => {
   }
   async function fetchAndDraw(study, signal) {
     if (signal.aborted) throw new DOMException("aborted", "AbortError");
-    const res = await fetch(`${BASE}/api/explore/thumbnail?study=${encodeURIComponent(study)}`, { signal });
-    if (!res.ok) { await res.body?.cancel(); return null; }
-    const instance = res.headers.get("x-instance") ?? study, modality = res.headers.get("x-modality") ?? "";
-    const scale = SCALE[modality] ?? 1;
-    const [buffer, { kit, pool: p }] = await Promise.all([res.arrayBuffer(), pool()]);
-    const img = await p.decode(buffer, { scale, key: `${instance}@1/${2 ** scale}`, signal, priority: kit.Priority.Visible });
+    const picture = await pictureOf(study, signal).catch(e => { if (signal.aborted) throw e; return undefined; });
+    if (!picture) return null;
+    const scale = SCALE[picture.modality] ?? 1;
+    const { kit, pool: p } = await pool();
+    const img = await p.decode(picture.data, { scale, key: `${study}@1/${2 ** scale}`, signal, priority: kit.Priority.Visible });
     const canvas = document.createElement("canvas");
     canvas.width = img.columns; canvas.height = img.rows;
     const ctx = canvas.getContext("2d");
@@ -65,6 +66,8 @@ const Thumbs = (() => {
     } catch { if (slot.isConnected) slot.dataset.state = "failed"; }
   }
   return {
+    /** Says how to get a study's picture. */
+    use(fn) { pictureOf = fn; },
     /** Shows each slot under `root` that a released study fills, as it scrolls into view. */
     watch(root) { for (const slot of root.querySelectorAll(".thumb[data-study]")) { if (loads.has(slot.dataset.study)) show(slot); else seen.observe(slot); } },
     /** A new view: cancels what's loading, and forgets what was drawn. */

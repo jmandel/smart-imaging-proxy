@@ -37,6 +37,12 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     // The sandbox's time, by its demo clock, which an assertion's expiry is checked against.
     return { tokenEndpoint: sandbox.auth.tokenUrl, now: sandbox.clock.now(), admin: { ...jwkOf(sandbox.admin), scope: ADMIN_SCOPE }, services: Object.values(sandbox.clients).map(c => ({ ...jwkOf(c), scope: "system/ImagingStudy.rs" })) };
   };
+  /** A management call to the policy API, passed on with the policy credential, in the caller's trace session. */
+  const policyThrough = (sandbox: Sandbox, req: Request, path: string) => traced("demo", async () => {
+    const body = req.method === "GET" || req.method === "DELETE" ? undefined : await req.text();
+    const r = await sandbox.policyFetch(path, { method: req.method, body, contentType: req.headers.get("content-type") ?? undefined });
+    return new Response(r.body, { status: r.status, headers: { "content-type": r.headers.get("content-type") ?? "application/json" } });
+  }, () => `Management API: ${req.method} policy${path.split("?")[0]}`)(req);
   /** Why a management call is refused, if it is: it needs a live token this sandbox issued its admin, with the admin scope. */
   const adminDenied = (sandbox: Sandbox, req: Request) => {
     const token = req.headers.get("authorization")?.match(/^bearer +(.+)$/i)?.[1];
@@ -132,9 +138,9 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     };
     const callback = traced("app", async req => {
       const back = new URL(req.url);
-      if (!explore.receiveCallback(back) && !tours.receiveCallback(back) && !session?.ctx.receiveCallback(back)) return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Not expected</title></head><body style="font:15px system-ui;padding:2rem"><p>This redirect doesn't match a sign-in the app is waiting for, so the app ignored it.</p></body></html>`, { status: 400, headers: { "content-type": "text/html" } });
+      if (!tours.receiveCallback(back) && !session?.ctx.receiveCallback(back)) return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Not expected</title></head><body style="font:15px system-ui;padding:2rem"><p>This redirect doesn't match a sign-in the app is waiting for, so the app ignored it.</p></body></html>`, { status: 400, headers: { "content-type": "text/html" } });
       return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Back in the app</title></head><body style="font:15px system-ui;padding:2rem"><p>Back in the app. You can close this window.</p><script>window.close()</script></body></html>`, { headers: { "content-type": "text/html" } });
-    }, (_req, url) => `Redirect back to the app: ${url.pathname}`, (_req, url) => explore.callbackContext(url) ?? tours.callbackContext() ?? session?.ctx.callbackContext ?? (session ? { session: session.ctx.session } : undefined));
+    }, (_req, url) => `Redirect back to the app: ${url.pathname}`, (_req, url) => tours.callbackContext() ?? session?.ctx.callbackContext ?? (session ? { session: session.ctx.session } : undefined));
 
     const stepInfo = (flow: any, c: Ctx) => flow.steps.map((s: any) => {
       let inputs: unknown[] = [];
@@ -165,14 +171,12 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       if (p === "/api/sandbox" || p.startsWith("/api/sandbox/")) {
         const denied = adminDenied(sandbox, req);
         if (denied) return denied;
+        if (p.startsWith("/api/sandbox/explore/")) return explore.fetch(req, url);
         if (p.startsWith("/api/sandbox/policy/")) {
           if (req.method !== "GET") { const refused = refuseWrite(req, url); if (refused) return refused; }
-          const body = req.method === "GET" || req.method === "DELETE" ? undefined : await req.text();
-          const r = await sandbox.policyFetch(`${p.slice("/api/sandbox/policy".length)}${url.search}`, { method: req.method, body, contentType: req.headers.get("content-type") ?? undefined });
-          return new Response(r.body, { status: r.status, headers: { "content-type": r.headers.get("content-type") ?? "application/json" } });
+          return policyThrough(sandbox, req, `${p.slice("/api/sandbox/policy".length)}${url.search}`);
         }
       }
-      if (p.startsWith("/api/explore/")) return explore.fetch(req, url);
       if (p === "/api/tours" || p.startsWith("/api/tours/") || p.startsWith("/api/checks/")) {
         if (req.method === "POST") { const refused = refuseWrite(req, url); if (refused) return refused; }
         return tours.fetch(req, url);

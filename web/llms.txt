@@ -148,6 +148,11 @@ All paths below are under `$SANDBOX`. Bodies are JSON.
 | `GET /api/sandbox/policy/shares`, `POST` `{"from":"user:josh","with":"user:sam-caregiver","patient":"patient:josh-example","sites":[...],"label":"caregiver"}`, `DELETE ?from=&with=&patient=` | People's shares |
 | `GET /api/sandbox/policy/app-approvals`, `POST` `{"by":"user:josh","app":"app:portal-app","patient":"patient:josh-example","sites":[...]}`, `DELETE ?by=&app=&patient=` | Which sites a person lets an app see |
 | `GET /api/sandbox/policy/explain?client=&user=&patient=` | Each of a patient's studies, whether it's released to that app or service, and why |
+| `GET /api/sandbox/explore/cast` | The people and services, whose records each holds, and each person's `fhirUser` |
+| `GET /api/sandbox/explore/referrals` | The referrals the services work from: the report each cites, its patient reference, accession number and system |
+| `GET /api/sandbox/explore/view?session=&user=&patient=` or `?session=&client=&referral=` | A view explained from policy: headline, the studies its viewer may know of with why each is or isn't released, the layer chain, and what could change it. `session` names the trace session your requests carry |
+| `GET /api/sandbox/explore/happened?session=&study=` | One line for what a session did with a study, from the activity log |
+| `GET /api/sandbox/explore/rule-sets?service=` | The imaging network's named rule sets for a service, with their rules to `PUT` |
 | `POST /api/sandbox/clock` `{"advanceSeconds":N}` or `{"reset":true}` | Moves the demo clock. `N` must be one of the choices in `GET /api/sandbox` |
 | `POST /api/sandbox/reset` `{"confirm":true}` | Puts policy back to what's on file |
 | `POST /api/sandbox/tokens/revoke-all` | Revokes every token |

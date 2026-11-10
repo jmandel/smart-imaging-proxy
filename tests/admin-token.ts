@@ -18,10 +18,10 @@ export async function keysOf(demo: Demo, prefix: string) {
   return r.json() as Promise<{ tokenEndpoint: string; now: number; admin: { client_id: string; jwk: any; scope: string }; services: { client_id: string; jwk: any; scope: string }[] }>;
 }
 /** A token from a sandbox's admin key: for its management API, or with `as`, as a person for an app. */
-export async function adminToken(demo: Demo, prefix: string, as?: { user: string; patient: string; app?: string }, now?: number): Promise<string> {
+export async function adminToken(demo: Demo, prefix: string, as?: { user: string; patient: string; app?: string }, now?: number, headers: Record<string, string> = {}): Promise<string> {
   const k = await keysOf(demo, prefix);
   const form = new URLSearchParams({ grant_type: "client_credentials", client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: assertion(k.admin.client_id, k.admin.jwk, k.tokenEndpoint, now ?? k.now), ...(as ? { user: as.user, patient: as.patient, ...(as.app ? { app: as.app } : {}) } : { scope: k.admin.scope }) });
-  const r = await fetch(k.tokenEndpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: form });
+  const r = await fetch(k.tokenEndpoint, { method: "POST", headers: { ...headers, "content-type": "application/x-www-form-urlencoded" }, body: form });
   const t: any = await r.json();
   if (!t.access_token) throw new Error(`admin token: ${JSON.stringify(t)}`);
   return t.access_token;

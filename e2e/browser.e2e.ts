@@ -37,7 +37,8 @@ async function open(path: string, opts: { viewport?: typeof DESKTOP; colorScheme
 }
 function watch(page: Page) {
   page.on("pageerror", e => problems.push(`${page.url()}: ${e.message}`));
-  page.on("console", m => { if (m.type() === "error" && !/status of 404/.test(m.text())) problems.push(`${page.url()}: ${m.text()}`); });
+  // A 404, or a 403 the protocol calls for, such as a service's refused search, is the browser logging an answer the page expects.
+  page.on("console", m => { if (m.type() === "error" && !/status of 40[34]/.test(m.text())) problems.push(`${page.url()}: ${m.text()}`); });
 }
 const overflow = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
 const signIn = async (popup: Page, user: string, decision: "Approve" | "Deny" = "Approve") => {
@@ -47,7 +48,7 @@ const signIn = async (popup: Page, user: string, decision: "Approve" | "Deny" = 
 };
 /** Does what starts a new Explore view, and waits until the view it started has loaded. */
 async function settle(page: Page, act: () => Promise<unknown>) {
-  await Promise.all([page.waitForResponse(r => /\/api\/explore\/(start|share|approve|apply-policy|unshare|revoke-app)$/.test(new URL(r.url()).pathname)), act()]);
+  await Promise.all([page.waitForResponse(r => new URL(r.url()).pathname.endsWith("/api/sandbox/explore/view")), act()]);
   await page.waitForFunction(() => { const h = document.querySelector("#view .headline h1"); return !!h && !h.querySelector(".spinner"); });
 }
 /** Waits for the view Explore opens on, Josh's, to load. */
@@ -129,7 +130,7 @@ describe("Explore", () => {
       const page = await open("/explore", { viewport });
       await pick(page, "josh");
       const asked: string[] = [];
-      page.on("request", r => { const u = new URL(r.url()); if (u.pathname.endsWith("/api/explore/instance")) asked.push(u.searchParams.get("instance")!); });
+      page.on("request", r => { const u = new URL(r.url()); if (u.pathname.includes("/instances/") && u.searchParams.size === 0 && r.headers()["authorization"]) asked.push(u.pathname.split("/").at(-1)!); });
       await page.locator(`[data-open="${SHEETS.mri}"]`).click();
       const stage = page.locator(".explore-viewer [data-v=stage]");
       await page.locator(".explore-viewer [data-v=note]:empty").waitFor({ state: "attached", timeout: 30000 });
@@ -186,15 +187,18 @@ describe("Explore", () => {
     stack.store.setDocument({ shares: [{ from: "user:josh", with: "user:sam-caregiver", patient: "patient:josh-example", sites: ["Lakeside Imaging", "Riverside Hospital"], label: "caregiver" }] });
     const page = await open("/explore");
     const asked: string[] = [];
-    page.on("request", r => { const u = new URL(r.url()); if (u.pathname.endsWith("/api/explore/thumbnail")) asked.push(u.searchParams.get("study")!); });
+    // Each image the page retrieves, by the study UID in its WADO-RS address, named by study once the view says which is which.
+    page.on("request", r => { const m = new URL(r.url()).pathname.match(/\/studies\/([^/]+)\/series\/[^/]+\/instances\//); if (m) asked.push(m[1]!); });
+    const named = async () => { const ids = await page.evaluate(() => Object.fromEntries(Object.values((0, eval)("view").studies).map((s: any) => [s.uid, s.id]))); return asked.map(u => ids[u] ?? u); };
     await pick(page, "sam-caregiver");
     await settle(page, () => page.locator("[data-whose=josh-example]").click());
-    await page.getByRole("button", { name: "Change what Health Records App can see" }).click();
+    // Sam hasn't approved the app for Josh's records yet: the view's one next step is to.
+    await page.locator(".empty").getByRole("button", { name: "Change what Health Records App can see" }).click();
     await page.locator("#action-form input[value='Riverside Hospital']").uncheck();
     // The previous view's thumbnails finish first: one still queued would be fetched after this, and counted here.
     await page.waitForFunction(() => !document.querySelector(".thumb[data-state=loading]"));
     asked.length = 0;
-    await settle(page, () => page.getByRole("button", { name: "Sign in and approve" }).click());
+    await settle(page, () => page.getByRole("button", { name: "Approve", exact: true }).click());
     await page.locator(".sheet.withheld").first().waitFor();
     await drawn(page, SHEETS.mri);
     await page.waitForLoadState("networkidle");
@@ -202,7 +206,7 @@ describe("Explore", () => {
     expect(withheld.length).toBe(4);
     expect(await page.locator(".sheet.withheld .status").first().innerText()).toContain("Withheld: Sam's approval of the Health Records App doesn't include Riverside Hospital");
     expect(await page.locator(".sheet.withheld .thumb[data-study]").count()).toBe(0);
-    expect(asked).toEqual([SHEETS.mri]);
+    expect(await named()).toEqual([SHEETS.mri]);
     expect(await page.locator(".headline h1").innerText()).toBe("Josh's studies Sam can see");
     expect(await page.locator(".headline .note").innerText()).toBe("The Health Records App can see 1 of these 5.");
     expect(problems).toEqual([]);
@@ -253,23 +257,6 @@ describe("Explore", () => {
     await page.locator("tr.detail details[data-exchange] summary").click();
     await page.locator("tr.detail .raw h4", { hasText: "Signed link, decoded" }).waitFor();
     expect(await page.locator("tr.detail .raw").innerText()).toContain('"ath"');
-    expect(problems).toEqual([]);
-  });
-  test("in a real window: choosing someone opens nothing, and the Sign in button opens the window, where the person signs in", async () => {
-    const page = await open("/explore");
-    await page.evaluate(() => localStorage.setItem("smart-imaging-signin", "window"));
-    let opened = 0;
-    context!.on("page", () => { opened++; });
-    await page.reload();
-    await page.locator("[data-user=sam-caregiver]").click();
-    await page.locator("[data-whose=riley-example]").click();
-    expect(await page.locator(".headline h1").innerText()).toBe("Sam");
-    expect(opened).toBe(0);
-    await page.locator("[data-user=josh]").click();
-    const [popup] = await Promise.all([context!.waitForEvent("page"), page.getByRole("button", { name: "Sign in", exact: true }).click()]);
-    await popup.waitForURL(/\/authorize/);
-    await signIn(popup, "josh");
-    await page.locator(".headline h1", { hasText: "Josh's own studies" }).waitFor({ timeout: 30000 });
     expect(problems).toEqual([]);
   });
   test("an empty view offers the one action its reason calls for, and taking it is a real share", async () => {

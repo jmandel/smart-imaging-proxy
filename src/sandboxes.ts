@@ -66,8 +66,8 @@ export function createSandboxes(shared: Shared, opts: { idleMs?: number; max?: n
   const evict = (id: string) => { const { live } = poolOf(id); const e = live.get(id); if (!e) return; live.delete(id); e.sandbox.close(); };
   const sweep = () => { const cutoff = Date.now() - idleMs; for (const pool of [minted, seeded]) for (const [id, e] of pool.live) if (!e.saved && e.usedAt < cutoff) evict(id); };
   function add(id: string, seed?: Seed, persist = false) {
-    // What a seed names is its sandbox's on file, so a reset there puts the seed back.
-    const store = new PolicyStore({ ...(persist ? { mode: "file" as const, path: pathOf(id) } : { mode: "memory" as const }), onFile: { relationships: seed?.relationships ?? ON_FILE.relationships, policies: seed?.policies ?? ON_FILE.policies }, patientOf: accountPatient });
+    // What a seed names is its sandbox's on file, so a reset there puts the seed back. A seed brings its own choices.
+    const store = new PolicyStore({ ...(persist ? { mode: "file" as const, path: pathOf(id) } : { mode: "memory" as const }), onFile: { relationships: seed?.relationships ?? ON_FILE.relationships, policies: seed?.policies ?? ON_FILE.policies, approvals: seed ? [] : ON_FILE.approvals }, patientOf: accountPatient });
     if (seed) {
       const { document, settings } = splitPanel(seed);
       if (document.shares || document.approvals) store.setDocument({ ...(document.shares ? { shares: document.shares } : {}), ...(document.approvals ? { approvals: document.approvals } : {}) });

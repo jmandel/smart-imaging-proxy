@@ -4,9 +4,9 @@ const BASE = location.pathname.match(/^\/s\/[^/]+/)?.[0] ?? "";
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-/** A call to this page's sandbox. The management API, under /api/sandbox, gets the sandbox's admin token. */
-async function api(method, path, body, base = BASE) {
-  const managed = path.startsWith("/api/sandbox"), send = async () => fetch(`${base}${path}`, { method, headers: { ...(managed ? { authorization: `Bearer ${await adminToken(base)}` } : {}), ...(body === undefined ? {} : { "content-type": "application/json" }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+/** A call to this page's sandbox, with any headers of the page's own. The management API, under /api/sandbox, gets the sandbox's admin token. */
+async function api(method, path, body, base = BASE, headers = {}) {
+  const managed = path.startsWith("/api/sandbox"), send = async () => fetch(`${base}${path}`, { method, headers: { ...headers, ...(managed ? { authorization: `Bearer ${await adminToken(base)}` } : {}), ...(body === undefined ? {} : { "content-type": "application/json" }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   let r = await send();
   // A token revoked, or expired by the demo clock: get a fresh one, once.
   if (r.status === 401 && managed) { adminTokens.delete(base); r = await send(); }
@@ -34,9 +34,9 @@ async function keysOf(base = BASE) {
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`);
   return r.json();
 }
-/** A token from a Backend Services client's key: client_credentials with a signed assertion, plus any extra fields. */
-async function backendToken(client, tokenEndpoint, fields, now) {
-  const r = await fetch(tokenEndpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "client_credentials", client_assertion_type: ASSERTION_TYPE, client_assertion: await signAssertion(client.jwk, client.client_id, tokenEndpoint, now), ...fields }) });
+/** A token from a Backend Services client's key: client_credentials with a signed assertion, plus any extra fields and headers. */
+async function backendToken(client, tokenEndpoint, fields, now, headers = {}) {
+  const r = await fetch(tokenEndpoint, { method: "POST", headers: { ...headers, "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "client_credentials", client_assertion_type: ASSERTION_TYPE, client_assertion: await signAssertion(client.jwk, client.client_id, tokenEndpoint, now), ...fields }) });
   const t = await r.json().catch(() => ({}));
   if (!t.access_token) throw new Error(`The token endpoint refused ${client.client_id}: ${t.error ?? `HTTP ${r.status}`}`);
   return t;
