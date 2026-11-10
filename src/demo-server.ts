@@ -2,6 +2,7 @@
 // flow API the checks and tests run flows through. `/s/{sandbox}/...` is that sandbox's own: its Explore,
 // its tour, its activity, its settings and its redirects. Starting a tour or a flow mints a sandbox for it.
 import { serveJwks } from "./viewer-jwks";
+import { contractOf, expectedTable } from "./contract";
 import { join } from "node:path";
 import { fetchJwks } from "./jwks";
 import { PORTS, PUBLIC_DEMO } from "./config";
@@ -73,7 +74,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     const section = sandbox.id
       ? `## This sandbox\n\n${name ? `This is "${name}". ` : ""}Everything below works here now. This link is its access, so share it only with those who should use it.\n\n\`\`\`sh\nSANDBOX=${site}\n\`\`\``
       : `## Start here\n\nCreate a sandbox, and use it for everything below:\n\n\`\`\`sh\nSANDBOX=${origin}$(curl -sX POST ${origin}/api/sandboxes | jq -r .base)\n\`\`\`\n\nOr open the site in a browser and choose Create a sandbox. Each sandbox has its own copy of this file at \`$SANDBOX/llms.txt\`, which names it.`;
-    const text = (await Bun.file(join(root, "src", "llms.txt")).text()).replaceAll("{{SANDBOX_SECTION}}", section).replaceAll("{{PAGES_SECTION}}", pagesSection(origin, site)).replaceAll("{{ORIGIN}}", origin).replaceAll("{{SITE}}", site);
+    const text = (await Bun.file(join(root, "src", "llms.txt")).text()).replaceAll("{{SANDBOX_SECTION}}", section).replaceAll("{{EXPECTED_TABLE}}", expectedTable(contractOf(sandbox))).replaceAll("{{PAGES_SECTION}}", pagesSection(origin, site)).replaceAll("{{ORIGIN}}", origin).replaceAll("{{SITE}}", site);
     return new Response(text, { headers: { "content-type": "text/plain; charset=utf-8", ...(sandbox.id ? { "x-robots-tag": "noindex", "cache-control": "no-store" } : {}) } });
   }
   const sandboxOf = (w: Sandbox) => w.id ? { id: w.id, base: w.prefix } : null;
@@ -148,6 +149,8 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       const url = new URL(req.url);
       const p = url.pathname;
       if (p === "/llms.txt") return llmsTxt(sandbox);
+      // The sandbox's ground truth as data, for an agent to assert against: no token, since it describes sample data.
+      if (p === "/contract.json" && req.method === "GET") return json(contractOf(sandbox));
       // The viewer's public keys, for servers that only take a jwks_uri: the address holds the key.
       if (!sandbox.id && p.startsWith("/jwks/") && (req.method === "GET" || req.method === "HEAD")) { const r = serveJwks(p); if (r) return r; }
       if (!sandbox.id && (p === "/api/checks" || p.startsWith("/api/checks/"))) return checkRuns.fetch(req, url, new URL(sandbox.urls.demo).origin);
@@ -237,6 +240,14 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
           const jwksUrl = (body as any).jwksUrl, jwksOk = typeof jwksUrl === "string" && jwksUrl ? !!(await fetchJwks(jwksUrl, PUBLIC_DEMO))?.length : true;
           const made = addClient(sandbox.store, body as any, { jwksReachable: () => jwksOk });
           return "error" in made ? json(made, 400) : json(made, 201);
+        }
+        // Clearing up after a batch of test apps: every one whose name starts with the prefix, which can't be empty.
+        if (req.method === "DELETE" && p === "/api/sandbox/clients") {
+          const prefix = url.searchParams.get("name-prefix") ?? "";
+          if (!prefix.trim()) return json({ error: "name-prefix is required, and can't be empty", hint: "DELETE /api/sandbox/clients?name-prefix=probe removes every app whose name starts with probe" }, 400);
+          const gone = listClients(sandbox.store).filter(c => c.name.startsWith(prefix)).map(c => c.id);
+          for (const id of gone) removeClient(sandbox.store, id);
+          return json({ removed: gone });
         }
         const id = p.slice("/api/sandbox/clients/".length);
         if (req.method === "DELETE" && id) return removeClient(sandbox.store, decodeURIComponent(id)) ? json({ removed: true }) : json({ error: "no such app" }, 404);

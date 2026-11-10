@@ -43,6 +43,14 @@ test("a tour leaves registrations alone, and removal ends them", async () => {
   expect(removeClient(w.store, c.id)).toBe(true);
   expect((await authorize(w, c.id)).status).toBe(400);
 });
+test("apps can be removed by a name prefix, and only those, and never with an empty one", async () => {
+  const w = stack.sandboxes.mint();
+  for (const name of ["probe one", "probe two", "Keep me"]) expect((await call("POST", `${w.prefix}/api/sandbox/clients`, { name, redirectUris: ["https://example.org/cb"] })).status).toBe(201);
+  expect((await call("DELETE", `${w.prefix}/api/sandbox/clients?name-prefix=`)).status).toBe(400);
+  const r = await call("DELETE", `${w.prefix}/api/sandbox/clients?name-prefix=probe`);
+  expect(((await r.json()) as any).removed.length).toBe(2);
+  expect(((await (await call("GET", `${w.prefix}/api/sandbox/clients`)).json()) as any).clients.map((c: any) => c.name)).toEqual(["Keep me"]);
+});
 test("the shared root has no registrations", async () => expect((await call("GET", "/api/sandbox/clients")).status).toBe(409));
 
 test("named studies add to an approval's sites, and only what the person can see counts", async () => {

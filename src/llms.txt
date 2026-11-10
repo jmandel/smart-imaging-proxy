@@ -42,14 +42,11 @@ Sign-in has no passwords.
 | `sam-caregiver` | `sam-example` | Two synthetic studies, and guardian of Riley |
 | `robin` | `robin-example` | No studies: a real empty result |
 
-What a correct app sees, signed in with a public client and approving every site, in a new sandbox:
+What a correct app sees, signed in with a public client and approving every site, as this sandbox's policy stands (a new sandbox's is the default):
 
-| Sign in as | Choose | `ImagingStudy?patient=` | `DiagnosticReport?patient=` | Why |
-|---|---|---|---|---|
-| `josh` | `josh-example` | 6 studies, at Northside Pathology, Lakeside Imaging and Riverside Hospital | A report for each | The patient's own |
-| `sam-caregiver` | `sam-example` | 2 studies | A report for each | The patient's own |
-| `sam-caregiver` | `riley-example` | 1 of Riley's 2: the knee MRI at Lakeside | Its report only | The imaging network's rule for guardians of patients 13 to 17 leaves out studies labeled confidential: the skin biopsy slide at Northside, whose report reads as 404 too |
-| `robin` | `robin-example` | None: `total` 0, no entries | None | No studies on file. Exit cleanly, not with an error |
+{{EXPECTED_TABLE}}
+
+The same, as data, with study ids, UIDs and titles, the sites, the people and the kinds of client: `GET $SANDBOX/contract.json`, no token. Assert against it rather than this table.
 
 Approving fewer sites leaves those sites' studies and reports out. `GET /api/sandbox/policy/explain` says why each study is or isn't released.
 
@@ -214,6 +211,7 @@ All paths below are under `$SANDBOX`. Bodies are JSON.
 | `GET /api/sandbox/clients` | Registered apps |
 | `POST /api/sandbox/clients` `{"name":"...","redirectUris":["..."]}` | Registers an app |
 | `DELETE /api/sandbox/clients/{id}` | Removes an app |
+| `DELETE /api/sandbox/clients?name-prefix=` | Removes every app whose name starts with the prefix, which can't be empty, and answers `{"removed":[ids]}`. For clearing up after test apps: give yours a common prefix |
 | `GET /api/sandbox/policy` | Relationships, policies, shares and approvals |
 | `GET /api/sandbox/policy/relationships`, `PUT` with a relationship, `DELETE ?subject=&relation=&object=` | Facts on file: who is guardian of whom |
 | `GET /api/sandbox/policy/policies`, `PUT /api/sandbox/policy/policies/{id}`, `DELETE /api/sandbox/policy/policies/{id}` | The imaging network's rules: sharing, guardian access, service access |
@@ -277,6 +275,18 @@ The shapes the management API takes and gives, as TypeScript. A `Ref` is a kind 
 
 ```ts
 type Ref = string;
+
+// GET $SANDBOX/contract.json, no token: the sandbox's ground truth, worked out from its policy now.
+interface Contract {
+  about: string; sites: string[];
+  users: { username: string; name: string; fhirUser: string; patient?: string }[];
+  patients: { id: string; name: string; studies: number }[];
+  clientTypes: { type: "public" | "confidential" | "backend"; auth: string; grant: string; scope: string }[];
+  expected: { user: string; patient: string; via: "self" | "related";
+    studies: { id: string; uid: string; site?: string; title: string }[];   // what an app approved for every site finds
+    reports: number;
+    withheld: { id: string; site?: string; title: string; labels: string[] }[] }[];
+}
 
 // GET /api/sandbox/keys-shared-on-purpose: the one call with no token.
 interface SampleKey { client_id: string; jwk: JsonWebKey & { kid: string; alg: "ES256" }; scope: string }
