@@ -30,8 +30,8 @@ Not spec requirements: whether the app did what the run asked. Each step depends
 | Condition | Fault | What the spec allows |
 |---|---|---|
 | `small-pages` | `pageSize: 2` | FHIR R4 Search §3.1.1.5.3: servers "may return less than the client requested" |
-| `search-503` | `searchRetryAfter: 2`, each token's first search | SIA, Finding studies: "the server MAY respond 503 … Retry-After" |
-| `retrieval-503` | `retrievalRetryAfter: 2`, each study's first retrieval | SIA, Retrieving images: "the endpoint MAY respond 503 with a Retry-After header" |
+| `search-503` | `searchRetryAfter: 1`, the first search, once | SIA, Finding studies: "the server MAY respond 503 … Retry-After" |
+| `retrieval-503` | `retrievalRetryAfter: 1`, the first retrieval, once | SIA, Retrieving images: "the endpoint MAY respond 503 with a Retry-After header" |
 | `endpoint-forms` | `endpointForms: true`, the three forms in turn | SIA, Finding studies: response-local, separately addressable, or contained. Response-local is only a SHOULD for capability URLs |
 
 ## Beyond what the spec guarantees (notes, not failures)

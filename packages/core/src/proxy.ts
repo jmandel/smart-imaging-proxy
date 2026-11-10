@@ -89,9 +89,8 @@ export function createProxy(opts: KeyOption & {
   const cache = new Map<string, { until: number; outcome: Outcome }>();
   const events: ProxyEvent[] = [];
   let seq = 0;
-  /** Staged for an app check: each study's first retrieval answers 503 with Retry-After of this many seconds. */
-  let retryAfter: number | undefined;
-  const answered = new Set<string>();
+  /** Staged for an app check: the first retrieval answers 503 with Retry-After of this many seconds, once. */
+  let retryAfter: number | undefined, retryAfterSpent = false;
 
   const verified = async (ctx: string) => verifyJws(ctx, await keySource.keysFor(kidOf(ctx)));
 
@@ -547,10 +546,11 @@ export function createProxy(opts: KeyOption & {
     const scope: Scope = { study, series, instance };
     if (decision.version !== undefined) scope.version = decision.version;
     if (!series && typeof released === "object") scope.onlySeries = released.series;
-    // A server assembling a study may answer 503 with Retry-After first (the guide's Retrieving images). Staged, once per study.
-    if (retryAfter && !answered.has(study)) {
-      answered.add(study);
-      ev.note = `staged: each study's first retrieval answers 503 with Retry-After: ${retryAfter}`;
+    // A server assembling a study may answer 503 with Retry-After first (the guide's Retrieving images). Staged
+    // once: one is enough to see whether the app waits, and more only make a run slower.
+    if (retryAfter && !retryAfterSpent) {
+      retryAfterSpent = true;
+      ev.note = `staged: the first retrieval answers 503 with Retry-After: ${retryAfter}`;
       return new Response(null, { status: 503, headers: { "Retry-After": String(retryAfter) } });
     }
 
@@ -593,9 +593,9 @@ export function createProxy(opts: KeyOption & {
       return res;
     }),
     events,
-    reset() { cache.clear(); events.length = 0; retryAfter = undefined; answered.clear(); },
-    /** Stages a 503 with Retry-After on each study's first retrieval from now on, or none. */
-    setRetryAfter(seconds: number | undefined) { retryAfter = seconds; answered.clear(); },
+    reset() { cache.clear(); events.length = 0; retryAfter = undefined; retryAfterSpent = false; },
+    /** Stages a 503 with Retry-After on the next retrieval, once, or none. */
+    setRetryAfter(seconds: number | undefined) { retryAfter = seconds; retryAfterSpent = false; },
     get retryAfter() { return retryAfter; },
     flushDecisions() { cache.clear(); },
     refreshKeys: () => keySource.refresh(),

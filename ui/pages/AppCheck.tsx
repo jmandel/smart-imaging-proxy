@@ -30,8 +30,8 @@ const SCRIPTS = [
 ];
 const CONDITIONS = [
   { id: "small-pages", text: "Search pages of at most 2 studies" },
-  { id: "search-503", text: "A 503 with Retry-After on each token's first search" },
-  { id: "retrieval-503", text: "A 503 with Retry-After on each study's first retrieval" },
+  { id: "search-503", text: "A 503 with Retry-After on the first search" },
+  { id: "retrieval-503", text: "A 503 with Retry-After on the first retrieval" },
   { id: "endpoint-forms", text: "Endpoints in all three forms the guide allows" },
 ];
 const KIND: Record<Client["type"], string> = { public: "Public app", confidential: "Confidential app", backend: "Backend service" };

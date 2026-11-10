@@ -92,7 +92,7 @@ export function accessLevel(t: { patient?: string; sub?: string }): "patient" | 
 
 /**
  * What any server may do that an app has to cope with, staged on purpose: pages of at most `pageSize` studies,
- * a 503 with Retry-After of `retryAfter` seconds on each token's first search, and Endpoints in every form.
+ * a 503 with Retry-After of `retryAfter` seconds on the first search after staging, and Endpoints in every form.
  */
 export interface SearchStaging { pageSize?: number; retryAfter?: number; endpointForms?: boolean }
 /** The forms staged Endpoints take, in turn, by a study's place among those released. */
@@ -147,8 +147,8 @@ export function createImagingServer(opts: ImagingServerOptions) {
   const keys = new Map([[key.kid, key.publicKey]]);
   let outage = false;
   let staged: SearchStaging = {};
-  /** The tokens that have searched since staging began, so only each one's first search is delayed. */
-  const searched = new Set<string>();
+  /** Whether the staged 503 has been given: once, to the first search after staging began. */
+  let searchDelayed = false;
   const decisions: any[] = [];
   const cursorKey = opts.cursorKey ?? randomBytes(32);
   const pageBytes = opts.pageBytes ?? PAGE_BYTES;
@@ -367,9 +367,9 @@ export function createImagingServer(opts: ImagingServerOptions) {
     const policy = snapshotOf(patient);
     if (level === "system" && !model.preAuthorized(policy, t.client_id, patient).length) return fail(403, "forbidden", "this patient is outside the client's authorized access");
     // Staged: results "being assembled", which the guide lets a server say with 503 and Retry-After (Finding studies).
-    if (staged.retryAfter && !searched.has(e.tokenHash!)) {
-      searched.add(e.tokenHash!);
-      e.reason = `staged: this token's first search answers 503 with Retry-After: ${staged.retryAfter}`;
+    if (staged.retryAfter && !searchDelayed) {
+      searchDelayed = true;
+      e.reason = `staged: the first search answers 503 with Retry-After: ${staged.retryAfter}`;
       return new Response(null, { status: 503, headers: { "Retry-After": String(staged.retryAfter) } });
     }
 
@@ -554,7 +554,7 @@ export function createImagingServer(opts: ImagingServerOptions) {
     }),
     setOutage(on: boolean) { outage = on; },
     /** Stages what any server may do, starting afresh: every token's next search is its first again. */
-    setStaged(s: SearchStaging) { staged = { ...s }; searched.clear(); },
+    setStaged(s: SearchStaging) { staged = { ...s }; searchDelayed = false; },
     get staged(): SearchStaging { return { ...staged }; },
     get outage() { return outage; },
     get signingKid() { return key.kid; },
@@ -567,6 +567,6 @@ export function createImagingServer(opts: ImagingServerOptions) {
     },
     decisions,
     /** Clears the outage switch, anything staged and the decision log. Policy belongs to the stores. */
-    reset() { outage = false; staged = {}; searched.clear(); decisions.length = 0; },
+    reset() { outage = false; staged = {}; searchDelayed = false; decisions.length = 0; },
   };
 }

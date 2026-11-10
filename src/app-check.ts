@@ -43,8 +43,8 @@ export const scriptById = (id: string) => SCRIPTS.find(s => s.id === id);
 export interface Condition { id: string; text: string; faults: Partial<Faults> }
 export const CONDITIONS: Condition[] = [
   { id: "small-pages", text: "Search pages hold at most 2 studies, so the rest are behind next links", faults: { pageSize: 2 } },
-  { id: "search-503", text: "Each token's first search answers 503 with Retry-After: 2", faults: { searchRetryAfter: 2 } },
-  { id: "retrieval-503", text: "Each study's first retrieval answers 503 with Retry-After: 2", faults: { retrievalRetryAfter: 2 } },
+  { id: "search-503", text: "The first search answers 503 with Retry-After: 1", faults: { searchRetryAfter: 1 } },
+  { id: "retrieval-503", text: "The first retrieval answers 503 with Retry-After: 1", faults: { retrievalRetryAfter: 1 } },
   { id: "endpoint-forms", text: "Endpoints come in all three forms the guide allows: a response-local entry, contained in the study, and an entry with its own address", faults: { endpointForms: true } },
 ];
 export const STAGED_FAULTS: (keyof Faults)[] = ["pageSize", "searchRetryAfter", "retrievalRetryAfter", "endpointForms"];

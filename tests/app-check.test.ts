@@ -197,7 +197,7 @@ describe("app check runs in a sandbox", () => {
     const run = (await call("POST", "/api/checks", { app: { sandbox: w.prefix, clientId: c.id } })).body.id;
     const started = await call("POST", `/api/checks/${run}/start`);
     expect(started.status).toBe(200);
-    expect(w.faults()).toEqual({ decisionOutage: false, truncateAfter: 9, pageSize: 2, searchRetryAfter: 2, retrievalRetryAfter: 2, endpointForms: true });
+    expect(w.faults()).toEqual({ decisionOutage: false, truncateAfter: 9, pageSize: 2, searchRetryAfter: 1, retrievalRetryAfter: 1, endpointForms: true });
     expect(w.appCheck).toMatchObject({ run, client: c.id, script: "josh" });
     expect((settingsStatus(stack, w) as any).appCheck.staged).toEqual(CONDITIONS.map(x => x.text));
     // While it's on, faults stay as staged, and a second run waits its turn.
@@ -241,7 +241,8 @@ describe("app check runs in a sandbox", () => {
     const app = await fetchApp(w.urls, c.id, "josh", undefined);
     expect([app.studies, app.retrieved]).toEqual([6, 6]);
     const live = await call("GET", `/api/checks/${run}`);
-    expect(live.body.progress.retrievals).toBeGreaterThanOrEqual(12);
+    // Six studies, and the one staged 503, retried: every retrieval the run staged was answered and repeated.
+    expect(live.body.progress.retrievals).toBe(7);
     const done = (await call("POST", `/api/checks/${run}/end`)).body;
     expect(done.steps.map((s: any) => `${s.title}: ${s.state}`)).toEqual([
       "Signed in as josh for josh-example: pass", "Approved everything offered: pass", "Searched for josh-example's studies: pass", "Found every study the server released: pass", "Opened every study it found: pass",
