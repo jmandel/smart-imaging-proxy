@@ -435,16 +435,7 @@ describe("the demo client", () => {
     expect(await page.locator("#landing").isVisible()).toBe(true);
     await context.close();
   });
-  test("a browser that saved its sandbox under an old key still lists it", async () => {
-    const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
-    const page = await context.newPage();
-    const base = await enterSandbox(page);
-    await page.evaluate(b => { localStorage.clear(); localStorage.setItem("smart-imaging-client:world", b); }, base);
-    await page.goto(`${ORIGIN}/`);
-    await page.locator(`.sandbox-list a[href="${base}/"]`).waitFor();
-    expect(await page.evaluate(() => localStorage.getItem("smart-imaging-client:world"))).toBeNull();
-    await context.close();
-  });
+
   test("a patient with no studies gets a real empty result", async () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();

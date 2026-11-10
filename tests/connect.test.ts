@@ -60,17 +60,6 @@ test("named studies add to an approval's sites, and only what the person can see
   const open = (released.studies ?? released.decisions ?? []).filter((d: any) => d.release !== "none" && d.released !== false).map((d: any) => d.id ?? d.study);
   expect(open).toEqual([kept!.id]);
 });
-test("a store saved before named studies keeps working", () => {
-  const { Database } = require("bun:sqlite");
-  const { PolicyStore } = require("@smart-imaging-proxy/core");
-  const path = join(require("node:os").tmpdir(), `old-${Date.now()}.sqlite`);
-  const fresh = new PolicyStore({ mode: "file", path }); fresh.close();
-  const db = new Database(path); db.exec("ALTER TABLE approvals DROP COLUMN studies; PRAGMA user_version = 8"); db.close();
-  const up = new PolicyStore({ mode: "file", path });
-  expect(up.approvals()).toEqual([]);
-  up.close(); require("node:fs").rmSync(path, { force: true });
-});
-
 test("a sandbox has a friendly name it keeps, and can be renamed", async () => {
   const w = stack.sandboxes.mint();
   const first = (await (await call("GET", `${w.prefix}/api/sandbox`)).json() as any).name;

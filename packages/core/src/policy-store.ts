@@ -101,7 +101,6 @@ export class PolicyStore {
     if (config.mode === "file") this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec(`PRAGMA synchronous = ${SYNCHRONOUS[this.durability]}`);
     // Version 9 only adds a column, so a world saved at 8 keeps working.
-    if (this.schemaVersion() === 8) this.db.exec("ALTER TABLE approvals ADD COLUMN studies TEXT; PRAGMA user_version = 9");
     const found = this.schemaVersion();
     if (found !== 0 && found !== SCHEMA_VERSION) {
       this.db.close();

@@ -3,7 +3,7 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { adoptOldDirectory, createSandboxes } from "../src/sandboxes";
+import { createSandboxes } from "../src/sandboxes";
 import { allowMint } from "../src/gateway";
 import { startStack, type Stack } from "../src/stack";
 import { createDemoServer } from "../src/demo-server";
@@ -81,18 +81,6 @@ test("a tour leaves other apps' tokens and approvals alone, and resets its own",
   const rows = (xs: { app: string; by: string; patient: string; sites?: string[] }[]) => xs.map(a => [a.app, a.by, a.patient, a.sites ?? null].join(" ")).sort();
   expect(rows(w.store.approvals())).toEqual(rows([{ app: "app:my-own-app", by: "user:josh", patient: "patient:josh-example" }, ...APPROVALS_ON_FILE]));
 });
-test("sandboxes saved under the directory's old name are kept", () => {
-  const home = mkdtempSync(join(tmpdir(), "rename-"));
-  mkdirSync(join(home, "worlds"));
-  writeFileSync(join(home, "worlds", "kept.sqlite"), "x");
-  const now = join(home, "sandboxes");
-  adoptOldDirectory(now);
-  expect(existsSync(join(now, "kept.sqlite"))).toBe(true);
-  expect(existsSync(join(home, "worlds"))).toBe(false);
-  adoptOldDirectory(now);
-  expect(existsSync(join(now, "kept.sqlite"))).toBe(true);
-  rmSync(home, { recursive: true, force: true });
-});
 test("only removal ends one, and it leaves no file", () => {
   const s = sandboxes();
   const id = s.mint({ saved: true }).id!;
@@ -108,17 +96,4 @@ test("one address can't create sandboxes without end", () => {
   expect(allowMint("9.9.9.9", t)).toBe(false);
   expect(allowMint("8.8.8.8", t)).toBe(true);
   expect(allowMint("9.9.9.9", t + 3601_000)).toBe(true);
-});
-test("a store saved before approvals were on file gets them once, and a change made after stays", async () => {
-  const { PolicyStore } = await import("@smart-imaging-proxy/core");
-  const { ON_FILE, withApprovalsOnFile, accountPatient } = await import("../src/stores");
-  // As a store saved before: everything on file but the approvals.
-  const store = new PolicyStore({ mode: "memory", onFile: { ...ON_FILE, approvals: [] }, patientOf: accountPatient });
-  expect(store.approvals()).toEqual([]);
-  withApprovalsOnFile(store);
-  const rows = () => store.approvals().map(a => `${a.by} ${a.patient}`).sort();
-  expect(rows()).toEqual(APPROVALS_ON_FILE.map(a => `${a.by} ${a.patient}`).sort());
-  store.removeApprovals({ by: "user:josh", app: "app:portal-app", patient: "patient:josh-example" });
-  withApprovalsOnFile(store);
-  expect(rows()).not.toContain("user:josh patient:josh-example");
 });

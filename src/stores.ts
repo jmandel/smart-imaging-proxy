@@ -63,15 +63,4 @@ export function storeConfigFromEnv(env: Record<string, string | undefined> = pro
 export const accountPatient = (user: string) => USERS[user]?.patient;
 /** The root's store: the one real policy database, or memory with no configuration. */
 export const openRootStore = (config: StoreConfig = { mode: "memory" }) =>
-  withApprovalsOnFile(new PolicyStore({ onFile: ON_FILE, patientOf: accountPatient, ...config, ...(config.mode === "file" ? { path: config.path ?? DEFAULT_POLICY_DB } : {}) }));
-/**
- * A store saved before app approvals were on file gets them once, where no approval of that app for that
- * patient by that person is there: one someone changed or removed since isn't touched. A new store has them already.
- */
-export function withApprovalsOnFile(store: PolicyStore, approvals: AppApproval[] = APPROVALS_ON_FILE) {
-  if (store.note("approvals-on-file")) return store;
-  const held = store.approvals();
-  for (const a of approvals) if (!held.some(h => h.by === a.by && h.app === a.app && h.patient === a.patient)) { try { store.putApproval(a); } catch {} }
-  store.setNote("approvals-on-file", "1");
-  return store;
-}
+  new PolicyStore({ onFile: ON_FILE, patientOf: accountPatient, ...config, ...(config.mode === "file" ? { path: config.path ?? DEFAULT_POLICY_DB } : {}) });

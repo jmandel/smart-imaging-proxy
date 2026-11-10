@@ -109,8 +109,6 @@ export class TraceStore {
       CREATE INDEX IF NOT EXISTS events_by_kind ON events (kind, seq);
       PRAGMA user_version = 1;
     `);
-    // Traces saved before the column was renamed keep working.
-    if ((db.query("PRAGMA table_info(events)").all() as { name: string }[]).some(c => c.name === "scope")) db.exec("ALTER TABLE events RENAME COLUMN scope TO sandbox");
     this.db = db;
     this.q = {
       spanBytes: db.query("SELECT bytes FROM spans WHERE session = ? AND span = ?"),

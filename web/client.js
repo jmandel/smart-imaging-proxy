@@ -304,20 +304,7 @@ function openStudy(session, study, button) {
 // The sandboxes this browser knows. The list is the only thing kept: the URL says which one a page is in.
 const SANDBOXES_KEY = "smart-imaging-client:sandboxes";
 function knownSandboxes() {
-  let list = [];
-  try { list = JSON.parse(stored(SANDBOXES_KEY) ?? "[]"); } catch {}
-  const saved = list.length;
-  // What earlier versions kept: one current sandbox, under either of its old names, and a list under its old name.
-  for (const old of ["smart-imaging-client:sandbox", "smart-imaging-client:world"]) {
-    const base = stored(old);
-    if (base && !list.some(w => w.base === base)) list.push({ base, joined: false });
-    if (base) store(old, null);
-  }
-  const old = stored("smart-imaging-client:worlds");
-  try { for (const w of JSON.parse(old ?? "[]")) if (!list.some(x => x.base === w.base)) list.push(w); } catch {}
-  // What came from the old names is saved under the new one as it's taken, so nothing read later loses it.
-  if (old !== null || list.length !== saved) { store(SANDBOXES_KEY, JSON.stringify(list)); store("smart-imaging-client:worlds", null); }
-  return list;
+  try { return JSON.parse(stored(SANDBOXES_KEY) ?? "[]"); } catch { return []; }
 }
 const saveSandboxes = list => store(SANDBOXES_KEY, JSON.stringify(list));
 const shareLink = base => `${location.origin}${base}/`;

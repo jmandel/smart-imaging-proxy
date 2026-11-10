@@ -185,6 +185,83 @@ Everything the Tours page does, you can do with these calls. `begin` returns `{p
 
 The protocol checks on the Tours page have no step API. Each is a scenario a client runs against a fresh sandbox, using the calls above, `POST /api/sandbox/faults`, and `GET /api/sandbox/catalog`. The page's source, `{{ORIGIN}}/checks.js`, is the reference for each one.
 
+## API types
+
+The shapes the management API takes and gives, as TypeScript. A `Ref` is a kind and an id: `user:josh`, `patient:josh-example`, `app:portal-app`, `service:hand-referral-service`.
+
+```ts
+type Ref = string;
+
+// GET /api/sandbox/keys: the one call with no token.
+interface SampleKey { client_id: string; jwk: JsonWebKey & { kid: string; alg: "ES256" }; scope: string }
+interface Keys { tokenEndpoint: string; now: number; admin: SampleKey; services: SampleKey[] }
+
+// GET /api/sandbox, and what each settings call answers with.
+interface SandboxStatus {
+  sandbox: { id: string; base: string } | null; name: string | null;
+  clock: { offsetSeconds: number; now: number }; clockChoices: { value: number; label: string }[];
+  storage: { current: "static-files" | "s3" | "orthanc"; names: string[] };
+  topology: { current: "separate" | "unified"; names: string[] };
+  catalog: { source: string; studies: number; series: number; [count: string]: unknown }; signing: { kid: string }; proxy: { cachedDecisions: number };
+}
+
+// The policy API, /api/sandbox/policy/*.
+interface Relationship { id?: string; subject: Ref; relation: "guardian_of"; object: Ref; recordedBy?: string }
+type OrgPolicy =
+  | { id: string; type: "guardian-access"; description?: string; when: { age: { min?: number; max?: number } }; allow: "all"; except?: string[] }
+  | { id: string; type: "sharing"; description?: string; allowedFrom: ("patient" | "guardian")[] }
+  | { id: string; type: "service-access"; description?: string; service: Ref; patients: "any" | Ref;
+      allow: { all?: boolean; sites?: string[]; modalities?: string[]; studies?: string[]; since?: string };
+      withholdSeries?: string[]; contextForm?: "auto" | "restricted" };
+interface Share { id?: string; from: Ref; with: Ref; patient: Ref; sites: string[]; label: string }      // POST /shares takes it without id
+interface AppApproval { id?: string; by: Ref; app: Ref; patient: Ref; sites?: string[]; fhirUser?: string } // POST /app-approvals: fhirUser is needed for one's own records
+type Release = "none" | "study" | { series: string[] };
+interface Explained {   // GET /explain?client=&user=&fhirUser=&patient=
+  searchAllowed: boolean;
+  studies: { id: string; title?: string; site?: string; date?: string; modalities: string[]; release: Release; why: string; withheldSeries: { uid: string }[] }[];
+}
+
+// Explore, /api/sandbox/explore/*.
+interface Cast {
+  people: { id: string; name: string; fhirUser: string; role: string; records: { patient: string; name: string; via: "self" | "guardian" | "share"; relationship?: string }[]; others: { patient: string; name: string }[] }[];
+  services: { id: string; name: string; role: string }[];
+  relationships: string[]; app: string; names: Record<Ref, string>;
+}
+interface Referral { id: string; report: string; reason?: string; patient: string; patientRef: string; accession: string; system: string }
+interface ExploreRow { id: string; title: string; site?: string; date?: string; modalities: string[]; released: boolean; reason?: string; partial?: string }
+type ExploreAction =
+  | { kind: "approve"; label: string; sites: string[]; ticked?: string[]; patient?: string }
+  | { kind: "share"; label: string; from: string; with?: string; patient: string; sites: string[] }
+  | { kind: "unshare" | "revoke-app"; label: string; with?: string; patient: string }
+  | { kind: "apply-policy"; label: string; ruleSet: string; text: string }
+  | { kind: "person"; label: string; user: string }
+  | { kind: "referral"; label: string; referral: string };
+interface ExploreView {   // GET /view: the studies a viewer may know of, and why each is or isn't released
+  status: "results" | "no-access" | "forbidden" | "failed"; patient?: string; headline: string; detail?: string;
+  rows: ExploreRow[]; actions: ExploreAction[]; empty?: { text: string; actions: ExploreAction[] };
+  whyTitle: string; chain?: { columns: { id: string; site?: string; title: string }[]; rows: { level: "fact" | "policy" | "choice" | "outcome"; name: string; has: string[] }[] };
+  activityUrl: string;
+}
+
+// GET /api/sandbox/catalog?patient=
+interface CatalogStudy { id: string; uid: string; site?: string; date?: string; instances: number; series: { uid: string; modality: string; instances: number }[] }
+
+// Tours, /api/sandbox/tours/*. begin answers { plan, session, trace }; finish takes { seen }.
+type Plan =
+  | { do: "sign-in"; user: string; patient: string; sites?: string[]; app: string; redirectUri: string; scope: string; aud: string }
+  | { do: "search"; as: string; query: string }
+  | { do: "retrieve"; as: string; url: string }
+  | { do: "service-search"; client: string; query: string }
+  | { do: "service-retrieve"; client: string; url: string }
+  | { do: "management"; calls: { method: string; path: string; body?: unknown }[] }
+  | { do: "referral-check"; referral: string; patientRef?: string; accession?: string; system?: string; clinicalFhir: string }
+  | { do: "none" };
+interface StepResult { ok: boolean; expected: string; actual: string; detail?: string; write?: string; eventCount: number; activityUrl: string }
+
+// POST /api/sandbox/clients
+interface ClientRequest { name: string; type?: "public" | "confidential" | "backend"; redirectUris?: string[]; jwk?: JsonWebKey & { kid: string }; jwksUrl?: string; patients?: "any" | string }
+```
+
 ## Pages
 
 - [Overview]({{SITE}}/): the sandbox, its viewer, and the two ways in.

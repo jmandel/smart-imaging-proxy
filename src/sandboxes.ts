@@ -6,19 +6,14 @@
 // which anyone can make up, never push out a minted sandbox. An unknown or evicted minted id is gone; an
 // evicted seed builds again.
 import { randomBytes } from "node:crypto";
-import { existsSync, renameSync, rmSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { deflateRawSync, inflateRawSync } from "node:zlib";
 import { PolicyStore } from "@smart-imaging-proxy/core";
-import { accountPatient, ON_FILE, splitPanel, withApprovalsOnFile, type Panel } from "./stores";
+import { accountPatient, ON_FILE, splitPanel, type Panel } from "./stores";
 import { createDemoClock } from "./clock";
 import { createSandbox, type Shared, type Sandbox } from "./sandbox";
 
-/** Moves saved sandboxes from the directory they had under their old name, once, so a deploy doesn't lose them. */
-export function adoptOldDirectory(dir: string) {
-  const old = join(dirname(dir), "worlds");
-  if (existsSync(old) && !existsSync(dir)) renameSync(old, dir);
-}
 
 export const SANDBOX_IDLE_MS = 30 * 60 * 1000;
 export const MAX_SANDBOXES = 64, MAX_SEEDS = 64;
@@ -55,7 +50,6 @@ export function decodeSeed(segment: string): { seed: Seed } | { error: string } 
  */
 export function createSandboxes(shared: Shared, opts: { idleMs?: number; max?: number; maxSeeds?: number; sandboxesDir?: string } = {}) {
   const saved = opts.sandboxesDir;
-  if (saved) adoptOldDirectory(saved);
   const idleMs = opts.idleMs ?? SANDBOX_IDLE_MS;
   const pathOf = (id: string) => join(saved!, `${id}.sqlite`);
   const hasFile = (id: string) => !!saved && MINTED.test(id) && existsSync(pathOf(id));
@@ -73,8 +67,6 @@ export function createSandboxes(shared: Shared, opts: { idleMs?: number; max?: n
       if (document.shares || document.approvals) store.setDocument({ ...(document.shares ? { shares: document.shares } : {}), ...(document.approvals ? { approvals: document.approvals } : {}) });
       if (Object.keys(settings).length) store.setSettings(settings);
     }
-    // A seed brings its own choices; a sandbox saved before approvals were on file gets them now, once.
-    if (!seed) withApprovalsOnFile(store);
     const clock = createDemoClock(Number(store.note("clock") ?? 0), offset => { if (persist) store.setNote("clock", String(offset)); });
     const sandbox = createSandbox({ id, store, clock, shared });
     const pool = poolOf(id);
