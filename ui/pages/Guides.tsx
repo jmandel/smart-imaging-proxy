@@ -1,12 +1,14 @@
 // The site's guides: Run a Server for server teams, and Why SMART Imaging for anyone deciding what it's worth or
 // how it works. Plain sections, each linking to the page that does it. Build an App is a wizard of its own.
-import type { ReactNode } from "react";
-import { VIEWER_URL } from "../lib/servers";
+import { useState, type ReactNode } from "react";
+import { useNavigate } from "react-router";
+import type { PrivateJwk } from "../lib/api";
+import { generateKey } from "../lib/servers";
+import { ClientMetadata, CLIENT_TYPES, type ClientType } from "../components/ClientMetadata";
 import { CONFORMANCE_PLAN, REFERENCES } from "../sitemap";
 import { PageLink } from "../shell/Shell";
 import { InSandbox } from "../components/InSandbox";
 import { ImagingChain } from "../components/ImagingChain";
-import { Address } from "../lib/format";
 
 interface Section { title: string; body: ReactNode; links?: ReactNode }
 
@@ -27,6 +29,24 @@ function Guide({ heading, lead, sections }: { heading: string; lead: string; sec
   );
 }
 
+/** Registering the viewer: the kind of client, and the metadata your server needs for it, key included. "Add
+ *  this server" carries both to Your servers. */
+function RegisterViewer() {
+  const [type, setType] = useState<ClientType>("public");
+  const [key, setKey] = useState<PrivateJwk | null>(null);
+  const navigate = useNavigate();
+  const choose = async (t: ClientType) => { setType(t); if (t !== "public" && !key) setKey((await generateKey()).priv); };
+  return <>
+    <fieldset className="client-type"><legend>How the viewer connects</legend>
+      {CLIENT_TYPES.map(([v, label, what]) => <label key={v}><input type="radio" name="guide-how" value={v} checked={type === v} onChange={() => choose(v)} /> {label} <span>{what}</span></label>)}
+    </fieldset>
+    <p>Register a client with these details, in your server's admin console or, if it supports dynamic registration, by posting the JSON. Then note the client ID it gives you.</p>
+    <ClientMetadata type={type} keyPair={key} />
+    {type !== "public" && key && <p className="note">The viewer signs its assertions with key <code>{key.kid}</code>, made in this browser just now. Your server checks them against the public half in <code>jwks</code>; the private half stays here. If your server only takes a <code>jwks_uri</code>, host that JWKS at an address of your own.</p>}
+    <p className="guide-links"><button type="button" className="primary" onClick={() => navigate(`/servers?add&how=${type}`, { state: type !== "public" && key ? { key } : undefined })}>Add this server</button></p>
+  </>;
+}
+
 export function RunAServer() {
   return <Guide heading="Test your imaging server" lead="Connect our viewer, a known-good SMART Imaging app, to your server. When something fails, you'll know it's the server, not the app." sections={[
     { title: "What your server needs", body: <ul className="how">
@@ -35,11 +55,8 @@ export function RunAServer() {
       <li><strong>ImagingStudy search</strong> by <code>patient</code>, with <code>_include=ImagingStudy:endpoint</code> and <code>next</code> links.</li>
       <li><strong>WADO-RS</strong> at each study's <code>Endpoint.address</code>, accepting the token, and <code>503</code> with <code>Retry-After</code> while images are prepared.</li>
     </ul> },
-    { title: "Register our viewer with it", body: <>
-      <p>As a client on your server, in any of three ways: a public app with PKCE (S256), a confidential app signing with <code>private_key_jwt</code>, or a backend service using <code>client_credentials</code>. Apps ask for <code>launch/patient patient/*.rs</code>, services for <code>system/ImagingStudy.rs</code>. The redirect URI is the same for every server:</p>
-      <p><Address value={VIEWER_URL} name="the redirect URI" /></p>
-    </> },
-    { title: "Add it, then check it", body: <p>Describe your server and how the viewer signs in to it; the form checks your discovery as you go. Then the server check runs every step of the guide against it, as far as it can on its own, and says where it stopped and why: each request, its answer, and what a failure usually means.</p>, links: <><PageLink id="servers" className="button" /> <a href={CONFORMANCE_PLAN}>Ideas for more checks, on GitHub</a></> },
+    { title: "Register our viewer with it", body: <RegisterViewer /> },
+    { title: "Check it", body: <p>Once it's added, the server check runs every step of the guide against it, as far as it can on its own, and says where it stopped and why: each request, its answer, and what a failure usually means.</p>, links: <><PageLink id="servers" /> <a href={CONFORMANCE_PLAN}>Ideas for more checks, on GitHub</a></> },
     { title: "Compare with a working server", body: <p>Open the viewer on a sandbox, and read its logs: every request and response, from discovery to the last image.</p>, links: <><InSandbox page="viewer">Viewer</InSandbox> <InSandbox page="activity">Logs</InSandbox></> },
   ]} />;
 }

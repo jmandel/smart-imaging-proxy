@@ -209,7 +209,9 @@ describe("the demo client", () => {
     await page.getByRole("button", { name: "Check discovery" }).click();
     await page.locator("#discovery li", { hasText: "SMART Imaging" }).waitFor();
     if (!process.env.EXTERNAL_ISS) expect(await page.locator("#discovery li[data-state=bad]").count()).toBe(0);
-    await page.locator("#register-facts").getByText(`${ORIGIN}/viewer`, { exact: true }).waitFor();
+    // What to register, as client metadata: each field copies on its own.
+    expect(await page.locator("#register-facts [data-field=redirect_uris] button").getAttribute("data-copy")).toBe(`${ORIGIN}/viewer`);
+    expect(await page.locator("#register-facts [data-field=token_endpoint_auth_method] button").getAttribute("data-copy")).toBe("none");
     await page.getByLabel("Name", { exact: true }).fill("Another server");
     await page.getByLabel("Client ID").fill(ext.clientId);
     await shot(page, "server-builder");
@@ -245,17 +247,37 @@ describe("the demo client", () => {
     await page.getByRole("heading", { name: "Add your first server" }).waitFor();
     await context.close();
   });
+  test("Run a Server shows the metadata for the client type chosen, and Add this server carries the type and its key to the form", async () => {
+    const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    await page.goto(`${ORIGIN}/run-a-server`);
+    expect(await page.locator("#register-facts [data-field=jwks]").count()).toBe(0);
+    await page.getByRole("radio", { name: /Backend service/ }).check();
+    await page.locator("#register-facts [data-field=jwks]").waitFor();
+    const meta = JSON.parse((await page.getByRole("button", { name: "Copy the client metadata as JSON" }).getAttribute("data-copy"))!);
+    expect(meta.grant_types).toEqual(["client_credentials"]);
+    expect(meta.redirect_uris).toBeUndefined();
+    expect(meta.jwks.keys[0].d).toBeUndefined();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+    await shot(page, "guide-register");
+    await page.getByRole("button", { name: "Add this server" }).click();
+    await page.waitForURL(u => u.pathname === "/servers");
+    expect(await page.getByRole("radio", { name: /Backend service/ }).isChecked()).toBe(true);
+    expect(JSON.parse((await page.locator("#register-facts [data-field=jwks] button").getAttribute("data-copy"))!).keys[0].kid).toBe(meta.jwks.keys[0].kid);
+    await context.close();
+  });
   test("a confidential client made on Your servers signs with the key it generated", async () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     const base = await enterSandbox(page);
     await page.goto(`${ORIGIN}/servers`);
     await page.getByLabel("FHIR base URL").fill(`${ORIGIN}${base}/fhir`);
-    await page.getByRole("radio", { name: /confidential app/ }).check();
+    await page.getByRole("radio", { name: /Confidential app/ }).check();
     // A signing client needs a key before it can be saved.
     await page.locator("#form-missing", { hasText: "Generate a key pair, or paste a private key" }).waitFor();
     await page.getByRole("button", { name: "Generate a key pair" }).click();
-    const jwk = JSON.parse((await page.getByRole("button", { name: "Copy JWK" }).getAttribute("data-copy"))!);
+    const jwk = JSON.parse((await page.locator("#register-facts [data-field=jwks] button").getAttribute("data-copy"))!).keys[0];
+    expect(JSON.parse((await page.getByRole("button", { name: "Copy the client metadata as JSON" }).getAttribute("data-copy"))!).token_endpoint_auth_method).toBe("private_key_jwt");
     expect(jwk.d).toBeUndefined();
     await page.getByRole("button", { name: "Check discovery" }).click();
     await page.locator("#discovery li", { hasText: "Signed assertions" }).waitFor();

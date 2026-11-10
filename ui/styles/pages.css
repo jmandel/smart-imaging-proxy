@@ -483,3 +483,19 @@ a.path p:not(.path-kicker) { color:var(--muted); }
 label.check { display:flex; align-items:baseline; flex-wrap:wrap; gap:.25rem .5rem; margin:.4rem 0 1rem; font-weight:500; }
 label.check input { align-self:center; margin:0; width:1.1rem; height:1.1rem; }
 label.check code { font-size:.85em; }
+
+/* The viewer's client metadata: JSON, one field a line, each line's copy button in one column at the right. */
+.client-meta { margin:.5rem 0 .75rem; border:1px solid var(--line); border-radius:8px; background:var(--code); overflow:hidden; }
+.client-meta figcaption { display:flex; align-items:center; justify-content:space-between; gap:.75rem; padding:.4rem .5rem .4rem .85rem; border-bottom:1px solid var(--line); background:var(--plate); font-size:.9rem; color:var(--muted); }
+.meta-lines { list-style:none; margin:0; padding:.35rem 0; font:.86rem/1.5 var(--mono); }
+.meta-lines li { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:.75rem; padding:0 .5rem 0 .85rem; min-height:2.25rem; }
+.meta-lines li:hover { background:var(--accent-soft); }
+.meta-lines li[data-field] code { padding-left:1.25rem; }
+.meta-lines li[data-field] { padding-top:.2rem; padding-bottom:.2rem; }
+.client-meta figcaption .tool { white-space:nowrap; flex:none; }
+.meta-lines code { display:flex; flex-wrap:wrap; column-gap:.5em; background:none; padding:0; font:inherit; border-radius:0; white-space:nowrap; overflow:visible; max-width:100%; min-width:0; }
+/* A value that doesn't fit beside its name goes under it, and one still too long scrolls on its own line. */
+.meta-lines .meta-value { min-width:0; max-width:100%; overflow-x:auto; scrollbar-width:thin; }
+.meta-lines .meta-key { color:var(--accent); min-width:0; max-width:100%; overflow-x:auto; scrollbar-width:none; }
+.meta-lines .tool { min-height:1.9rem; padding:.1rem .6rem; font-size:.82rem; }
+.meta-waiting { margin:0; padding:.45rem .85rem .6rem; }

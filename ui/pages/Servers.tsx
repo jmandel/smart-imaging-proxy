@@ -1,26 +1,20 @@
 // Describing a server of your own for the viewer: what it is, how the viewer signs in, and what to
 // register there. Discovery is checked here, from the browser, the way the viewer itself will read it.
-import { Fragment, useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { launchViewer } from "../lib/launch";
 import type { PrivateJwk } from "../lib/api";
-import { Address, announce, CopyButton, plural } from "../lib/format";
+import { announce, plural } from "../lib/format";
 import {
   APP_LAUNCH, BACKEND_CAPABILITY, checkServer, generateKey, imagingOf, parseServers, putServer,
-  savedServers, saveServers, serverKey, VIEWER_URL, type ServerEntry,
+  savedServers, saveServers, serverKey, type ServerEntry,
 } from "../lib/servers";
 import { PageLink } from "../shell/Shell";
+import { ClientMetadata, CLIENT_TYPES, SCOPES, type ClientType } from "../components/ClientMetadata";
 
-type How = "public" | "confidential" | "backend";
-const SCOPES: Record<How, string> = { public: "launch/patient patient/*.rs", confidential: "launch/patient patient/*.rs", backend: "system/ImagingStudy.rs" };
+type How = ClientType;
 const HOW_LABEL: Record<How, string> = { public: "Sign-in, public app", confidential: "Sign-in, confidential app", backend: "Backend service" };
-const HOWS: [How, string, ReactNode][] = [
-  ["public", "Sign-in, as a public app", "A person signs in. Authorization code with PKCE, and no key."],
-  ["confidential", "Sign-in, as a confidential app", <>The same, plus a <code>private_key_jwt</code> assertion signed in this browser.</>],
-  ["backend", "Backend service", "No one signs in. A signed assertion gets a token, and the viewer names the patient."],
-];
 const howOf = (s: ServerEntry): How => s.mode === "backend" ? "backend" : s.auth === "private_key_jwt" ? "confidential" : "public";
-const publicHalf = (jwk: PrivateJwk) => ({ kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, kid: jwk.kid, use: "sig", alg: "ES256" });
 const isPrivateKey = (k: any): k is PrivateJwk => k?.kty === "EC" && k.crv === "P-256" && !!k.d && !!k.kid;
 const hostOf = (u: string) => { try { return new URL(u).host; } catch { return u; } };
 
@@ -85,29 +79,6 @@ async function readDiscovery(typed: string): Promise<Discovered> {
   }
 }
 
-/** What to register at your server for this way of connecting, and the public key when the viewer signs. */
-function RegisterFacts({ how, keyPair }: { how: How; keyPair: PrivateJwk | null }) {
-  const signs = how !== "public";
-  const facts: [string, string][] = [
-    ...(how === "backend" ? [] : [["Redirect URI", VIEWER_URL] as [string, string]]),
-    ["Scopes", SCOPES[how]],
-    ["Client authentication", signs ? "private_key_jwt, signed with ES256" : "None (a public client using PKCE)"],
-    ...(how === "backend" ? [["Grant type", "client_credentials"] as [string, string]] : []),
-  ];
-  const pub = keyPair && JSON.stringify(publicHalf(keyPair));
-  return (
-    <dl className="registered-facts" id="register-facts">
-      {facts.map(([k, v]) => <Fragment key={k}>
-        <dt>{k}</dt><dd><code>{v}</code>{k === "Redirect URI" && <> <CopyButton label="Copy" value={v} aria="Copy redirect URI" /></>}</dd>
-      </Fragment>)}
-      {signs && keyPair && pub && <>
-        <dt>Public key</dt>
-        <dd><code className="jwk">{pub}</code> <CopyButton label="Copy JWK" value={pub} /> <CopyButton label="Copy as JWKS" value={JSON.stringify({ keys: [publicHalf(keyPair)] })} /></dd>
-      </>}
-    </dl>
-  );
-}
-
 /** The server check, run on one saved server. */
 const checkOf = (s: ServerEntry) => `/check?${new URLSearchParams({ server: serverKey(s) })}`;
 
@@ -155,9 +126,11 @@ export default function Servers() {
   const [params, setParams] = useSearchParams();
   const editKey = params.get("edit");
   const [fields, setFields] = useState<Fields>(EMPTY);
-  const [how, setHow] = useState<How>("public");
+  // The guide's Add this server names the way of connecting, and the key it made for it.
+  const handed = useLocation().state as { key?: PrivateJwk } | null, named = new URLSearchParams(location.search).get("how");
+  const [how, setHow] = useState<How>(named === "confidential" || named === "backend" ? named : "public");
   /** The private key the viewer signs with, made here or pasted. */
-  const [keyPair, setKeyPair] = useState<PrivateJwk | null>(null);
+  const [keyPair, setKeyPair] = useState<PrivateJwk | null>(handed?.key ?? null);
   /** The saved entry being edited, by its key and name, and whether the name was filled in from the address. */
   const [editing, setEditing] = useState<{ key: string; label: string } | null>(null);
   const [autoLabel, setAutoLabel] = useState(false);
@@ -284,16 +257,15 @@ export default function Servers() {
         <input type="text" id="srv-label" required maxLength={80} placeholder="My test EHR" autoComplete="off" value={fields.label} onChange={e => { set("label")(e); setAutoLabel(false); }} />
 
         <fieldset className="client-type"><legend>How the viewer connects</legend>
-          {HOWS.map(([v, label, what]) => <label key={v}><input type="radio" name="how" value={v} checked={how === v} onChange={() => setHow(v)} /> {label} <span>{what}</span></label>)}
+          {CLIENT_TYPES.map(([v, label, what]) => <label key={v}><input type="radio" name="how" value={v} checked={how === v} onChange={() => setHow(v)} /> {label} <span>{what}</span></label>)}
         </fieldset>
 
         <section className="register-box" aria-labelledby="register-title">
           <h3 id="register-title">Register the viewer with your server</h3>
-          <p className="note" id="register-why">Your server needs a client for this viewer. Register it with these details, then enter the client ID it gives you.</p>
-          {/* Drawn afresh for each way of connecting: the facts differ, rather than moving. */}
-          <RegisterFacts key={how} how={how} keyPair={keyPair} />
+          <p className="note" id="register-why">Your server needs a client for this viewer. Register one with these details, in its admin console or by posting the JSON to its dynamic registration, then enter the client ID it gives you below.</p>
+          <ClientMetadata type={how} keyPair={keyPair} scope={fields.scope.trim()} />
           {signs && <div id="key-field">
-            <p className="key-state" id="key-state">{keyPair ? `Signing with key ${keyPair.kid}. Register its public half above with your server, as a JWK or in a JWKS it fetches.` : "The viewer needs a key to sign with. Generate one here, then register its public half with your server."}</p>
+            <p className="key-state" id="key-state">{keyPair ? <>Signing with key <code>{keyPair.kid}</code>, kept in this browser. Its public half is the <code>jwks</code> above; if your server only takes a <code>jwks_uri</code>, host that JWKS at an address of your own.</> : "The viewer needs a key to sign with. Generate one here, and its public half joins the metadata above."}</p>
             <div className="configure-actions">
               <button type="button" className="secondary" id="generate" onClick={generate}>{keyPair ? "Generate a new key pair" : "Generate a key pair"}</button>
               <button type="button" className="tool" id="paste-toggle" aria-expanded={pasteOpen} onClick={() => setPasteOpen(!pasteOpen)}>Paste a private key instead</button>
