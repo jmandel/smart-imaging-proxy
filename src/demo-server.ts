@@ -74,7 +74,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     const section = sandbox.id
       ? `## This sandbox\n\n${name ? `This is "${name}". ` : ""}Everything below works here now. This link is its access, so share it only with those who should use it.\n\n\`\`\`sh\nSANDBOX=${site}\n\`\`\``
       : `## Start here\n\nCreate a sandbox, and use it for everything below:\n\n\`\`\`sh\nSANDBOX=${origin}$(curl -sX POST ${origin}/api/sandboxes | jq -r .base)\n\`\`\`\n\nOr open the site in a browser and choose Create a sandbox. Each sandbox has its own copy of this file at \`$SANDBOX/llms.txt\`, which names it.`;
-    const text = (await Bun.file(join(root, "src", "llms.txt")).text()).replaceAll("{{SANDBOX_SECTION}}", section).replaceAll("{{EXPECTED_TABLE}}", expectedTable(contractOf(sandbox))).replaceAll("{{PAGES_SECTION}}", pagesSection(origin, site)).replaceAll("{{ORIGIN}}", origin).replaceAll("{{SITE}}", site);
+    const text = (await Bun.file(join(root, "src", "llms.txt")).text()).replaceAll("{{SANDBOX_SECTION}}", section).replaceAll("{{EXPECTED_TABLE}}", expectedTable(contractOf(sandbox))).replaceAll("{{SMOKE_SCRIPT}}", await Bun.file(join(root, "src", "smoke.mjs")).text()).replaceAll("{{PAGES_SECTION}}", pagesSection(origin, site)).replaceAll("{{ORIGIN}}", origin).replaceAll("{{SITE}}", site);
     return new Response(text, { headers: { "content-type": "text/plain; charset=utf-8", ...(sandbox.id ? { "x-robots-tag": "noindex", "cache-control": "no-store" } : {}) } });
   }
   const sandboxOf = (w: Sandbox) => w.id ? { id: w.id, base: w.prefix } : null;
@@ -151,6 +151,8 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       if (p === "/llms.txt") return llmsTxt(sandbox);
       // The sandbox's ground truth as data, for an agent to assert against: no token, since it describes sample data.
       if (p === "/contract.json" && req.method === "GET") return json(contractOf(sandbox));
+      // llms.txt's smoke test as a file, the one llms.txt shows and this site's tests run.
+      if (p === "/smoke.mjs" && req.method === "GET") return new Response(Bun.file(join(root, "src", "smoke.mjs")), { headers: { "content-type": "text/javascript; charset=utf-8" } });
       // The viewer's public keys, for servers that only take a jwks_uri: the address holds the key.
       if (!sandbox.id && p.startsWith("/jwks/") && (req.method === "GET" || req.method === "HEAD")) { const r = serveJwks(p); if (r) return r; }
       if (!sandbox.id && (p === "/api/checks" || p.startsWith("/api/checks/"))) return checkRuns.fetch(req, url, new URL(sandbox.urls.demo).origin);

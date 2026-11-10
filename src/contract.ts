@@ -5,7 +5,7 @@
 import { PATIENT_NAMES, USERS } from "./auth-server";
 import { modelOf, refStudies } from "./tours";
 import { reportTitle } from "./referrals";
-import type { Sandbox } from "./sandbox";
+import type { Faults, Sandbox } from "./sandbox";
 
 export interface ExpectedView {
   user: string; patient: string; via: "self" | "related";
@@ -22,6 +22,15 @@ export interface Contract {
   users: { username: string; name: string; fhirUser: string; patient?: string }[];
   patients: { id: string; name: string; studies: number }[];
   clientTypes: { type: "public" | "confidential" | "backend"; auth: string; grant: string; scope: string }[];
+  /** What's set on the sandbox now, so whether it answers as a new one is a question with no token. */
+  state: {
+    /** No fault set, no app check running, and the demo clock where it started. */
+    clean: boolean;
+    faults: Faults;
+    clockOffsetSeconds: number;
+    /** A running app check's script and what it stages, not its run's id, which is the access to the run. */
+    appCheck: { script: string; staged: string[]; endsAt: string } | null;
+  };
   /** Every person and patient pairing a person can act on, as this sandbox's policy stands now. */
   expected: ExpectedView[];
 }
@@ -51,8 +60,15 @@ export function contractOf(sandbox: Sandbox): Contract {
       { type: "confidential", auth: "private_key_jwt, ES256, ES384 or RS384", grant: "authorization_code", scope: "launch/patient patient/*.rs" },
       { type: "backend", auth: "private_key_jwt, ES256, ES384 or RS384", grant: "client_credentials", scope: "system/ImagingStudy.rs" },
     ],
+    state: stateOf(sandbox),
     expected,
   };
+}
+
+function stateOf(sandbox: Sandbox): Contract["state"] {
+  const faults = sandbox.faults(), offset = sandbox.clock.offset(), run = sandbox.appCheck;
+  const faulty = faults.decisionOutage || faults.endpointForms || [faults.truncateAfter, faults.pageSize, faults.searchRetryAfter, faults.retrievalRetryAfter].some(x => x !== null);
+  return { clean: !faulty && !run && offset === 0, faults, clockOffsetSeconds: offset, appCheck: run ? { script: run.script, staged: run.staged, endsAt: run.endsAt } : null };
 }
 
 /** llms.txt's table of expected answers, from the contract. */

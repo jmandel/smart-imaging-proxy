@@ -47,6 +47,15 @@ test("contract.json lists the four views llms.txt describes, and the sites", () 
   ]);
 });
 
+test("its state says a new sandbox is clean, and a fault makes it not", async () => {
+  expect(contract.state.clean).toBe(true);
+  const admin = { ...await adminHeaders({ fetch: r => fetch(r) }, base), "content-type": "application/json" };
+  await fetch(`${S()}/api/sandbox/faults`, { method: "POST", headers: admin, body: JSON.stringify({ pageSize: 2 }) });
+  const now = await (await fetch(`${S()}/contract.json`)).json() as Contract;
+  expect([now.state.clean, now.state.faults.pageSize]).toEqual([false, 2]);
+  await fetch(`${S()}/api/sandbox/faults`, { method: "POST", headers: admin, body: JSON.stringify({ pageSize: null }) });
+  expect(((await (await fetch(`${S()}/contract.json`)).json()) as Contract).state.clean).toBe(true);
+});
 test("every view it lists is what an app actually sees", async () => {
   for (const v of contract.expected) {
     const { token, imaging } = await signIn(v.user, v.patient), bearer = { authorization: `Bearer ${token}` };
