@@ -1,5 +1,7 @@
 // Every HTTP exchange in one trace, from both sides of each call, opened from the live trace in a tab of its own.
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router";
+import { useReady } from "../lib/ready";
 import { Exchange } from "../trace/Exchange";
 import { fmtBytes, sessionApi, shortUids, type Span } from "../trace/model";
 import "../trace/trace.css";
@@ -21,10 +23,11 @@ function Entry({ s, open, hidden, toggled }: { s: Span; open: boolean; hidden: b
 }
 
 export default function TraceLog() {
-  const q = new URLSearchParams(location.search), session = q.get("session"), trace = q.get("trace");
+  // The filter is in the address with the trace (?filter=), kept in place as it's typed.
+  const [q, setQ] = useSearchParams(), session = q.get("session"), trace = q.get("trace"), filter = q.get("filter") ?? "";
+  const setFilter = (text: string) => setQ(p => { const n = new URLSearchParams(p); if (text) n.set("filter", text); else n.delete("filter"); return n; }, { replace: true });
   const [spans, setSpans] = useState<Span[]>();
   const [failed, setFailed] = useState(false);
-  const [filter, setFilter] = useState("");
   const [opened, setOpened] = useState<ReadonlySet<number>>(new Set());
   useEffect(() => {
     if (!session) return;
@@ -38,6 +41,7 @@ export default function TraceLog() {
   const f = filter.toLowerCase();
   const shown = (i: number) => !f || texts[i]!.includes(f);
   const count = spans ? spans.filter((_, i) => shown(i)).length : 0;
+  useReady(!session || failed || !!spans);
   const toggle = (i: number, open: boolean) => setOpened(o => { const n = new Set(o); if (open) n.add(i); else n.delete(i); return n; });
 
   if (!session) return <main className="trace-page trace-sub"><h1>HTTP log</h1><p className="note">Open this page from the HTTP log link on a trace in the live view.</p></main>;

@@ -236,7 +236,8 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
   const demoQuery = (url: URL) => { const q = new URLSearchParams(); for (const k of ["demo_traceparent", "demo_session", "return", "return_state", "preselect", "suggest_delegate"]) if (url.searchParams.get(k)) q.set(k, url.searchParams.get(k)!); const s = q.toString(); return s ? `&${s}` : ""; };
   const redirectTo = (location: string) => new Response(null, { status: 303, headers: { Location: location } });
   const initials = (name: string) => name.split(/\s+/).map(w => w[0]).join("").slice(0, 2).toUpperCase();
-  /** The account picker. It's a plain form, so it works with no script. */
+  /** The account picker. It's a plain form, so it works with no script. Each account is named by the person's
+   *  name alone, so a driver finds it by that, whatever its role line says. */
   const signInForm = async (action: string, hint = "", error = "") => {
     const relationships = await opts.directory.relationships();
     return `
@@ -244,7 +245,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     <p class="demo-note">This is a demo: picking an account stands in for real authentication.</p>
     <form method="post" action="${esc(action)}">
       <fieldset class="accounts"><legend>Choose an account</legend>
-        ${Object.entries(USERS).map(([id, u]) => `<label class="account"><input type="radio" name="username" value="${esc(id)}" ${id === hint ? "checked" : ""} required><span class="avatar" aria-hidden="true">${esc(initials(u.name))}</span><span class="account-text"><b>${esc(u.name)}</b><span class="role">${esc(roleOf(u, relationships.filter(r => r.delegate === id)))}</span><code>${esc(u.fhirUser)}</code></span></label>`).join("")}
+        ${Object.entries(USERS).map(([id, u]) => `<label class="account"><input type="radio" name="username" value="${esc(id)}" ${id === hint ? "checked" : ""} required aria-label="${esc(u.name)}"><span class="avatar" aria-hidden="true">${esc(initials(u.name))}</span><span class="account-text"><b>${esc(u.name)}</b><span class="role">${esc(roleOf(u, relationships.filter(r => r.delegate === id)))}</span><code>${esc(u.fhirUser)}</code></span></label>`).join("")}
       </fieldset>
       <div class="buttons"><button class="primary">Continue</button></div>
     </form>`;
@@ -262,7 +263,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
   const whoseWords = (r: Held) => r.via === "self" ? "your own records" : r.via === "guardian" ? `you're their ${esc(r.relationship ?? "guardian")}, on file with the Imaging Server` : `shared with you as ${esc(r.relationship ?? "a related person")}`;
   /** One radio for each person, with the signed-in person apart from the others. */
   const whoseRadios = (records: Held[], selected: string) => {
-    const card = (r: Held) => `<label class="account"><input type="radio" name="patient" value="${esc(r.patient)}" ${r.patient === selected ? "checked" : ""}><span class="avatar" aria-hidden="true">${esc(initials(nameOf(r.patient)))}</span><span class="account-text"><b>${esc(nameOf(r.patient))}</b><span class="role">${whoseWords(r)}</span></span></label>`;
+    const card = (r: Held) => `<label class="account"><input type="radio" name="patient" value="${esc(r.patient)}" ${r.patient === selected ? "checked" : ""} aria-label="${esc(nameOf(r.patient))}"><span class="avatar" aria-hidden="true">${esc(initials(nameOf(r.patient)))}</span><span class="account-text"><b>${esc(nameOf(r.patient))}</b><span class="role">${whoseWords(r)}</span></span></label>`;
     const own = records.filter(r => r.via === "self"), others = records.filter(r => r.via !== "self");
     if (!own.length || !others.length) return records.map(card).join("");
     return `<p class="people-group">You</p>${own.map(card).join("")}<p class="people-group">People you hold records for</p>${others.map(card).join("")}`;

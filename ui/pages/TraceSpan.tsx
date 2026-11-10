@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { Exchange } from "../trace/Exchange";
 import { logHref, sessionApi, type Span } from "../trace/model";
+import { useReady } from "../lib/ready";
 import "../trace/trace.css";
 
 type Loaded = { state: "loading" } | { state: "missing" } | { state: "unchosen" } | { state: "shown"; span: Span };
@@ -21,6 +22,7 @@ export default function TraceSpan() {
       });
     return () => { live = false; };
   }, []);
+  useReady(loaded.state !== "loading");
   return (
     <main className="trace-page trace-sub">
       {loaded.state === "loading" && <p className="muted">Loading…</p>}

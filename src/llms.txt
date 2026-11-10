@@ -14,7 +14,7 @@ A sandbox has both sides of SMART Imaging: the health system's servers, and a vi
 
 Each part stands on its own, so read only the ones you need.
 
-The site's pages are a single-page app: fetched without JavaScript, a page is an empty shell. Everything a page does is also a JSON API described here, so an agent never needs a browser: prefer the API. The one exception is your own browser app, whose code has to run in one.
+The site's pages are a single-page app: fetched without JavaScript, a page is an empty shell. Everything a page does is also a JSON API described here, so an agent never needs a browser: prefer the API. The exceptions are your own browser app, whose code has to run in one, and showing a person a page: "Links to a view" and "Driving the site in a browser" cover both.
 
 # Shared background
 
@@ -43,11 +43,11 @@ An app starts at the clinical FHIR base. `GET $SANDBOX/fhir/.well-known/smart-co
 
 Sign-in has no passwords.
 
-| Username | Patient id | Notes |
-|---|---|---|
-| `josh` | `josh-example` | Six real, de-identified studies |
-| `sam-caregiver` | `sam-example` | Two synthetic studies, and guardian of Riley |
-| `robin` | `robin-example` | No studies: a real empty result |
+| Username | Name at sign-in | Patient id | Notes |
+|---|---|---|---|
+| `josh` | Josh Example | `josh-example` | Six real, de-identified studies |
+| `sam-caregiver` | Sam Example | `sam-example` | Two synthetic studies, and guardian of Riley |
+| `robin` | Robin Example | `robin-example` | No studies: a real empty result |
 
 What a correct app sees, signed in with a public client and approving everything offered, as this sandbox's policy stands (a new sandbox's is the default):
 
@@ -58,6 +58,20 @@ The same, as data, with study ids, UIDs and titles, the people and the kinds of 
 Approving less at sign-in leaves those studies and their reports out. `GET /api/sandbox/policy/explain` says why each study is or isn't released.
 
 `riley-example` is Sam's 15-year-old child. One of Riley's studies is confidential adolescent care, which Sam can't see. Clinical entries are invented.
+
+{{VIEW_LINKS_SECTION}}
+
+## Driving the site in a browser
+
+When a browser is the point, as for your own app or a page to show someone:
+
+**Wait for `html[data-ready]`** after opening a page and after each change of view. It's set once the page has drawn its first real content, its data loaded or its error shown, and removed while a new page, or a new view named in the address, is loading. In Playwright: `await page.locator("html[data-ready]").waitFor()`.
+
+**Find controls by role and accessible name**, as `getByRole(role, { name, exact: true })` does, never by layout or CSS class. These names are kept stable, and a test finds each one:
+
+{{CONTROLS_TABLE}}
+
+**Sign-in and consent are plain forms** from the Authorization Server, served without JavaScript. The viewer opens them in a tab of its own; with `connect` in its address it signs in in the same tab instead. Tours and Explore never show them.
 
 # Building an app
 

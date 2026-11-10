@@ -1,7 +1,8 @@
 // The site's guides: Run a Server for server teams, and Why SMART Imaging for anyone deciding what it's worth or
 // how it works. Plain sections, each linking to the page that does it. Build an App is a wizard of its own.
-import { useState, type ReactNode } from "react";
-import { useNavigate } from "react-router";
+import { useEffect, useState, type ReactNode } from "react";
+import { useNavigate, useSearchParams } from "react-router";
+import { Choice } from "../lib/format";
 import type { PrivateJwk } from "../lib/api";
 import { generateKey } from "../lib/servers";
 import { ClientMetadata, CLIENT_TYPES, type ClientType } from "../components/ClientMetadata";
@@ -32,13 +33,20 @@ function Guide({ heading, lead, sections }: { heading: string; lead: string; sec
 /** Registering the viewer: the kind of client, and the metadata your server needs for it, key included. "Add
  *  this server" carries both to Your servers. */
 function RegisterViewer() {
-  const [type, setType] = useState<ClientType>("public");
+  // The way of connecting is in the address (?how=), so a link opens the guide on it.
+  const [params, setParams] = useSearchParams(), asked = params.get("how");
+  const named: ClientType = CLIENT_TYPES.some(([v]) => v === asked) ? asked as ClientType : "public";
+  // Held here as well, so the radio changes as it's pressed, before the address catches up.
+  const [type, setType] = useState(named);
+  useEffect(() => setType(named), [named]);
   const [key, setKey] = useState<PrivateJwk | null>(null);
   const navigate = useNavigate();
-  const choose = async (t: ClientType) => { setType(t); if (t !== "public" && !key) setKey((await generateKey()).priv); };
+  // A way that signs needs a key, made here once, whether it was chosen on the page or by the link.
+  useEffect(() => { if (type !== "public" && !key) generateKey().then(k => setKey(k.priv)); }, [type]);
+  const choose = (t: ClientType) => { setType(t); setParams(t === "public" ? {} : { how: t }, { replace: true, preventScrollReset: true }); };
   return <>
     <fieldset className="client-type"><legend>How the viewer connects</legend>
-      {CLIENT_TYPES.map(([v, label, what]) => <label key={v}><input type="radio" name="guide-how" value={v} checked={type === v} onChange={() => choose(v)} /> {label} <span>{what}</span></label>)}
+      {CLIENT_TYPES.map(([v, label, what]) => <Choice key={v} type="radio" name="guide-how" value={v} checked={type === v} onChange={() => choose(v)} label={label} detail={what} />)}
     </fieldset>
     <p>Register a client with these details, in your server's admin console or, if it supports dynamic registration, by posting the JSON. Then note the client ID it gives you.</p>
     <ClientMetadata type={type} keyPair={key} />

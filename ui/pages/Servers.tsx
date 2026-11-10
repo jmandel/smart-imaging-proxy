@@ -4,7 +4,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { launchViewer } from "../lib/launch";
 import type { PrivateJwk } from "../lib/api";
-import { announce, plural } from "../lib/format";
+import { announce, Choice, plural } from "../lib/format";
 import {
   APP_LAUNCH, BACKEND_CAPABILITY, checkServer, generateKey, imagingOf, parseServers, putServer,
   savedServers, saveServers, serverKey, type ServerEntry,
@@ -127,8 +127,8 @@ export default function Servers() {
   const editKey = params.get("edit");
   const [fields, setFields] = useState<Fields>(EMPTY);
   // The guide's Add this server names the way of connecting, and the key it made for it.
-  const handed = useLocation().state as { key?: PrivateJwk } | null, named = new URLSearchParams(location.search).get("how");
-  const [how, setHow] = useState<How>(named === "confidential" || named === "backend" ? named : "public");
+  const handed = useLocation().state as { key?: PrivateJwk } | null, first = params.get("how");
+  const [how, setHow] = useState<How>(first === "confidential" || first === "backend" ? first : "public");
   /** The private key the viewer signs with, made here or pasted. */
   const [keyPair, setKeyPair] = useState<PrivateJwk | null>(handed?.key ?? null);
   /** The saved entry being edited, by its key and name, and whether the name was filled in from the address. */
@@ -158,6 +158,17 @@ export default function Servers() {
     setFields({ ...EMPTY, iss: s.iss, label: s.label, clientId: s.clientId, scope: s.scope ?? "", imaging: s.imaging ?? "", patient: s.patient ?? "" });
     setHow(howOf(s)); setKeyPair(s.jwk ?? null); setAdvancedOpen(!!(s.scope || s.imaging));
   };
+  // A new server's way of connecting is in the address too (?add&how=), so a link opens the form set to it.
+  const choose = (v: How) => {
+    setHow(v);
+    // `?add` stays bare: URLSearchParams would write `add=`.
+    if (editKey) return;
+    const q = new URLSearchParams(location.search);
+    if (v === "public") q.delete("how"); else q.set("how", v);
+    navigate(`?${q}`.replace(/([?&])add=(?=&|$)/, "$1add"), { replace: true, preventScrollReset: true });
+  };
+  const named = params.get("how");
+  useEffect(() => { if (!editKey) setHow(named === "confidential" || named === "backend" ? named : "public"); }, [named]);
   const toList = () => { clearForm(); setParams({}); };
   const edit = (s: ServerEntry) => { setParams({ edit: serverKey(s) }); window.scrollTo(0, 0); };
   // The form follows the address: an edit link, Back, or a reload fills it from the saved entry.
@@ -257,7 +268,7 @@ export default function Servers() {
         <input type="text" id="srv-label" required maxLength={80} placeholder="My test EHR" autoComplete="off" value={fields.label} onChange={e => { set("label")(e); setAutoLabel(false); }} />
 
         <fieldset className="client-type"><legend>How the viewer connects</legend>
-          {CLIENT_TYPES.map(([v, label, what]) => <label key={v}><input type="radio" name="how" value={v} checked={how === v} onChange={() => setHow(v)} /> {label} <span>{what}</span></label>)}
+          {CLIENT_TYPES.map(([v, label, what]) => <Choice key={v} type="radio" name="how" value={v} checked={how === v} onChange={() => choose(v)} label={label} detail={what} />)}
         </fieldset>
 
         <section className="register-box" aria-labelledby="register-title">

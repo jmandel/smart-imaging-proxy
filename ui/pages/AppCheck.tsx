@@ -5,7 +5,8 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 import { api, BASE } from "../lib/api";
-import { Address, announce, CopyButton } from "../lib/format";
+import { Address, announce, Choice, CopyButton } from "../lib/format";
+import { useReady } from "../lib/ready";
 import { RegisterForm, useClients, type Client } from "../components/RegisterApp";
 import { PageLink } from "../shell/Shell";
 import { download } from "../check/report";
@@ -133,6 +134,7 @@ function Run({ id }: { id: string }) {
     try { const made = await runs<{ id: string }>("POST", "", { app: { sandbox: run!.app.sandbox, clientId: run!.app.clientId, script: run!.app.script, conditions: run!.app.conditions } }); await runs("POST", `/${made.id}/start`); changed(); setParams({ run: made.id }); }
     catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   };
+  useReady(!!run || !!error);
   if (!run) return error ? <p className="error" role="alert">{error}</p> : <p className="note" role="status">Loading the run…</p>;
   const logs = `${run.app.sandbox}/activity`, p = run.progress;
   return <>
@@ -182,6 +184,7 @@ function Setup() {
   const [on, setOn] = useState<{ run: string; client: string } | null>();
   const [error, setError] = useState<string>(), [busy, setBusy] = useState(false);
   useEffect(() => { api<{ appCheck: { run: string; client: string } | null }>("GET", "/api/sandbox").then(s => setOn(s.appCheck), () => setOn(null)); }, []);
+  useReady(clients !== undefined && on !== undefined);
   const chosen = clients?.find(c => c.id === app);
   useEffect(() => { if (chosen?.type === "backend") setScript("service"); }, [chosen?.id]);
   const scripts = SCRIPTS.filter(s => !chosen || (s.kind === "backend") === (chosen.type === "backend"));
@@ -199,10 +202,7 @@ function Setup() {
       {clients === undefined ? <p className="note">Loading…</p> : clients.length ? (
         <fieldset className="server-choice"><legend className="sr-only">Apps registered in this sandbox</legend>
           {clients.map(c => (
-            <label className="server" key={c.id}>
-              <input type="radio" name="app" checked={app === c.id} onChange={() => pick(c)} />
-              <strong>{c.name}</strong><span>{KIND[c.type]}, client ID <code>{c.id}</code></span>
-            </label>
+            <Choice className="server" key={c.id} type="radio" name="app" checked={app === c.id} onChange={() => pick(c)} label={c.name} detail={<>{KIND[c.type]}, client ID <code>{c.id}</code></>} bold />
           ))}
         </fieldset>
       ) : <p className="note">No app is registered in this sandbox yet.</p>}
@@ -215,10 +215,7 @@ function Setup() {
       <h2 id="h-script">Script</h2>
       <fieldset className="server-choice"><legend className="sr-only">Script</legend>
         {scripts.map(s => (
-          <label className="server" key={s.id}>
-            <input type="radio" name="script" checked={script === s.id} onChange={() => setScript(s.id)} />
-            <strong>{s.title}</strong><span>{s.line}</span>
-          </label>
+          <Choice className="server" key={s.id} type="radio" name="script" checked={script === s.id} onChange={() => setScript(s.id)} label={s.title} detail={s.line} bold />
         ))}
       </fieldset>
     </section>

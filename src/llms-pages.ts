@@ -1,5 +1,6 @@
 // llms.txt's list of pages, from the same site map the pages' menus are drawn from, so the two can't disagree.
 import { hrefOf, MENU, PAGES, SANDBOX_GROUPS, SITE_TOOLS, type PageId } from "../ui/sitemap";
+import { CONTROLS, NAMED, VIEW_LINKS } from "../ui/drive";
 
 /** The "Pages" section, for a sandbox at `site` on `origin`. */
 export function pagesSection(origin: string, site: string): string {
@@ -20,5 +21,33 @@ export function pagesSection(origin: string, site: string): string {
     "",
     `- ${link("sandbox")}: ${PAGES.sandbox.blurb}`,
     ...SANDBOX_GROUPS.map(g => `- **${g.title}:** ${g.pages.map(id => `${link(id)} (${PAGES[id].blurb.replace(/\.$/, "").replace(/^./, c => c.toLowerCase())})`).join(", ")}.`),
+  ].join("\n");
+}
+
+/** An address as llms.txt writes it: a sandbox page's under `$SANDBOX`, a site page's at the origin. */
+const addressOf = (origin: string, id: PageId, query = "") => `${PAGES[id].level === "sandbox" ? "$SANDBOX" : origin}${PAGES[id].path}${query}`;
+
+/** The "Links to a view" section: every view an address opens, from the list the pages follow. */
+export function viewLinksSection(origin: string): string {
+  return [
+    "## Links to a view",
+    "",
+    "Every state worth showing someone is in the page's address, and survives a reload, so you can hand a person the exact view: a story, a filtered log, a person's studies. A link holds nothing secret beyond the sandbox's own URL. Explore, the logs and the live trace have a Link to this view button that copies it. A saved server is named by `{iss}|{client id}`, URL-encoded, and opens only in the browser that saved it.",
+    "",
+    "| Page | Address | What it opens |",
+    "|---|---|---|",
+    // A bar in a cell, even in code, would end the cell.
+    ...VIEW_LINKS.map(v => `| ${PAGES[v.page].name} | \`${addressOf(origin, v.page, v.query)}\` | ${v.opens} |`.replaceAll("}|{", "}\\|{")),
+  ].join("\n");
+}
+
+/** The controls an agent can find by role and accessible name, as a table. */
+export function controlsTable(): string {
+  return [
+    "| Page | Control | Role | Name |",
+    "|---|---|---|---|",
+    ...CONTROLS.map(c => `| ${c.page} | ${c.control} | \`${c.role}\` | \`${c.name}\` |`),
+    "",
+    `In a name, ${Object.entries(NAMED).map(([k, v]) => `\`{${k}}\` is ${v}`).join("; ")}.`,
   ].join("\n");
 }

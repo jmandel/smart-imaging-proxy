@@ -1,12 +1,15 @@
 // Explore: pick a person and whose records, or a service and a referral, and see what their app can see. The
 // page is a SMART Imaging client, like the demo app (see ../explore/protocol.ts). The sandbox explains the view
 // from its policy, and a change, a share or an approval, is a write to the sandbox's management API. Every
-// request carries this view's trace session, so the activity log shows what it did.
+// request carries this view's trace session, so the activity log shows what it did. The view is in the address
+// (?user=&patient=, or ?client=&referral=, and &study= for one opened), so a link or a reload opens it again.
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router";
 import { Chain, Legend } from "../components/Layers";
 import { pictures } from "../components/Thumbnail";
 import { api, BASE } from "../lib/api";
-import { announce } from "../lib/format";
+import { announce, LinkToView } from "../lib/format";
+import { useReady } from "../lib/ready";
 import { APP_LAUNCH, BACKEND_CAPABILITY, imagingOf } from "../lib/servers";
 import { thumbnailOf, wadoSource } from "../lib/smart-imaging";
 import { session } from "../lib/store";
@@ -20,6 +23,14 @@ import type { Action, Cast, ChainLine, Choice, Explained, Referral, Retrieval, V
 /** The view last looked at in this tab, for each sandbox. */
 const lastKey = () => `smart-imaging-explore:${BASE}`;
 const message = (e: unknown) => (e as Error).message;
+/** The view an address names, if it names one. */
+function choiceIn(q: URLSearchParams): Choice | undefined {
+  const client = q.get("client"), user = q.get("user"), patient = q.get("patient"), referral = q.get("referral");
+  if (client) return { client, ...(referral ? { referral } : {}) };
+  if (user) return { user, ...(patient ? { patient } : {}) };
+}
+/** A view's address, as its query. */
+const queryOf = (c: Choice, study?: string) => `?${new URLSearchParams({ ...(c.client ? { client: c.client, ...(c.referral ? { referral: c.referral } : {}) } : { user: c.user!, ...(c.patient ? { patient: c.patient } : {}) }), ...(study ? { study } : {}) })}`;
 
 export default function Explore() {
   const [cast, setCast] = useState<Cast>(), [referrals, setReferrals] = useState<Referral[]>([]);
@@ -33,11 +44,15 @@ export default function Explore() {
   const headline = useRef<HTMLHeadingElement>(null), main = useRef<HTMLElement>(null);
   /** Whether the next headline drawn takes focus: a new view's, or an opened study's. */
   const wantFocus = useRef(false);
+  const navigate = useNavigate(), address = useLocation().search;
+  /** The address of the view looked at, without its study: the address leads, and the page follows it. */
+  const shownQuery = useRef<string>(undefined);
 
   const loadCast = async () => { const c = await api<Cast>("GET", "/api/sandbox/explore/cast"); setCast(c); return c; };
 
   /** A view: the sandbox's explanation, then the app's own token, search and pictures. */
-  async function look(asked: Choice, c = cast!, refs = referrals) {
+  /** `fromAddress` when the address asked for it: then it's written in place, as the view it resolved to. */
+  async function look(asked: Choice, c = cast!, refs = referrals, study?: string, fromAddress = false) {
     setError(""); setOpen(undefined); setChain(undefined); setForm(undefined); setRetrievals({}); setReturnTo(undefined);
     wantFocus.current = true;
     view?.pictures?.cancel();
@@ -54,7 +69,12 @@ export default function Explore() {
     const who = me.who;
     current.current = me.session;
     const live = () => current.current === me.session;
-    session.set(lastKey(), JSON.stringify({ ...choice, ...(referral ? { referral } : {}) }));
+    const resolved: Choice = service ? { client: service.id, ...(referral ? { referral } : {}) } : { user: person!.id, ...(choice.patient ? { patient: choice.patient } : {}) };
+    session.set(lastKey(), JSON.stringify(resolved));
+    // The address names this view: a new entry for a view chosen here, and in place for one the address asked for.
+    shownQuery.current = queryOf(resolved);
+    const to = queryOf(resolved, study);
+    if (to !== location.search) navigate(to, { replace: fromAddress, preventScrollReset: true });
     // The view is filled in as its answers arrive, so what's drawn while it runs is a copy.
     setView({ ...me });
     try {
@@ -82,7 +102,10 @@ export default function Explore() {
         });
       } else me.sheets = [];
     } catch (e) { if (live()) { setError(message(e)); me.headline ??= "This didn't finish"; } }
-    if (live()) setView({ ...me, running: false });
+    if (!live()) return;
+    setView({ ...me, running: false });
+    // A study the address names opens once its view is drawn.
+    if (study && me.sheets?.some(s => s.id === study)) { setOpen(study); loadChain(me, study); }
   }
 
   /** The study's chain in one line, from the same events the activity log shows for it. */
@@ -92,8 +115,12 @@ export default function Explore() {
       if (current.current === me.session && opened.current === study) setChain(c);
     } catch (e) { setChain(undefined); setError(message(e)); }
   }
-  const openStudy = (id: string) => { setOpen(id); setChain(undefined); wantFocus.current = true; loadChain(view!, id); };
-  const back = () => { setReturnTo(open); setOpen(undefined); };
+  const showStudy = (id: string) => { setOpen(id); setChain(undefined); wantFocus.current = true; loadChain(view!, id); };
+  const closeStudy = () => { setReturnTo(opened.current); setOpen(undefined); };
+  // Opening a study, and going back from it, are steps in the address, so the browser's Back closes it too. The
+  // page changes at once, and the address follows.
+  const openStudy = (id: string) => { showStudy(id); navigate(`${shownQuery.current}&study=${encodeURIComponent(id)}`, { preventScrollReset: true }); };
+  const back = () => { closeStudy(); navigate(shownQuery.current!, { preventScrollReset: true }); };
   const retrieve = (id: string) => {
     const me = view!, st = me.studies[id];
     if (!st) return;
@@ -107,7 +134,8 @@ export default function Explore() {
   // Changes, as the sandbox's management API makes them, then the same view again.
   const policy = (method: string, path: string, body?: unknown) => api(method, `/api/sandbox/policy${path}`, body, BASE, traceHeaders(view));
   async function change(fn: () => Promise<unknown>, then: Choice) {
-    try { await fn(); look(then, await loadCast()); } catch (e) { setError(message(e)); }
+    // The same view again, so in place in the address.
+    try { await fn(); look(then, await loadCast(), referrals, undefined, true); } catch (e) { setError(message(e)); }
   }
   const again = (v: View): Choice => v.who.kind === "user" ? { user: v.who.id, patient: v.patient } : { client: v.who.id, referral: v.who.referral };
   function act(a: Action, f?: Submitted) {
@@ -138,17 +166,28 @@ export default function Explore() {
         const c = await loadCast();
         const refs = (await api<{ referrals: Referral[] }>("GET", "/api/sandbox/explore/referrals")).referrals;
         setReferrals(refs);
-        let last: Choice | undefined;
-        try { last = JSON.parse(session.get(lastKey()) ?? "null") ?? undefined; } catch {}
-        look(last ?? { user: "josh" }, c, refs);
+        // The view the address names; with none, the one last looked at here, or Josh, the patient.
+        const q = new URLSearchParams(location.search);
+        let last: Choice | undefined = choiceIn(q);
+        if (!last) try { last = JSON.parse(session.get(lastKey()) ?? "null") ?? undefined; } catch {}
+        look(last ?? { user: "josh" }, c, refs, q.get("study") ?? undefined, true);
       } catch (e) { setError(message(e)); }
     })();
     return () => { current.current = undefined; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // Back, Forward, or a link to another view: the page follows the address to the view, and the study, it names.
+  useEffect(() => {
+    if (!cast || !view) return;
+    const q = new URLSearchParams(address), asked = choiceIn(q), study = q.get("study") ?? undefined;
+    if (asked && queryOf(asked) !== shownQuery.current) { look(asked, cast, referrals, study, true); return; }
+    if (view.running || study === opened.current) return;
+    if (study && view.sheets?.some(s => s.id === study)) showStudy(study); else if (!study) closeStudy();
+  }, [address]);
+  useReady(!!error || (!!cast && !!view && !view.running));
   // Back to this page from the browser's cache: the sandbox may have changed meanwhile, so look again.
   const onShow = useRef<() => void>(undefined);
-  onShow.current = () => { if (view && !view.running) look(again(view)); };
+  onShow.current = () => { if (view && !view.running) look(again(view), cast, referrals, undefined, true); };
   useEffect(() => {
     const shown = (e: PageTransitionEvent) => { if (e.persisted) onShow.current?.(); };
     addEventListener("pageshow", shown);
@@ -184,7 +223,7 @@ export default function Explore() {
     return <>
       {choice}
       <div className="headline">
-        <h1 id="headline" tabIndex={-1} ref={headline}>{view.headline ?? ""}</h1>
+        <div className="headline-row"><h1 id="headline" tabIndex={-1} ref={headline}>{view.headline ?? ""}</h1><LinkToView /></div>
         {view.detail && <p className="note">{view.detail}</p>}
       </div>
       {view.tech.length > 0 && <details className="tech-detail"><summary>Technical detail</summary><ul>{view.tech.map((t, i) => <li key={i}>{t}</li>)}</ul></details>}

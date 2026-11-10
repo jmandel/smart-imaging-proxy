@@ -1,7 +1,10 @@
 // The live trace: every span the services record, grouped by trace, nested by cause, with timings, as it happens.
 // A row opens a short preview of that span; the full exchange and a trace's HTTP log open in tabs of their own.
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useSearchParams } from "react-router";
 import { BASE } from "../lib/api";
+import { LinkToView } from "../lib/format";
+import { useReady } from "../lib/ready";
 import { Preview } from "../trace/Preview";
 import { SERVICES, sessionLabel, useLiveTrace, type LiveTrace } from "../trace/live";
 import { fmtBytes, fmtMs, fullHref, logHref, sessionApi, shortUids, traceApi, type Span, type Stats } from "../trace/model";
@@ -135,7 +138,29 @@ function Terms() {
 }
 
 export default function Trace() {
-  const trace = useLiveTrace(new URLSearchParams(location.search).get("session") ?? "");
+  // The session held still on, and the span whose preview is open, are in the address (?session=&span=). With no
+  // session, the page follows the newest.
+  const [params, setParams] = useSearchParams();
+  const asked = params.get("session") ?? "";
+  const trace = useLiveTrace(asked);
+  const [span, setSpan] = useState(params.get("span"));
+  const spanToOpen = useRef(span);
+  useEffect(() => { if (asked !== trace.chosen) trace.choose(asked); }, [asked]);
+  useEffect(() => {
+    const q = new URLSearchParams();
+    if (trace.chosen) q.set("session", trace.chosen);
+    if (trace.chosen && span) q.set("span", span);
+    if (q.toString() !== params.toString()) setParams(q, { replace: true, preventScrollReset: true });
+  }, [trace.chosen, span]);
+  // A span the address names opens once it has arrived, and is brought into sight.
+  useEffect(() => {
+    const id = spanToOpen.current;
+    if (!id || !trace.spans.has(id)) return;
+    spanToOpen.current = null;
+    if (!trace.open.has(id)) { trace.stopFollowing(); trace.toggle(id); }
+    requestAnimationFrame(() => document.querySelector(`[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "center" }));
+  }, [trace.version]);
+  useReady(trace.status !== "Connecting…");
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const [checks, setChecks] = useState(true);
   const [parts, setParts] = useState(false);
@@ -168,8 +193,10 @@ export default function Trace() {
   }, [trace]);
   const onToggle = useCallback((id: string) => {
     trace.stopFollowing();
-    if (trace.open.has(id) && list.current) holdHeight(list.current);
+    const closing = trace.open.has(id);
+    if (closing && list.current) holdHeight(list.current);
     trace.toggle(id);
+    setSpan(was => closing ? (was === id ? null : was) : id);
   }, [trace]);
   // A different session starts with the page as tall as it needs.
   useEffect(() => { if (list.current) list.current.style.minHeight = ""; }, [trace.shown]);
@@ -190,6 +217,7 @@ export default function Trace() {
           <label title="A line for each check a service made, such as a token's expiry or an assertion's signature"><input type="checkbox" checked={checks} onChange={e => setChecks(e.target.checked)} /> Checks each service made</label>
           <label title="A line for each DICOM part streamed in a retrieval, with its transfer syntax and size"><input type="checkbox" checked={parts} onChange={e => setParts(e.target.checked)} /> Each image part</label>
           <button type="button" onClick={() => trace.togglePause()}>{trace.paused ? "Resume" : "Pause"}</button>
+          <LinkToView />
           {active && <a className="action" download href={sessionApi(active, "/export")} title={`Download ${active} as JSON, with its full exchanges`}>Export session</a>}
           {/* Only the site's own trace can be cleared: a sandbox's is kept for everyone using it. */}
           {!BASE && <button type="button" onClick={clear}>Clear traces</button>}

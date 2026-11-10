@@ -4,7 +4,8 @@
 import { Link, useSearchParams } from "react-router";
 import { useLinkedSandbox } from "../lib/store";
 import { PageLink } from "../shell/Shell";
-import { Address } from "../lib/format";
+import { Address, Choice } from "../lib/format";
+import { useReady } from "../lib/ready";
 import { SandboxPicker } from "../components/SandboxPicker";
 import { AuthNotes, Endpoints, SamplePeople } from "../components/ConnectFacts";
 import { canTry, RegisterForm, tryInViewer, useClients, type Client } from "../components/RegisterApp";
@@ -26,6 +27,7 @@ export default function BuildAnApp() {
   const step: StepId = STEPS.some(s => s.id === params.get("step")) ? params.get("step") as StepId : "sandbox";
   const app = clients?.find(c => c.id === params.get("app"));
   const at = STEPS.findIndex(s => s.id === step);
+  useReady(!sandbox || clients !== undefined);
   // How far the wizard can go: an app needs a sandbox, and connecting needs the app.
   const reachable = (id: StepId) => id === "sandbox" || (!!sandbox && (id === "app" || !!app));
   const go = (id: StepId, appId = app?.id) => setParams(p => { const q = new URLSearchParams(p); q.set("step", id); if (appId) q.set("app", appId); else q.delete("app"); return q; });
@@ -55,10 +57,7 @@ export default function BuildAnApp() {
             <h2 id="wizard-title">Choose your app</h2>
             <fieldset className="server-choice"><legend className="sr-only">Apps registered in {sandbox.name ?? "this sandbox"}</legend>
               {clients.map(c => (
-                <label className="server" key={c.id}>
-                  <input type="radio" name="app" checked={app?.id === c.id} onChange={() => go("app", c.id)} />
-                  <strong>{c.name}</strong><span>{KIND[c.type]}, client ID <code>{c.id}</code></span>
-                </label>
+                <Choice className="server" key={c.id} type="radio" name="app" checked={app?.id === c.id} onChange={() => go("app", c.id)} label={c.name} detail={<>{KIND[c.type]}, client ID <code>{c.id}</code></>} bold />
               ))}
             </fieldset>
           </> : <h2 id="wizard-title" className="sr-only">Your app</h2>}

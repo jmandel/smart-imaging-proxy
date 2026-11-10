@@ -38,6 +38,15 @@ export function putServer(entry: ServerEntry, replacing = serverKey(entry)) {
 
 /** A sandbox as a server in the viewer's list. */
 export const sandboxServer = (base: string, name?: string): ServerEntry => ({ label: name ?? "Sandbox", iss: `${location.origin}${base}/fhir`, clientId: SANDBOX_CLIENT, sandbox: base });
+/** The sandbox a server is, when it's a sandbox's own FHIR base with its built-in client. */
+export function sandboxOfServer(s: Pick<ServerEntry, "iss" | "clientId">): string | undefined {
+  const m = s.clientId === SANDBOX_CLIENT && s.iss.startsWith(location.origin) ? s.iss.slice(location.origin.length).match(/^(\/s\/[A-Za-z0-9_-]+)?\/fhir$/) : null;
+  return m ? m[1] ?? "" : undefined;
+}
+/** The query that names a server to the viewer or the server check: a sandbox by its base, which anyone with the
+ *  link can open, and a server of your own by its key in this browser's list. */
+export const serverQuery = (s: Pick<ServerEntry, "iss" | "clientId">) => { const base = sandboxOfServer(s); return base !== undefined ? new URLSearchParams({ sandbox: base }) : new URLSearchParams({ server: serverKey(s) }); };
+
 /** A server as a list offers it: its key, and a line saying what it is. */
 export interface ServerChoice extends ServerEntry { id: string; detail: string }
 /** The servers the viewer and the server check offer: your sandboxes, then the servers you added. One you added by hand stands in for the sandbox it names. */

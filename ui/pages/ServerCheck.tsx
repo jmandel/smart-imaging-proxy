@@ -7,6 +7,7 @@ import { Link, useSearchParams } from "react-router";
 import { announce, CopyButton } from "../lib/format";
 import { putServer, sandboxServer, savedServers, serverKey, signsIn, useServers, VIEWER_URL, type ServerChoice, type ServerEntry } from "../lib/servers";
 import { useSandboxes } from "../lib/store";
+import { useReady } from "../lib/ready";
 import { PageLink } from "../shell/Shell";
 import { SCOPE } from "../viewer/connect";
 import { useSteps, type Step } from "../viewer/trail";
@@ -126,6 +127,8 @@ function Run({ server, runId }: { server: RunServer; runId?: string }) {
     return () => { runs.current++; };
   }, [key, attempt]);
   const reportFailed = useReporting(runId, lines, finished);
+  // Ready once the first steps are drawn: the run goes on, and stops only for a sign-in.
+  useReady(lines.length > 0);
   // The tab opens from the press itself, or the browser blocks it.
   const signIn = waiting && (() => { setWaiting(undefined); waiting(open("about:blank", "smart-imaging-sign-in")); });
   const busy = lines.some(l => l.mark === "running"), said = summary(lines), sandbox = sandboxOf(server.iss);
@@ -170,6 +173,7 @@ function AgentRun({ id }: { id: string }) {
       setServer(b.server);
     }).catch(e => setError((e as Error).message));
   }, [id]);
+  useReady(!!server || !!error);
   if (error) return <p className="error" role="alert">{error}</p>;
   return server ? <Run server={server} runId={id} /> : <p className="note" role="status">Loading the check…</p>;
 }

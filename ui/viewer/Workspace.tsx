@@ -5,6 +5,7 @@ import { ImageViewer, type ImageViewerHandle } from "../components/ImageViewer";
 import { announce, bytes, plural, studyDate } from "../lib/format";
 import { diagnose } from "../lib/diagnose";
 import { fhirHeaders, searchAll, studiesFrom, viewerSeries, WADO_ACCEPT, wadoSource, type Resource, type Study } from "../lib/smart-imaging";
+import { useReady } from "../lib/ready";
 import { Protocol } from "./Protocol";
 import { save, type Session } from "./session";
 import { curlOf, HttpError, requestLine, type Trail } from "./trail";
@@ -116,6 +117,8 @@ export function Workspace({ session, trail, disconnect }: { session: Session; tr
   const [groups, setGroups] = useState<Record<string, Load<string[]>>>({});
   const [reports, setReports] = useState<Load<Resource[]>>({});
   const [studies, setStudies] = useState<Load<{ studies: Study[]; incomplete: boolean }>>({});
+  // Ready once the patient's studies are listed, or it's said why they couldn't be.
+  useReady(!!studies.data || !!studies.error);
   const [chosen, setChosen] = useState<number>();
   // What's been retrieved, in all and by study, for the protocol panel.
   const stats = useRef({ images: 0, bytes: 0, firstMs: undefined as number | undefined });

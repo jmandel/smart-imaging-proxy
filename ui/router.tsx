@@ -2,19 +2,21 @@
 // outside React moves between pages with `router.navigate`, in place, as a link would.
 import { createBrowserRouter, Outlet, ScrollRestoration, useLocation, useParams, type RouteObject } from "react-router";
 import { setBase } from "./lib/api";
+import { addressChanged, followAddress, useDrawn } from "./lib/ready";
 import { pageAt, PAGES, type PageId } from "./sitemap";
 import { Shell } from "./shell/Shell";
 import { UI_PAGES } from "./pages";
 
 /** Pages that follow their own query as it changes (a story, a wizard's step, a form), and so keep what they've
  *  loaded when only the query changes. Every other page reads its query once, when it starts. */
-const FOLLOWS_QUERY = new Set<PageId>(["tours", "build-an-app", "servers", "app-check"]);
+const FOLLOWS_QUERY = new Set<PageId>(["tours", "build-an-app", "servers", "app-check", "explore", "viewer", "run-a-server", "connect", "trace", "trace-log", "config"]);
 
 /** A page of the map, in its sandbox when the route names one. A new address starts the page afresh. */
 function PageAt({ id }: { id: PageId }) {
   const { sandbox } = useParams(), { pathname, search } = useLocation();
   setBase(sandbox ? `/s/${sandbox}` : "");
   const Page = UI_PAGES[id]!;
+  useDrawn(`${pathname}${search}`);
   return <Shell key={sandbox ?? ""} page={id}><Page key={FOLLOWS_QUERY.has(id) ? pathname : `${pathname}${search}`} /></Shell>;
 }
 
@@ -33,4 +35,8 @@ export const router = createBrowserRouter([{
     ...pages.filter(p => p.level === "sandbox" && !pageAt("site", p.path)).map(p => page(p.id, p.path)),
   ],
 }]);
+
+// The page at the router's address is the one `html[data-ready]` waits for: a click that moves on drops it at once.
+followAddress(() => `${router.state.location.pathname}${router.state.location.search}`);
+router.subscribe(addressChanged);
 

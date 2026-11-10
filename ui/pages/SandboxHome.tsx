@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api, BASE, sandboxName } from "../lib/api";
 import { knownSandboxes, renameSandbox, saveSandboxes, session, useSandboxes } from "../lib/store";
 import { VIEWER_SESSION } from "../lib/servers";
+import { useReady } from "../lib/ready";
 import { PAGES, SANDBOX_GROUPS } from "../sitemap";
 import { PageLink } from "../shell/Shell";
 
@@ -14,6 +15,7 @@ export default function SandboxHome() {
   const [name, setName] = useState<string | null | undefined>(), [asked, setAsked] = useState(false);
   const [sharing, setSharing] = useState(false), [shareNote, setShareNote] = useState("Anyone with this link can see and change this sandbox.");
   useEffect(() => { sandboxName(BASE).then(n => { setName(n); setAsked(true); }); }, []);
+  useReady(asked);
   if (!asked) return <main id="landing" className="landing overview"><section className="sandbox panel" id="sandbox"><p className="note">Loading…</p></section></main>;
   if (name === null || name === undefined) return (
     <main id="landing" className="landing overview">

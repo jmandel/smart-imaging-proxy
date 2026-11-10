@@ -137,3 +137,42 @@ grow into a second management API.
 2. The sample-logins table shows each login's patients and studies.
 3. Cuts: `src/flows` moves into the tests; URL-seeded sandboxes go.
 4. More of the sandbox's checks against your own server, where a client alone can do them (issue #1).
+
+#### What's in the address
+
+The list llms.txt prints under "Links to a view" is `VIEW_LINKS` in `ui/drive.ts`. Pages that change their own
+query stay mounted and follow it (`FOLLOWS_QUERY` in `ui/router.tsx`); a choice that leads the address by a
+moment is held in the page too, so a radio changes as it's pressed.
+
+| Page | In the address | Since |
+|---|---|---|
+| Build an App | `?step=`, `?app=` | before |
+| Run a Server | `?how=` (the way the viewer connects) | Nov 2026 |
+| Your servers | `?add`, `?edit=`, and `?how=` with `?add` | `how` follows the form since Nov 2026 |
+| Server check | `?sandbox=`, `?server=`, `?run=` | before |
+| Viewer | `?sandbox=` or `?server=`; `&connect` signs in at once, in the same tab | Nov 2026 |
+| App check | `?app=`, `?run=` | before |
+| Tour | `?tour=` | before |
+| Explore | `?user=&patient=`, or `?client=&referral=`; `&study=` for one opened | Nov 2026 |
+| Register an app | `?type=` (the form's kind of app), `?app=` (one registered, brought into sight) | Nov 2026 |
+| Logs | `session`, `type`, `study`, `link`, `sandbox`, `trace`, `event` | before |
+| Live trace | `?session=` (held still on), `&span=` (its preview open) | Nov 2026 |
+| HTTP log | `?session=&trace=`, and `&filter=` | `filter` since Nov 2026 |
+| Sandbox Config | `?panel=` (scrolled to it) | Nov 2026 |
+| Endpoints, Home pages, My Sandboxes | nothing: no state of their own | |
+
+Nothing in a link is secret beyond the sandbox's URL: a saved server is named by its address and client ID, and
+opens only in the browser that saved it.
+
+#### For a browser that drives the site
+
+- **Each page's HTML** has its title, a `<meta name="description">` from the site map, `<link rel="help">` to
+  llms.txt (the sandbox's own in a sandbox), and a short `<noscript>` note. `uiRoutes()` reads Bun's bundled
+  shell from `/_shell` and fills these in per page; in production the shell is read once, in development each
+  time, so hot reload still works. Its ETag is of the page as sent.
+- **`html[data-ready]`** is `ui/lib/ready.ts`. The router drops it as the address changes; it comes back once
+  the page at that address is drawn and every `useReady(done)` in it is done. A page with no data of its own
+  needs no call.
+- **Controls by role and name**: `CONTROLS` in `ui/drive.ts`, printed in llms.txt, and found one by one by
+  `e2e/drive.e2e.ts`. Radios and person buttons are named by their label alone, their line below as the
+  description (`Choice` in `ui/lib/format.tsx`), so a name stays short when its description changes.

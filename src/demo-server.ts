@@ -25,8 +25,8 @@ import { panelOf } from "./stores";
 import type { Sandbox } from "./sandbox";
 import { ADMIN_SCOPE, SANDBOX_ADMIN } from "./sandbox-keys";
 import app from "../ui/index.html";
-import { pageAt, PAGES } from "../ui/sitemap";
-import { pagesSection } from "./llms-pages";
+import { pageAt, PAGES, type PageId } from "../ui/sitemap";
+import { controlsTable, pagesSection, viewLinksSection } from "./llms-pages";
 import { createCheckRuns } from "./check-runs";
 
 const json = (b: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(b, { status, headers });
@@ -74,7 +74,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     const section = sandbox.id
       ? `## This sandbox\n\n${name ? `This is "${name}". ` : ""}Everything below works here now. This link is its access, so share it only with those who should use it.\n\n\`\`\`sh\nSANDBOX=${site}\n\`\`\``
       : `## Start here\n\nCreate a sandbox, and use it for everything below:\n\n\`\`\`sh\nSANDBOX=${origin}$(curl -sX POST ${origin}/api/sandboxes | jq -r .base)\n\`\`\`\n\nOr open the site in a browser and choose Create a sandbox. Each sandbox has its own copy of this file at \`$SANDBOX/llms.txt\`, which names it.`;
-    const text = (await Bun.file(join(root, "src", "llms.txt")).text()).replaceAll("{{SANDBOX_SECTION}}", section).replaceAll("{{EXPECTED_TABLE}}", expectedTable(contractOf(sandbox))).replaceAll("{{SMOKE_SCRIPT}}", await Bun.file(join(root, "src", "smoke.mjs")).text()).replaceAll("{{PAGES_SECTION}}", pagesSection(origin, site)).replaceAll("{{ORIGIN}}", origin).replaceAll("{{SITE}}", site);
+    const text = (await Bun.file(join(root, "src", "llms.txt")).text()).replaceAll("{{SANDBOX_SECTION}}", section).replaceAll("{{EXPECTED_TABLE}}", expectedTable(contractOf(sandbox))).replaceAll("{{SMOKE_SCRIPT}}", await Bun.file(join(root, "src", "smoke.mjs")).text()).replaceAll("{{PAGES_SECTION}}", pagesSection(origin, site)).replaceAll("{{VIEW_LINKS_SECTION}}", viewLinksSection(origin)).replaceAll("{{CONTROLS_TABLE}}", controlsTable()).replaceAll("{{ORIGIN}}", origin).replaceAll("{{SITE}}", site);
     return new Response(text, { headers: { "content-type": "text/plain; charset=utf-8", ...(sandbox.id ? { "x-robots-tag": "noindex", "cache-control": "no-store" } : {}) } });
   }
   const sandboxOf = (w: Sandbox) => w.id ? { id: w.id, base: w.prefix } : null;
@@ -318,17 +318,68 @@ async function traceThrough(req: Request, url: URL, path: string): Promise<Respo
   }
 }
 
+/** Where Bun serves the bundled shell as it built it, for each page's address to fill in with its own head. */
+const SHELL = "/_shell";
+const esc = (t: string) => t.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+
+/** The bundled shell. In production Bun builds it once, so it's read once per server; in development it changes. */
+/** What a page's route needs of the server it runs on. */
+type Served = { url: URL; development: boolean };
+const shells = new Map<string, Promise<string>>();
+function shellHtml(server: Served): Promise<string> {
+  const at = new URL(SHELL, server.url).href;
+  const read = () => fetch(at).then(r => r.ok ? r.text() : Promise.reject(new Error(`the shell answered ${r.status}`)));
+  if (server.development) return read();
+  let held = shells.get(at);
+  if (!held) { shells.set(at, held = read()); held.catch(() => shells.delete(at)); }
+  return held;
+}
+
+/**
+ * A page's head, filled in on the server, so what reads the HTML alone still learns something: its title and
+ * description from the site map, llms.txt as its help, and without JavaScript, a few lines on the page and on
+ * driving the site. In a sandbox, the llms.txt is the sandbox's own.
+ */
+export function pageHead(id: PageId, base: string): { head: string; body: string; title: string } {
+  const p = PAGES[id], llms = `${base}/llms.txt`;
+  const title = id === "home" ? p.name : `${p.name} · SMART Imaging`;
+  const head = `<meta name="description" content="${esc(p.blurb)}"><link rel="help" href="${esc(llms)}" type="text/plain">`;
+  const body = `<noscript><main class="landing"><h1>${esc(p.name)}</h1><p>${esc(p.blurb)}</p>`
+    + `<p>This site is a single-page app, so this page needs JavaScript. Everything it does is also a JSON API, described in <a href="${esc(llms)}">${base ? "this sandbox's llms.txt" : "llms.txt"}</a>.</p>`
+    + `<p>To drive it in a browser, wait for <code>html[data-ready]</code> after each page or change of view, and find controls by role and accessible name. llms.txt lists them, under "Driving the site in a browser".</p></main></noscript>`;
+  return { head, body, title };
+}
+
+/** A page's shell: Bun's bundle, with the page's own head. Its ETag is of what's sent, so a reload can be a 304. */
+async function pageShell(id: PageId, req: Request, server: Served): Promise<Response> {
+  // A route answers before the server's fetch, so it checks the Host itself, against DNS rebinding.
+  const foreign = refuseHost(req);
+  if (foreign) return foreign;
+  const base = new URL(req.url).pathname.match(/^\/s\/[^/]+/)?.[0] ?? "";
+  const { head, body, title } = pageHead(id, base);
+  const html = (await shellHtml(server))
+    .replace(/<title>[^<]*<\/title>/, `<title>${esc(title)}</title>`)
+    .replace("</head>", `${head}</head>`)
+    .replace(/<body[^>]*>/, m => `${m}${body}`);
+  const etag = `"${Bun.hash(html).toString(36)}"`;
+  const headers = { "content-type": "text/html;charset=utf-8", "cache-control": "no-cache", etag };
+  if (req.headers.get("if-none-match") === etag) return new Response(null, { status: 304, headers });
+  return new Response(html, { headers });
+}
+
+type UiRoute = typeof app | ((req: Request, server: Served) => Promise<Response>);
 /**
  * The React app at every page's address: the site's own at the root, a sandbox's under /s/{id}, and on a
  * local root, a sandbox's too. Bun bundles it from ui/index.html, and serves its scripts and styles itself.
  */
-export function uiRoutes(): Record<string, typeof app> {
-  const routes: Record<string, typeof app> = {};
+export function uiRoutes(): Record<string, UiRoute> {
+  const routes: Record<string, UiRoute> = { [SHELL]: app };
+  const at = (id: PageId) => (req: Request, server: Served) => pageShell(id, req, server);
   for (const p of Object.values(PAGES)) {
-    if (p.level === "site") { routes[p.path] = app; continue; }
-    if (p.path === "/") { routes["/s/:sandbox"] = app; routes["/s/:sandbox/"] = app; continue; }
-    routes[`/s/:sandbox${p.path}`] = app;
-    if (!pageAt("site", p.path)) routes[p.path] = app;
+    if (p.level === "site") { routes[p.path] = at(p.id); continue; }
+    if (p.path === "/") { routes["/s/:sandbox"] = at(p.id); routes["/s/:sandbox/"] = at(p.id); continue; }
+    routes[`/s/:sandbox${p.path}`] = at(p.id);
+    if (!pageAt("site", p.path)) routes[p.path] = at(p.id);
   }
   return routes;
 }

@@ -2,7 +2,7 @@
 // wizard both use these. A key made here stays in this browser.
 import { useEffect, useState, type FormEvent } from "react";
 import { api, type PrivateJwk } from "../lib/api";
-import { Address, announce, CopyButton } from "../lib/format";
+import { Address, announce, Choice, CopyButton } from "../lib/format";
 import { generateKey, savedServers, saveServers, VIEWER_URL, type ServerEntry } from "../lib/servers";
 import { launchViewer } from "../lib/launch";
 import { store, stored } from "../lib/store";
@@ -37,7 +37,7 @@ export function Registered({ c, base, removed }: { c: Client; base: string; remo
   const key = savedKeys()[c.id], fhirBase = fhirBaseOf(base);
   const remove = async () => { await api("DELETE", `/api/sandbox/clients/${encodeURIComponent(c.id)}`, undefined, base); removed(); };
   return (
-    <article className="panel registered">
+    <article className="panel registered" id={`app-${c.id}`}>
       <div className="registered-head"><h3>{c.name}</h3><button type="button" className="tool" aria-label={`Remove ${c.name}`} onClick={remove}>Remove</button></div>
       <dl className="registered-facts">
         <dt>FHIR base</dt><dd><Address value={fhirBase} name="FHIR base" /></dd>
@@ -67,9 +67,12 @@ export function useClients(base: string) {
   return { clients, refresh };
 }
 
-/** The form that registers an app in `base`'s sandbox. `registered` hears of the app it made. */
-export function RegisterForm({ base, registered, title = "Register an app" }: { base: string; registered: (c: Client) => void; title?: string }) {
-  const [name, setName] = useState(""), [type, setType] = useState<ClientType>("public"), [redirect, setRedirect] = useState("");
+export const CLIENT_KINDS = TYPES.map(t => t[0]);
+/** The form that registers an app in `base`'s sandbox. `registered` hears of the app it made. Its kind of app is
+ *  its own, unless the page holds it, as Register an app does in its address. */
+export function RegisterForm({ base, registered, title = "Register an app", kind }: { base: string; registered: (c: Client) => void; title?: string; kind?: [ClientType, (t: ClientType) => void] }) {
+  const [name, setName] = useState(""), [ownType, setOwnType] = useState<ClientType>("public"), [redirect, setRedirect] = useState("");
+  const [type, setType] = kind ?? [ownType, setOwnType];
   const [viewerToo, setViewerToo] = useState(true);
   const [jwks, setJwks] = useState(""), [pasted, setPasted] = useState(""), [patients, setPatients] = useState("any");
   const [error, setError] = useState<string>();
@@ -100,7 +103,7 @@ export function RegisterForm({ base, registered, title = "Register an app" }: { 
       <label htmlFor="app-name">App name</label>
       <input type="text" id="app-name" required maxLength={80} autoComplete="off" value={name} onChange={e => setName(e.target.value)} />
       <fieldset className="client-type"><legend>Type</legend>
-        {TYPES.map(([v, label, what]) => <label key={v}><input type="radio" name="type" value={v} checked={type === v} onChange={() => setType(v)} /> {label} <span>{what}</span></label>)}
+        {TYPES.map(([v, label, what]) => <Choice key={v} type="radio" name="type" value={v} checked={type === v} onChange={() => setType(v)} label={label} detail={what} />)}
       </fieldset>
       {type !== "backend" && <div id="redirect-field">
         <label htmlFor="app-redirect">Redirect URI</label>

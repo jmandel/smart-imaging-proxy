@@ -10,6 +10,7 @@ import { api, BASE } from "../lib/api";
 import { announce, plural, StudyList } from "../lib/format";
 import { sandboxClient, type SandboxClient } from "../lib/sandbox-client";
 import { APP_LAUNCH, BACKEND_CAPABILITY } from "../lib/servers";
+import { useReady } from "../lib/ready";
 import { PageLink } from "../shell/Shell";
 
 interface Panel { label?: string; chain: LayerChain }
@@ -209,6 +210,7 @@ export default function Tours() {
     }
   }
 
+  useReady(!!list || !!error);
   const inRunner = !!(BASE && state?.tour);
   // One layout throughout: the stories on the left, the chosen one on the right, as a preview until it runs.
   const chosen = inRunner ? state!.tour!.id : params.get("tour") ?? list?.tours[0]?.id;

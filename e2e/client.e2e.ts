@@ -513,7 +513,7 @@ describe("the demo client", () => {
     await shot(page, "connect-backend");
     // A service connects at once, with no one to sign in.
     await page.getByRole("button", { name: "Try it in the viewer" }).click();
-    await page.waitForURL(/\/viewer$/);
+    await page.waitForURL(u => u.pathname === "/viewer");
     await page.getByText("Backend service: no one signed in").waitFor();
     await page.locator(".study-button").nth(5).waitFor();
     await page.locator("[data-stage=authorize]", { hasText: "signed assertion" }).waitFor();
@@ -691,7 +691,7 @@ describe("the demo client", () => {
     await page.getByRole("button", { name: "Register" }).click();
     // Trying it saves it as one of your servers, which the check then offers.
     await page.getByRole("button", { name: "Try it in the viewer" }).click();
-    await page.waitForURL(/\/viewer$/);
+    await page.waitForURL(u => u.pathname === "/viewer");
     await page.goto(`${ORIGIN}/check`);
     await page.getByRole("link", { name: /Referral service/ }).click();
     await page.waitForURL(u => u.pathname === "/check" && u.searchParams.has("server"));

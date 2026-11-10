@@ -2,8 +2,10 @@
 // from, how the imaging FHIR server sits beside the clinical one, the demo clock, starting over, and ending
 // access at once. Each section says what its last action did, beside it.
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useSearchParams } from "react-router";
 import { api } from "../lib/api";
 import { announce } from "../lib/format";
+import { useReady } from "../lib/ready";
 
 interface Status {
   sandbox: { id: string; base: string } | null;
@@ -26,6 +28,7 @@ function offsetText(s: number) {
 }
 
 type SectionId = "storage" | "topology" | "clock" | "reset" | "end";
+const SECTIONS: SectionId[] = ["storage", "topology", "clock", "reset", "end"];
 /** What a section's last action did, or why it failed. */
 interface Said { section: SectionId; text: string; failed?: boolean }
 
@@ -52,6 +55,12 @@ export default function Config() {
     api<Status>("GET", "/api/sandbox").then(setSt, e => setError((e as Error).message));
     checkStorage();
   }, []);
+  useReady(!!st || !!error);
+  // A link can name a panel (?panel=clock): the page opens scrolled to it, once it's drawn, and follows the address.
+  const [params] = useSearchParams(), panel = params.get("panel") as SectionId | null;
+  useEffect(() => {
+    if (st && panel && SECTIONS.includes(panel)) document.getElementById(`config-${panel}`)?.scrollIntoView({ block: "start" });
+  }, [!!st, panel]);
 
   /** Does one action; the status it answers with redraws the page. */
   const act = async (section: SectionId, method: string, route: string, body: unknown, done: string) => {

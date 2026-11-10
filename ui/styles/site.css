@@ -146,8 +146,10 @@ button.person span { display:block; color:var(--muted); font-size:.88rem; line-h
 .headline h1 { margin:0; font-size:clamp(1.6rem, 3.2vw, 2.15rem); font-weight:800; letter-spacing:-.01em; line-height:1.15; text-wrap:balance; }
 .headline h1:focus { outline:none; }
 .headline .note { margin:.35rem 0 0; }
-.seg { flex:0 0 auto; display:inline-flex; flex-wrap:wrap; border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--plate); }
-.seg button { flex:none; min-height:2.75rem; padding:.3rem .95rem; background:none; border:0; border-right:1px solid var(--line); }
+.headline-row { display:flex; flex-wrap:wrap; align-items:baseline; gap:.4rem 1rem; }
+.headline-row .tool, .log-head > .tool { flex:none; }
+.seg { flex:0 1 auto; max-width:100%; display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--plate); }
+.seg button { flex:1 1 auto; min-width:0; min-height:2.75rem; line-height:1.25; padding:.3rem .95rem; background:none; border:0; border-right:1px solid var(--line); }
 .seg button:last-child { border-right:0; }
 .seg button[aria-pressed=true] { background:var(--accent); color:var(--plate); font-weight:700; }
 .seg button:hover:not(:disabled):not([aria-pressed=true]) { background:var(--code); }
@@ -484,7 +486,8 @@ tr.detail > td { background:var(--box); max-width:none; padding:.6rem .8rem .8re
 @media (min-width:44rem) { .ly-pair .ly-pane + .ly-pane { border-top:0; padding-top:0; } }
 .ly-legend { display:flex; flex-direction:column; gap:.3rem; font-size:.8rem; color:var(--muted); line-height:1.35; }
 .ly-legend ul { display:flex; flex-wrap:wrap; gap:.3rem 1rem; list-style:none; margin:0; padding:0; }
-.ly-legend li { display:inline-flex; align-items:center; gap:.35rem; }
+.ly-legend li { display:inline-flex; flex-wrap:wrap; align-items:center; gap:.35rem; max-width:100%; }
+.ly-legend li > span:last-child { min-width:0; }
 .ly-legend p { margin:0; max-width:60ch; }
 .ly-legend .layers { display:inline-flex; flex:none; gap:3px; container-type:normal; }
 /* A sample box takes its row's colors, without the row's own layout. */

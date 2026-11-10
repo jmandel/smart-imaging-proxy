@@ -7,7 +7,8 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "
 import { useLocation, useNavigate } from "react-router";
 import { api, BASE } from "../lib/api";
 import { wordsFor, time, type EventWords, type LogEvent, type Names } from "../lib/event-words";
-import { announce, bytes, plural, StudyList } from "../lib/format";
+import { announce, bytes, LinkToView, plural, StudyList } from "../lib/format";
+import { useReady } from "../lib/ready";
 import { LEVEL, Mark } from "../components/Layers";
 import { Exchange } from "../activity/Exchange";
 import { EndsStrip, Flow, type SessionFlow, type StudyEnd } from "../activity/Flow";
@@ -263,11 +264,13 @@ export default function Activity() {
     setPage({ ...p, events: [...p.events, ...page!.events] });
   };
 
+  useReady(!!error || (!!summary && !!page));
   const one = !!summary?.flow;
   return (
     <main className={`log${summary?.viewer ? " one-session" : ""}`}>
       <div className="log-head">
         <h1 id="title" tabIndex={-1} ref={title}>Logs</h1>
+        <LinkToView />
         <p className="note" id="view-line">{summary && (summary.viewer
           ? <>One session, showing only what {n.who(summary.sessions[0]?.who) || "its person or service"} may see. <LogLink to={`${BASE}/activity`}>Every session</LogLink></>
           : <>Every session, as the operator sees it.{summary.traceUrl && <> <a href={summary.traceUrl}>Open the live trace</a></>}</>)}</p>

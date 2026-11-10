@@ -1,5 +1,5 @@
 // Who's looking, and whose records: the people and services to pick from, and for the one picked, whose
-// studies or which referral.
+// studies or which referral. Each is named by its name alone, with its role as its description.
 import type { Cast, Choice, Person, Referral, View } from "./types";
 
 /** The people and services, as two lists. On a phone, one select stands in for both. */
@@ -22,10 +22,10 @@ export function WhoList({ cast, view, look }: { cast: Cast; view?: View; look: (
         </label>
       </div>
       <section aria-labelledby="h-people"><h2 id="h-people">People</h2>
-        <ul>{cast.people.map(p => <li key={p.id}><button type="button" className="person" data-user={p.id} aria-pressed={current === p.id} disabled={busy} onClick={() => look({ user: p.id })}><b>{p.name}</b><span>{p.role}</span></button></li>)}</ul>
+        <ul>{cast.people.map(p => <li key={p.id}><button type="button" className="person" data-user={p.id} aria-pressed={current === p.id} disabled={busy} onClick={() => look({ user: p.id })} aria-labelledby={`who-user-${p.id}`} aria-describedby={`who-user-${p.id}-role`}><b id={`who-user-${p.id}`}>{p.name}</b><span id={`who-user-${p.id}-role`}>{p.role}</span></button></li>)}</ul>
       </section>
       <section aria-labelledby="h-services"><h2 id="h-services">Services</h2>
-        <ul>{cast.services.map(s => <li key={s.id}><button type="button" className="person" data-client={s.id} aria-pressed={current === s.id} disabled={busy} onClick={() => look({ client: s.id })}><b>{s.name}</b><span>{s.role}</span></button></li>)}</ul>
+        <ul>{cast.services.map(s => <li key={s.id}><button type="button" className="person" data-client={s.id} aria-pressed={current === s.id} disabled={busy} onClick={() => look({ client: s.id })} aria-labelledby={`who-client-${s.id}`} aria-describedby={`who-client-${s.id}-role`}><b id={`who-client-${s.id}`}>{s.name}</b><span id={`who-client-${s.id}-role`}>{s.role}</span></button></li>)}</ul>
       </section>
     </aside>
   );
