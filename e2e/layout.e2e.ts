@@ -13,7 +13,9 @@ beforeAll(async () => { const root = join(import.meta.dir, ".."); stack = await 
 afterAll(async () => { await browser.close(); srv.stop(true); stack.stop(); });
 const OBS = () => { (window as any).__s = []; new PerformanceObserver(l => { for (const e of l.getEntries() as any[]) (window as any).__s.push({ v: +e.value.toFixed(4), input: e.hadRecentInput, src: e.sources.map((s: any) => { const n = s.node; return n ? `${n.nodeName}${n.id ? "#" + n.id : ""}${n.className && typeof n.className === "string" ? "." + n.className.split(" ")[0] : ""}` : "?"; }).slice(0, 4) }); }).observe({ type: "layout-shift", buffered: true }); };
 const report = async (name: string, page: Page) => { await page.waitForTimeout(1200); const s = await page.evaluate(() => (window as any).__s); const total = s.reduce((a: number, e: any) => a + e.v, 0); console.log(`[${name}] total=${total.toFixed(3)}  ${s.sort((a: any, b: any) => b.v - a.v).slice(0, 2).map((e: any) => `${e.v}${e.input ? "(input)" : ""}:${e.src.slice(0, 3).join(",")}`).join(" | ")}`); expect(total).toBeLessThan(name.endsWith("connect switch type") ? 0.05 : 0.03); };
-for (const [label, viewport] of [["desktop", { width: 1440, height: 900 }], ["phone", { width: 390, height: 844 }]] as const) test(label, async () => {
+// Desktop and phone run at once, each in its own browser context and its own new sandbox: each report still waits
+// its full 1.2 s for late shifts, and the two share nothing a page writes.
+for (const [label, viewport] of [["desktop", { width: 1440, height: 900 }], ["phone", { width: 390, height: 844 }]] as const) test.concurrent(label, async () => {
   const ctx = await browser.newContext({ viewport }); ctx.setDefaultTimeout(10000); await ctx.addInitScript(OBS);
   const p = await ctx.newPage();
   await p.goto(`${O}/`); await report(`${label} home`, p);

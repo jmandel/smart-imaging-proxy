@@ -1,0 +1,3 @@
+[test]
+# Reuses Orthanc's catalog build across stacks in one process: see tests/preload.ts.
+preload = ["./tests/preload.ts"]

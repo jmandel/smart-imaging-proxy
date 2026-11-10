@@ -31,16 +31,17 @@ export async function fetchApp(urls: SandboxUrls, client: string, user: string, 
   const resolve = (study: any, ref: string) => ref.startsWith("#") ? study.contained?.find((c: any) => c.id === ref.slice(1))
     : entries.find(e => e.fullUrl === ref || e.fullUrl?.endsWith(`/${ref}`))?.resource;
   const studies = entries.filter(e => e.resource.resourceType === "ImagingStudy").map(e => e.resource);
+  // The studies are opened at once, as a viewer loading thumbnails might, so their staged 503s are waited out together.
   let retrieved = 0;
-  for (const st of studies) {
+  await Promise.all(studies.map(async st => {
     const address = resolve(st, st.endpoint?.[0]?.reference ?? "")?.address;
     const series = st.series?.find((s: any) => s.instance?.length);
-    if (!address || !series) continue;
+    if (!address || !series) return;
     const uid = st.identifier.find((i: any) => i.system === "urn:dicom:uid").value.replace(/^urn:oid:/, "");
     const base = habits.buildUrl ? `${urls.proxy}/wado/-` : address;
     const r = await get(`${base}/studies/${uid}/series/${series.uid}/instances/${series.instance[0].uid}`, { ...bearer, ...(habits.accept === false ? {} : { accept: WADO_ACCEPT }) });
     await r.arrayBuffer();
     if (r.ok) retrieved++;
-  }
+  }));
   return { token: t.access_token as string, studies: studies.length, retrieved };
 }

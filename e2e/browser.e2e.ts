@@ -109,17 +109,22 @@ describe("opening a page", () => {
 describe("every page, on desktop and phone, in light and dark", () => {
   for (const [name, viewport] of [["desktop", DESKTOP], ["phone", PHONE]] as const) for (const colorScheme of ["light", "dark"] as const) {
     test(`${name} ${colorScheme}: no script or console errors, no sideways scrolling, and the header holds the menu`, async () => {
-      for (const path of ["/", "/explore", "/activity", CONFIG.traceUrl, `${CONFIG.authUrl}/account`]) {
-        const page = await open(path, { viewport, colorScheme });
-        await page.waitForLoadState("networkidle");
-        expect([path, await overflow(page)]).toEqual([path, 0]);
-        // Every page of the site, the trace's too, ends with the site map and the source.
-        if (!path.startsWith(CONFIG.authUrl)) expect([path, await page.locator(".site-footer a[href='https://github.com/jmandel/smart-imaging-proxy']").count()]).toEqual([path, 2]);
-        if (!path.startsWith("http") && path !== "/") {
-          expect(await page.locator(".pages a").allInnerTexts()).toEqual(["Build an App", "Run a Server", "Why SMART Imaging", "My Sandboxes", "For Agents"]);
-        }
-        await context!.close(); context = undefined;
-      }
+      // The pages only read, so they load at once, each in its own context.
+      await Promise.all(["/", "/explore", "/activity", CONFIG.traceUrl, `${CONFIG.authUrl}/account`].map(async path => {
+        const own = await browser.newContext({ viewport, colorScheme });
+        own.on("page", watch);
+        try {
+          const page = await own.newPage();
+          await page.goto(path.startsWith("http") ? path : `${DEMO}${path}`);
+          await page.waitForLoadState("networkidle");
+          expect([path, await overflow(page)]).toEqual([path, 0]);
+          // Every page of the site, the trace's too, ends with the site map and the source.
+          if (!path.startsWith(CONFIG.authUrl)) expect([path, await page.locator(".site-footer a[href='https://github.com/jmandel/smart-imaging-proxy']").count()]).toEqual([path, 2]);
+          if (!path.startsWith("http") && path !== "/") {
+            expect(await page.locator(".pages a").allInnerTexts()).toEqual(["Build an App", "Run a Server", "Why SMART Imaging", "My Sandboxes", "For Agents"]);
+          }
+        } finally { await own.close(); }
+      }));
       expect(problems).toEqual([]);
     });
     test(`${name} ${colorScheme}: a story's diagram text keeps its contrast, and a study in the result looks the same as in Explore`, async () => {

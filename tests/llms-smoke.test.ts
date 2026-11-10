@@ -18,7 +18,7 @@ beforeAll(async () => {
 });
 afterAll(() => { demo?.stop(true); stack?.stop(); });
 
-/** Runs the served smoke.mjs against a new sandbox, after `stage` has set it up. */
+/** Runs the served smoke.mjs against a new sandbox, after `stage` has set it up. Each run has its own sandbox, so they run at once. */
 async function smoke(stage?: (base: string) => Promise<void>) {
   const { base } = await (await fetch(`${CONFIG.demoUrl}/api/sandboxes`, { method: "POST" })).json() as { base: string };
   await stage?.(base);
@@ -36,12 +36,12 @@ test("llms.txt shows the smoke test the site serves, as is", async () => {
   const [doc, file] = await Promise.all([fetch(`${CONFIG.demoUrl}${base}/llms.txt`).then(r => r.text()), fetch(`${CONFIG.demoUrl}${base}/smoke.mjs`).then(r => r.text())]);
   expect(doc).toContain(`\`\`\`js\n${file}\`\`\``);
 });
-test("the smoke test runs as served and prints OK, retrieving from every study", async () => {
+test.concurrent("the smoke test runs as served and prints OK, retrieving from every study", async () => {
   const r = await smoke();
   expect({ code: r.code, err: r.err }).toEqual({ code: 0, err: "" });
   expect(r.out).toMatch(/^OK: 6 studies, an image from each \(\d+ bytes\), 6 reports$/);
 });
-test("and with every condition an app check stages: small pages, 503s, and Endpoints in all three forms", async () => {
+test.concurrent("and with every condition an app check stages: small pages, 503s, and Endpoints in all three forms", async () => {
   const r = await smoke(async base => {
     const res = await fetch(`${CONFIG.demoUrl}${base}/api/sandbox/faults`, { method: "POST", headers: { ...await adminHeaders({ fetch: q => fetch(q) }, base), "content-type": "application/json" }, body: JSON.stringify({ pageSize: 2, endpointForms: true, searchRetryAfter: 1, retrievalRetryAfter: 1 }) });
     expect(res.status).toBe(200);
@@ -49,7 +49,7 @@ test("and with every condition an app check stages: small pages, 503s, and Endpo
   expect({ code: r.code, err: r.err }).toEqual({ code: 0, err: "" });
   expect(r.out).toMatch(/^OK: 6 studies, an image from each/);
 });
-test("and in a sandbox switched to unified topology, where imaging is advertised at the top level", async () => {
+test.concurrent("and in a sandbox switched to unified topology, where imaging is advertised at the top level", async () => {
   let advertised: any;
   const r = await smoke(async base => {
     const res = await fetch(`${CONFIG.demoUrl}${base}/api/sandbox`, { method: "PATCH", headers: { ...await adminHeaders({ fetch: q => fetch(q) }, base), "content-type": "application/json" }, body: JSON.stringify({ topology: "unified" }) });
