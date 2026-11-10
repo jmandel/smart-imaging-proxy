@@ -225,19 +225,32 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     return ok ? { client_id: claims.iss as string, scopes: reg!.scopes } : undefined;
   }
 
-  const page = (title: string, body: string, status = 200) => new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)}</title><style>${PAGE_CSS}</style></head><body><p class="brand">Authorization Server</p><main>${body}</main></body></html>`, { status, headers: { "content-type": "text/html; charset=utf-8" } });
+  const page = (title: string, body: string, status = 200) => new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)}</title><style>${PAGE_CSS}</style></head><body><p class="brand">Authorization Server</p><main>${body}</main>${STEPS_REPLACE}</body></html>`, { status, headers: { "content-type": "text/html; charset=utf-8" } });
   const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 
   const demoQuery = (url: URL) => { const q = new URLSearchParams(); for (const k of ["demo_traceparent", "demo_session", "return", "return_state", "preselect", "suggest_delegate"]) if (url.searchParams.get(k)) q.set(k, url.searchParams.get(k)!); const s = q.toString(); return s ? `&${s}` : ""; };
   const redirectTo = (location: string) => new Response(null, { status: 303, headers: { Location: location } });
+  /**
+   * Where a sign-in form goes next. The pages' own script sends a form asking for JSON, then replaces the
+   * page with where it says, so each step takes the place of the last in the browser's history and Back
+   * returns to the app. A form sent without script gets the redirect.
+   */
+  const goOn = (req: Request, location: string, status: 302 | 303) => req.headers.get("accept")?.includes("application/json") ? Response.json({ location }) : new Response(null, { status, headers: { Location: location } });
+  /** Sends each sign-in step's form in the background and replaces the page with where it leads. */
+  const STEPS_REPLACE = `<script>for (const f of document.querySelectorAll("form[data-replace]")) f.addEventListener("submit", async e => {
+  e.preventDefault();
+  const r = await fetch(f.action, { method: "POST", body: new URLSearchParams(new FormData(f, e.submitter)), headers: { accept: "application/json" } });
+  const b = (r.headers.get("content-type") ?? "").includes("json") ? await r.json() : undefined;
+  if (b?.location) location.replace(b.location); else { document.open(); document.write(await r.text()); document.close(); }
+});</script>`;
   const initials = (name: string) => name.split(/\s+/).map(w => w[0]).join("").slice(0, 2).toUpperCase();
   /** The account picker. It's a plain form, so it works with no script. */
-  const signInForm = async (action: string, hint = "", error = "") => {
+  const signInForm = async (action: string, hint = "", error = "", replaces = false) => {
     const relationships = await opts.directory.relationships();
     return `
     ${error ? `<p class="error" role="alert">${esc(error)}</p>` : ""}
     <p class="demo-note">This is a demo: picking an account stands in for real authentication.</p>
-    <form method="post" action="${esc(action)}">
+    <form method="post" action="${esc(action)}" ${replaces ? "data-replace" : ""}>
       <fieldset class="accounts"><legend>Choose an account</legend>
         ${Object.entries(USERS).map(([id, u]) => `<label class="account"><input type="radio" name="username" value="${esc(id)}" ${id === hint ? "checked" : ""} required><span class="avatar" aria-hidden="true">${esc(initials(u.name))}</span><span class="account-text"><b>${esc(u.name)}</b><span class="role">${esc(roleOf(u, relationships.filter(r => r.delegate === id)))}</span><code>${esc(u.fhirUser)}</code></span></label>`).join("")}
       </fieldset>
@@ -289,7 +302,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     if (!check("authorization-server", "scope has no system-level access, which only Backend Services clients get", !scope.split(" ").some(s => s.startsWith("system/")), { scope })) return back("invalid_scope");
     const id = randomBytes(16).toString("base64url");
     txns.set(id, { client_id: q.get("client_id")!, redirect_uri: q.get("redirect_uri")!, state: q.get("state")!, scope, code_challenge: q.get("code_challenge")!, exp: now() + 600, login_hint: q.get("login_hint") ?? undefined, patient_hint: q.get("demo_patient") ?? undefined });
-    return page("Sign in", `<h1>Sign in to continue to ${esc(client!.name)}</h1><p class="who">This page belongs to the Authorization Server, not the app.</p>${await signInForm(`${P}/authorize/signin?txn=${id}${demoQuery(url)}`, q.get("login_hint") ?? "")}`);
+    return page("Sign in", `<h1>Sign in to continue to ${esc(client!.name)}</h1><p class="who">This page belongs to the Authorization Server, not the app.</p>${await signInForm(`${P}/authorize/signin?txn=${id}${demoQuery(url)}`, q.get("login_hint") ?? "", "", true)}`);
   }
 
   const txnOf = (url: URL) => {
@@ -304,9 +317,9 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     if (!t) return expired();
     const user = signIn(new URLSearchParams(await req.text()));
     const client = clientOf(t.txn.client_id)!;
-    if (!user) return page("Sign in", `<h1>Sign in to continue to ${esc(client.name)}</h1>${await signInForm(`${P}/authorize/signin?txn=${t.id}${demoQuery(url)}`, t.txn.login_hint ?? "", NOT_AN_ACCOUNT)}`, 401);
+    if (!user) return page("Sign in", `<h1>Sign in to continue to ${esc(client.name)}</h1>${await signInForm(`${P}/authorize/signin?txn=${t.id}${demoQuery(url)}`, t.txn.login_hint ?? "", NOT_AN_ACCOUNT, true)}`, 401);
     t.txn.user = user;
-    return redirectTo(`${P}/authorize/consent?txn=${t.id}${demoQuery(url)}`);
+    return goOn(req, `${P}/authorize/consent?txn=${t.id}${demoQuery(url)}`, 303);
   }
 
   async function consentPage(url: URL): Promise<Response> {
@@ -329,7 +342,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     return page("Authorize app", `<h1>Let ${esc(client.name)} access imaging records?</h1>
       <p class="who">Signed in as ${esc(user.name)} (<code>${esc(user.fhirUser)}</code>).</p>
       ${opts.registeredClient?.(t.txn.client_id) ? `<p class="who">Approving sends you to <strong>${esc(new URL(t.txn.redirect_uri).host)}</strong>. This app was registered by someone using this sandbox.</p>` : ""}
-      <form method="post" action="${esc(action)}">
+      <form method="post" action="${esc(action)}" data-replace>
         <fieldset class="accounts"><legend>Whose records</legend>${whoseRadios(access.records, selected)}${access.records.length > 1 ? `<p class="note">This app gets one person's records. Choosing someone else later is a new authorization, with its own approval.</p>` : ""}</fieldset>
         <fieldset><legend>Requested permissions</legend><ul class="scopes">${t.txn.scope.split(" ").map(s => `<li><code>${esc(s)}</code></li>`).join("")}</ul></fieldset>
         ${sites}
@@ -347,7 +360,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     const f = new URLSearchParams(await req.text());
     const back = new URL(txn.redirect_uri);
     back.searchParams.set("state", txn.state);
-    const deny = () => { back.searchParams.set("error", "access_denied"); return new Response(null, { status: 302, headers: { Location: back.toString() } }); };
+    const deny = () => { back.searchParams.set("error", "access_denied"); return goOn(req, back.toString(), 302); };
     if (!check("authorization-server", "user approves", f.get("decision") === "approve", { user: txn.user, decision: f.get("decision") })) return deny();
     const user = USERS[txn.user!]!;
     const access = await opts.directory.access(txn.user!, user.fhirUser);
@@ -369,7 +382,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     codes.set(code, { grant, client_id: txn.client_id, redirect_uri: txn.redirect_uri, code_challenge: txn.code_challenge, exp: now() + 60 });
     check("authorization-server", "issue single-use authorization code", true, { lifetime_seconds: 60, patient: grant.patient, user: grant.sub, sites: chosen.sites.join(", ") || undefined });
     back.searchParams.set("code", code);
-    return new Response(null, { status: 302, headers: { Location: back.toString() } });
+    return goOn(req, back.toString(), 302);
   }
 
   // Every account_session cookie the browser sends: a scope's and the root's can both reach a scope's

@@ -184,7 +184,7 @@ describe("Account picker", () => {
   const signInPage = async (hint?: string) => (await statusOf(buildAuthorization(conf.authorization_endpoint, "portal-app", undefined, undefined, hint).url)).text();
   const checked = (html: string) => [...html.matchAll(/<input type="radio" name="username" value="([^"]+)" checked/g)].map(m => m[1]);
 
-  test("lists every account as a radio, with no password field and no script", async () => {
+  test("lists every account as a radio, with no password field, in a plain form that works with no script", async () => {
     const html = await signInPage();
     for (const [id, name] of Object.entries(ACCOUNTS)) {
       expect(html).toContain(`name="username" value="${id}"`);
@@ -193,7 +193,10 @@ describe("Account picker", () => {
     expect(html).toContain("Patient/robin-example");
     expect(html).toContain("picking an account stands in for real authentication");
     expect(html).not.toMatch(/password/i);
-    expect(html).not.toContain("<script");
+    // The form posts on its own. The page's one script only keeps each step out of the browser's history.
+    expect(html).toMatch(/<form method="post" action="[^"]+" data-replace>/);
+    expect(html.match(/<script>/g)!.length).toBe(1);
+    expect(html).toContain("location.replace(b.location)");
     expect(html.match(/<button/g)!.length).toBe(1);
     expect(html).toContain(">Continue</button>");
   });

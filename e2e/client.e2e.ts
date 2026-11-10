@@ -50,6 +50,8 @@ async function enterSandbox(page: Page) {
   await page.locator("#sandbox-name").waitFor();
   return new URL(page.url()).pathname.replace(/\/$/, "");
 }
+/** The sandbox a page is in, from its address. */
+const baseOf = (page: Page) => new URL(page.url()).pathname.match(/^\/s\/[^/]+/)![0];
 async function signIn(page: Page, user: string) {
   await enterSandbox(page);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
@@ -66,7 +68,7 @@ describe("the demo client", () => {
     const problems: string[] = [];
     page.on("pageerror", e => problems.push(e.message));
     await signIn(page, "josh");
-    expect(new URL(page.url()).pathname).toMatch(/^\/s\/[^/]+\/$/);
+    expect(new URL(page.url()).pathname).toMatch(/^\/s\/[^/]+\/viewer$/);
     await expect(page.locator(".who").textContent()).resolves.toBe("Josh Example");
     await page.getByRole("heading", { name: "Conditions" }).waitFor();
     await page.locator("#c-Condition li", { hasText: "Migraine" }).waitFor();
@@ -170,7 +172,7 @@ describe("the demo client", () => {
     await page.getByRole("button", { name: "Continue" }).click();
     await page.getByRole("button", { name: "Approve" }).click();
     await page.locator("#app").waitFor({ state: "visible" });
-    expect(new URL(page.url()).pathname).toBe(`${base}/`);
+    expect(new URL(page.url()).pathname).toBe(`${base}/viewer`);
     await page.getByText("Connected to Another server").waitFor();
     await page.locator(".who").waitFor();
     await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
@@ -261,6 +263,23 @@ describe("the demo client", () => {
     expect(await page.locator(`.sandbox-list a[href="${second}/"]`).count()).toBe(1);
     await context.close();
   });
+  test("Back from the viewer is the overview, ready, not the sign-in pages", async () => {
+    const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    await signIn(page, "josh");
+    const base = baseOf(page);
+    expect(new URL(page.url()).pathname).toBe(`${base}/viewer`);
+    await page.goBack();
+    await page.waitForURL(u => u.pathname === `${base}/`);
+    await page.locator("#landing").waitFor({ state: "visible" });
+    expect(await page.getByText("This request has expired").count()).toBe(0);
+    expect(await page.locator("#connect").isEnabled()).toBe(true);
+    // Still connected in this tab: the overview says so, and goes back to the viewer.
+    await page.locator("#resume a", { hasText: "Back to the viewer" }).click();
+    await page.waitForURL(u => u.pathname === `${base}/viewer`);
+    await page.locator("#app").waitFor({ state: "visible" });
+    await context.close();
+  });
   test("a page brought back with Back shows where things are now", async () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
@@ -300,7 +319,7 @@ describe("the demo client", () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     await signIn(page, "josh");
-    const base = new URL(page.url()).pathname.replace(/\/$/, "");
+    const base = baseOf(page);
     await page.goto(`${ORIGIN}${base}/connect`);
     await page.getByLabel("App name").fill("My test app");
     await page.getByLabel("Redirect URI").fill("https://app.example/callback");
@@ -362,7 +381,7 @@ describe("the demo client", () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     await signIn(page, "josh");
-    const base = new URL(page.url()).pathname.replace(/\/$/, "");
+    const base = baseOf(page);
     await page.locator(".study-button").first().waitFor();
     await page.evaluate(async b => { await (window as any).api("PATCH", "/api/sandbox", { topology: "unified" }, b); }, base);
     await page.evaluate(() => sessionStorage.clear());
@@ -380,7 +399,7 @@ describe("the demo client", () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     await signIn(page, "josh");
-    const base = new URL(page.url()).pathname.replace(/\/$/, "");
+    const base = baseOf(page);
     await page.goto(`${ORIGIN}${base}/connect`);
     await page.getByLabel("App name").fill("Referral service");
     await page.getByRole("radio", { name: /Backend service/ }).check();
@@ -400,7 +419,7 @@ describe("the demo client", () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     await signIn(page, "josh");
-    const base = new URL(page.url()).pathname.replace(/\/$/, "");
+    const base = baseOf(page);
     await page.goto(`${ORIGIN}${base}/connect`);
     await page.getByLabel("App name").fill("Confidential one");
     await page.getByRole("radio", { name: /Confidential app/ }).check();
