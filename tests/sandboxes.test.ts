@@ -330,7 +330,7 @@ describe("sandbox lifetimes", () => {
     for (const u of [`${w.clinicalFhir}/.well-known/smart-configuration`, `${w.demo}/api/flow-state`, `${w.imaging}/fhir/metadata`, `${w.proxy}/wado/-/studies/1.2`, `${w.trace}/api/sessions`, `http://127.0.0.1:${PORTS.imaging}/s/${id}/fhir/metadata`]) {
       const r = await get(u);
       expect([u, r.status]).toEqual([u, 404]);
-      expect(((await r.json()) as any).error).toContain("doesn't exist");
+      expect(((await r.json()) as any).error).toContain("no sandbox has this address");
     }
     expect(splitSandbox("/s/x/a")).toEqual({ sandbox: "x", rest: "/a" });
     expect(splitSandbox("/s/x")).toEqual({ sandbox: "x", rest: "/" });

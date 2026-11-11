@@ -34,7 +34,7 @@ An app starts at the clinical FHIR base. `GET $SANDBOX/fhir/.well-known/smart-co
 ## The sandbox model
 
 - A sandbox holds its own policy, approvals, tokens, registered apps, demo clock, and choice of image storage. Images and patients are shared and read-only.
-- It's saved to disk, and lasts until its owner deletes it.
+- It's saved to disk, and lasts until its owner deletes it (`DELETE /api/sandbox`). Only the throwaway sandboxes tours and checks make for themselves idle out, after 30 minutes.
 - **Its URL is the access.** Anyone with it can read and change the sandbox, so treat it as a secret. The name is only a label.
 - Access is a union of grants. There are no deny rules: every grant only adds access.
 - The site root is read-only on public deployments. Work in a sandbox.
@@ -154,8 +154,6 @@ curl "$SANDBOX/imaging/fhir/ImagingStudy?patient=Patient/josh-example&_include=I
 
 The clinical FHIR server is read-only: anything but `GET` is `405` with `Allow: GET`. Each FHIR server has a CapabilityStatement: `$SANDBOX/fhir/metadata` and `$SANDBOX/imaging/fhir/metadata`.
 
-Every refusal has a body that says why: an OperationOutcome on a FHIR address, and `{"error", "hint"}` elsewhere. An authorization error sent back to the app's redirect URI carries `error_description`.
-
 Reports link to their images by accession number (`identifier`, with the same `system` as the study's accession) and by the study's DICOM UID (`imagingStudy[].identifier`, system `urn:dicom:uid`). Either goes in an ImagingStudy search's `identifier`; ImagingStudy isn't read by id. Each has a PDF and a text attachment at the URLs in `presentedForm`. A report is available only when the study it describes is released to the token.
 
 ```sh
@@ -172,7 +170,9 @@ curl "$ADDRESS/studies/$STUDY_UID/series/$SERIES_UID/instances/$INSTANCE_UID" \
 
 The answer is `multipart/related`: each part is one DICOM file, starting after the part's headers, with `DICM` at byte 128. `/studies/{uid}` and `/metadata` (`accept: application/dicom+json`) also work. `/frames`, `/rendered` and `/thumbnail` return 501. A study not yet ready answers 503 with `Retry-After`: wait that long and ask again. An address that isn't an `Endpoint.address` the search gave (such as `/wado/studies/{uid}`) is a 404, not a 503: there is nothing to wait for.
 
-Every refusal says why. FHIR endpoints answer an `OperationOutcome` whose `issue[0].diagnostics` gives the reason; everything else answers JSON `{error, hint?}`.
+Every refusal says why. FHIR endpoints answer an `OperationOutcome` whose `issue[0].diagnostics` gives the reason; everything else answers JSON `{error, hint?}`. An authorization error sent back to the app's redirect URI carries `error_description`.
+
+`$SANDBOX/wado/-/studies/{uid}/…` is retrieval with no signed context: the proxy asks the Imaging Server's decision API for each request (and caches the answer briefly), instead of reading the decision from the address. It's how a viewer handed only a token and a UID would ask, and what `decisionOutage` stops. An app given an `Endpoint.address` uses that.
 
 ## Smoke test
 
@@ -331,7 +331,25 @@ The last four are what the guide or FHIR lets any server do, and are what an app
 
 Create a new sandbox with `POST {{ORIGIN}}/api/sandboxes`. The response has `base`, a path to add to the origin.
 
-Starting a guided tour resets a sandbox's policy, but keeps its registered apps, and other apps' tokens and approvals.
+Starting a guided tour resets a sandbox's policy, but keeps its registered apps, and other apps' tokens and approvals. `GET $SANDBOX/api/tours` lists the tours, with each one's steps and premise, the cast, and the protocol checks; `current` is the tour running here, if one is.
+
+### The activity log
+
+Every request any part of the sandbox answers is recorded as events, which the Activity page shows. Read them with no token; the sandbox's URL is the access.
+
+| Route | What it does |
+|---|---|
+| `GET $SANDBOX/api/activity` | One page of events, oldest first, up to `limit` (100 by default, at most 500). `more` says whether there are earlier ones; pass the answer's `before` as `before` for the page before it. `after=N` gives only events after sequence `N`, for polling |
+| `GET $SANDBOX/api/activity/summary` | Rollups of the same events: counts by type, a timeline, sessions and studies |
+| `GET $SANDBOX/api/activity/span?session=&span=` | The request and response behind one event |
+
+Filters, on the first two: `session`, `study` (an `ImagingStudy.id`), `type`, `kind`, `outcome`, `who`, `trace` and `link`. A tour step or an Explore view has its own `session`; an app's own requests are in `unattributed@{sandbox id}`, or in the session named by the `baggage: demo.session=…` header they send. An event names the check that failed when something is refused, so `outcome=denied` with your session is the quickest answer to "why".
+
+The activity log keeps a limited amount across the whole deployment, oldest first out, so read what you need soon after.
+
+### The account page
+
+`$SANDBOX/account` is the Authorization Server's own page for a signed-in person: what they hold, sharing with a related person, stopping a share, and stopping an app. Its forms write the same policy as `/api/sandbox/policy/shares` and `/app-approvals`. It's there for a person driving the sandbox in a browser; an agent uses the management API.
 
 ### Running a tour step yourself
 

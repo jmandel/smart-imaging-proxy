@@ -88,7 +88,7 @@ export function createSandboxes(shared: Shared, opts: { idleMs?: number; max?: n
         return "error" in d ? { status: 400, error: d.error } : { sandbox: add(id, d.seed) };
       }
       if (hasFile(id)) return { sandbox: add(id, undefined, true) };
-      return { status: 404, error: MINTED.test(id) ? "this sandbox doesn't exist, or it sat idle and was dropped: start a new one" : "that isn't a sandbox" };
+      return { status: 404, error: MINTED.test(id) ? "no sandbox has this address: it was deleted, or mistyped. (Only the sandboxes tours and checks make for themselves idle out.) Start a new one with POST /api/sandboxes" : "that isn't a sandbox" };
     },
     has: (id: string) => poolOf(id).live.has(id),
     /** Every live sandbox's sandbox. */
