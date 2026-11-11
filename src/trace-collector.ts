@@ -143,7 +143,15 @@ export function createCollector(_root: string, config: TraceStoreConfig = { mode
     if (p === "/api/sessions") return Response.json(list(sandbox));
     if (p.startsWith("/api/sessions/") && !decodable(p)) return bad("that session name isn't valid percent-encoding");
     const m = p.match(/^\/api\/sessions\/([^/]+)\/spans$/);
-    if (m) return json(store.summariesJson(decodeURIComponent(m[1]!)));
+    if (m) {
+      // ?traces=N is the newest N traces, whole, with how many there are in X-Trace-Count: a long session's page loads quickly.
+      const id = decodeURIComponent(m[1]!), n = Number(url.searchParams.get("traces"));
+      const limited = Number.isInteger(n) && n > 0 ? n : undefined;
+      const res = json(store.summariesJson(id, limited));
+      res.headers.set("x-trace-count", String(store.traceCount(id)));
+      res.headers.set("access-control-expose-headers", "x-trace-count");
+      return res;
+    }
     const log = p.match(/^\/api\/sessions\/([^/]+)\/http$/);
     if (log) return Response.json(store.httpLog(decodeURIComponent(log[1]!), url.searchParams.get("trace") ?? undefined));
     const one = p.match(/^\/api\/sessions\/([^/]+)\/spans\/([^/]+)$/);

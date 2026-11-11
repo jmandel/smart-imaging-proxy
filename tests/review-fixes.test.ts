@@ -277,3 +277,21 @@ describe("Sign-ins in progress aren't held forever", async () => {
     try { expect(stack.auth.held().txns).toBe(0); } finally { resetClock(); }
   });
 });
+
+describe("A long session's trace loads its newest requests first", () => {
+  test("?traces=N gives the newest N traces whole, and X-Trace-Count says how many there are", async () => {
+    const session = `long-${Date.now()}`, hex = (n: number) => [...crypto.getRandomValues(new Uint8Array(n))].map(b => b.toString(16).padStart(2, "0")).join("");
+    for (let i = 0; i < 5; i++) await fetch(`${CLINICAL_FHIR}/.well-known/smart-configuration`, { headers: { traceparent: `00-${hex(16)}-${hex(8)}-01`, baggage: `demo.session=${session}` } });
+    await Bun.sleep(300);
+    const { CONFIG } = await import("../src/config");
+    const all: any[] = await (await fetch(`${CONFIG.traceUrl}/api/sessions/${session}/spans`)).json();
+    const r = await fetch(`${CONFIG.traceUrl}/api/sessions/${session}/spans?traces=2`);
+    const some: any[] = await r.json();
+    expect(r.headers.get("x-trace-count")).toBe("5");
+    expect(new Set(some.map(s => s.trace)).size).toBe(2);
+    expect(new Set(all.map(s => s.trace)).size).toBe(5);
+    // The newest two, by when each began.
+    const newest = [...new Set(all.map(s => s.trace))].slice(-2).sort();
+    expect([...new Set(some.map(s => s.trace))].sort()).toEqual(newest);
+  });
+});

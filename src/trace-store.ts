@@ -121,6 +121,9 @@ export class TraceStore {
       sessions: db.query("SELECT id, started_at AS startedAt, last_at AS lastAt, spans, bytes FROM sessions ORDER BY last_at DESC"),
       session: db.query("SELECT id, started_at AS startedAt, last_at AS lastAt, spans, bytes FROM sessions WHERE id = ?"),
       summaries: db.query("SELECT summary FROM spans WHERE session = ? ORDER BY start"),
+      // A long session's newest traces only, whole: every span of each, so no tree loses its root.
+      recentSummaries: db.query("SELECT summary FROM spans WHERE session = ?1 AND trace IN (SELECT trace FROM spans WHERE session = ?1 GROUP BY trace ORDER BY MIN(start) DESC LIMIT ?2) ORDER BY start"),
+      traceCount: db.query("SELECT COUNT(DISTINCT trace) AS n FROM spans WHERE session = ?"),
       full: db.query("SELECT s.summary, b.http FROM spans s LEFT JOIN bodies b ON b.session = s.session AND b.span = s.span WHERE s.session = ? ORDER BY s.start"),
       one: db.query("SELECT s.summary, b.http FROM spans s LEFT JOIN bodies b ON b.session = s.session AND b.span = s.span WHERE s.session = ? AND s.span = ?"),
       log: db.query("SELECT s.summary, b.http FROM spans s JOIN bodies b ON b.session = s.session AND b.span = s.span WHERE s.session = ? AND s.has_http = 1 ORDER BY s.start"),
@@ -267,7 +270,13 @@ export class TraceStore {
   sessions(): SessionInfo[] { this.flush(); return this.safeSessions(); }
   session(id: string): SessionInfo | undefined { this.flush(); return (this.q.session!.get(id) as SessionInfo | null) ?? undefined; }
   /** A JSON array of summaries, built without parsing them, so listing stays cheap. */
-  summariesJson(id: string): string { this.flush(); return `[${(this.q.summaries!.all(id) as { summary: string }[]).map(r => r.summary).join(",")}]`; }
+  summariesJson(id: string, traces?: number): string {
+    this.flush();
+    const rows = (traces ? this.q.recentSummaries!.all(id, traces) : this.q.summaries!.all(id)) as { summary: string }[];
+    return `[${rows.map(r => r.summary).join(",")}]`;
+  }
+  /** How many traces a session holds. */
+  traceCount(id: string): number { this.flush(); return (this.q.traceCount!.get(id) as { n: number }).n; }
   span(session: string, span: string): SpanRecord | undefined {
     this.flush();
     const row = this.q.one!.get(session, span) as { summary: string; http: string | null } | null;

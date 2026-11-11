@@ -12,6 +12,9 @@ export const SERVICES: Record<string, [string, string]> = {
 };
 export const sessionLabel = (id: string) => id === UNATTRIBUTED ? "Calls outside any flow" : id;
 
+/** A long session shows its newest requests first: drawing thousands at once holds the page for seconds. */
+const RECENT_TRACES = 200;
+
 export class LiveTrace {
   sessions: SessionInfo[] = [];
   /** The session chosen to hold still on, or "" to follow the newest. */
@@ -30,6 +33,10 @@ export class LiveTrace {
   /** Bumped on every change: what React compares. */
   version = 0;
 
+  /** How many traces the shown session holds, and whether all are loaded: a long session loads its newest first. */
+  traceCount = 0;
+  allLoaded = true;
+  private wantAll = false;
   private waiting: (() => void)[] = [];
   private loading = new Set<string>();
   private loadTicket = 0;
@@ -69,17 +76,22 @@ export class LiveTrace {
   /** Loads the active session's spans, starting afresh when it's a different session from the one shown. */
   async load() {
     const id = this.activeSession(), ticket = ++this.loadTicket;
-    if (id !== this.shown) { this.shown = id; this.clearShown(); }
+    if (id !== this.shown) { this.shown = id; this.clearShown(); this.wantAll = false; }
     this.changed();
     if (!id) return;
     try {
-      const list: Span[] = await (await fetch(sessionApi(id, "/spans"))).json();
+      const r = await fetch(sessionApi(id, this.wantAll ? "/spans" : `/spans?traces=${RECENT_TRACES}`));
+      const list: Span[] = await r.json();
       if (ticket !== this.loadTicket) return;
+      this.traceCount = Number(r.headers.get("x-trace-count") ?? 0);
+      this.allLoaded = this.wantAll || this.traceCount <= RECENT_TRACES;
       for (const s of list) this.keep(s);
     } catch { this.status = "Couldn't load that session."; }
     this.changed();
   }
 
+  /** Loads the shown session's earlier traces too. */
+  loadAll() { this.wantAll = true; return this.load(); }
   /** Holds still on one session, or with "", follows the newest again. */
   choose(id: string) { this.chosen = id; this.follow = !id; this.changed(true); return this.load(); }
   setFollow(on: boolean) {

@@ -18,6 +18,9 @@
 .trace-page .trace-head p { margin:0; color:var(--on-film-dim); font-size:.85rem; }
 .trace-page .trace-head :focus-visible { outline-color:var(--on-film); }
 .trace-page .trace-head select, .trace-page .trace-head button { background:var(--film); border-color:var(--film-line); color:var(--on-film); }
+/* A copy button is a .tool, whose own hover colours outrank the rule above: on the film, it keeps the film's. */
+.trace-page .trace-head .tool, .trace-page .trace-head .tool:hover:not(:disabled) { background:var(--film); border-color:var(--film-line); color:var(--on-film); min-height:0; padding:.25rem .5rem; font-size:inherit; font-weight:inherit; }
+.trace-page .trace-head .tool:hover:not(:disabled) { border-color:var(--on-film-dim); }
 .trace-page .trace-head a { color:var(--on-film); }
 .trace-page .trace-controls { display:flex; gap:.5rem .9rem; align-items:center; flex-wrap:wrap; font-size:.85rem; }
 .trace-page .trace-controls label { display:inline-flex; gap:.3rem; align-items:center; }
@@ -113,3 +116,4 @@
   .trace-page .trace-controls label:first-child { flex:1 1 100%; min-width:0; }
   .trace-page .trace-controls label:first-child select { flex:1 1 0; width:0; min-width:0; max-width:none; }
 }
+.trace-page .trace-earlier { margin:.6rem 1.5rem 0; font-size:.88rem; color:var(--muted); }

@@ -10,6 +10,8 @@ import { SERVICES, sessionLabel, useLiveTrace, type LiveTrace } from "../trace/l
 import { fmtBytes, fmtMs, fullHref, logHref, sessionApi, shortUids, traceApi, type Span, type Stats } from "../trace/model";
 import "../trace/trace.css";
 
+const RECENT = 200;
+
 interface Filters { hidden: ReadonlySet<string>; checks: boolean; parts: boolean }
 const visible = (s: Span, f: Filters) => !f.hidden.has(s.service) && (s.kind !== "check" || f.checks) && (!/^part \d+:/.test(s.name) || f.parts);
 
@@ -232,6 +234,7 @@ export default function Trace() {
         ))}
       </div>
       <Terms />
+      {!trace.allLoaded && <p className="trace-earlier" role="note">Showing this session's newest {RECENT} of its {trace.traceCount} requests. <button type="button" onClick={() => trace.loadAll()}>Load all {trace.traceCount}</button></p>}
       <div id="traces" ref={list}>
         {groups.length ? groups.map(g => <TraceSection key={g.id} trace={trace} g={g} onToggle={onToggle} />)
           : <p className="trace-empty">Nothing yet. Run a flow step in the demo, and it appears here as it happens.</p>}
