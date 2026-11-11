@@ -34,13 +34,20 @@ export async function patientFetch(url: string, init?: RequestInit, waiting: (se
 }
 
 const connectionOf = (e: Resource | undefined) => e?.connectionType?.code ?? e?.connectionType?.coding?.[0]?.code;
-/** An Endpoint by reference: contained, a response-local urn:uuid, or a full or relative URL in the Bundle. */
+/**
+ * An Endpoint by reference, by FHIR's Bundle rules (Resolving references in Bundles): `#id` among the owner's
+ * contained resources; an absolute URL or urn: by fullUrl; a relative one (`Endpoint/{id}`) against the base of
+ * the owner's own fullUrl, and nothing else. The same resolution the smoke test makes, and the App check grades.
+ */
 export function resolveEndpoint(owner: Resource, ref: string | undefined, entries: BundleEntry[]): Resource | undefined {
   if (!ref) return undefined;
   if (ref.startsWith("#")) return owner.contained?.find((c: Resource) => c.id === ref.slice(1));
   const endpoints = entries.filter(e => e.resource.resourceType === "Endpoint");
-  const relative = /^Endpoint\/[^/]+$/.test(ref);
-  return (endpoints.find(e => e.fullUrl === ref) ?? (relative ? endpoints.find(e => e.fullUrl?.endsWith(`/${ref}`) || e.resource.id === ref.split("/")[1]) : undefined))?.resource;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(ref)) return endpoints.find(e => e.fullUrl === ref)?.resource;
+  const ownerUrl = entries.find(e => e.resource === owner)?.fullUrl;
+  if (!ownerUrl || !/^https?:\/\//.test(ownerUrl)) return undefined;
+  const target = `${ownerUrl.replace(/[A-Za-z]+\/[^/]+(\/_history\/[^/]+)?$/, "")}${ref}`;
+  return endpoints.find(e => e.fullUrl === target)?.resource;
 }
 /** The WADO-RS address among some references. The token only ever goes to one of these, never to a QIDO-RS or viewer link. */
 export function wadoAddress(owner: Resource, refs: { reference?: string }[] | undefined, entries: BundleEntry[]): string | undefined {

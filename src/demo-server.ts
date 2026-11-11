@@ -10,6 +10,7 @@ import { listClients, metadataOf, register, removeClient } from "./clients";
 import { traced, traceSettled } from "./trace";
 import type { BackendName, Stack } from "./stack";
 import { flowById } from "./flows";
+import { withCors } from "./cors";
 import { extraField, readJson, refuseHost, refuseWrite, settingsApi, BACKEND_NAMES } from "./settings-api";
 import { PATIENT_NAMES, realNow, type BackendClient } from "./auth-server";
 import { createExplore } from "./explore";
@@ -150,6 +151,21 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     // ended at, so this page only says where the browser is.
     const callback = traced("app", async () => new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Back in the app</title></head><body style="font:15px system-ui;padding:2rem"><p>Back in the app.</p></body></html>`, { headers: { "content-type": "text/html" } }), (_req, url) => `Redirect back to the app: ${url.pathname}`);
 
+    /** Registering an app: RFC 7591 dynamic registration, with the sandbox's admin token as the initial access
+     *  token, so it's protected as the management API is. Listing and removing apps stay in the management API. */
+    async function registerApp(req: Request): Promise<Response> {
+      if (req.method !== "POST") return json({ error: "invalid_request", error_description: "register with POST" }, 405, { allow: "POST" });
+      if (!sandbox.id) return json({ error: "invalid_request", error_description: "apps are registered in a sandbox: POST /api/sandboxes for one, then POST $SANDBOX/register" }, 409);
+      if (adminDenied(sandbox, req)) return json({ error: "invalid_token", error_description: "registering takes this sandbox's admin token as its initial access token: get one with its admin key, from GET /api/sandbox/keys-shared-on-purpose" }, 401, { "WWW-Authenticate": 'Bearer error="invalid_token"' });
+      const refused = refuseHost(req);
+      if (refused) return refused;
+      const metadata = await req.json().catch(() => null);
+      // A jwks_uri has to work when it's registered, which also shows its owner any mistake straight away.
+      const uri = metadata?.jwks_uri, reachable = typeof uri === "string" && uri ? !!(await fetchJwks(uri, PUBLIC_DEMO))?.length : true;
+      const made = register(sandbox.store, metadata, { jwksReachable: () => reachable });
+      return "error" in made ? json(made, 400) : json({ ...metadataOf(made), client_id_issued_at: Math.floor(Date.now() / 1000) }, 201);
+    }
+
     async function fetch(req: Request): Promise<Response> {
       const url = new URL(req.url);
       const p = url.pathname;
@@ -165,20 +181,10 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       if (p === "/checks" && req.method === "GET") return new Response(null, { status: 308, headers: { location: `/check${sandbox.id ? `?sandbox=${encodeURIComponent(sandbox.prefix)}` : ""}` } });
       // The management API takes this sandbox's admin token. Its keys are the one thing open: the URL is the access.
       if (p === KEYS_PATH && req.method === "GET") return PUBLIC_DEMO && !sandbox.id ? json({ error: "the shared sandbox gives out no keys: make a sandbox of your own with POST /api/sandboxes" }, 403) : json(sampleKeys(sandbox));
-      // Registering an app: RFC 7591 dynamic registration, with the sandbox's admin token as the initial access
-      // token, so it's protected as the management API is. Listing and removing apps stay in the management API.
-      if (p === "/register") {
-        if (req.method !== "POST") return json({ error: "invalid_request", error_description: "register with POST" }, 405, { allow: "POST" });
-        if (!sandbox.id) return json({ error: "invalid_request", error_description: "apps are registered in a sandbox: POST /api/sandboxes for one, then POST $SANDBOX/register" }, 409);
-        if (adminDenied(sandbox, req)) return json({ error: "invalid_token", error_description: "registering takes this sandbox's admin token as its initial access token: get one with its admin key, from GET /api/sandbox/keys-shared-on-purpose" }, 401, { "WWW-Authenticate": 'Bearer error="invalid_token"' });
-        const refused = refuseWrite(req, url);
-        if (refused) return refused;
-        const metadata = await req.json().catch(() => null);
-        // A jwks_uri has to work when it's registered, which also shows its owner any mistake straight away.
-        const uri = metadata?.jwks_uri, reachable = typeof uri === "string" && uri ? !!(await fetchJwks(uri, PUBLIC_DEMO))?.length : true;
-        const made = register(sandbox.store, metadata, { jwksReachable: () => reachable });
-        return "error" in made ? json(made, 400) : json({ ...metadataOf(made), client_id_issued_at: Math.floor(Date.now() / 1000) }, 201);
-      }
+      // A browser app may register itself from its own origin: the admin token in Authorization is the only credential, so
+      // there's no cookie for another site to ride on, and any origin may call it, as with the token endpoint.
+      if (p === "/register") return withCors(registerApp)(req);
+
       if (p === "/api/sandbox" || p.startsWith("/api/sandbox/")) {
         const denied = adminDenied(sandbox, req);
         if (denied) return denied;

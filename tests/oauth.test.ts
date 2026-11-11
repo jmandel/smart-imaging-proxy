@@ -448,6 +448,11 @@ describe("Backend Services", () => {
     const c = client();
     for (const claims of [{ iss: {} }, { iss: "constructor", sub: "constructor" }, { iss: "__proto__", sub: "__proto__" }, { exp: "9999999999" }, { exp: null }, { exp: now() + 1.5 }, { jti: {} }, { jti: 1 }, { jti: "" }, { aud: [] }]) await refused(signed(c, claims));
   });
+  test("an assertion's aud may be a list that holds the token endpoint, as JWT allows", async () => {
+    const c = client();
+    expect((await post(assertionBody(signed(c, { aud: [conf.token_endpoint, "https://other.example"] })))).status).toBe(200);
+    await refused(signed(c, { aud: ["https://other.example"] }));
+  });
   test("an assertion's signature has to be from the registered key", async () => {
     const other = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey;
     const c = client();

@@ -86,6 +86,9 @@ export function hasImagingScope(scope: string, level: "patient" | "system"): boo
 }
 
 /** System-level access is for Backend Services tokens, which no user authorized. A user's token needs a patient. */
+/** What an ImagingStudy search applies. Anything else is ignored, or with Prefer: handling=strict refused. */
+const SEARCH_PARAMS = ["patient", "identifier", "based-on:identifier", "_lastUpdated", "_count", "_cursor", "_include"];
+
 export function accessLevel(t: { patient?: string; sub?: string }): "patient" | "system" | undefined {
   return t.patient ? "patient" : t.sub ? undefined : "system";
 }
@@ -109,6 +112,8 @@ export interface ImagingServerOptions {
   introspect: (token: string) => Promise<any>;
   /** The patient a user account is, if any. */
   patientOf: (user: string) => string | undefined;
+  /** Whether a bare id is one of the deployment's people. Where given, the policy API refuses shares and relationships with anyone else. */
+  isUser?: (user: string) => boolean;
   /** What the patient record says, such as a birth date, for organization policy by age. */
   patientAttributes?: (patient: string) => PatientAttributes | undefined;
   /** A reference's display name, such as `user:sam` to Sam, for the reasons decisions give. */
@@ -287,6 +292,16 @@ export function createImagingServer(opts: ImagingServerOptions) {
     const id = param.startsWith(clinical) ? param.slice(clinical.length) : param.replace(/^Patient\//, "");
     return FHIR_ID.test(id) ? { id } : { status: 400, code: "invalid", text: "patient must be a logical id or a reference to a Patient on this deployment's clinical FHIR server" };
   }
+  /** The parameters a search can't apply, by name, or as name=value for an _include it doesn't do. */
+  function ignoredParams(q: URLSearchParams): string[] {
+    const out = new Set<string>();
+    for (const [k, v] of q) {
+      if (k === "_include") { if (v !== "ImagingStudy:endpoint") out.add(`${k}=${v}`); }
+      else if (k === "_format") { if (!/json/.test(v)) out.add(`${k}=${v}`); }
+      else if (!SEARCH_PARAMS.includes(k)) out.add(k);
+    }
+    return [...out];
+  }
   function searchFilters(url: URL, patient: string): CatalogSearch | { error: string } {
     const tokens = (name: string): TokenFilter | string => {
       const filter: TokenFilter = [];
@@ -335,6 +350,8 @@ export function createImagingServer(opts: ImagingServerOptions) {
     }
   }
 
+  /** A request another FHIR server passed on, with the base it was asked at: its links name that base. */
+  const askedAt = new WeakMap<Request, string>();
   /** Search, reported as one `search.returned` event, whatever it answers. */
   async function search(req: Request, url: URL): Promise<Response> {
     const shown = new URLSearchParams(url.searchParams);
@@ -346,6 +363,7 @@ export function createImagingServer(opts: ImagingServerOptions) {
     return res;
   }
   async function searchFor(req: Request, url: URL, e: SearchReturned): Promise<Response> {
+    const base = askedAt.get(req) ?? opts.base;
     const fail = (status: number, code: string, text: string) => { e.reason = text; return Response.json(outcome(code, text), { status }); };
     const bearer = bearerOf(req);
     if (!bearer) { e.reason = "no bearer token"; return new Response(null, { status: 401, headers: { "WWW-Authenticate": "Bearer" } }); }
@@ -355,7 +373,8 @@ export function createImagingServer(opts: ImagingServerOptions) {
     e.client = t.client_id;
     if (t.sub) e.user = t.sub;
     const level = accessLevel(t);
-    if (!level || !hasImagingScope(t.scope, level)) return fail(403, "forbidden", "scope does not cover ImagingStudy");
+    if (!level) return fail(403, "forbidden", "a person's token has no patient context, so it can't search: ask for launch/patient at sign-in");
+    if (!hasImagingScope(t.scope, level)) return fail(403, "forbidden", "scope does not cover ImagingStudy");
     const patientParams = url.searchParams.getAll("patient");
     if (!patientParams[0]) return fail(400, "required", "the patient parameter is required");
     if (patientParams.length > 1) return fail(400, "invalid", "a search covers one patient");
@@ -378,6 +397,14 @@ export function createImagingServer(opts: ImagingServerOptions) {
     const asked = countParam === null ? DEFAULT_COUNT : Math.min(Number(countParam), MAX_COUNT);
     // A server may return fewer than asked (FHIR search, Page Count); staged pages do, and next links repeat what was asked.
     const count = Math.min(asked, staged.pageSize ?? asked);
+    // A parameter this server doesn't support is ignored, as FHIR lets a server do, and left out of the
+    // links, which is how FHIR says so; an OperationOutcome entry names it too. With Prefer: handling=strict it's an error.
+    const ignored = ignoredParams(url.searchParams);
+    if (ignored.length && /(^|[;,\s])handling=strict\b/.test(req.headers.get("prefer") ?? "")) return fail(400, "not-supported", `this server doesn't support ${ignored.join(", ")}. It searches by ${SEARCH_PARAMS.join(", ")}`);
+    if (ignored.length) e.ignored = ignored;
+    // The query as asked, written as it was, less what was ignored.
+    const decode = (s: string) => { try { return decodeURIComponent(s.replace(/\+/g, " ")); } catch { return s; } };
+    const applied = url.search.slice(1).split("&").filter(part => { if (!part) return false; const [k = "", v = ""] = part.split("=").map(decode); return !ignored.includes(k) && !ignored.includes(`${k}=${v}`); }).join("&");
     const filters = searchFilters(url, patient);
     if ("error" in filters) return fail(400, "invalid", filters.error);
     const cursorParam = url.searchParams.get("_cursor");
@@ -420,20 +447,21 @@ export function createImagingServer(opts: ImagingServerOptions) {
     const rows = page.map(({ study, ev, place }) => ({ study, ev, uuid: randomUUID(), address: hasEndpoint(study) ? `${opts.proxyBase()}/wado/${contextFor(bearer, t, study, ev)}` : undefined, form: staged.endpointForms ? FORMS[place % FORMS.length]! : "response-local" as EndpointForm }));
     if (staged.endpointForms) e.endpointForms = Object.fromEntries(rows.filter(r => r.address).map(r => [r.study.id, r.form]));
 
-    const link: { relation: string; url: string }[] = [{ relation: "self", url: `${opts.base}/ImagingStudy${url.search}` }];
+    const link: { relation: string; url: string }[] = [{ relation: "self", url: `${base}/ImagingStudy${applied ? `?${applied}` : ""}` }];
     if (more && count > 0) {
-      const next = new URLSearchParams(url.searchParams);
+      const next = new URLSearchParams(applied);
       if (countParam !== null) next.set("_count", String(asked));
       next.set("_cursor", signCursor(positionOf(page[page.length - 1]!.study), filters));
-      link.push({ relation: "next", url: `${opts.base}/ImagingStudy?${next}` });
+      link.push({ relation: "next", url: `${base}/ImagingStudy?${next}` });
     }
 
     // The Bundle is streamed a study at a time, and each hierarchy is released once it's written. A
     // page's parsed hierarchies are held at once, which the byte budget bounds, except that one
     // study larger than the budget is held whole, along with its one serialized entry.
     const self = (function* () {
-      yield `${JSON.stringify({ resourceType: "Bundle", type: "searchset", total, link }).slice(0, -1)}${rows.length ? ',"entry":[' : ""}`;
-      let first = true;
+      const warning = ignored.length ? { search: { mode: "outcome" }, resource: { resourceType: "OperationOutcome", issue: [{ severity: "warning", code: "not-supported", diagnostics: `ignored, as this server doesn't support it: ${ignored.join(", ")}. It searches by ${SEARCH_PARAMS.join(", ")}` }] } } : undefined;
+      yield `${JSON.stringify({ resourceType: "Bundle", type: "searchset", total, link }).slice(0, -1)}${rows.length || warning ? ',"entry":[' : ""}${warning ? JSON.stringify(warning) : ""}`;
+      let first = !warning;
       const endpoint = (id: string, address: string) => ({
         resourceType: "Endpoint", id, status: "active", name: "WADO-RS",
         connectionType: { system: "http://terminology.hl7.org/CodeSystem/endpoint-connection-type", code: "dicom-wado-rs" },
@@ -445,12 +473,12 @@ export function createImagingServer(opts: ImagingServerOptions) {
         const resource: any = imagingStudy(study, hierarchies.get(study.pk), ev, endpointRef);
         if (address && form === "contained") resource.contained = [endpoint("wado", address)];
         hierarchies.delete(study.pk);
-        yield `${first ? "" : ","}${JSON.stringify({ fullUrl: `${opts.base}/ImagingStudy/${study.id}`, resource, search: { mode: "match" } })}`;
+        yield `${first ? "" : ","}${JSON.stringify({ fullUrl: `${base}/ImagingStudy/${study.id}`, resource, search: { mode: "match" } })}`;
         first = false;
         // Each Endpoint is written right after its study, so both are always on the same page.
-        if (address && form !== "contained") yield `,${JSON.stringify({ fullUrl: form === "separate" ? `${opts.base}/Endpoint/${uuid}` : endpointRef, search: { mode: "include" }, resource: endpoint(uuid, address) })}`;
+        if (address && form !== "contained") yield `,${JSON.stringify({ fullUrl: form === "separate" ? `${base}/Endpoint/${uuid}` : endpointRef, search: { mode: "include" }, resource: endpoint(uuid, address) })}`;
       }
-      yield rows.length ? "]}" : "}";
+      yield rows.length || warning ? "]}" : "}";
     })();
     const encoder = new TextEncoder();
     return new Response(new ReadableStream({
@@ -525,6 +553,8 @@ export function createImagingServer(opts: ImagingServerOptions) {
       shareableSites: (store, user, patient) => ownSites(snapshotOf(patient, store), user, patient),
       visibleSites: (store, user, patient, fhirUser) => visibleSites(snapshotOf(patient, store), user, patient, fhirUser),
       sitesFor: patient => opts.catalog().sitesFor(patient),
+      allSites: () => opts.catalog().allSites(),
+      ...(opts.isUser ? { isUser: opts.isUser } : {}),
       sharingFor: (store, from, patient) => model.sharingFor(snapshotOf(idOf(patient, "patient")!, store), from, patient),
       guardianPolicies: (store, patient) => model.guardianPolicies(snapshotOf(idOf(patient, "patient")!, store), patient),
       routesHeld: (store, user, patient, fhirUser) => {
@@ -552,6 +582,8 @@ export function createImagingServer(opts: ImagingServerOptions) {
       if (p === "/.well-known/jwks.json") return Response.json({ keys: [publicJwk(key)] });
       return new Response("not found", { status: 404 });
     }),
+    /** A search another FHIR server answers by passing it here, as one server (unified topology): links name `base`. */
+    fetchAt(req: Request, base: string) { askedAt.set(req, base); return this.fetch(req); },
     setOutage(on: boolean) { outage = on; },
     /** Stages what any server may do, starting afresh: every token's next search is its first again. */
     setStaged(s: SearchStaging) { staged = { ...s }; searchDelayed = false; },

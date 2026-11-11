@@ -89,6 +89,12 @@ export interface Directory {
   revokeApp(client: string, user: string, patient?: string): Promise<void>;
 }
 
+/** The sign-in and consent pages run no script and load nothing, and no other site may frame them, so a
+ *  click on Approve is always the person's own. (form-action is left out: it would also govern the redirect back to the app.) */
+const PAGE_HEADERS = {
+  "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'",
+  "x-frame-options": "DENY", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "cache-control": "no-store",
+};
 const PAGE_CSS = `
 :root{color-scheme:light dark;--bg:#e9f0f5;--panel:#fbfdfe;--ink:#13242f;--muted:#4f6675;--line:#cfdbe3;--accent:#0a6a9c;--accent-soft:#d9e9f2;--bad:#ad2f28;--bad-soft:#f8e2df;--warn:#845800;--warn-soft:#f6ebcd;--code:#e3ebf0}
 @media (prefers-color-scheme:dark){:root{--bg:#0a1822;--panel:#10232f;--ink:#e4edf2;--muted:#9ab0bd;--line:#27404f;--accent:#6cbfe8;--accent-soft:#17384c;--bad:#ff9d92;--bad-soft:#42201d;--warn:#f2c55c;--warn-soft:#3a2f10;--code:#1b3241}}
@@ -188,6 +194,13 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     recordEvent("authorization-server", { kind: "token.issued", grant: grantType, client: g.client_id, ...(g.sub ? { user: g.sub } : {}), ...(g.patient ? { patient: g.patient } : {}), scope: g.scope, tokenHash: ath(access_token).slice(0, 10), expiresIn: tokenLifetime, exp, refresh: withRefresh });
     return res;
   };
+  /** For a confidential app, the refusal when the request doesn't carry its own valid assertion; nothing for any other app. */
+  const confidentialUnproved = async (client_id: string, f: URLSearchParams) => {
+    if (opts.registeredClient?.(client_id)?.type !== "confidential") return undefined;
+    const proved = f.get("client_assertion_type") === "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" ? await verifyAssertion(f.get("client_assertion") ?? "", `${opts.issuer}/token`) : undefined;
+    if (check("authorization-server", "confidential client authenticated with private_key_jwt", !!proved && !("failed" in proved) && proved.client_id === client_id, { client: client_id })) return undefined;
+    return oauthError("invalid_client", 401, proved && "failed" in proved ? proved.failed : "confidential client authenticated with private_key_jwt");
+  };
   const tokenResponse = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store", Pragma: "no-cache" } });
   /** An OAuth error, with the check that failed as its description: every refusal says why. */
   const oauthError = (error: string, status = 400, why?: string) => tokenResponse({ error, ...(why ? { error_description: `failed: ${why}` } : {}) }, status);
@@ -216,7 +229,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     const reg = registered ? (clientKey ? { kid: (clientKey as any).kid as string, publicKey: createPublicKey({ key: clientKey as any, format: "jwk" }), scopes: registered.type === "backend" ? BACKEND_SCOPES : [] } : undefined) : backendKeys.get(claims.iss);
     if (!check("authorization-server", "client is registered, with its public key on file", !!reg && head.kid === reg.kid, { client: claims.iss, kid: head.kid, registered_scopes: reg?.scopes.join(" ") })) return { failed: "client is registered, with its public key on file" };
     if (!check("authorization-server", "assertion's algorithm suits its key, and iss equals sub", algorithmFits(head.alg, reg!.publicKey) && claims.sub === claims.iss, { alg: head.alg, iss: claims.iss, sub: claims.sub })) return { failed: "assertion's algorithm suits its key, and iss equals sub" };
-    if (!check("authorization-server", "assertion's aud is this token endpoint", claims.aud === tokenUrl, { aud: claims.aud })) return { failed: `assertion's aud is this token endpoint: it's ${JSON.stringify(claims.aud)}, and should be ${tokenUrl}` };
+    if (!check("authorization-server", "assertion's aud is this token endpoint", claims.aud === tokenUrl || (Array.isArray(claims.aud) && claims.aud.includes(tokenUrl)), { aud: claims.aud })) return { failed: `assertion's aud is this token endpoint: it's ${JSON.stringify(claims.aud)}, and should be ${tokenUrl}` };
     // An assertion is checked by real time, not the demo clock: an app signs with its own clock, and can't know
     // where this sandbox's clock was moved to. The demo clock governs what the story is about: tokens, links, ages.
     const t = realNow();
@@ -230,8 +243,8 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     return ok ? { client_id: claims.iss as string, scopes: reg!.scopes } : { failed: "client assertion signature verifies, with the registered key" };
   }
 
-  const page = (title: string, body: string, status = 200) => new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)}</title><style>${PAGE_CSS}</style></head><body><p class="brand">Authorization Server</p><main>${body}</main></body></html>`, { status, headers: { "content-type": "text/html; charset=utf-8" } });
-  const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
+  const page = (title: string, body: string, status = 200) => new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)}</title><style>${PAGE_CSS}</style></head><body><p class="brand">Authorization Server</p><main>${body}</main></body></html>`, { status, headers: { "content-type": "text/html; charset=utf-8", ...PAGE_HEADERS } });
+  const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 
   const demoQuery = (url: URL) => { const q = new URLSearchParams(); for (const k of ["demo_traceparent", "demo_session", "return", "return_state", "preselect", "suggest_delegate"]) if (url.searchParams.get(k)) q.set(k, url.searchParams.get(k)!); const s = q.toString(); return s ? `&${s}` : ""; };
   const redirectTo = (location: string) => new Response(null, { status: 303, headers: { Location: location } });
@@ -515,10 +528,8 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
         if (!check("authorization-server", "authorization code hasn't expired", c!.exp > now())) return oauthError("invalid_grant", 400, "authorization code hasn't expired");
         if (!check("authorization-server", "client_id and redirect_uri match the authorization request", c!.client_id === f.get("client_id") && c!.redirect_uri === f.get("redirect_uri"))) return oauthError("invalid_grant", 400, "client_id and redirect_uri match the authorization request");
         // A confidential app proves who it is as well as holding the code.
-        if (opts.registeredClient?.(c!.client_id)?.type === "confidential") {
-          const proved = f.get("client_assertion_type") === "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" ? await verifyAssertion(f.get("client_assertion") ?? "", tokenUrl) : undefined;
-          if (!check("authorization-server", "confidential client authenticated with private_key_jwt", !!proved && !("failed" in proved) && proved.client_id === c!.client_id, { client: c!.client_id })) return oauthError("invalid_client", 401, proved && "failed" in proved ? proved.failed : "confidential client authenticated with private_key_jwt");
-        }
+        const unproved = await confidentialUnproved(c!.client_id, f);
+        if (unproved) return unproved;
         const verifier = f.get("code_verifier") ?? "";
         const computed = createHash("sha256").update(verifier).digest("base64url");
         if (!check("authorization-server", "PKCE: S256 of code_verifier equals code_challenge", computed === c!.code_challenge, { computed: computed.slice(0, 10), challenge: c!.code_challenge.slice(0, 10) })) return oauthError("invalid_grant", 400, "PKCE: S256 of code_verifier equals code_challenge");
@@ -529,6 +540,9 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
         const held = opts.store().getToken(presented, "refresh");
         if (!held) return oauthError("invalid_grant", 400, "refresh token is one this sandbox issued");
         if (!check("authorization-server", "refresh token was issued to this client", held.client_id === f.get("client_id"), { client: f.get("client_id"), issued_to: held.client_id })) return oauthError("invalid_grant", 400, "refresh token was issued to this client");
+        // As at the code exchange, a confidential app authenticates (RFC 6749, section 6): holding the refresh token isn't enough.
+        const unproved = await confidentialUnproved(held.client_id, f);
+        if (unproved) return unproved;
         // A used token stays on file, marked revoked, until it expires. Seeing it again means the chain has leaked.
         if (!check("authorization-server", "refresh token hasn't been used or revoked", !held.revoked, { client: held.client_id, family_revoked: held.revoked ? !!held.family : undefined })) {
           if (held.family) opts.store().revokeTokenFamily(held.family);
@@ -566,6 +580,11 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     }
     // Unified: this FHIR server is also the Imaging FHIR Server.
     if (opts.unified?.() && opts.imagingFetch && url.pathname === "/fhir/ImagingStudy") return opts.imagingFetch(req);
+    // This FHIR server is read-only: anything but a read is refused, whatever the resource.
+    if (url.pathname.startsWith("/fhir/") && req.method !== "GET" && req.method !== "HEAD") {
+      check("authorization-server", "a FHIR request is a read", false, { method: req.method, path: url.pathname });
+      return Response.json({ resourceType: "OperationOutcome", issue: [{ severity: "error", code: "not-supported", diagnostics: `${req.method} isn't supported: this FHIR server is read-only, and answers GET only` }] }, { status: 405, headers: { "content-type": "application/fhir+json", Allow: "GET" } });
+    }
     if (url.pathname.startsWith("/fhir/Patient/")) {
       const id = url.pathname.slice("/fhir/Patient/".length);
       const bearer = req.headers.get("authorization")?.match(/^Bearer (.+)$/i)?.[1];
@@ -583,14 +602,14 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
       if (!check("authorization-server", "report read has a live access token", !!t && !t.revoked && t.exp! > now(), {})) return new Response(null, { status: 401, headers: { "WWW-Authenticate": bearer ? 'Bearer error="invalid_token"' : "Bearer" } });
       const refused = (status: number, code: string, diagnostics: string) => Response.json({ resourceType: "OperationOutcome", issue: [{ severity: "error", code, diagnostics }] }, { status, headers: { "content-type": "application/fhir+json" } });
       if (!t!.patient || !hasClinicalScope(t!.scope, "DiagnosticReport")) return refused(403, "forbidden", "scope does not cover DiagnosticReport");
-      const released = await opts.releasedStudies(t!), fhir = `${opts.issuer}/fhir`, json = (b: unknown) => Response.json(b, { headers: { "content-type": "application/fhir+json" } });
+      const released = await opts.releasedStudies(t!), fhir = `${opts.issuer}/fhir`, imagingBase = opts.unified?.() ? fhir : opts.imagingFhirBase, json = (b: unknown) => Response.json(b, { headers: { "content-type": "application/fhir+json" } });
       if (reportPath[2]) { const file = reportAttachment(reportPath[2], released, fhir); return file ? new Response(file.bytes as any, { headers: { "content-type": file.contentType } }) : refused(404, "not-found", "no such report"); }
-      if (reportPath[1]) { const found = reportRead(reportPath[1], released, fhir, opts.imagingFhirBase); return found ? json(found) : refused(404, "not-found", "no such report"); }
+      if (reportPath[1]) { const found = reportRead(reportPath[1], released, fhir, imagingBase); return found ? json(found) : refused(404, "not-found", "no such report"); }
       const asked = url.searchParams.get("patient");
       if (!asked) return refused(400, "required", "the patient parameter is required");
       const id = asked.startsWith(`${fhir}/Patient/`) ? asked.slice(`${fhir}/Patient/`.length) : asked.replace(/^Patient\//, "");
       if (id !== t!.patient) return refused(403, "forbidden", "patient does not match the token's patient context");
-      return json(reportSearch(released, fhir, opts.imagingFhirBase));
+      return json(reportSearch(released, fhir, imagingBase));
     }
     const clinicalType = url.pathname.match(/^\/fhir\/([A-Za-z]+)$/)?.[1];
     if (clinicalType && isClinicalType(clinicalType) && req.method === "GET") {

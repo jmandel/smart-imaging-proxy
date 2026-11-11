@@ -96,7 +96,7 @@ export function createSandbox(o: { id?: string; store: PolicyStore; clock: DemoC
   const directoryPolicy = policyClient(local(PORTS.imaging), policySecret, "authorization-server");
 
   const auth = createAuthServer({
-    issuer: urls.auth, imagingFhirBase: `${urls.imaging}/fhir`, serviceSecret, redirectUri: urls.callback, demoClientRedirectUri: `${new URL(urls.demo).origin}/viewer`, unified: () => store.note("topology") === "unified", releasedStudies: async t => { const x: any = await policy.explain({ client: t.client_id, ...(t.sub ? { user: t.sub, fhirUser: t.fhirUser } : {}), patient: t.patient! } as any); const ids = new Set((x.studies ?? []).filter((d: any) => d.release !== "none").map((d: any) => d.id)); return catalog().allStudies().filter(st => ids.has(st.id)); }, imagingFetch: (req: Request) => imaging.fetch(req), siteNames: () => [...new Set(catalog().allStudies().flatMap(st => st.site ? [st.site] : []))].sort(), ...(o.id ? { registeredClient: (id: string) => listClients(store).find(c => c.id === id) } : {}), store: () => store, clock,
+    issuer: urls.auth, imagingFhirBase: `${urls.imaging}/fhir`, serviceSecret, redirectUri: urls.callback, demoClientRedirectUri: `${new URL(urls.demo).origin}/viewer`, unified: () => store.note("topology") === "unified", releasedStudies: async t => { const x: any = await policy.explain({ client: t.client_id, ...(t.sub ? { user: t.sub, fhirUser: t.fhirUser } : {}), patient: t.patient! } as any); const ids = new Set((x.studies ?? []).filter((d: any) => d.release !== "none").map((d: any) => d.id)); return catalog().allStudies().filter(st => ids.has(st.id)); }, imagingFetch: (req: Request) => imaging.fetchAt(req, `${urls.auth}/fhir`), siteNames: () => [...new Set(catalog().allStudies().flatMap(st => st.site ? [st.site] : []))].sort(), ...(o.id ? { registeredClient: (id: string) => listClients(store).find(c => c.id === id) } : {}), store: () => store, clock,
     // The Authorization Server's pages, in their own terms, over the policy API's three levels.
     directory: {
       relationships: async () => [
@@ -134,7 +134,7 @@ export function createSandbox(o: { id?: string; store: PolicyStore; clock: DemoC
     return r.ok ? r.json() : { active: false };
   };
   const imaging = createImagingServer({
-    base: `${urls.imaging}/fhir`, clinicalFhirBase: urls.clinicalFhir, proxyBase: () => urls.proxy, introspect, patientOf: user => USERS[user]?.patient, patientAttributes, name: nameOf,
+    base: `${urls.imaging}/fhir`, clinicalFhirBase: urls.clinicalFhir, proxyBase: () => urls.proxy, introspect, patientOf: user => USERS[user]?.patient, isUser: user => Object.hasOwn(USERS, user), patientAttributes, name: nameOf,
     serviceSecret, policySecret, catalog, keyStore: store, store: () => store, observer: traceObserver, clock,
   });
 

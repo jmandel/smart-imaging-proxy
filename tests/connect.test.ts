@@ -70,10 +70,17 @@ test("apps register by RFC 7591: discovery names the endpoint, the admin token i
   expect(await err({ client_name: "Bad", redirect_uris: ["http://example.org/cb"] })).toEqual([400, "invalid_redirect_uri"]);
   expect(await err({ client_name: "Bad", token_endpoint_auth_method: "client_secret_basic", redirect_uris: [REDIRECT] })).toEqual([400, "invalid_client_metadata"]);
   expect(await err({ client_name: "Bad", grant_types: ["client_credentials"], token_endpoint_auth_method: "none" })).toEqual([400, "invalid_client_metadata"]);
+  // A service names whose studies it may reach: nothing is assumed.
+  expect(await err({ client_name: "Bad", grant_types: ["client_credentials"], token_endpoint_auth_method: "private_key_jwt", jwks: { keys: [{ kty: "EC", crv: "P-256", x: "x", y: "y", kid: "k" }] } })).toEqual([400, "invalid_client_metadata"]);
   const key = { kty: "EC", crv: "P-256", x: "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU", y: "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0", kid: "k1" };
   const made = await call("POST", `${w.prefix}/register`, { client_name: "Confidential", token_endpoint_auth_method: "private_key_jwt", redirect_uris: [REDIRECT], jwks: { keys: [key] } });
   const m: any = await made.json();
-  expect([made.status, m.token_endpoint_auth_method, m.grant_types, m.redirect_uris, m.jwks.keys[0].kid, typeof m.client_id_issued_at]).toEqual([201, "private_key_jwt", ["authorization_code"], [REDIRECT], "k1", "number"]);
+  expect([made.status, m.token_endpoint_auth_method, m.grant_types, m.redirect_uris, m.jwks.keys[0].kid, typeof m.client_id_issued_at]).toEqual([201, "private_key_jwt", ["authorization_code", "refresh_token"], [REDIRECT], "k1", "number"]);
+  // A browser app can register itself from its own origin: preflight, then the answer, both readable.
+  const pre = await demo.fetch(new Request(`${CONFIG.demoUrl}${w.prefix}/register`, { method: "OPTIONS", headers: { origin: "https://app.example", "access-control-request-method": "POST", "access-control-request-headers": "authorization, content-type" } }));
+  expect([pre.status, pre.headers.get("access-control-allow-origin"), pre.headers.get("access-control-allow-headers")]).toEqual([204, "*", "authorization, content-type"]);
+  const cross = await demo.fetch(new Request(`${CONFIG.demoUrl}${w.prefix}/register`, { method: "POST", headers: { ...(await adminFor(demo, `${w.prefix}/register`)), "content-type": "application/json", origin: "https://app.example" }, body: JSON.stringify({ client_name: "From a page", redirect_uris: [REDIRECT] }) }));
+  expect([cross.status, cross.headers.get("access-control-allow-origin")]).toEqual([201, "*"]);
   // One way to register: the management API lists and removes apps, and no longer makes them.
   expect((await call("POST", `${w.prefix}/api/sandbox/clients`, { name: "Old way", redirectUris: [REDIRECT] })).status).toBe(404);
   const root: any = await (await fetch(`${stack.root.urls.auth}/fhir/.well-known/smart-configuration`)).json();
@@ -168,7 +175,7 @@ test("a bad assertion gets nothing: wrong key, wrong audience, or used twice", a
   expect((await tokenCall(w, c.id, once)).status).toBe(200);
   expect((await tokenCall(w, c.id, once)).status).toBe(401);
 });
-test("a confidential app can't get a backend token, and needs its key to use a code", async () => {
+test("a confidential app can't get a backend token, and needs its key to use a code or a refresh token", async () => {
   const w = stack.sandboxes.mint(), { privateKey, jwk } = pair(), S = w.urls.auth, aud = `${S}/token`;
   const c = addClient(w.store, { name: "Conf", type: "confidential", redirectUris: [REDIRECT], jwk }) as any;
   expect((await tokenCall(w, c.id, assertion(privateKey, jwk.kid, c.id, aud))).status).toBe(400);
@@ -188,6 +195,12 @@ test("a confidential app can't get a backend token, and needs its key to use a c
   const ok = await post(aud, { ...exchange, code: await code(), client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: assertion(privateKey, jwk.kid, c.id, aud) });
   expect(ok.status).toBe(200);
   expect(((await ok.json()) as any).patient).toBe("josh-example");
+  // Refreshing takes the key too: the refresh token alone isn't enough, and a refused try doesn't spend it.
+  url.searchParams.set("scope", "launch/patient patient/*.rs offline_access");
+  const t: any = await (await post(aud, { ...exchange, code: await code(), client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: assertion(privateKey, jwk.kid, c.id, aud) })).json();
+  expect(t.refresh_token).toBeString();
+  expect((await post(aud, { grant_type: "refresh_token", client_id: c.id, refresh_token: t.refresh_token })).status).toBe(401);
+  expect((await post(aud, { grant_type: "refresh_token", client_id: c.id, refresh_token: t.refresh_token, client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", client_assertion: assertion(privateKey, jwk.kid, c.id, aud) })).status).toBe(200);
 });
 
 // Clients that publish their keys, and what a public deployment refuses to fetch.
@@ -212,7 +225,7 @@ test("a JWKS URL works for ES384 and RS384, follows rotation, and a key it stops
   let hits = 0;
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => { hits++; return Response.json({ keys: published }); } });
   try {
-    const made = await call("POST", `${w.prefix}/register`, { client_name: "Rotating", grant_types: ["client_credentials"], token_endpoint_auth_method: "private_key_jwt", jwks_uri: `http://127.0.0.1:${server.port}/jwks` });
+    const made = await call("POST", `${w.prefix}/register`, { client_name: "Rotating", grant_types: ["client_credentials"], token_endpoint_auth_method: "private_key_jwt", patients: "any", jwks_uri: `http://127.0.0.1:${server.port}/jwks` });
     expect(made.status).toBe(201);
     const m = await made.json() as any, c = { id: m.client_id as string }, aud = `${w.urls.auth}/token`;
     const jwt = (alg: string, hash: string, key: any, kid: string, ieee: boolean) => {
@@ -233,7 +246,7 @@ test("a JWKS URL works for ES384 and RS384, follows rotation, and a key it stops
 });
 test("what can't be fetched gives the same answer as what isn't there", async () => {
   const w = stack.sandboxes.mint();
-  const r = await call("POST", `${w.prefix}/register`, { client_name: "Nope", grant_types: ["client_credentials"], token_endpoint_auth_method: "private_key_jwt", jwks_uri: "http://127.0.0.1:1/jwks" });
+  const r = await call("POST", `${w.prefix}/register`, { client_name: "Nope", grant_types: ["client_credentials"], token_endpoint_auth_method: "private_key_jwt", patients: "any", jwks_uri: "http://127.0.0.1:1/jwks" });
   expect(r.status).toBe(400);
   expect(await fetchJwks("http://127.0.0.1:1/jwks", true)).toBeUndefined();
 });

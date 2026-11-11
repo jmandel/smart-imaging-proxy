@@ -102,24 +102,26 @@ curl -X POST "$SANDBOX/register" -H "authorization: Bearer $ADMIN" -H 'content-t
   -d '{"client_name":"My app","redirect_uris":["https://example.org/callback"],"token_endpoint_auth_method":"none","grant_types":["authorization_code"]}'
 ```
 
-The answer is `201` with the client metadata as registered, its `client_id` and `client_id_issued_at`. Redirect URIs must match exactly, and use https, or http on loopback (`localhost`, `127.0.0.1` or `[::1]`). Authorize with `aud=$SANDBOX/fhir` and `scope=launch/patient patient/*.rs`. A refusal is RFC 7591's: `400` with `error` (`invalid_redirect_uri` or `invalid_client_metadata`) and `error_description`; with no admin token, `401` and `invalid_token`.
+The answer is `201` with the client metadata as registered, its `client_id` and `client_id_issued_at`. Redirect URIs must match exactly, and use https, or http on loopback (`localhost`, `127.0.0.1` or `[::1]`). Authorize with `aud=$SANDBOX/fhir` and `scope=launch/patient patient/*.rs`. A refusal is RFC 7591's: `400` with `error` (`invalid_redirect_uri` or `invalid_client_metadata`) and `error_description`; with no admin token, `401` and `invalid_token`. `/register` answers CORS, so a browser app can register itself from its own origin with the admin token.
 
 The kind of client follows from how it authenticates and its grant. Both signing kinds sign a `private_key_jwt` assertion with ES256, ES384 or RS384, and register the public half as `jwks`, or publish keys at a public https address and register it as `jwks_uri`, which also lets them rotate. Internal addresses are refused.
 
 | Kind | `token_endpoint_auth_method` | `grant_types` | Also needs | Flow |
 |---|---|---|---|---|
-| Public (default) | `none` | `["authorization_code"]` | `redirect_uris` | Authorization code with PKCE |
-| Confidential | `private_key_jwt` | `["authorization_code"]` | `redirect_uris`, and `jwks` or `jwks_uri` | The same, plus `client_assertion_type` and `client_assertion` at `/token` |
+| Public (default) | `none` | `["authorization_code"]`, optionally with `"refresh_token"` | `redirect_uris` | Authorization code with PKCE |
+| Confidential | `private_key_jwt` | `["authorization_code"]`, optionally with `"refresh_token"` | `redirect_uris`, and `jwks` or `jwks_uri` | The same, plus `client_assertion_type` and `client_assertion` at `/token` |
 | Backend service | `private_key_jwt` | `["client_credentials"]` | `jwks` or `jwks_uri`, and `patients`: `any` or one patient id | `client_credentials` with scope `system/ImagingStudy.rs`. No one signs in |
 
-`patients` is this sandbox's one extension to RFC 7591's metadata: a backend service has no one to approve it, so registering it names whose studies it may reach.
+`patients` is this sandbox's one extension to RFC 7591's metadata: a backend service has no one to approve it, so registering it names whose studies it may reach. It's required: leaving it out is `invalid_client_metadata`, never "any".
+
+An app that signs in is registered with both `authorization_code` and `refresh_token`: asking for `online_access` or `offline_access` at sign-in gets a refresh token (see "Refresh tokens").
 
 ```sh
 curl -X POST "$SANDBOX/register" -H "authorization: Bearer $ADMIN" -H 'content-type: application/json' \
   -d '{"client_name":"Referral service","token_endpoint_auth_method":"private_key_jwt","grant_types":["client_credentials"],"patients":"josh-example","jwks":{"keys":[{"kty":"EC","crv":"P-256","x":"...","y":"...","kid":"key-1"}]}}'
 ```
 
-The assertion is a JWT with `iss` and `sub` set to the client id, `aud` set to `$SANDBOX/token`, a unique `jti`, and `exp` at most five minutes ahead, by real time: assertions are checked by real time, whatever the sandbox's demo clock says. A backend service names the patient in each search, and asking about a patient outside its grant returns 403.
+The assertion is a JWT with `iss` and `sub` set to the client id, `aud` set to `$SANDBOX/token` (or a list that holds it), a unique `jti`, and `exp` at most five minutes ahead, by real time: assertions are checked by real time, whatever the sandbox's demo clock says. A backend service names the patient in each search, and asking about a patient outside its grant returns 403.
 
 ## Sign in without a browser
 
@@ -132,6 +134,10 @@ An agent can walk the forms a person would:
 
 A person can approve less on the consent page, and so can an agent driving it: see "Approving less at sign-in" under "The management API". An app can't tell from its token which it got.
 
+## Refresh tokens
+
+Ask for `online_access` or `offline_access` in `scope` at sign-in, and the token response also has a `refresh_token` (the two mean the same here). `POST $SANDBOX/token` with `grant_type=refresh_token`, `refresh_token` and `client_id` gets a new access token and a new refresh token, with the same patient, scope and approval; a confidential app also sends its `client_assertion`, as at the code exchange. Each refresh token works once. Presenting one that was already used is `invalid_grant`, and revokes every token in its chain, as a leaked token would need. A refresh token lasts 30 days of the demo clock unless the sandbox's settings say otherwise, and only the app it was issued to can use it.
+
 ## Read data
 
 To look at real answers before your app can sign in, the sandbox's admin key can get a token as a person for an app, with no forms: see "The same assertion, … gets a token as that person" under "Manage a sandbox". Your app should still sign in as below; the App check grades only its own tokens.
@@ -142,13 +148,15 @@ curl "$SANDBOX/fhir/Condition?patient=Patient/josh-example&clinical-status=activ
 curl "$SANDBOX/imaging/fhir/ImagingStudy?patient=Patient/josh-example&_include=ImagingStudy:endpoint" -H "authorization: Bearer $TOKEN"
 ```
 
-Reports link to their images by accession number, and each has a PDF and a text attachment at the URLs in `presentedForm`. A report is available only when the study it describes is released to the token.
+The clinical FHIR server is read-only: anything but `GET` is `405` with `Allow: GET`.
+
+Reports link to their images by accession number (`identifier`, with the same `system` as the study's accession) and by the study's DICOM UID (`imagingStudy[].identifier`, system `urn:dicom:uid`). Either goes in an ImagingStudy search's `identifier`; ImagingStudy isn't read by id. Each has a PDF and a text attachment at the URLs in `presentedForm`. A report is available only when the study it describes is released to the token.
 
 ```sh
 curl "$SANDBOX/fhir/DiagnosticReport?patient=Patient/josh-example" -H "authorization: Bearer $TOKEN"
 ```
 
-Each study names its `Endpoint` in `endpoint`, in any of three forms the guide allows, and an app must resolve all three by FHIR's Bundle rules: `#wado` is in the study's own `contained`; `urn:uuid:…` is the entry with that exact `fullUrl`; and a relative `Endpoint/{id}` resolves against the base of the study's own `fullUrl` (`{imaging}/fhir/`), to the entry whose `fullUrl` is `{imaging}/fhir/Endpoint/{id}`. The smoke test below does exactly this. Its `address` is that study's own DICOMweb base: retrieve under it, never under an address you build. A search with no results has no `entry` at all, only `total: 0`, so read `entry ?? []`.  `$STUDY_UID` is the study's `identifier` with system `urn:dicom:uid`, less its `urn:oid:` prefix (not `ImagingStudy.id`); series and instance UIDs are `series[].uid` and `series[].instance[].uid`. Still send the token:
+Each study names its `Endpoint` in `endpoint`, in any of three forms the guide allows, and an app must resolve all three by FHIR's Bundle rules: `#wado` is in the study's own `contained`; `urn:uuid:…` is the entry with that exact `fullUrl`; and a relative `Endpoint/{id}` resolves against the base of the study's own `fullUrl` (`{imaging}/fhir/`), to the entry whose `fullUrl` is `{imaging}/fhir/Endpoint/{id}`. The smoke test below does exactly this. Its `address` is that study's own DICOMweb base: retrieve under it, never under an address you build. A search with no results has no `entry` at all, only `total: 0`, so read `entry ?? []`. A search parameter the server doesn't support is ignored, as FHIR allows: it's left out of the `self` and `next` links, and named in an entry with `search.mode: "outcome"` holding a warning OperationOutcome. With `Prefer: handling=strict`, it's a `400` instead. Supported: `patient`, `identifier`, `based-on:identifier`, `_lastUpdated`, `_count`, `_include=ImagingStudy:endpoint`, and `_cursor` from a `next` link.  `$STUDY_UID` is the study's `identifier` with system `urn:dicom:uid`, less its `urn:oid:` prefix (not `ImagingStudy.id`); series and instance UIDs are `series[].uid` and `series[].instance[].uid`. Still send the token:
 
 ```sh
 curl "$ADDRESS/studies/$STUDY_UID/series/$SERIES_UID/instances/$INSTANCE_UID" \
@@ -279,9 +287,9 @@ All paths below are under `$SANDBOX`. Bodies are JSON.
 | `DELETE /api/sandbox/clients/{id}` | Removes an app |
 | `DELETE /api/sandbox/clients?name-prefix=` | Removes every app whose name starts with the prefix, which can't be empty, and answers `{"removed":[ids]}`. For clearing up after test apps: give yours a common prefix |
 | `GET /api/sandbox/policy` | Relationships, policies, shares and approvals |
-| `GET /api/sandbox/policy/relationships`, `PUT` with a relationship, `DELETE ?subject=&relation=&object=` | Facts on file: who is guardian of whom |
+| `GET /api/sandbox/policy/relationships`, `PUT` with a relationship, `DELETE ?subject=&relation=&object=` | Facts on file: who is guardian of whom. `relation` is `guardian_of`, the one policy reads, and `subject` one of the sample accounts |
 | `GET /api/sandbox/policy/policies`, `PUT /api/sandbox/policy/policies/{id}`, `DELETE /api/sandbox/policy/policies/{id}` | The imaging network's rules: sharing, guardian access, service access |
-| `GET /api/sandbox/policy/shares`, `POST` `{"from":"user:josh","with":"user:sam-caregiver","patient":"patient:josh-example","sites":[...],"label":"caregiver"}`, `DELETE ?from=&with=&patient=` | People's shares |
+| `GET /api/sandbox/policy/shares`, `POST` `{"from":"user:josh","with":"user:sam-caregiver","patient":"patient:josh-example","sites":[...],"label":"caregiver"}`, `DELETE ?from=&with=&patient=` | People's shares. `with` is another sample account; a name in `sites` that isn't a site is a 400, and a real site the sharer can't see is dropped, as the account page would |
 | `GET /api/sandbox/policy/app-approvals`, `POST` `{"by":"user:josh","app":"app:portal-app","patient":"patient:josh-example","sites":[...]}`, `DELETE ?by=&app=&patient=` | Which sites a person lets an app see. `"sites": null` is every site, including later ones; leaving `sites` out keeps the last choice |
 | `GET /api/sandbox/policy/explain?client=&user=&fhirUser=&patient=` | Each of a patient's studies, whether it's released to that app or service, and why. A `user` needs its `fhirUser`, e.g. `user=josh&fhirUser=Patient/josh-example` |
 | `GET /api/sandbox/explore/cast` | The people and services, whose records each holds, and each person's `fhirUser` |
@@ -464,7 +472,7 @@ interface AppCheckRun {
 
 // POST $SANDBOX/register: RFC 7591 client metadata, and the same, with client_id and client_id_issued_at, in answer.
 interface ClientMetadata {
-  client_name?: string; redirect_uris?: string[]; grant_types?: ["authorization_code"] | ["client_credentials"]; response_types?: ["code"];
+  client_name?: string; redirect_uris?: string[]; grant_types?: ["authorization_code"] | ["authorization_code", "refresh_token"] | ["client_credentials"]; response_types?: ["code"];
   token_endpoint_auth_method?: "none" | "private_key_jwt"; jwks?: { keys: (JsonWebKey & { kid: string })[] }; jwks_uri?: string; scope?: string;
   patients?: "any" | string;   // this sandbox's extension, for a backend service
 }

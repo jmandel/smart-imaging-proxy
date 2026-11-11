@@ -19,6 +19,8 @@ export interface SearchReturned {
   kind: "search.returned"; status: number; client?: string; user?: string; patient?: string; tokenHash?: string;
   /** The query, without `_cursor`. */
   query: string;
+  /** Parameters the search couldn't apply, and ignored. */
+  ignored?: string[];
   /** For a 200: this page's studies, and every study the caller may see. */
   found?: string[]; total?: number;
   /** For a 200: the studies the user reaches by a route of their own and this client isn't released, such as one outside an app approval's sites, each with its reason. */

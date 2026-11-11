@@ -194,7 +194,11 @@ describe("sharing", () => {
     expect(await policy.share({ from: "user:parent", with: "user:sitter", patient: "patient:teen", sites: ["Site D"], label: "sitter" })).toEqual({ ok: false, refusal: { error: "no sharing policy lets guardians share", policy: SHARING.id } });
     expect(await policy.share({ from: "user:sitter", with: "user:pat", patient: "patient:teen", sites: ["Site D"], label: "x" })).toMatchObject({ ok: false, refusal: { policy: SHARING.id } });
     expect((await raw("/shares", { method: "POST", body: JSON.stringify({ from: "user:parent", with: "user:sitter", patient: "patient:teen", sites: [], label: "sitter" }) })).status).toBe(403);
-    expect(await policy.share({ from: "user:pat", with: "user:sitter", patient: "patient:pat", sites: ["Site A", "Site Z"], label: "friend" })).toMatchObject({ ok: true, share: { sites: ["Site A"] } });
+    // A name that isn't a site at all is refused, not quietly dropped.
+    await expect(policy.share({ from: "user:pat", with: "user:sitter", patient: "patient:pat", sites: ["Site A", "Site Z"], label: "friend" })).rejects.toThrow("not a site: Site Z");
+    expect(await policy.shares()).toEqual([]);
+    // A real site the sharer can't name is only dropped, so the answer says nothing about it.
+    expect(await policy.share({ from: "user:pat", with: "user:sitter", patient: "patient:pat", sites: ["Site A", "Site D"], label: "friend" })).toMatchObject({ ok: true, share: { sites: ["Site A"] } });
     expect(await policy.shares()).toMatchObject([{ from: "user:pat", with: "user:sitter", patient: "patient:pat", sites: ["Site A"], label: "friend", basis: "self" }]);
   });
 });

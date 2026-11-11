@@ -111,7 +111,8 @@ export function metadataOf(c: RegisteredClient): ClientMetadata & { client_id: s
   return {
     client_id: c.id, client_name: c.name,
     ...(c.type === "backend" ? {} : { redirect_uris: c.redirectUris, response_types: ["code"] }),
-    grant_types: c.type === "backend" ? ["client_credentials"] : ["authorization_code"],
+    // A refresh token comes with online_access or offline_access, for any app that signs in.
+    grant_types: c.type === "backend" ? ["client_credentials"] : ["authorization_code", "refresh_token"],
     token_endpoint_auth_method: signs ? "private_key_jwt" : "none",
     ...(c.jwk ? { jwks: { keys: [c.jwk] } } : {}), ...(c.jwksUrl ? { jwks_uri: c.jwksUrl } : {}),
     scope: c.type === "backend" ? BACKEND_SCOPES.join(" ") : "launch/patient patient/*.rs",
@@ -131,6 +132,8 @@ export function register(store: PolicyStore, m: ClientMetadata, check: { jwksRea
   if (m.response_types && (backend || m.response_types.join() !== "code")) return bad("response_types must be [\"code\"], and only for authorization_code");
   if (m.jwks && m.jwks_uri) return bad("give jwks or jwks_uri, not both");
   if (method === "none" && (m.jwks || m.jwks_uri)) return bad("a client with token_endpoint_auth_method none has no keys");
+  // A service has no one to approve it, so what it may reach is said when it's registered, never assumed.
+  if (backend && m.patients === undefined) return bad(`a client_credentials client names "patients": "any", or one patient's id (one of ${KNOWN_PATIENTS.join(", ")}), since no one signs in to approve it`);
   const type: ClientType = backend ? "backend" : method === "private_key_jwt" ? "confidential" : "public";
   const made = addClient(store, { name: m.client_name ?? "Unnamed app", type, redirectUris: m.redirect_uris, jwk: m.jwks, jwksUrl: m.jwks_uri, patients: m.patients }, check);
   if (!("error" in made)) return made;

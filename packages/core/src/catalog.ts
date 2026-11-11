@@ -155,6 +155,7 @@ export function createCatalog(path: string = ":memory:", opts: { accessionSystem
     linkPatient(source, sourcePatientId, patient) { db.run("INSERT INTO patient_links (source, source_patient_id, patient) VALUES (?1, ?2, ?3) ON CONFLICT (source, source_patient_id) DO UPDATE SET patient = ?3", [source, sourcePatientId, patient]); },
     linkedPatients() { return (db.query("SELECT DISTINCT patient FROM patient_links ORDER BY patient").all() as any[]).map(r => r.patient); },
     sitesFor(patient) { return (db.query("SELECT DISTINCT site FROM studies WHERE patient = ? AND site IS NOT NULL ORDER BY site").all(patient) as any[]).map(r => r.site); },
+    allSites() { return (db.query("SELECT DISTINCT site FROM studies WHERE site IS NOT NULL ORDER BY site").all() as any[]).map(r => r.site); },
     allStudies() { return withSeries(db.query(`SELECT ${STUDY_COLUMNS} FROM studies s ORDER BY s.pk`).all() as any[]); },
     stats() {
       const n = (sql: string) => (db.query(sql).get() as any).n as number;

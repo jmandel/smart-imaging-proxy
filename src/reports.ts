@@ -9,6 +9,7 @@ import { buildReport, conclusion, type Organization, type Practitioner, type Rep
 import { renderText, type Doc } from "./reports/doc";
 import { buildPdf } from "./reports/pdf";
 import { patientOnFile } from "./clinical";
+import { ACCESSION_SYSTEM } from "./config";
 
 const definitions = new Map((source as any).studies.map((s: any) => [s.id, s]));
 const person = (id: string) => (care.practitioners as Practitioner[]).find(p => p.id === id);
@@ -45,9 +46,10 @@ function resourceFor(study: CatalogStudy, fhir: string, imagingFhir: string) {
     code: { ...(input.code ? { coding: [input.code] } : {}), text: title },
     subject: { reference: `${fhir}/Patient/${study.patient}` },
     ...(isoDate(study.date) ? { effectiveDateTime: isoDate(study.date) } : {}),
-    ...(study.accession ? { identifier: [{ type: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/v2-0203", code: "ACSN" }] }, value: study.accession }] } : {}),
+    ...(study.accession ? { identifier: [{ type: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/v2-0203", code: "ACSN" }] }, system: ACCESSION_SYSTEM, value: study.accession }] } : {}),
     conclusion: conclusion(input),
-    imagingStudy: [{ reference: `${imagingFhir}/ImagingStudy/${study.id}`, display: title }],
+    // By the study's DICOM UID, which an ImagingStudy search's identifier takes: this server doesn't read ImagingStudy by id.
+    imagingStudy: [{ type: "ImagingStudy", identifier: { system: "urn:dicom:uid", value: `urn:oid:${study.uid}` }, display: title }],
     presentedForm: [
       { contentType: "application/pdf", url: `${fhir}/Binary/${id}.pdf`, title: `${title} (PDF)` },
       { contentType: "text/plain", url: `${fhir}/Binary/${id}.txt`, title: `${title} (text)` },

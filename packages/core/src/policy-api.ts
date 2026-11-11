@@ -33,11 +33,15 @@ export interface PolicyModelView {
   shareableSites(store: PolicyStore, user: string, patient: string): string[];
   visibleSites(store: PolicyStore, user: string, patient: string, fhirUser?: string): string[];
   sitesFor(patient: string): string[];
+  /** Every site the catalog knows, whoever's studies are there. */
+  allSites?(): string[];
   sharingFor(store: PolicyStore, from: string, patient: string): { role?: "patient" | "guardian"; policy?: SharingPolicy };
   guardianPolicies(store: PolicyStore, patient: string): { age?: number; policies: GuardianAccessPolicy[] };
   isGuardian(store: PolicyStore, user: string, patient: string): boolean;
   /** The routes a user holds to a patient now, from the rows alone, which an approval rests on: `self`, guardian relationship ids, share ids. */
   routesHeld(store: PolicyStore, user: string, patient: string, fhirUser?: string): string[];
+  /** Whether a bare id is one of the deployment's people, where it knows them. */
+  isUser?(user: string): boolean;
 }
 
 const json = (b: unknown, status = 200) => Response.json(b, { status });
@@ -109,6 +113,10 @@ function policyApiOf(deps: { policySecret: string; store: () => PolicyStore; che
       if (p === "/relationships" && m === "GET") return json({ revision: store.revision(), relationships: store.relationships() });
       if (p === "/relationships" && m === "PUT") {
         const r = await body(req) as any;
+        // The one relationship policy reads. Any other would be stored and never mean anything.
+        if (isObject(r) && r.relation !== GUARDIAN_OF) return bad(`relation must be ${GUARDIAN_OF}: it's the only relationship policy reads`);
+        if (isObject(r) && (!idOf(r.subject, "user") || !idOf(r.object, "patient"))) return bad("subject is user:id, and object is patient:id");
+        if (isObject(r) && model.isUser && !model.isUser(idOf(r.subject, "user")!)) return bad(`${r.subject} isn't one of this deployment's people`);
         const revision = store.putRelationship(r);
         return json({ revision, relationship: store.relationshipOf(r) });
       }
@@ -142,13 +150,19 @@ function policyApiOf(deps: { policySecret: string; store: () => PolicyStore; che
       if (p === "/shares" && m === "POST") {
         const s = await body(req) as ShareRequest;
         if (!isObject(s) || !["from", "with", "patient", "label"].every(k => typeof s[k as keyof ShareRequest] === "string" && s[k as keyof ShareRequest]) || !isSites(s.sites)) return bad("from, with, patient, sites and label are required, and sites is a list of strings");
-        const from = idOf(s.from, "user"), patient = idOf(s.patient, "patient");
-        if (!from || !patient) return bad("from is user:id, and patient is patient:id");
+        const from = idOf(s.from, "user"), patient = idOf(s.patient, "patient"), to = idOf(s.with, "user");
+        if (!from || !patient || !to) return bad("from and with are user:id, and patient is patient:id");
+        if (model.isUser && !model.isUser(to)) return bad(`${s.with} isn't one of this deployment's people`);
+        if (to === from) return bad("a share is with someone else");
         const why = shareRefusal(store, from, patient);
         if (!check("policy", "organization policy lets this person share", !why, { from: s.from, patient: s.patient, policy: why?.policy, why: why?.error })) return refused(why!);
         // A share can only narrow what the sharer may name, whatever the form submitted.
         const known = new Set(model.shareableSites(store, from, patient));
         const sites = s.sites.filter(x => known.has(x));
+        // A name that isn't a site at all is a mistake, not a narrower share, as at the consent step. A real site
+        // the sharer can't name is only dropped, as the form would, so the answer reveals nothing about it.
+        const sites_ = model.allSites ? new Set(model.allSites()) : undefined, unknown = sites_ ? s.sites.filter(x => !sites_.has(x)) : [];
+        if (unknown.length) return bad(`not a site: ${unknown.join(", ")}. The sites are ${[...sites_!].join(", ")}`);
         // The share rests on the route the sharer shares through: being the patient, or their guardian relationship.
         const { role } = model.sharingFor(store, s.from, s.patient);
         const basis = role === "patient" ? SELF : store.relationshipOf({ subject: s.from, relation: GUARDIAN_OF, object: s.patient })!.id!;
