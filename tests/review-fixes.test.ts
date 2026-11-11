@@ -208,3 +208,60 @@ describe("Revoking a token ends its retrievals at once", () => {
     expect([(await meta(address)).status, (await meta(unsigned)).status]).toEqual([401, 401]);
   });
 });
+
+describe("Discovery and refusals say what's there and why", () => {
+  test("the clinical server has a CapabilityStatement, with ImagingStudy when it's unified", async () => {
+    const cs: any = await (await fetch(`${CLINICAL_FHIR}/metadata`)).json();
+    expect(cs.resourceType).toBe("CapabilityStatement");
+    expect(cs.rest[0].resource.map((r: any) => r.type)).toEqual(["Patient", "Condition", "AllergyIntolerance", "MedicationRequest", "DiagnosticReport", "Binary"]);
+    const w = stack.sandboxes.mint();
+    w.setTopology("unified");
+    const unified: any = await (await fetch(`${w.urls.auth}/fhir/metadata`)).json();
+    expect(unified.rest[0].resource.map((r: any) => r.type)).toContain("ImagingStudy");
+  });
+  test("introspection isn't advertised, and says who it's for", async () => {
+    expect(conf.introspection_endpoint).toBeUndefined();
+    const r = await fetch(`${CLINICAL_FHIR.replace(/\/fhir$/, "")}/introspect`, { method: "POST", body: "token=x" });
+    expect(r.status).toBe(401);
+    expect(((await r.json()) as any).error_description).toContain("Imaging Server's own call");
+  });
+  test("an authorize error says why, and a wrong aud is invalid_request", async () => {
+    const u = new URL(conf.authorization_endpoint);
+    Object.entries({ response_type: "code", client_id: "portal-app", redirect_uri: "http://127.0.0.1/never", scope: "launch/patient patient/*.rs", aud: "https://elsewhere.example/fhir", state: "s", code_challenge: "c", code_challenge_method: "S256" }).forEach(([k, v]) => u.searchParams.set(k, v));
+    const { CALLBACK } = await import("../src/flows/oauth");
+    u.searchParams.set("redirect_uri", CALLBACK);
+    const back = new URL((await fetch(u, { redirect: "manual" })).headers.get("location")!);
+    expect(back.searchParams.get("error")).toBe("invalid_request");
+    expect(back.searchParams.get("error_description")).toContain("aud is the FHIR server");
+    u.searchParams.delete("code_challenge");
+    u.searchParams.set("aud", CLINICAL_FHIR);
+    const pkce = new URL((await fetch(u, { redirect: "manual" })).headers.get("location")!);
+    expect([pkce.searchParams.get("error"), pkce.searchParams.get("error_description")]).toEqual(["invalid_request", expect.stringContaining("PKCE")]);
+  });
+  test("a staged 503 and a 501 say why, and when to come back", async () => {
+    const w = stack.sandboxes.mint();
+    w.setFaults({ searchRetryAfter: 1 });
+    const t = await scriptedLaunch("josh", "portal-app", { at: w.urls });
+    const r = await fetch(`${w.urls.imaging}/fhir/ImagingStudy?patient=josh-example&_include=ImagingStudy:endpoint`, { headers: bearer(t) });
+    expect([r.status, r.headers.get("retry-after")]).toEqual([503, "1"]);
+    expect(((await r.json()) as any).issue[0]).toMatchObject({ code: "transient", diagnostics: expect.stringContaining("Retry-After") });
+    const b: any = await (await fetch(`${w.urls.imaging}/fhir/ImagingStudy?patient=josh-example&_include=ImagingStudy:endpoint`, { headers: bearer(t) })).json();
+    const study = b.entry.find((e: any) => e.resource.resourceType === "ImagingStudy").resource;
+    const address = b.entry.find((e: any) => e.resource.resourceType === "Endpoint").resource.address;
+    const uid = study.identifier.find((i: any) => i.system === "urn:dicom:uid").value.replace("urn:oid:", "");
+    const rendered = await fetch(`${address}/studies/${uid}/rendered`, { headers: { authorization: `Bearer ${t.access_token}` } });
+    expect(rendered.status).toBe(501);
+    expect(((await rendered.json()) as any).error).toContain("rendered");
+  });
+});
+
+describe("The gateway's reasons", async () => {
+  const { withReason } = await import("../src/error-bodies");
+  test("every bodiless refusal it fills in says something more than its status", async () => {
+    for (const status of [400, 401, 403, 404, 405, 406, 409, 429, 500, 501, 502, 503]) for (const path of ["/fhir/Condition", "/wado/x/studies/1", "/api/sandbox/x"]) {
+      const r = await withReason(new Response(null, { status }), path, "GET");
+      const text = await r.text();
+      expect([status, path, text.includes(`HTTP ${status}`)]).toEqual([status, path, false]);
+    }
+  });
+});

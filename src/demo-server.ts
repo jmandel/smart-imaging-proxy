@@ -282,7 +282,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       }
       if (p === "/api/sandbox/policy" && req.method === "GET") return json(panelOf(sandbox.store));
       if (p.startsWith("/api/")) return json({ error: `no ${req.method} ${p}`, hint: "The calls are listed in llms.txt." }, 404);
-      return new Response("not found", { status: 404 });
+      return new Response(null, { status: 404 });
     }
     return { fetch };
   }

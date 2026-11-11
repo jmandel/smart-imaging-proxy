@@ -20,12 +20,17 @@ function reasonFor(status: number, kind: Kind, authenticate: string | null): { e
       : { error: "this token may not read this" };
     case 404: return kind === "wado"
       ? { error: "no such study, series or instance released to this token", hint: "Use the Endpoint.address that search returned with the study. /frames, /rendered and /thumbnail aren't served here." }
-      : { error: "not found" };
+      : { error: "not found", hint: "llms.txt, at the sandbox's base, lists every address." };
     case 405: return { error: "this method isn't allowed here" };
     case 406: return kind === "wado"
       ? { error: "none of the accepted types can be served", hint: "Ask for accept: multipart/related; type=\"application/dicom\"; transfer-syntax=*, or application/dicom+json for metadata." }
       : { error: "none of the accepted types can be served" };
+    case 409: return { error: "this conflicts with the sandbox's current state" };
+    case 429: return { error: "too many requests", hint: "Wait, and try again. Retry-After says how long, when it's sent." };
+    case 500: return { error: "the service failed", hint: "It's a bug in the sandbox. The sandbox's activity page (/activity under its base) shows what led up to it." };
+    case 501: return { error: "this isn't implemented here" };
     case 502: return { error: "a service behind this address didn't answer" };
+    case 503: return { error: "not available right now", hint: "Wait Retry-After seconds, when it's sent, and ask again." };
     default: return { error: `HTTP ${status}` };
   }
 }

@@ -99,7 +99,7 @@ export function createCollector(_root: string, config: TraceStoreConfig = { mode
     const p = url.pathname;
     if (!ownHost(req)) return new Response("this service answers only at its own addresses", { status: 403 });
     // A sandbox's view reads only its own sessions, and changes nothing.
-    if (sandbox && (p === "/v1/spans" || p === "/v1/events" || req.method !== "GET")) return new Response("not found", { status: 404 });
+    if (sandbox && (p === "/v1/spans" || p === "/v1/events" || req.method !== "GET")) return new Response(null, { status: 404 });
     if (p === "/v1/events" && req.method === "POST") {
       if (req.headers.get("origin")) return new Response(null, { status: 403 });
       if (!sameSecret(req.headers.get("authorization")?.match(/^bearer +(.+)$/i)?.[1], spanSecret)) return new Response(null, { status: 401 });
@@ -116,7 +116,7 @@ export function createCollector(_root: string, config: TraceStoreConfig = { mode
     // A sandbox's view lists only its own events.
     if (p === "/api/events") { const q = eventQueryOf(url); return Response.json({ events: store.events(sandbox ? { ...q, sandbox } : q), facets: store.eventFacets(sandbox) }); }
     const session = p.match(/^\/api\/sessions\/([^/]+)\//)?.[1];
-    if (sandbox && session && decodable(session) && sandboxOf(decodeURIComponent(session)) !== sandbox) return new Response("not found", { status: 404 });
+    if (sandbox && session && decodable(session) && sandboxOf(decodeURIComponent(session)) !== sandbox) return new Response(null, { status: 404 });
     if (p === "/v1/spans" && req.method === "POST") {
       // Services send spans. A browser always names an origin, and has no reason to send any.
       if (req.headers.get("origin")) return new Response(null, { status: 403 });
@@ -149,13 +149,13 @@ export function createCollector(_root: string, config: TraceStoreConfig = { mode
     const one = p.match(/^\/api\/sessions\/([^/]+)\/spans\/([^/]+)$/);
     if (one) {
       const r = store.span(decodeURIComponent(one[1]!), one[2]!);
-      return r ? Response.json(r) : new Response("not found", { status: 404 });
+      return r ? Response.json(r) : new Response(null, { status: 404 });
     }
     const exported = p.match(/^\/api\/sessions\/([^/]+)\/export$/);
     if (exported) {
       const id = decodeURIComponent(exported[1]!);
       const info = store.session(id);
-      if (!info) return new Response("not found", { status: 404 });
+      if (!info) return new Response(null, { status: 404 });
       return new Response(JSON.stringify({ session: publicSession(info), exportedAt: new Date().toISOString(), spans: store.fullSession(id) }, null, 1), {
         headers: { "content-type": "application/json;charset=utf-8", "content-disposition": `attachment; filename="trace-${id.replace(/[^A-Za-z0-9._-]/g, "_")}.json"` },
       });
@@ -176,7 +176,7 @@ export function createCollector(_root: string, config: TraceStoreConfig = { mode
       });
       return new Response(body, { headers: { "content-type": "text/event-stream", "cache-control": "no-store" } });
     }
-    return new Response("not found", { status: 404 });
+    return new Response(null, { status: 404 });
   };
   /** Whole sessions as maps, read from the store. Tests read spans this way. */
   const sessions = {

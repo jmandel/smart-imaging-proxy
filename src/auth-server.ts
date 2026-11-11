@@ -8,7 +8,7 @@ import { derivedKey, SANDBOX_ADMIN } from "./sandbox-keys";
 import { refuseWrite } from "./settings-api";
 import { PORTS, PUBLIC_DEMO } from "./config";
 import { check, recordEvent, traced } from "./trace";
-import { asksClinical, clinicalSearch, demographics, grantedScope, hasClinicalScope, isClinicalType } from "./clinical";
+import { asksClinical, clinicalCapability, clinicalSearch, demographics, grantedScope, hasClinicalScope, isClinicalType } from "./clinical";
 import { BACKEND_SCOPES } from "./clients";
 import { jwksKey } from "./jwks";
 import { reportAttachment, reportSearch, reportRead } from "./reports";
@@ -298,14 +298,15 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     // Client and redirect URI errors must not redirect, since the target can't be trusted.
     if (!check("authorization-server", "client is registered", !!client, { client: q.get("client_id") })) return page("Authorization error", "<h1>Unknown client</h1>", 400);
     if (!check("authorization-server", "redirect_uri exactly matches registration", client!.redirectUris.includes(q.get("redirect_uri") ?? ""), { redirect_uri: q.get("redirect_uri") })) return page("Authorization error", "<h1>Unregistered redirect URI</h1>", 400);
-    const back = (error: string) => { const u = new URL(q.get("redirect_uri")!); u.searchParams.set("error", error); if (q.get("state")) u.searchParams.set("state", q.get("state")!); return new Response(null, { status: 302, headers: { Location: u.toString() } }); };
-    if (!check("authorization-server", "response_type is code", q.get("response_type") === "code")) return back("unsupported_response_type");
-    if (!check("authorization-server", "state is present", !!q.get("state"))) return back("invalid_request");
-    if (!check("authorization-server", "PKCE: S256 challenge is present", q.get("code_challenge_method") === "S256" && !!q.get("code_challenge"), { method: q.get("code_challenge_method") })) return back("invalid_request");
-    if (!check("authorization-server", "aud is a FHIR server this deployment authorizes", q.get("aud") === `${opts.issuer}/fhir` || q.get("aud") === opts.imagingFhirBase, { aud: q.get("aud") })) return back("invalid_scope");
+    // Every error the app is sent back with says why, in error_description (RFC 6749, section 4.1.2.1).
+    const back = (error: string, description: string) => { const u = new URL(q.get("redirect_uri")!); u.searchParams.set("error", error); u.searchParams.set("error_description", description); if (q.get("state")) u.searchParams.set("state", q.get("state")!); return new Response(null, { status: 302, headers: { Location: u.toString() } }); };
+    if (!check("authorization-server", "response_type is code", q.get("response_type") === "code")) return back("unsupported_response_type", `response_type is code, not ${q.get("response_type") ?? "missing"}`);
+    if (!check("authorization-server", "state is present", !!q.get("state"))) return back("invalid_request", "state is required");
+    if (!check("authorization-server", "PKCE: S256 challenge is present", q.get("code_challenge_method") === "S256" && !!q.get("code_challenge"), { method: q.get("code_challenge_method") })) return back("invalid_request", "PKCE is required: send code_challenge, with code_challenge_method=S256");
+    if (!check("authorization-server", "aud is a FHIR server this deployment authorizes", q.get("aud") === `${opts.issuer}/fhir` || q.get("aud") === opts.imagingFhirBase, { aud: q.get("aud") })) return back("invalid_request", `aud is the FHIR server the app will call: ${opts.issuer}/fhir${opts.unified?.() ? "" : ` or ${opts.imagingFhirBase}`}, not ${q.get("aud") ?? "missing"}`);
     const scope = q.get("scope") ?? "";
-    if (!check("authorization-server", "scope is requested", scope.length > 0, { scope })) return back("invalid_scope");
-    if (!check("authorization-server", "scope has no system-level access, which only Backend Services clients get", !scope.split(" ").some(s => s.startsWith("system/")), { scope })) return back("invalid_scope");
+    if (!check("authorization-server", "scope is requested", scope.length > 0, { scope })) return back("invalid_scope", "scope is required, such as launch/patient patient/*.rs");
+    if (!check("authorization-server", "scope has no system-level access, which only Backend Services clients get", !scope.split(" ").some(s => s.startsWith("system/")), { scope })) return back("invalid_scope", "system/ scopes are for Backend Services clients, with client_credentials; an app a person signs in to asks for patient/ scopes");
     const id = randomBytes(16).toString("base64url");
     txns.set(id, { client_id: q.get("client_id")!, redirect_uri: q.get("redirect_uri")!, state: q.get("state")!, scope, code_challenge: q.get("code_challenge")!, exp: now() + 600, login_hint: q.get("login_hint") ?? undefined, patient_hint: q.get("demo_patient") ?? undefined });
     return page("Sign in", `<h1>Sign in to continue to ${esc(client!.name)}</h1><p class="who">This page belongs to the Authorization Server, not the app.</p>${await signInForm(`${P}/authorize/signin?txn=${id}${demoQuery(url)}`, q.get("login_hint") ?? "")}`);
@@ -478,7 +479,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
       if (shared.refused) return page("Not allowed", `<h1>The organization's policy doesn't allow this share</h1><p>${esc(shared.refused)}</p>`, 403);
     } else if (url.pathname === "/account/delegations/revoke") await opts.directory.revokeDelegation(name!, f.get("delegate") ?? "", f.get("patient") ?? undefined);
     else if (url.pathname === "/account/apps/revoke") await opts.directory.revokeApp(f.get("client") ?? "", name!, f.get("patient") ?? undefined);
-    else return new Response("not found", { status: 404 });
+    else return new Response(null, { status: 404 });
     return redirectTo(`${P}/account${q}`);
   }
 
@@ -490,7 +491,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     if (url.pathname === "/fhir/.well-known/smart-configuration") {
       return Response.json({
         issuer: opts.issuer, authorization_endpoint: `${opts.issuer}/authorize`, token_endpoint: tokenUrl,
-        introspection_endpoint: `${opts.issuer}/introspect`, revocation_endpoint: `${opts.issuer}/revoke`,
+        revocation_endpoint: `${opts.issuer}/revoke`,
         // A sandbox registers apps by RFC 7591, with its admin token as the initial access token.
         ...(opts.registeredClient ? { registration_endpoint: `${opts.issuer}/register` } : {}),
         grant_types_supported: ["authorization_code", "client_credentials", "refresh_token"],
@@ -571,7 +572,8 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     if (url.pathname === "/account" && req.method === "GET") return account(url, req);
     if (url.pathname.startsWith("/account/") && req.method === "POST") return accountPost(url, req);
     if (url.pathname === "/introspect" && req.method === "POST") {
-      if (!sameSecret(req.headers.get("authorization")?.match(/^bearer +(.+)$/i)?.[1], opts.serviceSecret)) return new Response(null, { status: 401 });
+      // The Imaging Server's own call, with the deployment's service credential. It isn't advertised: apps don't introspect.
+      if (!sameSecret(req.headers.get("authorization")?.match(/^bearer +(.+)$/i)?.[1], opts.serviceSecret)) return Response.json({ error: "invalid_client", error_description: "introspection is the Imaging Server's own call, with the deployment's service credential; an app has no use for it, and it isn't in discovery" }, { status: 401 });
       const f = new URLSearchParams(await req.text());
       const t = opts.store().getToken(f.get("token") ?? "", "access");
       check("authorization-server", "introspect token", !!t && !t.revoked && t.exp! > now(), { token_hash: ath(f.get("token") ?? "").slice(0, 10), client: t?.client_id, revoked: t?.revoked, expired: !!t && t.exp! <= now() });
@@ -586,6 +588,11 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     }
     // Unified: this FHIR server is also the Imaging FHIR Server.
     if (opts.unified?.() && opts.imagingFetch && url.pathname === "/fhir/ImagingStudy") return opts.imagingFetch(req);
+    if (url.pathname === "/fhir/metadata" && (req.method === "GET" || req.method === "HEAD")) {
+      // Unified, the imaging server's ImagingStudy is this server's too.
+      const imaging: any = opts.unified?.() && opts.imagingFetch ? await (await opts.imagingFetch(new Request(new URL("/fhir/metadata", req.url)))).json().catch(() => undefined) : undefined;
+      return Response.json(clinicalCapability(`${opts.issuer}/fhir`, opts.issuer, imaging?.rest?.[0]?.resource ?? []), { headers: { "content-type": "application/fhir+json" } });
+    }
     // This FHIR server is read-only: anything but a read is refused, whatever the resource.
     if (url.pathname.startsWith("/fhir/") && req.method !== "GET" && req.method !== "HEAD") {
       check("authorization-server", "a FHIR request is a read", false, { method: req.method, path: url.pathname });
@@ -627,7 +634,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
       const found = clinicalSearch(clinicalType, url.searchParams, t!, `${opts.issuer}/fhir`);
       return Response.json(found.body, { status: found.status, headers: { "content-type": "application/fhir+json" } });
     }
-    return new Response("not found", { status: 404 });
+    return new Response(null, { status: 404 });
   });
 
   return {

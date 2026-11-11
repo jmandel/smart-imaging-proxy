@@ -645,7 +645,7 @@ export function createTours(sandbox: Sandbox, stack: Stack) {
         const want = tourById(url.searchParams.get("tour") ?? "");
         return json(want && (!run || run.tour.id !== want.id) ? preview(want) : state());
       }
-      if (req.method !== "POST" || !p.startsWith("/api/sandbox/tours/")) return new Response("not found", { status: 404 });
+      if (req.method !== "POST" || !p.startsWith("/api/sandbox/tours/")) return new Response(null, { status: 404 });
       if (!sandbox.id) return json({ error: "a tour runs in a sandbox of its own: start one at /api/tours/{id}/start" }, 409);
       const started = p.match(/^\/api\/sandbox\/tours\/([^/]+)\/start$/);
       if (started) {
@@ -677,7 +677,7 @@ export function createTours(sandbox: Sandbox, stack: Stack) {
         await finishStep(s, body?.seen);
         return json(state());
       }
-      return new Response("not found", { status: 404 });
+      return new Response(null, { status: 404 });
     },
   };
 }

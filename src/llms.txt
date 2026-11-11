@@ -25,7 +25,7 @@ A real deployment has separate systems, and here they share one origin.
 | Role | URL | What it does |
 |---|---|---|
 | Clinical FHIR server | `$SANDBOX/fhir` | SMART discovery, `Patient`, `AllergyIntolerance`, `Condition`, `MedicationRequest`, `DiagnosticReport`, `Binary` |
-| Authorization server | `$SANDBOX/authorize`, `/token`, `/introspect`, `/revoke` | Sign-in, consent, tokens |
+| Authorization server | `$SANDBOX/authorize`, `/token`, `/revoke`, `/register` | Sign-in, consent, tokens, registering apps |
 | Imaging FHIR server | `$SANDBOX/imaging/fhir` | `ImagingStudy` search, with each study's `Endpoint`. Applies policy |
 | DICOMweb proxy | `$SANDBOX/wado/{signed-context}/studies/...` | WADO-RS retrieval. Enforces the decision signed into the address |
 
@@ -152,7 +152,9 @@ curl "$SANDBOX/fhir/Condition?patient=Patient/josh-example&clinical-status=activ
 curl "$SANDBOX/imaging/fhir/ImagingStudy?patient=Patient/josh-example&_include=ImagingStudy:endpoint" -H "authorization: Bearer $TOKEN"
 ```
 
-The clinical FHIR server is read-only: anything but `GET` is `405` with `Allow: GET`.
+The clinical FHIR server is read-only: anything but `GET` is `405` with `Allow: GET`. Each FHIR server has a CapabilityStatement: `$SANDBOX/fhir/metadata` and `$SANDBOX/imaging/fhir/metadata`.
+
+Every refusal has a body that says why: an OperationOutcome on a FHIR address, and `{"error", "hint"}` elsewhere. An authorization error sent back to the app's redirect URI carries `error_description`.
 
 Reports link to their images by accession number (`identifier`, with the same `system` as the study's accession) and by the study's DICOM UID (`imagingStudy[].identifier`, system `urn:dicom:uid`). Either goes in an ImagingStudy search's `identifier`; ImagingStudy isn't read by id. Each has a PDF and a text attachment at the URLs in `presentedForm`. A report is available only when the study it describes is released to the token.
 

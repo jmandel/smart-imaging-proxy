@@ -174,8 +174,10 @@ export function createProxy(opts: KeyOption & {
     return { allowed: true, release: claims.series ? { series: claims.series } : "study", via: "instant", ...(claims.ver !== undefined ? { version: claims.ver } : {}) };
   }
 
+  /** A 503 that says why, and when to come back. */
+  const unavailable = (seconds: number, error: string, hint: string) => Response.json({ error, hint }, { status: 503, headers: { "Retry-After": String(seconds) } });
   const denyResponse = (o: Outcome) => {
-    if (o.unavailable) return new Response(null, { status: 503, headers: { "Retry-After": "5" } });
+    if (o.unavailable) return unavailable(5, "the access decision service didn't answer, so nothing can be released", "Wait Retry-After seconds and ask again. A signed Endpoint.address that's still valid doesn't need the decision service.");
     if (o.denial === "invalid_token") return new Response(null, { status: 401, headers: { "WWW-Authenticate": 'Bearer error="invalid_token"' } });
     if (o.denial === "insufficient_scope") return new Response(null, { status: 403, headers: { "WWW-Authenticate": 'Bearer error="insufficient_scope"' } });
     return new Response(null, { status: 404 });
@@ -185,7 +187,7 @@ export function createProxy(opts: KeyOption & {
     if (e instanceof BackendError) {
       if (e.kind === "NotFound") return new Response(null, { status: 404 });
       if (e.kind === "NotAcceptable" || e.kind === "CannotDecode") return new Response(null, { status: 406 });
-      if (e.kind === "Unavailable") return new Response(null, { status: 503, headers: { "Retry-After": String(e.retryAfter ?? 5) } });
+      if (e.kind === "Unavailable") return unavailable(e.retryAfter ?? 5, "the image store didn't answer", "Wait Retry-After seconds and ask again.");
     }
     return new Response(null, { status: 502 });
   };
@@ -562,7 +564,7 @@ export function createProxy(opts: KeyOption & {
       if (retryAfterSpent.size >= 10000) retryAfterSpent.clear();
       retryAfterSpent.add(ath(token!));
       ev.note = `staged: each token's first retrieval answers 503 with Retry-After: ${retryAfter}`;
-      return new Response(null, { status: 503, headers: { "Retry-After": String(retryAfter) } });
+      return unavailable(retryAfter, "the study isn't ready yet", "Wait Retry-After seconds, then make the same request again. (Staged by this sandbox's retrievalRetryAfter fault: once for each token.)");
     }
 
     const acceptable = (forms: MediaForm[]) => {
@@ -579,7 +581,7 @@ export function createProxy(opts: KeyOption & {
       const form = acceptable(BULK_FORMS);
       return form ? bulk(study, series, instance, tail.slice(5), form, decision.version, ev, server, started) : new Response(null, { status: 406 });
     }
-    if (tail) { ev.note = `${tail.split("/")[0]} is a SHOULD this proxy does not implement`; return new Response(null, { status: 501 }); }
+    if (tail) { ev.note = `${tail.split("/")[0]} is a SHOULD this proxy does not implement`; return Response.json({ error: `/${tail.split("/")[0]} isn't implemented here`, hint: "Retrieve the instances, or /metadata, and render them yourself. SMART Imaging Access names /rendered and /thumbnail as a SHOULD." }, { status: 501 }); }
 
     const accept = parseAccept(req.headers.get("accept"), "dicom");
     // PS3.18 8.7.5: a request without Accept gets 406.

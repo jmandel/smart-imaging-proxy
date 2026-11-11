@@ -70,6 +70,33 @@ function resourceOf(type: ClinicalType, row: Row, reference: string) {
   return { resourceType: type, id: row.id, status: row.status, intent: "order", medicationCodeableConcept: text, subject: { reference } };
 }
 
+/** The clinical FHIR server's CapabilityStatement: its reads and searches, and SMART's OAuth endpoints. */
+export function clinicalCapability(base: string, issuer: string, extra: unknown[] = []) {
+  const patientParam = { name: "patient", type: "reference", documentation: "Required: the token's own patient, as an id, Patient/id, or that reference on this base." };
+  const status = (name: string) => ({ name, type: "token", documentation: "A comma means any of the values." });
+  return {
+    resourceType: "CapabilityStatement", status: "active", date: "2026-11-10", kind: "instance", fhirVersion: "4.0.1", format: ["json"],
+    implementation: { description: "Clinical FHIR server: the patient's record, beside the Authorization Server. Read-only.", url: base },
+    rest: [{
+      mode: "server",
+      security: {
+        service: [{ coding: [{ system: "http://hl7.org/fhir/restful-security-service", code: "SMART-on-FHIR" }] }],
+        extension: [{ url: "http://fhir-registry.smarthealthit.org/StructureDefinition/oauth-uris", extension: [{ url: "authorize", valueUri: `${issuer}/authorize` }, { url: "token", valueUri: `${issuer}/token` }, { url: "revoke", valueUri: `${issuer}/revoke` }] }],
+        description: "SMART App Launch and Backend Services. Discovery is at .well-known/smart-configuration on this base.",
+      },
+      resource: [
+        { type: "Patient", interaction: [{ code: "read" }] },
+        { type: "Condition", interaction: [{ code: "search-type" }], searchParam: [patientParam, status("clinical-status")] },
+        { type: "AllergyIntolerance", interaction: [{ code: "search-type" }], searchParam: [patientParam, status("clinical-status")] },
+        { type: "MedicationRequest", interaction: [{ code: "search-type" }], searchParam: [patientParam, status("status")] },
+        { type: "DiagnosticReport", interaction: [{ code: "read" }, { code: "search-type" }], searchParam: [patientParam], documentation: "A report is available only when the study it describes is released to the token." },
+        { type: "Binary", interaction: [{ code: "read" }], documentation: "A report's attachments, at the URLs in presentedForm." },
+        ...extra,
+      ],
+    }],
+  };
+}
+
 const outcome = (code: string, diagnostics: string) => ({ resourceType: "OperationOutcome", issue: [{ severity: "error", code, diagnostics }] });
 
 /**

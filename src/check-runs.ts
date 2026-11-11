@@ -253,7 +253,7 @@ export function createCheckRuns({ now = Date.now, site }: { now?: () => number; 
       run.assertions++;
       return json({ assertion: await signAssertion(run.server, b.aud, Math.floor(now() / 1000)) });
     }
-    return new Response("not found", { status: 404 });
+    return new Response(null, { status: 404 });
   }
   return { fetch, size: () => { prune(); return runs.size; } };
 }

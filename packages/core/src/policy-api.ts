@@ -230,7 +230,7 @@ function policyApiOf(deps: { policySecret: string; store: () => PolicyStore; che
         return json({ revision: b.tokens ? store.resetAll() : store.resetPolicy() });
       }
       if (p === "/store" && m === "GET") return json(store.info());
-      return new Response("not found", { status: 404 });
+      return new Response(null, { status: 404 });
     } catch (e) {
       if (e instanceof PolicyValidationError) return bad(e.message, e.errors);
       if (e instanceof SyntaxError) return bad(e.message);

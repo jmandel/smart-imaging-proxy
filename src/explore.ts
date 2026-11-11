@@ -221,7 +221,7 @@ export function createExplore(sandbox: Sandbox, clients: Record<string, BackendC
     /** The management API's Explore reads, under /api/sandbox/explore. */
     async fetch(req: Request, url: URL): Promise<Response> {
       const p = url.pathname.slice("/api/sandbox/explore".length), q = (k: string) => url.searchParams.get(k) ?? undefined;
-      if (req.method !== "GET") return new Response("not found", { status: 404 });
+      if (req.method !== "GET") return new Response(null, { status: 404 });
       if (p === "/cast") return json(options());
       if (p === "/referrals") return json({ referrals: referralList() });
       if (p === "/rule-sets") {
@@ -258,7 +258,7 @@ export function createExplore(sandbox: Sandbox, clients: Record<string, BackendC
         if (!views.has(session)) return json({ error: "that session has no view explained here" }, 404);
         return json({ line: chainLine(await happened(session, study)), activityUrl: `${sandbox.prefix}/activity?session=${encodeURIComponent(session)}&study=${encodeURIComponent(study)}` });
       }
-      return new Response("not found", { status: 404 });
+      return new Response(null, { status: 404 });
     },
   };
 }

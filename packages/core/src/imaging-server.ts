@@ -405,7 +405,7 @@ export function createImagingServer(opts: ImagingServerOptions) {
       if (searchDelayed.size >= 10000) searchDelayed.clear();
       searchDelayed.add(ath(bearer));
       e.reason = `staged: each token's first search answers 503 with Retry-After: ${staged.retryAfter}`;
-      return new Response(null, { status: 503, headers: { "Retry-After": String(staged.retryAfter) } });
+      return Response.json({ resourceType: "OperationOutcome", issue: [{ severity: "error", code: "transient", diagnostics: `the results are being assembled: wait Retry-After (${staged.retryAfter} s), then make the same search again. (Staged by this sandbox's searchRetryAfter fault: once for each token.)` }] }, { status: 503, headers: { "Retry-After": String(staged.retryAfter), "content-type": "application/fhir+json" } });
     }
 
     const countParam = url.searchParams.get("_count");
@@ -596,7 +596,7 @@ export function createImagingServer(opts: ImagingServerOptions) {
       if (p === "/access/v1/evaluation" && req.method === "POST") return evaluation(req);
       if (p === "/.well-known/authzen-configuration") return Response.json({ policy_decision_point: serviceBase, access_evaluation_endpoint: `${serviceBase}/access/v1/evaluation` });
       if (p === "/.well-known/jwks.json") return Response.json({ keys: [publicJwk(key)] });
-      return new Response("not found", { status: 404 });
+      return new Response(null, { status: 404 });
     }),
     /** A search another FHIR server answers by passing it here, as one server (unified topology): links name `base`. */
     fetchAt(req: Request, base: string) { askedAt.set(req, base); return this.fetch(req); },

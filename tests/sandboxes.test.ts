@@ -165,7 +165,7 @@ describe("every URL a sandbox issues carries its prefix", () => {
     const w = stack.sandboxes.mint();
     const prefix = `/s/${w.id}`;
     const conf: any = await (await get(`${w.urls.clinicalFhir}/.well-known/smart-configuration`)).json();
-    for (const k of ["issuer", "authorization_endpoint", "token_endpoint", "introspection_endpoint", "revocation_endpoint"]) expect([k, new URL(conf[k]).pathname.startsWith(prefix)]).toEqual([k, true]);
+    for (const k of ["issuer", "authorization_endpoint", "token_endpoint", "revocation_endpoint"]) expect([k, new URL(conf[k]).pathname.startsWith(prefix)]).toEqual([k, true]);
     expect(conf.associated_endpoints[0].url).toBe(`${w.urls.imaging}/fhir`);
     const meta: any = await (await get(`${w.urls.imaging}/fhir/metadata`)).json();
     expect(meta.implementation.url).toBe(`${w.urls.imaging}/fhir`);
