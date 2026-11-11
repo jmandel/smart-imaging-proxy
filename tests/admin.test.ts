@@ -52,10 +52,23 @@ test("the admin gets a token as a person, which reads only what policy releases 
   const josh = await adminToken(demo, a.prefix, { user: "josh", patient: "josh-example" });
   const r = await fetch(`${a.urls.imaging}/fhir/ImagingStudy?patient=josh-example`, { headers: { authorization: `Bearer ${josh}` } });
   expect(r.status).toBe(200);
-  const alex = await adminToken(demo, a.prefix, { user: "alex-neighbor", patient: "josh-example" });
-  const none: any = await (await fetch(`${a.urls.imaging}/fhir/ImagingStudy?patient=josh-example`, { headers: { authorization: `Bearer ${alex}` } })).json();
-  expect((none.entry ?? []).filter((e: any) => e.resource.resourceType === "ImagingStudy")).toEqual([]);
   await expect(adminToken(demo, a.prefix, { user: "nobody", patient: "josh-example" })).rejects.toThrow("invalid_request");
+});
+
+test("the admin's token as a person makes sign-in's test: no record held, no token", async () => {
+  const a = stack.sandboxes.mint();
+  // Alex holds nothing of Josh's until Josh shares, and Josh holds nothing of Riley's.
+  await expect(adminToken(demo, a.prefix, { user: "alex-neighbor", patient: "josh-example" })).rejects.toThrow("invalid_grant");
+  await expect(adminToken(demo, a.prefix, { user: "josh", patient: "riley-example" })).rejects.toThrow("invalid_grant");
+  await expect(adminToken(demo, a.prefix, { user: "josh", patient: "nobody" })).rejects.toThrow("invalid_grant");
+  // A scope sign-in couldn't grant is refused, not issued.
+  await expect(adminToken(demo, a.prefix, { user: "josh", patient: "josh-example", scope: "launch/patient system/*.rs" })).rejects.toThrow("invalid_scope");
+  await expect(adminToken(demo, a.prefix, { user: "josh", patient: "josh-example", scope: "patient/*.rs" })).rejects.toThrow("invalid_scope");
+  // Once Josh shares, Alex's app gets a token, and it finds only what the share gives.
+  const auth = { authorization: `Bearer ${await adminToken(demo, a.prefix)}`, "content-type": "application/json", origin: new URL(CONFIG.demoUrl).origin };
+  expect((await call(a.prefix, "/api/sandbox/policy/shares", { method: "POST", headers: auth, body: JSON.stringify({ from: "user:josh", with: "user:alex-neighbor", patient: "patient:josh-example", sites: ["Lakeside Imaging"], label: "neighbor" }) })).status).toBe(200);
+  const alex = await adminToken(demo, a.prefix, { user: "alex-neighbor", patient: "josh-example" });
+  expect((await fetch(`${a.urls.imaging}/fhir/ImagingStudy?patient=josh-example`, { headers: { authorization: `Bearer ${alex}` } })).status).toBe(200);
 });
 
 test("a service signs with its own sandbox's key, and another sandbox's key gets nothing", async () => {

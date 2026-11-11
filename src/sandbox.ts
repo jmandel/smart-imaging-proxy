@@ -112,7 +112,7 @@ export function createSandbox(o: { id?: string; store: PolicyStore; clock: DemoC
         };
       },
       recordConsent: async c => {
-        const r = await directoryPolicy.approveApp({ by: ref("user", c.user), app: ref("app", c.client), patient: ref("patient", c.patient), fhirUser: c.fhirUser, ...(c.sites ? { sites: c.sites } : {}), ...(c.studies ? { studies: c.studies } : {}) });
+        const r = await directoryPolicy.approveApp({ by: ref("user", c.user), app: ref("app", c.client), patient: ref("patient", c.patient), fhirUser: c.fhirUser, sites: c.sites, ...(c.studies ? { studies: c.studies } : {}) });
         return r.ok ? {} : { refused: `${r.refusal.error} (${r.refusal.policy})` };
       },
       delegate: async d => {

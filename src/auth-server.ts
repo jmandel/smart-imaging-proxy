@@ -82,7 +82,7 @@ export interface Directory {
   relationships(): Promise<{ patient: string; delegate: string; relationship: string }[]>;
   access(user: string, fhirUser: string): Promise<AccessSummary>;
   /** Records an app approval, or says why organization policy refused it. */
-  recordConsent(c: { client: string; user: string; fhirUser: string; patient: string; sites?: string[]; studies?: string[] }): Promise<{ refused?: string }>;
+  recordConsent(c: { client: string; user: string; fhirUser: string; patient: string; sites: string[] | null; studies?: string[] }): Promise<{ refused?: string }>;
   /** Records a share, or says why organization policy refused it, naming the policy. */
   delegate(d: { patient: string; grantedBy: string; fhirUser: string; delegate: string; relationship: string; sites: string[] }): Promise<{ refused?: string }>;
   revokeDelegation(grantedBy: string, delegate: string, patient?: string): Promise<void>;
@@ -359,6 +359,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     const access = await opts.directory.access(txn.user!, user.fhirUser);
     const record = access.records.find(r => r.patient === (f.get("patient") ?? access.records[0]?.patient));
     if (!check("authorization-server", "user has access to the chosen patient", !!record, { user: txn.user, patient: f.get("patient"), via: record?.via })) return deny();
+    // Each sign-in's choice replaces the app's approval: a form that showed no sites approves every one.
     const chosen = chosenSites(f, record!.patient);
     // A name that isn't a site at all is a mistake, not a choice: approving it would quietly approve nothing. A real
     // site the person doesn't hold is only dropped, as the form itself would.
@@ -375,7 +376,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
       // A client that never showed the studies chose the whole site.
       if (!listed.has(site) || kept.length === here.length) approvedSites.push(site); else approvedStudies.push(...kept.map(st => st.id));
     }
-    const approved = await opts.directory.recordConsent({ client: txn.client_id, user: txn.user!, fhirUser: user.fhirUser, patient: record!.patient, ...(chosen.shown ? { sites: approvedSites, ...(approvedStudies.length ? { studies: approvedStudies } : {}) } : {}) });
+    const approved = await opts.directory.recordConsent({ client: txn.client_id, user: txn.user!, fhirUser: user.fhirUser, patient: record!.patient, ...(chosen.shown ? { sites: approvedSites, ...(approvedStudies.length ? { studies: approvedStudies } : {}) } : { sites: null }) });
     if (!check("authorization-server", "the Imaging Server recorded the approval", !approved.refused, { refused: approved.refused })) return deny();
     const grant: Grant = { client_id: txn.client_id, scope: txn.scope, sub: txn.user!, fhirUser: user.fhirUser };
     if (/(^| )launch\/patient( |$)/.test(txn.scope)) grant.patient = record!.patient;
@@ -493,7 +494,14 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
           const user = f.get("user")!, patient = f.get("patient") ?? "", app = f.get("app") ?? "portal-app";
           const known = Object.hasOwn(USERS, user) && /^[A-Za-z0-9\-.]{1,64}$/.test(patient) && (Object.hasOwn(APP_NAMES, app) || !!opts.registeredClient?.(app));
           if (!check("authorization-server", "the admin names a known user, a patient, and a known app", known, { user, patient, app })) return oauthError("invalid_request", 400, "the admin names a known user, a patient, and a known app");
-          return tokenResponse(issue({ client_id: app, scope: f.get("scope") || PERSON_SCOPE, patient, sub: user, fhirUser: USERS[user]!.fhirUser }, false, "client_credentials"));
+          // The same test sign-in makes: the person holds this patient's record, as themself, a guardian, or by a share.
+          const held = (await opts.directory.access(user, USERS[user]!.fhirUser)).records.some(r => r.patient === patient);
+          if (!check("authorization-server", "the user holds this patient's record, as sign-in requires", held, { user, patient })) return oauthError("invalid_grant", 400, `${user} holds no record of ${patient}, so sign-in would give their app no token for it: no one shared it, and they aren't the patient or a guardian`);
+          // What sign-in could grant: patient context, and patient-level reads.
+          const scope = f.get("scope") || PERSON_SCOPE;
+          const allowed = scope.split(" ").every(s => s === "launch/patient" || s === "openid" || s === "fhirUser" || /^patient\/[A-Za-z*]+\.(rs|s|read)$/.test(s)) && /(^| )launch\/patient( |$)/.test(scope);
+          if (!check("authorization-server", "a person's scope is launch/patient with patient-level reads", allowed, { scope })) return oauthError("invalid_scope", 400, `a person's token has launch/patient and patient-level read scopes only; leave scope out for "${PERSON_SCOPE}"`);
+          return tokenResponse(issue({ client_id: app, scope, patient, sub: user, fhirUser: USERS[user]!.fhirUser }, false, "client_credentials"));
         }
         const asked = (f.get("scope") ?? "").split(" ").filter(s => reg.scopes.includes(s));
         if (!check("authorization-server", "requested scope is within the client's registration", asked.length > 0, { requested: f.get("scope"), granted: asked.join(" ") })) return oauthError("invalid_scope", 400, "requested scope is within the client's registration");

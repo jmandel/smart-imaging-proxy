@@ -261,7 +261,7 @@ const t = await (await fetch(k.tokenEndpoint, { method: "POST", body: new URLSea
 const ADMIN = t.access_token;
 ```
 
-The same assertion, signed with `admin.jwk`, with `user`, `patient` and optionally `app` (default `portal-app`) sent in place of `scope` (send no `scope` at all), gets a token as that person for that app, as the app would get one at sign-in. It's a sandbox-only extension, for exploring what a person's app can reach without walking the sign-in. What it reads is decided by policy, like any token's.
+The same assertion, signed with `admin.jwk`, with `user`, `patient` and optionally `app` (default `portal-app`) sent in place of `scope` (send no `scope` at all), gets a token as that person for that app, as the app would get one at sign-in. It's a sandbox-only extension, for exploring what a person's app can reach without walking the sign-in. It makes sign-in's test: the person has to hold the patient's record (as the patient, a guardian, or by a share), or the answer is `invalid_grant`. Unlike sign-in, it records no approval, so it reads what the app's existing approval allows: a new app has none, and finds nothing until someone signs in to it once. What it reads is decided by policy, like any token's.
 
 The three services in `services` are ordinary Backend Services clients. Sign as one of them the same way, with `scope=system/ImagingStudy.rs`.
 
@@ -282,7 +282,7 @@ All paths below are under `$SANDBOX`. Bodies are JSON.
 | `GET /api/sandbox/policy/relationships`, `PUT` with a relationship, `DELETE ?subject=&relation=&object=` | Facts on file: who is guardian of whom |
 | `GET /api/sandbox/policy/policies`, `PUT /api/sandbox/policy/policies/{id}`, `DELETE /api/sandbox/policy/policies/{id}` | The imaging network's rules: sharing, guardian access, service access |
 | `GET /api/sandbox/policy/shares`, `POST` `{"from":"user:josh","with":"user:sam-caregiver","patient":"patient:josh-example","sites":[...],"label":"caregiver"}`, `DELETE ?from=&with=&patient=` | People's shares |
-| `GET /api/sandbox/policy/app-approvals`, `POST` `{"by":"user:josh","app":"app:portal-app","patient":"patient:josh-example","sites":[...]}`, `DELETE ?by=&app=&patient=` | Which sites a person lets an app see |
+| `GET /api/sandbox/policy/app-approvals`, `POST` `{"by":"user:josh","app":"app:portal-app","patient":"patient:josh-example","sites":[...]}`, `DELETE ?by=&app=&patient=` | Which sites a person lets an app see. `"sites": null` is every site, including later ones; leaving `sites` out keeps the last choice |
 | `GET /api/sandbox/policy/explain?client=&user=&fhirUser=&patient=` | Each of a patient's studies, whether it's released to that app or service, and why. A `user` needs its `fhirUser`, e.g. `user=josh&fhirUser=Patient/josh-example` |
 | `GET /api/sandbox/explore/cast` | The people and services, whose records each holds, and each person's `fhirUser` |
 | `GET /api/sandbox/explore/referrals` | The referrals the services work from: the report each cites, its patient reference, accession number and system |
@@ -341,7 +341,7 @@ To approve less than everything at sign-in, as a person can on the consent page:
 
 To approve only some studies at a site, as the consent page's study boxes do: add `study_listed` with the site's name, and a `study` field with the id of each study to approve there. A site with `study_listed` approves just the studies named; one without it approves the whole site, including studies that arrive later. A study id is `ImagingStudy.id`, and `contract.json` lists them. When the person can act for more than one patient, the page names each field for its patient instead: `sites@{patient}`, `study@{patient}`, `study@{patient}_listed` and `sites_shown@{patient}`.
 
-Each sign-in's choice replaces that app's approval for that patient, so a later sign-in that approves fewer sites narrows what earlier tokens' searches return.
+Each sign-in's choice replaces that app's approval for that patient, so a later sign-in that approves fewer sites narrows what earlier tokens' searches return. A consent form posted with no site fields approves every site, as a form that showed none would.
 
 ## API types
 

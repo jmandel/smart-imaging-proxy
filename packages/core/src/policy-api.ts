@@ -21,7 +21,8 @@ export interface ExplainQuery { client: string; user?: string; fhirUser?: string
 /** A share as a person asks for it. Sites narrow to what the sharer may name. */
 export interface ShareRequest { from: string; with: string; patient: string; sites: string[]; label: string; }
 /** An app approval as a person gives it. `fhirUser` says who they are. With no `sites`, an earlier choice of sites stays. */
-export interface ApprovalRequest { by: string; app: string; patient: string; sites?: string[]; studies?: string[]; fhirUser?: string; }
+/** `sites` left out keeps the sites chosen before; `null` is every site, including later ones. */
+export interface ApprovalRequest { by: string; app: string; patient: string; sites?: string[] | null; studies?: string[]; fhirUser?: string; }
 /** Why a choice was refused: the organization policy, by id, or its type when no policy of it applies. */
 export interface Refusal { error: string; policy: string; }
 
@@ -165,7 +166,7 @@ function policyApiOf(deps: { policySecret: string; store: () => PolicyStore; che
       if (p === "/app-approvals" && m === "GET") return json({ revision: store.revision(), approvals: store.approvals() });
       if (p === "/app-approvals" && m === "POST") {
         const a = await body(req) as ApprovalRequest;
-        if (!isObject(a) || !["by", "app", "patient"].every(k => typeof a[k as keyof ApprovalRequest] === "string") || (a.sites !== undefined && !isSites(a.sites)) || (a.studies !== undefined && !isSites(a.studies))) return bad("by, app and patient are required, and sites is a list of strings");
+        if (!isObject(a) || !["by", "app", "patient"].every(k => typeof a[k as keyof ApprovalRequest] === "string") || (a.sites !== undefined && a.sites !== null && !isSites(a.sites)) || (a.studies !== undefined && !isSites(a.studies))) return bad("by, app and patient are required, and sites is a list of strings, or null for every site");
         const user = idOf(a.by, "user"), patient = idOf(a.patient, "patient");
         if (!user || !patient || !idOf(a.app, "app")) return bad("by is user:id, app is app:id, and patient is patient:id");
         const held = model.access(store, user, a.fhirUser ?? "").records.find(r => r.patient === patient);
@@ -177,7 +178,8 @@ function policyApiOf(deps: { policySecret: string; store: () => PolicyStore; che
         if (!check("policy", "user holds this patient's record", !why, { user: a.by, patient: a.patient, policy: why?.policy })) return refused(why!);
         const existing = store.approvals().find(x => x.app === a.app && x.by === a.by && x.patient === a.patient);
         let sites = existing?.sites, studies = existing?.studies;
-        if (a.sites) {
+        if (a.sites === null) sites = studies = undefined;
+        else if (a.sites) {
           // An approval can only narrow what the user holds, whatever the form submitted.
           const narrowed = a.sites.filter(x => held!.sites.includes(x));
           // Everything the patient has is the same as no limit, which then covers later sites too.

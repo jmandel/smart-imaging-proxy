@@ -77,7 +77,8 @@ function page(prefix = "") {
     const q = new URLSearchParams({ session, ...(choice.user ? { user: choice.user, ...(choice.patient ? { patient: choice.patient } : {}) } : { client: choice.client!, ...(choice.referral ? { referral: choice.referral } : {}) }) });
     const v = await ok("GET", `/api/sandbox/explore/view?${q}`);
     let found: any[] = [], token: string | undefined, searchStatus: number | undefined;
-    if (v.patient) {
+    // A person who holds no record of the patient gets no token, as at sign-in, so there's nothing to search.
+    if (v.patient && !(choice.user && v.status === "no-access")) {
       token = await tokenFor(choice, v.patient);
       const r = choice.referral && referrals().find(x => x.id === choice.referral) || (choice.client ? referrals()[0] : undefined);
       const query = choice.client ? new URLSearchParams({ patient: r.patientRef, identifier: `${r.system}|${r.accession}`, _include: "ImagingStudy:endpoint" }) : new URLSearchParams({ patient: v.patient, _include: "ImagingStudy:endpoint", _count: "100" });

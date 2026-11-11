@@ -110,6 +110,17 @@ describe("Consent", () => {
     expect(b.total).toBe(1);
     await stack.resetAll();
   });
+  test("each sign-in's choice replaces the last: approving with no sites shown approves every site again", async () => {
+    await stack.resetAll();
+    const count = async (t: any) => ((await (await fetch(`${conf.associated_endpoints[0].url}/ImagingStudy?patient=josh-example`, { headers: { Authorization: `Bearer ${t.access_token}` } })).json()) as any).total;
+    expect(await count(await scriptedLaunch("josh", "portal-app", { sites: ["Lakeside Imaging"] }))).toBe(1);
+    expect(await count(await scriptedLaunch("josh", "portal-app"))).toBe(6);
+    expect(stack.store.approvals().find(a => a.by === "user:josh" && a.app === "app:portal-app")!.sites).toBeUndefined();
+    // Approving no sites, then approving plainly, is every site too.
+    expect(await count(await scriptedLaunch("josh", "portal-app", { sites: [] }))).toBe(0);
+    expect(await count(await scriptedLaunch("josh", "portal-app"))).toBe(6);
+    await stack.resetAll();
+  });
 });
 
 describe("Code exchange", () => {

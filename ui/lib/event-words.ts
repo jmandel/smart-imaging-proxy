@@ -47,7 +47,7 @@ export function wordsFor(names: Names) {
     const whose = (p?: string) => p ? `${nameOf(p)}'s records` : "records";
     if (op === "POST /shares") return { who: nameOf(b.from), what: `${nameOf(b.from)} shares ${whose(b.patient)} with ${nameOf(b.with)}${b.label ? `, as ${b.label}` : ""}`, sites: sitesOf(b.sites) };
     if (op === "DELETE /shares") return { who: q.from ? nameOf(q.from) : undefined, what: `${q.from ? nameOf(q.from) : "Everyone"} stops sharing ${q.patient ? `${whose(q.patient)} ` : ""}with ${nameOf(q.with)}` };
-    if (op === "POST /app-approvals") return { who: nameOf(b.by), what: `${nameOf(b.by)} approves ${nameOf(b.app)} for ${whose(b.patient)}`, sites: b.sites ? sitesOf(b.sites) : "Every site, or the sites chosen before" };
+    if (op === "POST /app-approvals") return { who: nameOf(b.by), what: `${nameOf(b.by)} approves ${nameOf(b.app)} for ${whose(b.patient)}`, sites: b.sites ? sitesOf(b.sites) : b.sites === null ? "Every site" : "The sites chosen before" };
     if (op === "DELETE /app-approvals") return { who: nameOf(q.by), what: `${nameOf(q.by)} revokes ${nameOf(q.app)}${q.patient ? ` for ${whose(q.patient)}` : ""}` };
     if (op === "PUT /relationships") return { what: `Recorded: ${nameOf(b.subject)} ${String(b.relation ?? "").replaceAll("_", " ")} ${nameOf(b.object)}` };
     if (op === "DELETE /relationships") return { what: `Removed: ${nameOf(q.subject)} ${String(q.relation ?? "").replaceAll("_", " ")} ${nameOf(q.object)}` };

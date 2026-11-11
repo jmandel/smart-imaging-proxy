@@ -82,7 +82,8 @@ export default function Explore() {
       const v = await api<Explained>("GET", `/api/sandbox/explore/view?${q}`, undefined, BASE, traceHeaders(me));
       if (!live()) return;
       Object.assign(me, v, { patientName: v.patient && c.names[`patient:${v.patient}`] });
-      if (v.patient) {
+      // A person who holds no record of the patient would get no token at sign-in, and gets none here.
+      if (v.patient && !(who.kind === "user" && v.status === "no-access")) {
         const imaging = imagingOf(await discover(), `${location.origin}${BASE}/fhir`, service ? BACKEND_CAPABILITY : APP_LAUNCH)?.url;
         if (!imaging) throw new Error("The sandbox's SMART configuration names no imaging server.");
         const token = service ? await serviceToken(me, service.id) : await personToken(me, who.id, v.patient, c.app);
