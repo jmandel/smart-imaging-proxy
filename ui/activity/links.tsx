@@ -1,4 +1,4 @@
-// Every filter of the log is in its address, so Explore and the tours link here already filtered, and links and
+// Every filter of the log is in its address, so Explore links here already filtered, and links and
 // Back both move between views in place.
 import type { ReactNode } from "react";
 import { Link, useLocation } from "react-router";

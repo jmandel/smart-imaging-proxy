@@ -1,6 +1,6 @@
-// The demo's own web server: the tours, which are its home page, Explore, and the activity log, backed by the real services, and the
-// flow API the checks and tests run flows through. `/s/{sandbox}/...` is that sandbox's own: its Explore,
-// its tour, its activity, its settings and its redirects. Starting a tour or a flow mints a sandbox for it.
+// The demo's own web server: the pages, Explore, and the activity log, backed by the real services, and the flow API
+// the checks and tests run flows through. `/s/{sandbox}/...` is that sandbox's own: its Explore, its activity, its
+// settings and its redirects. Running a flow mints a sandbox for it.
 import { serveJwks } from "./viewer-jwks";
 import { contractOf, expectedTable } from "./contract";
 import { join } from "node:path";
@@ -14,7 +14,6 @@ import { withCors } from "./cors";
 import { extraField, readJson, refuseHost, refuseWrite, settingsApi, BACKEND_NAMES } from "./settings-api";
 import { PATIENT_NAMES, realNow, type BackendClient } from "./auth-server";
 import { createExplore } from "./explore";
-import { createTours, tourById } from "./tours";
 import { eventQueryOf } from "./trace-collector";
 import { EVENT_SUMMARY_MAX, type EventQuery } from "./trace-store";
 import { activityType, sessionRows, sessionStudies, studiesNamed, tiles, timeline, ACTIVITY_TYPES } from "./activity";
@@ -84,18 +83,26 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
     return new Response(`${opening.trimEnd()}\n\n${chosen.text.trimEnd()}\n`, { headers });
   }
   const sandboxOf = (w: Sandbox) => w.id ? { id: w.id, base: w.prefix } : null;
+  /**
+   * The apps every sandbox has without anyone registering them: the demo's own public clients, which its viewer and
+   * pages sign in as, and the Backend Services the demo's services act as. None can be removed, and none has a key
+   * here: a service's access comes from this sandbox's policy, not from a grant made at registration.
+   */
+  const builtInClients = (sandbox: Sandbox) => [
+    ...sandbox.auth.publicClients().map(c => ({ ...c, type: "public" as const, builtIn: true as const })),
+    ...Object.keys(sandbox.clients).map(id => ({ id, name: id.split("-").map(w => w[0]!.toUpperCase() + w.slice(1)).join(" "), type: "backend" as const, redirectUris: [], builtIn: true as const })),
+  ];
 
   function sandboxServer(sandbox: Sandbox) {
 
     // The redirect URI the demo app registered. Whoever is waiting takes only its own redirect, by `state`.
     // The redirect is a real protocol message with no trace fields, so its span joins the flow waiting on it.
     const explore = createExplore(sandbox, clients, stack);
-    const tours = createTours(sandbox, stack);
-    /** A session's events as its viewer may see them: an Explore view's person or service, a tour's taker, or whoever a flow acts as. */
+    /** A session's events as its viewer may see them: an Explore view's person or service, or whoever a flow acts as. */
     const idOfUid = (uid: string) => sandbox.catalog.studyByUid(uid)?.id;
     const viewerEvents = (session: string, events: EventRecord[]) => {
       const all = stack.collector.store.events({ session, limit: EVENT_SUMMARY_MAX }, EVENT_SUMMARY_MAX);
-      return forViewer(events, viewerKnows(all, explore.knownIn(session) ?? tours.knownIn(session) ?? []), idOfUid);
+      return forViewer(events, viewerKnows(all, explore.knownIn(session) ?? []), idOfUid);
     };
     /**
      * The log's filters. A sandbox's log is its own, and the root's covers every sandbox, filtered by
@@ -125,12 +132,10 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       const titled = (r: { study: string }) => { const st = sandbox.catalog.allStudies().find(c => c.id === r.study); return { ...r, title: st ? reportTitle(st) : r.study, site: st?.site }; };
       return { ...f, phases: f.phases.map(p => ({ ...p, studies: p.studies.map(titled) })) };
     };
-    /** What a session is, in words: Explore, a tour, a flow, or one of the protocol checks. */
+    /** What a session is, in words: Explore, a flow, or one of the protocol checks. */
     const sessionLabel = (session: string) => {
       const name = session.replace(/@[^@]*$/, "");
       if (name.startsWith("explore-")) return "Explore";
-      const tour = name.match(/^tour-(.+)-[0-9a-f]{6}$/);
-      if (tour) return `Tour: ${tourById(tour[1]!)?.title ?? tour[1]}`;
       const flow = name.match(/^flow-\d+-(.+)-[0-9a-f]{6}$/);
       if (flow) return `Flow: ${flowById(flow[1]!)?.title ?? flow[1]}`;
       if (name === "unattributed") return "Outside any session";
@@ -197,15 +202,10 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
           const rows = sandbox.catalog.allStudies().filter(st => st.patient === patient).sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "") || b.pk - a.pk);
           return json({ patient, studies: rows.map(st => ({ id: st.id, uid: st.uid, site: st.site, date: st.date, instances: st.instanceCount, series: (sandbox.catalog.hierarchies([st.pk]).get(st.pk)?.series ?? []).map(x => ({ uid: x.uid, modality: x.modality, instances: x.instanceCount })) })) });
         }
-        if (p.startsWith("/api/sandbox/tours/")) { if (req.method !== "GET") { const refused = refuseWrite(req, url); if (refused) return refused; } return tours.fetch(req, url); }
         if (p.startsWith("/api/sandbox/policy/")) {
           if (req.method !== "GET") { const refused = refuseWrite(req, url); if (refused) return refused; }
           return policyThrough(sandbox, req, `${p.slice("/api/sandbox/policy".length)}${url.search}`);
         }
-      }
-      if (p === "/api/tours" || p.startsWith("/api/tours/")) {
-        if (req.method === "POST") { const refused = refuseWrite(req, url); if (refused) return refused; }
-        return tours.fetch(req, url);
       }
       if ((p === "/api/sandbox" && req.method !== "DELETE") || (p.startsWith("/api/sandbox/") && !p.startsWith("/api/sandbox/clients") && p !== "/api/sandbox/policy")) return settingsApi(stack, sandbox, req, url);
       if (p === "/api/activity" && req.method === "GET") {
@@ -258,7 +258,7 @@ export function createDemoServer(stack: Stack, clients: Record<string, BackendCl
       }
       if (p === "/api/sandbox/clients" || p.startsWith("/api/sandbox/clients/")) {
         if (!sandbox.id) return json({ error: "apps are registered in a sandbox: open /connect" }, 409);
-        if (req.method === "GET" && p === "/api/sandbox/clients") return json({ clients: listClients(sandbox.store) });
+        if (req.method === "GET" && p === "/api/sandbox/clients") return json({ clients: listClients(sandbox.store), builtIn: builtInClients(sandbox) });
         const refused = refuseWrite(req, url);
         if (refused) return refused;
         // Clearing up after a batch of test apps: every one whose name starts with the prefix, which can't be empty.

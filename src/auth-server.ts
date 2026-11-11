@@ -683,6 +683,10 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
 
   return {
     fetch: fetchHandler,
+    /** The demo's own public clients: apps that work in this sandbox without anyone registering them. */
+    publicClients(): { id: string; name: string; redirectUris: string[] }[] {
+      return Object.entries(PUBLIC_CLIENTS).map(([id, c]) => ({ id, name: c.name, redirectUris: [...c.redirectUris] }));
+    },
     registerBackendClient(client_id: string, scopes: string[], privateKey: KeyObject = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey): BackendClient {
       const kid = kidOf(client_id);
       backendKeys.set(client_id, { kid, publicKey: createPublicKey(privateKey), scopes });

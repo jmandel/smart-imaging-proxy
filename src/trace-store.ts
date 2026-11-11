@@ -245,7 +245,7 @@ export class TraceStore {
     const removed: string[] = [];
     // Among sandboxes, fair shares: what goes first is the oldest of the sandboxes holding more than a few
     // sessions, and last a sandbox's own app traffic (unattributed@{id}), which an app check grades from. So
-    // one busy sandbox's tours and views don't push out another's app's requests.
+    // one busy sandbox's views don't push out another's app's requests.
     const sandboxOf = (id: string) => id.slice(id.lastIndexOf("@") + 1), held = new Map<string, number>();
     for (const s of oldest) if (sandboxed(s.id)) held.set(sandboxOf(s.id), (held.get(sandboxOf(s.id)) ?? 0) + 1);
     const rank = (id: string) => !sandboxed(id) ? 0 : id.startsWith("unattributed@") ? 2 : (held.get(sandboxOf(id)) ?? 0) > FAIR_SHARE ? 0 : 1;

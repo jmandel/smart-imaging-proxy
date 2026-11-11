@@ -1,5 +1,5 @@
-// A small reference model of the policy rules, written apart from core's evaluation, which the tours
-// check the real system against. It reads a sandbox's policy document and catalog at one moment, and
+// A small reference model of the policy rules, written apart from core's evaluation, which a sandbox's
+// contract and Explore check the real system against. It reads a sandbox's policy document and catalog at one moment, and
 // says which studies each kind of caller should reach. It knows nothing of how core decides.
 //
 // Choices rest on rows by id. A share records the one route its sharer shares through, "self" or their

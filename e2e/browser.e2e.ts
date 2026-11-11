@@ -127,20 +127,6 @@ describe("every page, on desktop and phone, in light and dark", () => {
       }));
       expect(problems).toEqual([]);
     });
-    test(`${name} ${colorScheme}: a story's diagram text keeps its contrast, and a study in the result looks the same as in Explore`, async () => {
-      const page = await open("/tours?tour=revoke", { viewport, colorScheme });
-      await page.locator(".tour-chain .layers").first().waitFor();
-      for (const sel of [".tour-chain .ly-site", ".tour-chain .ly-count", ".tour-chain .ly-box.off", ".tour-chain .ly-row.choice .ly-box.on", ".tour-chain .ly-row.outcome .ly-box.on", ".tour-chain .ly-box.linked", ".tour-chain .ly-legend p"]) {
-        expect([sel, (await contrast(page, sel)) >= 4.5]).toEqual([sel, true]);
-      }
-      const fill = (sel: string) => page.locator(sel).first().evaluate(el => getComputedStyle(el).backgroundColor);
-      const inTour = await fill(".tour-chain .ly-row.outcome .ly-box.on");
-      await page.goto(`${DEMO}/explore`);
-      await pick(page, "josh");
-      expect(await fill(".why .ly-row.outcome .ly-box.on")).toBe(inTour);
-      expect(await contrast(page, ".why .ly-row.outcome .ly-box.on")).toBeGreaterThanOrEqual(4.5);
-      expect(problems).toEqual([]);
-    });
     test(`${name} ${colorScheme}: Explore's text keeps its contrast, on the box, the chain and the film`, async () => {
       const page = await open("/explore", { viewport, colorScheme });
       await pick(page, "josh");
@@ -346,88 +332,6 @@ describe("Explore", () => {
   });
 });
 
-describe("Tours", () => {
-  test("one layout: the stories listed beside the chosen one, which shows the chain it ends on, the guardian's with the locked study, and the revoke's before and after", async () => {
-    const page = await open("/tours");
-    await page.locator(".tour-list .tour").first().waitFor();
-    expect(await page.locator(".tour-list .tour").count()).toBe(6);
-    expect(await page.locator(".tour-chain figure.layers").count()).toBe(1);
-    await page.locator(".tour-list .tour", { hasText: "Sam, guardian of 15-year-old Riley" }).click();
-    await page.getByRole("heading", { name: "Sam, guardian of 15-year-old Riley" }).waitFor();
-    expect(await page.locator(".tour-chain .ly-box.locked").count()).toBeGreaterThan(0);
-    await page.locator(".tour-list .tour", { hasText: "Josh stops sharing with Sam" }).click();
-    await page.getByRole("heading", { name: "Josh stops sharing with Sam" }).waitFor();
-    expect(await page.locator(".tour-chain .ly-pane .ly-pane-label").allInnerTexts()).toEqual(["Before Josh stops sharing", "After Josh stops sharing", "Once those study links expire"]);
-    expect(await page.locator(".cast dt").allTextContents()).toContain("The imaging network");
-    expect(await overflow(page)).toBe(0);
-    expect(problems).toEqual([]);
-  });
-  for (const tour of ["own", "guardian", "caregiver", "revoke", "backend", "turns-18"]) {
-    test(`${tour}: its card starts it in its own scope, it runs end to end, and every step matches the model`, async () => {
-      const page = await open(`/tours?tour=${tour}`);
-      await page.locator(`[data-start="${tour}"]`).click();
-      await page.waitForURL(/\/s\/[^/]+\/tours\?tour=/);
-      await page.locator(".step.next .what span", { hasText: "Expected:" }).waitFor();
-      await page.locator(".tour-chain figure.layers").first().waitFor();
-      await page.getByRole("button", { name: "Run the rest" }).click();
-      await page.locator(".tour-buttons .verdict").waitFor({ timeout: 90000 });
-      expect(await page.locator(".tour-buttons .verdict").innerText()).toBe("Every step went as expected");
-      expect(await page.locator(".step .verdict.ok").count()).toBe(await page.locator(".step").count());
-      // Steps carry no event cards: a link to their own events in the log.
-      expect(await page.locator(".step .card").count()).toBe(0);
-      expect(await page.locator(".step .result a").first().getAttribute("href")).toMatch(/\/activity\?session=.*&trace=[0-9a-f]{32}$/);
-      expect(await overflow(page)).toBe(0);
-      expect(problems).toEqual([]);
-    });
-  }
-  test("a sign-in step runs in the page from its own button, and Back and Forward keep the story where it stood", async () => {
-    const page = await open("/tours?tour=own");
-    await page.locator('[data-start="own"]').click();
-    await page.waitForURL(/\/s\/[^/]+\/tours\?tour=own/);
-    const launch = page.locator("[data-step=launch]");
-    expect(await launch.innerText()).toBe("Run");
-    await launch.click();
-    await page.locator(".step .verdict").first().waitFor({ timeout: 30000 });
-    expect(await page.locator(".step .verdict").first().innerText()).toBe("As expected");
-    // Focus moves on to the next step's button.
-    expect(await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.step)).toBe(await page.locator("[data-step]").getAttribute("data-step"));
-    await page.goBack();
-    await page.getByRole("button", { name: "Run this story" }).waitFor();
-    expect(await page.locator(".tour-list .tour").count()).toBe(6);
-    await page.goForward();
-    await page.locator(".step .verdict").first().waitFor();
-    expect(await page.locator(".step .verdict").allInnerTexts()).toEqual(["As expected"]);
-    expect(problems).toEqual([]);
-  });
-  test("automated runs open no window", async () => {
-    const page = await open("/tours");
-    let opened = 0;
-    context!.on("page", () => { opened++; });
-    await page.goto(page.url().replace(/\/tours.*/, "/tours?tour=caregiver"));
-    await page.locator('[data-start="caregiver"]').click();
-    await page.waitForURL(/\/s\/[^/]+\/tours/);
-    await page.getByRole("button", { name: "Run the rest" }).click();
-    await page.locator(".tour-buttons .verdict").waitFor({ timeout: 90000 });
-    expect(opened).toBe(0);
-  });
-  test("the server check on a sandbox runs the checks only a sandbox can run, as one pass or fail list, each opening its activity", async () => {
-    const { base } = await (await fetch(`${DEMO}/api/sandboxes`, { method: "POST" })).json() as { base: string };
-    const page = await open(`/check?sandbox=${encodeURIComponent(base)}`);
-    await page.getByRole("heading", { name: "Checks only a sandbox can run" }).waitFor();
-    await page.getByRole("button", { name: "Run the sandbox checks" }).click();
-    await page.locator(".sandbox-checks-summary", { hasText: "passed" }).waitFor({ timeout: 110000 });
-    expect(await page.locator(".sandbox-checks-summary").innerText()).toBe("8 of 8 passed");
-    const link = page.locator(".sandbox-checks .state a").first();
-    // The logs open in a tab of their own, so the check keeps its place.
-    const [logs] = await Promise.all([page.context().waitForEvent("page"), link.click()]);
-    await logs.waitForURL(/\/activity\?session=/);
-    await logs.locator("tr.ev").first().waitFor();
-    expect(page.url()).toContain("/check");
-    // The checks provoke refusals on purpose, which the browser logs as failed loads: no script error is the test.
-    expect(problems.filter(p => !/Failed to load resource/.test(p))).toEqual([]);
-  });
-});
-
 describe("activity", () => {
   for (const [name, viewport] of [["desktop", DESKTOP], ["phone", PHONE]] as const) {
     test(`${name}: tiles roll up each type, a tile lists its type, a row opens its event, and a shared value links on`, async () => {
@@ -482,11 +386,12 @@ describe("live trace", () => {
       await page.locator(".trace-head [role=status]", { hasText: "Live." }).waitFor();
       expect(await page.getByLabel("Follow newest").isChecked()).toBe(false);
       await scriptedLaunch("josh");
-      // The stream brings every span in, with no reload. The session can hold an earlier run's sign-in too, so the
-      // newest token row is only the newest once the page shows every span held.
+      // The stream brings every span in, with no reload. The session can hold an earlier run's sign-in too, so wait
+      // for this run's own token span by its id: which rows show depends on the filters, so counting them isn't it.
       await flushTraces();
-      const held: { name: string }[] = await (await fetch(`${CONFIG.traceUrl}/api/sessions/unattributed/spans`)).json();
-      await page.waitForFunction(n => document.querySelectorAll(".row").length === n, held.filter(s => !/^part \d+:/.test(s.name)).length);
+      const held: { span: string; kind: string; name: string }[] = await (await fetch(`${CONFIG.traceUrl}/api/sessions/unattributed/spans`)).json();
+      const newest = held.filter(s => s.kind === "server" && s.name === "POST /token").at(-1)!;
+      await page.locator(`.item[data-id="${newest.span}"]`).waitFor();
       const token = page.locator(".row[data-kind=server] .name", { hasText: "POST /token" }).last();
       await token.waitFor();
       await token.click();

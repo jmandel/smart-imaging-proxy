@@ -74,11 +74,12 @@ async function enterSandbox(page: Page) {
   await page.locator("#sandbox-name").waitFor();
   return new URL(page.url()).pathname.replace(/\/$/, "");
 }
-/** The viewer, at the site's root, opened on a sandbox from that sandbox's home page. */
+/** The viewer, a page of the sandbox's own, opened from that sandbox's home page: the sandbox's bar stays around it. */
 async function viewerOn(page: Page, base: string) {
   await page.goto(`${ORIGIN}${base}/`);
   await page.locator("#landing").getByRole("link", { name: "Viewer", exact: true }).click();
-  await page.waitForURL(u => u.pathname === "/viewer");
+  await page.waitForURL(u => u.pathname === `${base}/viewer`);
+  await page.locator(".sandbox-bar").waitFor();
 }
 /** Presses something that opens the sign-in in a tab of its own, and gives that tab. */
 async function signInTab(page: Page, press: () => Promise<unknown>) {
@@ -108,8 +109,10 @@ describe("the demo client", () => {
     const page = await context.newPage();
     const problems: string[] = [];
     page.on("pageerror", e => problems.push(e.message));
-    await signIn(page, "josh");
-    expect(new URL(page.url()).pathname).toBe("/viewer");
+    const base = await signIn(page, "josh");
+    expect(new URL(page.url()).pathname).toBe(`${base}/viewer`);
+    // The sandbox's own bar stays above it: the viewer is a page of the sandbox's.
+    await page.locator(".sandbox-bar").waitFor();
     await expect(page.locator(".who").textContent()).resolves.toBe("Josh Example");
     await page.getByRole("heading", { name: "Conditions" }).waitFor();
     await page.locator("#c-Condition li", { hasText: "Migraine" }).waitFor();
@@ -372,13 +375,14 @@ describe("the demo client", () => {
   test("the viewer brought back with Back, its sign-in tab still open, offers Connect again", async () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
-    await viewerOn(page, await enterSandbox(page));
+    const base = await enterSandbox(page);
+    await viewerOn(page, base);
     const tab = await signInTab(page, pressConnect(page));
     await page.getByText("Connecting…").waitFor();
     // Away to a page outside the app, then Back: whether the browser kept the page or loads it afresh.
     await page.goto(`${ORIGIN}/llms.txt`);
     await page.goBack();
-    await page.waitForURL(u => u.pathname === "/viewer");
+    await page.waitForURL(u => u.pathname === `${base}/viewer`);
     await page.locator("#landing").waitFor({ state: "visible" });
     expect(await page.locator("#connect").isEnabled()).toBe(true);
     await tab.close();
@@ -389,11 +393,12 @@ describe("the demo client", () => {
     // A popup blocker: window.open gives no tab.
     await context.addInitScript(() => { window.open = () => null; });
     const page = await context.newPage();
-    await viewerOn(page, await enterSandbox(page));
+    const base = await enterSandbox(page);
+    await viewerOn(page, base);
     await pressConnect(page)();
     await page.waitForURL(/\/authorize/);
     await page.goBack();
-    await page.waitForURL(u => u.pathname === "/viewer");
+    await page.waitForURL(u => u.pathname === `${base}/viewer`);
     await page.locator("#landing").waitFor({ state: "visible" });
     expect(await page.locator("#connect").isEnabled()).toBe(true);
     await pressConnect(page)();
@@ -409,14 +414,14 @@ describe("the demo client", () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     const base = await enterSandbox(page);
-    for (const path of [`${base}/`, `${base}/build`, `${base}/tours`, `${base}/explore`, `${base}/activity`, `${base}/connect`]) {
+    for (const path of [`${base}/`, `${base}/build`, `${base}/explore`, `${base}/activity`, `${base}/connect`]) {
       await page.goto(`${ORIGIN}${path}`);
       await page.locator(".sandbox-bar").waitFor();
       const hrefs = (sel: string) => page.locator(sel).evaluateAll(as => as.map(a => a.getAttribute("href")));
       // The header is the site's: its guides, at the root, and this sandbox's guide for agents.
       expect([path, await hrefs("nav.pages a")]).toEqual([path, ["/build-an-app", "/build-a-server", "/about", "/sandboxes", `${base}/llms.txt`]]);
-      // The sandbox's bar, and the footer's map of it, stay in it, but for the site's one viewer and its server check, opened on it.
-      const own = [`${base}/`, "/viewer", `${base}/tours`, `${base}/explore`, `/check?sandbox=${encodeURIComponent(base)}`, `${base}/app-check`, `${base}/build`, `${base}/connect`, `${base}/activity`, `${base}/trace/`, `${base}/config`];
+      // The sandbox's bar, and the footer's map of it, stay in it, but for the site's server check, opened on it.
+      const own = [`${base}/`, `${base}/viewer`, `${base}/explore`, `/check?sandbox=${encodeURIComponent(base)}`, `${base}/app-check`, `${base}/build`, `${base}/connect`, `${base}/activity`, `${base}/trace/`, `${base}/config`];
       expect([path, await hrefs(".sandbox-bar a")]).toEqual([path, own]);
       expect([path, await hrefs(".site-footer-sandbox a")]).toEqual([path, [...own, "/sandboxes"]]);
       expect(await page.locator("a.mark").getAttribute("href")).toBe("/");
@@ -529,8 +534,8 @@ describe("the demo client", () => {
     await page.getByRole("button", { name: "Register" }).click();
     await page.getByRole("heading", { name: "Referral service" }).waitFor();
     await shot(page, "connect-backend");
-    const clientId = (await page.getByRole("button", { name: "Copy client ID" }).getAttribute("data-copy"))!;
-    const privKey = (await page.getByRole("button", { name: "Copy private key" }).getAttribute("data-copy"))!;
+    const clientId = (await page.getByRole("button", { name: "Copy Referral service's client ID" }).getAttribute("data-copy"))!;
+    const privKey = (await page.getByRole("button", { name: "Copy Referral service's private key" }).getAttribute("data-copy"))!;
     await page.goto(`${ORIGIN}/servers?add&how=backend`);
     await page.getByLabel("FHIR base URL").fill(`${ORIGIN}${base}/fhir`);
     await page.getByLabel("Name", { exact: true }).fill("Referral service");
@@ -560,8 +565,8 @@ describe("the demo client", () => {
     await page.getByLabel(/Allow any redirect URI/).check();
     await page.getByRole("button", { name: "Register" }).click();
     await page.getByRole("heading", { name: "Confidential one" }).waitFor();
-    const clientId = (await page.getByRole("button", { name: "Copy client ID" }).getAttribute("data-copy"))!;
-    const privKey = (await page.getByRole("button", { name: "Copy private key" }).getAttribute("data-copy"))!;
+    const clientId = (await page.getByRole("button", { name: "Copy Confidential one's client ID" }).getAttribute("data-copy"))!;
+    const privKey = (await page.getByRole("button", { name: "Copy Confidential one's private key" }).getAttribute("data-copy"))!;
     await page.goto(`${ORIGIN}/servers?add&how=confidential`);
     await page.getByLabel("FHIR base URL").fill(`${ORIGIN}${base}/fhir`);
     await page.getByLabel("Name", { exact: true }).fill("Confidential one");
@@ -700,8 +705,6 @@ describe("the demo client", () => {
     await page.locator(".check-step[data-step='7']", { hasText: "Refused with 401" }).waitFor();
     await page.locator(".check-step[data-step='8']", { hasText: "for riley-example, with josh-example's token" }).waitFor();
     await page.locator(".check-step[data-step='11']", { hasText: "Refused with 401" }).waitFor();
-    // A sandbox also gets the checks only a sandbox can run.
-    await page.getByRole("heading", { name: "Checks only a sandbox can run" }).waitFor();
     await shot(page, "server-check");
     // Nothing the check did is kept for the viewer, so it isn't left thinking it's connected.
     expect(await page.evaluate(() => sessionStorage.getItem("smart-imaging-viewer"))).toBeNull();
@@ -728,8 +731,8 @@ describe("the demo client", () => {
     await page.getByRole("radio", { name: /Backend service/ }).check();
     await page.getByRole("button", { name: "Register" }).click();
     await page.getByRole("heading", { name: "Referral service" }).waitFor();
-    const clientId = (await page.getByRole("button", { name: "Copy client ID" }).getAttribute("data-copy"))!;
-    const privKey = (await page.getByRole("button", { name: "Copy private key" }).getAttribute("data-copy"))!;
+    const clientId = (await page.getByRole("button", { name: "Copy Referral service's client ID" }).getAttribute("data-copy"))!;
+    const privKey = (await page.getByRole("button", { name: "Copy Referral service's private key" }).getAttribute("data-copy"))!;
     await page.goto(`${ORIGIN}/servers?add&how=backend`);
     await page.getByLabel("FHIR base URL").fill(`${ORIGIN}${base}/fhir`);
     await page.getByLabel("Name", { exact: true }).fill("Referral service");

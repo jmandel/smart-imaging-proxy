@@ -1,6 +1,6 @@
 // Policy sandboxes: scratch sandboxes addressed by the URL. `/s/{sandbox}/` in front of any path reaches that
 // sandbox's own services. A sandbox is a minted id, random and unguessable, which starts from what is on file;
-// its policy changes go through its management API, one way for everything. Unsaved sandboxes (a tour's, a
+// its policy changes go through its management API, one way for everything. Unsaved sandboxes (a check's, a
 // check's) idle out, and the least recently used go first past the cap. An unknown or evicted unsaved id is gone.
 import { randomBytes } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
@@ -18,7 +18,7 @@ const MINTED = /^[A-Za-z0-9_-]{22}$/;
 
 /**
  * With `sandboxesDir`, a sandbox minted with `saved` is a SQLite file there that lasts until its owner deletes
- * it, across restarts. Every other sandbox, such as a tour's or a check's, lives in memory and idles out.
+ * it, across restarts. Every other sandbox, such as a check's, lives in memory and idles out.
  */
 export function createSandboxes(shared: Shared, opts: { idleMs?: number; max?: number; sandboxesDir?: string } = {}) {
   const saved = opts.sandboxesDir;
@@ -47,7 +47,7 @@ export function createSandboxes(shared: Shared, opts: { idleMs?: number; max?: n
       const e = live.get(id);
       if (e) { live.delete(id); e.usedAt = Date.now(); live.set(id, e); return { sandbox: e.sandbox }; }
       if (hasFile(id)) return { sandbox: add(id, true) };
-      return { status: 404, error: MINTED.test(id) ? "no sandbox has this address: it was deleted, or mistyped. (Only the sandboxes tours and checks make for themselves idle out.) Start a new one with POST /api/sandboxes" : "that isn't a sandbox: a sandbox's id is the 22 characters POST /api/sandboxes gave" };
+      return { status: 404, error: MINTED.test(id) ? "no sandbox has this address: it was deleted, or mistyped. (Only the sandboxes checks make for themselves idle out.) Start a new one with POST /api/sandboxes" : "that isn't a sandbox: a sandbox's id is the 22 characters POST /api/sandboxes gave" };
     },
     has: (id: string) => live.has(id),
     /** Every live sandbox. */

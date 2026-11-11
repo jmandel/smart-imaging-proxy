@@ -1,5 +1,6 @@
-// Register an app: registering an app in this sandbox, and its apps so far, each with what its developer needs.
-// The kind of app the form is set to, and an app just registered, are in the address (?type=, ?app=).
+// Register an app: registering an app in this sandbox, the apps registered so far, and the demo's own, each with what
+// its developer needs. The kind of app the form is set to, and an app just registered, are in the address
+// (?type=, ?app=).
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
 import { BASE } from "../lib/api";
@@ -8,7 +9,7 @@ import { PageLink } from "../shell/Shell";
 import { CLIENT_KINDS, RegisterForm, Registered, useClients, type ClientType } from "../components/RegisterApp";
 
 export default function Connect() {
-  const { clients, refresh } = useClients(BASE);
+  const { clients, builtIn, refresh } = useClients(BASE);
   const [params, setParams] = useSearchParams();
   const asked = params.get("type") as ClientType | null, named: ClientType = asked && CLIENT_KINDS.includes(asked) ? asked : "public";
   // Held here as well, so the radio changes as it's pressed, before the address catches up.
@@ -27,6 +28,10 @@ export default function Connect() {
       <section aria-labelledby="yours"><h2 id="yours">Your apps</h2>
         <div id="clients">{!clients ? <p className="note">Loading…</p> : clients.length ? clients.map(c => <Registered key={c.id} c={c} base={BASE} removed={refresh} />) : <p className="note">None yet.</p>}</div>
       </section>
+      {!!builtIn?.length && <section aria-labelledby="built-in"><h2 id="built-in">Built into this sandbox</h2>
+        <p className="note">The demo's own apps, which work here without being registered, so you can sign in as one and see what an app gets. They can't be removed: a backend service among them reaches what this sandbox's policy releases.</p>
+        <div id="built-in-clients">{builtIn.map(c => <Registered key={c.id} c={c} base={BASE} removed={refresh} />)}</div>
+      </section>}
     </main>
   );
 }

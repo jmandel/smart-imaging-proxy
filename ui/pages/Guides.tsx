@@ -34,7 +34,7 @@ export function About() {
       <li>Images stay where they are. Nothing is copied ahead of time.</li>
     </ul> },
     { title: "How it works", body: <ImagingChain /> },
-    { title: "See it work", body: <p>Our viewer signs in as a sample patient and opens their images. The Tour plays out sharing, guardians and referrals. The live trace shows every request between the servers.</p>, links: <><InSandbox page="viewer" className="button">Open the viewer</InSandbox> <InSandbox page="tours">Tour</InSandbox> <InSandbox page="trace">Live trace</InSandbox></> },
+    { title: "See it work", body: <p>Our viewer signs in as a sample patient and opens their images. Explore shows what each sample person and service can reach, and why. The live trace shows every request between the servers.</p>, links: <><InSandbox page="viewer" className="button">Open the viewer</InSandbox> <InSandbox page="explore">Explore</InSandbox> <InSandbox page="trace">Live trace</InSandbox></> },
     { title: "What it takes", body: <ul className="how">
       <li><strong>A health system</strong> adds an imaging FHIR server and a DICOMweb endpoint behind the sign-in it already has for SMART apps.</li>
       <li><strong>An app</strong> uses the SMART App Launch it may already support, asking for imaging too.</li>

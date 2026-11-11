@@ -153,7 +153,7 @@ test("a refused sandbox mint makes no sandbox", async () => {
 
 test("the demo's pages and read APIs answer only at its own addresses", async () => {
   const demo = (path: string, headers: Record<string, string> = {}) => fetch(`http://127.0.0.1:${PORTS.demo}${path}`, { headers });
-  for (const path of ["/", "/tours", "/explore", "/activity", "/api/activity", "/api/activity/summary", "/api/sandbox/policy", "/api/sandbox/storage", "/api/sandbox/explore/cast", "/api/sandbox", "/api/sandbox/keys-shared-on-purpose"]) {
+  for (const path of ["/", "/explore", "/activity", "/api/activity", "/api/activity/summary", "/api/sandbox/policy", "/api/sandbox/storage", "/api/sandbox/explore/cast", "/api/sandbox", "/api/sandbox/keys-shared-on-purpose"]) {
     expect((await demo(path, { host: "evil.example" })).status).toBe(403);
     // The management API wants the admin token, and refuses before anything else.
     expect([path, (await demo(path)).status]).toEqual([path, path.startsWith("/api/sandbox") && path !== "/api/sandbox/keys-shared-on-purpose" ? 401 : 200]);

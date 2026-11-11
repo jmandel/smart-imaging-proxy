@@ -10,7 +10,6 @@ import Sandboxes from "./Sandboxes";
 import Build from "./Build";
 import Connect from "./Connect";
 import Viewer from "./Viewer";
-import Tours from "./Tours";
 import Servers from "./Servers";
 import ServerCheck from "./ServerCheck";
 import AppCheck from "./AppCheck";
@@ -26,7 +25,6 @@ export const UI_PAGES: Partial<Record<PageId, ComponentType>> = {
   "build-an-app": BuildAnApp, "build-a-server": BuildAServer, about: About, sandboxes: Sandboxes,
   build: Build, connect: Connect,
   viewer: Viewer,
-  tours: Tours,
   servers: Servers, check: ServerCheck, "app-check": AppCheck,
   explore: Explore,
   activity: Activity, config: Config,

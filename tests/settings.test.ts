@@ -53,7 +53,7 @@ describe("pages", () => {
     // The site's own pages are the site's alone: no sandbox has a copy.
     for (const p of Object.values(PAGES).filter(p => p.level === "site")) expect(routes.some(r => r.startsWith("/s/:sandbox") && r.endsWith(p.path) && p.path !== "/")).toBe(false);
     const base = await mint();
-    for (const path of ["/viewer", "/servers", "/build-an-app", "/build-a-server", "/about", "/sandboxes", "/check"]) expect([path, (await call("GET", `${base}${path}`)).status]).toEqual([path, 404]);
+    for (const path of ["/servers", "/build-an-app", "/build-a-server", "/about", "/sandboxes", "/check"]) expect([path, (await call("GET", `${base}${path}`)).status]).toEqual([path, 404]);
     for (const path of ["/browse", "/admin", "/app.js", "/admin.js", "/browse.js", "/cards.js", "/api/explore/events", "/api/browse/options", "/api/admin/status"]) expect([path, (await call("GET", path)).status]).toEqual([path, 404]);
   });
 });
@@ -275,11 +275,10 @@ describe("loading pages", () => {
     const base = await mint(), sandbox = (stack.sandboxes.resolve(base.slice(3)) as any).sandbox;
     const policyOf = (store: any) => JSON.stringify([store.snapshot(), store.getSettings()]);
     const saved = policyOf(stack.store), its = policyOf(sandbox.store);
-    for (const path of ["/api/sandbox", "/api/sandbox/policy", "/api/sandbox/explore/cast", "/api/sandbox/explore/referrals", "/api/tours", "/api/activity"]) {
+    for (const path of ["/api/sandbox", "/api/sandbox/policy", "/api/sandbox/explore/cast", "/api/sandbox/explore/referrals", "/api/activity"]) {
       expect([path, (await call("GET", path)).status]).toEqual([path, 200]);
       expect([path, (await call("GET", `${base}${path}`)).status]).toEqual([path, 200]);
     }
-    expect((await call("GET", `${base}/api/sandbox/tours/state?tour=own`)).status).toBe(200);
     expect([policyOf(stack.store), policyOf(sandbox.store)]).toEqual([saved, its]);
   });
   test("the log only reads, on load or after: every call it and its parts make is a GET", async () => {

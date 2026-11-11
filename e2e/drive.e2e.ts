@@ -79,13 +79,6 @@ test("every control in llms.txt's table is found by its role and name", async ()
   await expectControls(page, "app-check-run");
   await page.getByRole("button", { name: "Abandon", exact: true }).click();
 
-  // A sandbox's tours open on a preview until a story starts; then the address names it.
-  await open(page, `${base}/tours`);
-  await expectControls(page, "tour-preview");
-  await page.getByRole("button", { name: "Run this story", exact: true }).click();
-  await page.waitForURL(u => u.searchParams.has("tour"));
-  await expectControls(page, "tour-run");
-
   // The server check runs on its own as far as the sign-in, and stops there for a person.
   await open(page, `/check?sandbox=${encodeURIComponent(base)}`);
   await page.getByRole("button", { name: "Sign in to continue", exact: true }).waitFor({ timeout: 60000 });

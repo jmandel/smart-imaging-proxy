@@ -414,14 +414,6 @@ a.path p:not(.path-kicker) { color:var(--muted); }
 .check-run-note p { margin:0; }
 .check-step[data-state=note] .mark, .check-step[data-state=note] .state { color:var(--muted); }
 .check-step .fail-detail { color:var(--bad); }
-/* The checks only a sandbox can run: a section of their own under the steps. */
-.sandbox-checks { margin-top:2rem; }
-.sandbox-checks h2 { font-size:1.2rem; margin:0 0 .3rem; }
-.sandbox-checks > .note { margin:0 0 .7rem; }
-.sandbox-checks .check-actions { margin-bottom:.6rem; }
-.sandbox-checks-summary { font-weight:700; }
-.sandbox-checks-summary.good { color:var(--good); } .sandbox-checks-summary.bad { color:var(--bad); }
-.sandbox-checks .state a { display:inline-flex; align-items:center; min-height:2.75rem; }
 .seen { list-style:none; margin:.2rem 0 .5rem; padding:0; display:grid; gap:.15rem; }
 .seen li { display:flex; gap:.45rem; align-items:baseline; min-width:0; }
 .seen li span { flex:none; font-weight:700; color:var(--good); }

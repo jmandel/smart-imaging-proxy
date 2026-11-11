@@ -1,6 +1,6 @@
 // Apps a person registers in their own sandbox, so anyone can try the demo with their own app: public apps,
 // confidential apps that sign a key-based assertion, and backend services. Kept with the sandbox, so they last until its
-// owner starts over and a tour leaves them alone. A service has no one to approve it, so registering one grants its access.
+// owner starts over, and starting over leaves them alone. A service has no one to approve it, so registering one grants its access.
 import { randomBytes } from "node:crypto";
 import type { PolicyStore, ServiceAccessPolicy } from "@smart-imaging-proxy/core";
 import { JWKS_REFUSED } from "./jwks";

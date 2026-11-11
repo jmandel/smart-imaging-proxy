@@ -1,4 +1,4 @@
-// Named rule sets of service-access policies: what Explore and the backend tour offer to apply. Each
+// Named rule sets of service-access policies: what Explore offers to apply. Each
 // set follows the pattern of a flow. Anything a set needs from the catalog, such as a series UID, is
 // read when it's applied.
 import type { CatalogStore, ServiceAccessPolicy } from "@smart-imaging-proxy/core";

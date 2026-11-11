@@ -1,4 +1,4 @@
-// Apps registered in a sandbox: they work there, only there, and a tour leaves them alone.
+// Apps registered in a sandbox: they work there, only there, and starting over leaves them alone.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { join } from "node:path";
 import { addClient, listClients, removeClient } from "../src/clients";
@@ -81,10 +81,10 @@ test("an app registered with redirect_uris [\"*\"] accepts any safe redirect URI
   expect(tok.status).toBe(200);
   expect(((await tok.json()) as any).patient).toBe("josh-example");
 });
-test("a tour leaves registrations alone, and removal ends them", async () => {
+test("starting over leaves registrations alone, and removal ends them", async () => {
   const w = stack.sandboxes.mint();
   const c = addClient(w.store, { name: "Kept", redirectUris: [REDIRECT] }) as any;
-  expect((await call("POST", `${w.prefix}/api/sandbox/tours/own/start`, {})).status).toBe(201);
+  await w.resetPolicy();
   expect(listClients(w.store).map(x => x.id)).toEqual([c.id]);
   expect(removeClient(w.store, c.id)).toBe(true);
   expect((await authorize(w, c.id)).status).toBe(400);
@@ -198,7 +198,7 @@ test("keys are public ES256 JWKs with a kid, and private ones are refused", () =
   expect(addClient(w.store, { name: "S", type: "backend", jwk, patients: "nobody" })).toHaveProperty("error");
   expect(addClient(w.store, { name: "S", type: "nope" as any })).toHaveProperty("error");
 });
-test("a backend service reaches only what it was granted, and its grant outlasts a tour", async () => {
+test("a backend service reaches only what it was granted, and its grant outlasts starting over", async () => {
   const w = stack.sandboxes.mint(), { privateKey, jwk } = pair();
   const c = addClient(w.store, { name: "Svc", type: "backend", jwk, patients: "josh-example" }) as any;
   const search = (t: string, p: string) => fetch(`${w.urls.imaging}/fhir/ImagingStudy?patient=${p}&_include=ImagingStudy:endpoint`, { headers: { authorization: `Bearer ${t}` } });
@@ -207,7 +207,7 @@ test("a backend service reaches only what it was granted, and its grant outlasts
   expect(t.scope).toBe("system/ImagingStudy.rs");
   expect(((await (await search(t.access_token, "josh-example")).json()) as any).entry.filter((e: any) => e.resource.resourceType === "ImagingStudy").length).toBe(6);
   expect((await search(t.access_token, "sam-example")).status).toBe(403);
-  await call("POST", `${w.prefix}/api/sandbox/tours/own/start`, {});
+  await w.resetPolicy();
   const again: any = await (await tokenCall(w, c.id, jwt())).json();
   expect((await search(again.access_token, "josh-example")).status).toBe(200);
   await call("DELETE", `${w.prefix}/api/sandbox/clients/${c.id}`);

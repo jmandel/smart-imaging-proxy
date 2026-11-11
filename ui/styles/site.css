@@ -214,59 +214,12 @@ button.sheet:hover { background:var(--film-raised); }
 .tag { display:inline-block; font-size:.78rem; font-weight:700; border-radius:3px; padding:.02rem .4rem; background:var(--code); white-space:nowrap; }
 .tag.ok { background:var(--good-soft); color:var(--good); } .tag.denied, .tag.error { background:var(--bad-soft); color:var(--bad); } .tag.info { background:var(--code); color:var(--muted); }
 
-/* Tours: the stories beside the one in progress. */
-.tours { display:grid; grid-template-columns:minmax(0,21rem) minmax(0,1fr); gap:2rem; max-width:1280px; margin:0 auto; padding:1.75rem 1.5rem 3rem; align-items:start; }
-.tour-list { display:flex; flex-direction:column; gap:.45rem; }
-.tour-list h2 { margin:0 0 .2rem; font-size:.9rem; font-weight:700; color:var(--muted); }
-.tour-list button.tour { display:block; width:100%; text-align:left; background:none; color:var(--ink); border:2px solid transparent; border-radius:10px; padding:.7rem .9rem; }
-.tour-list button.tour:hover { background:var(--code); }
-.tour-list button.tour[aria-current=true] { background:var(--plate); border-color:var(--accent); }
-.tour-list button.tour { font-weight:600; line-height:1.35; padding:.55rem .8rem; border-radius:8px; }
-.tour-list > a { display:inline-flex; align-items:center; min-height:2.75rem; padding:0 .8rem; }
-.tour-list .cast { margin-top:.6rem; background:none; border:0; border-top:1px solid var(--line); border-radius:0; padding:.6rem .8rem 0; }
-.tour-list .cast summary { cursor:pointer; font-weight:700; min-height:2rem; display:flex; align-items:center; }
-.tour-list .cast dl { grid-template-columns:minmax(0,1fr); margin-top:.4rem; }
-.home-head { display:flex; flex-wrap:wrap; align-items:baseline; gap:.4rem 1.4rem; }
-.home-head h1 { margin:0; font-size:1.9rem; font-weight:800; }
-.home-head h1:focus { outline:none; }
-.home-head > a { margin-left:auto; display:inline-flex; align-items:center; min-height:2.75rem; }
-.tour-chain { display:flex; flex-direction:column; gap:.6rem; background:var(--plate); border:1px solid var(--line); border-radius:10px; padding:.85rem 1rem; max-width:44rem; }
-/* Before, after, and once links expire: room for the panels side by side. */
-.tour-chain:has(.ly-pair) { max-width:none; }
-.step-chain { grid-column:1 / -1; max-width:40rem; padding:.5rem 0 .2rem; }
-/* Who's who and the diagram key, above the stories. */
-.cast, .key { background:var(--plate); border:1px solid var(--line); border-radius:10px; padding:.85rem 1rem; display:flex; flex-direction:column; gap:.5rem; }
-.cast h2, .key h2 { margin:0; font-size:1rem; font-weight:800; }
-.cast dl { margin:0; display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 19rem), 1fr)); gap:.45rem 1.4rem; }
-.cast dl div { display:flex; flex-direction:column; }
-.cast dt { font-weight:700; }
-.cast dd { margin:0; color:var(--muted); font-size:.88rem; line-height:1.35; }
-.compare .tech, .tech-detail p { font-size:.9rem; color:var(--ink); overflow-wrap:anywhere; }
-.tech-detail summary { cursor:pointer; color:var(--accent); min-height:2rem; display:flex; align-items:center; }
-.tech-detail p { margin:.2rem 0 0; }
-.tour-main { display:flex; flex-direction:column; gap:1.1rem; min-width:0; }
-.tour-main h1 { margin:0; font-size:clamp(1.6rem, 3.2vw, 2.15rem); font-weight:800; line-height:1.15; }
-.tour-main h1:focus { outline:none; }
-.tour-main > p, .tour-head p { margin:.2rem 0 0; max-width:62ch; color:var(--muted); overflow-wrap:anywhere; }
-.pill { align-self:flex-start; font-size:.84rem; color:var(--muted); background:var(--code); border-radius:999px; padding:.2rem .7rem; }
-.steps { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:.6rem; }
-.step { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:.4rem 1rem; align-items:center; background:var(--plate); border:1px solid var(--line); border-radius:10px; padding:.85rem 1rem; }
-.step.next { border:2px solid var(--accent); }
-.step.pending { background:transparent; border-style:dashed; color:var(--muted); }
-.step .what { min-width:0; overflow-wrap:anywhere; }
-.step .what b { display:block; color:var(--ink); }
-.step .what span { font-size:.9rem; }
-.step .what .expect { display:block; margin-top:.15rem; }
 /* A list of studies: one title per line, since titles carry commas. */
 .study-list { margin:.15rem 0 0; padding-left:1.2rem; }
 .study-list li { margin:.05rem 0; }
-.step .verdict { font-weight:700; }
-.step .verdict.ok { color:var(--good); } .step .verdict.bad { color:var(--bad); }
-.step .compare { grid-column:1 / -1; display:grid; grid-template-columns:max-content minmax(0,1fr); gap:.1rem .8rem; font-size:.92rem; margin:0; }
-.step .compare dt { color:var(--muted); } .step .compare dd { margin:0; overflow-wrap:anywhere; }
-.step .result { grid-column:1 / -1; min-width:0; margin:0; font-size:.9rem; color:var(--muted); }
-.step .result a { display:inline-flex; align-items:center; min-height:2.75rem; }
-.tour-buttons { display:flex; flex-wrap:wrap; gap:.6rem; align-items:center; }
+.tech-detail p { font-size:.9rem; color:var(--ink); overflow-wrap:anywhere; }
+.tech-detail summary { cursor:pointer; color:var(--accent); min-height:2rem; display:flex; align-items:center; }
+.tech-detail p { margin:.2rem 0 0; }
 
 /* The activity log: rollups on top, sessions beside the table of events. */
 .log { max-width:1320px; margin:0 auto; padding:1.5rem 1.5rem 3rem; display:flex; flex-direction:column; gap:1.1rem; }
@@ -502,9 +455,7 @@ tr.detail > td { background:var(--box); max-width:none; padding:.6rem .8rem .8re
   .glance { grid-template-columns:minmax(0,1fr); }
 }
 @media (max-width:900px) {
-  .tours, .log-body { grid-template-columns:minmax(0,1fr); }
-  /* On a narrow screen the story in progress comes first, and the others after it. */
-  .tour-list { order:2; }
+  .log-body { grid-template-columns:minmax(0,1fr); }
   .session-list { max-height:24rem; }
 }
 @media (max-width:900px) {
@@ -547,7 +498,7 @@ tr.detail > td { background:var(--box); max-width:none; padding:.6rem .8rem .8re
   .sandbox-bar { padding:.2rem .9rem; }
   .mark { font-size:.95rem; gap:.4rem; }
   .pages a { padding:0 .5rem; }
-  .explore, .tours, .log { padding:1rem 1rem 2.5rem; gap:1rem; }
+  .explore, .log { padding:1rem 1rem 2.5rem; gap:1rem; }
   .mark .name { display:none; }
   .tiles { grid-template-columns:repeat(2, minmax(0,1fr)); }
   .filters label { flex:1 1 9rem; }

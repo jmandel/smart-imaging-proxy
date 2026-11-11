@@ -1,4 +1,4 @@
-// A client of one sandbox, as Tours and its checks act in it: real sign-ins as an app, refresh, search and
+// A client of one sandbox, as the server check acts in it: real sign-ins as an app, refresh, search and
 // retrieval with the tokens this page holds, a service's own Backend Services token, and the sandbox's
 // management API. Every request carries the page's trace session, and the trace it's part of, so the activity
 // log shows what the page did, and how the proxy decided each retrieval.

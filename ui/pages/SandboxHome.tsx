@@ -65,7 +65,7 @@ export default function SandboxHome() {
         {SANDBOX_GROUPS.map(g => (
           <section key={g.title} aria-label={g.title}>
             <h2>{g.title}</h2>
-            <ul className="link-list">{g.pages.map(id => <li key={id}><PageLink id={id} /><span>{id === "viewer" ? "Our SMART app, signed in to this sandbox." : id === "check" ? "Every step of the guide, and the checks only a sandbox can run, against this sandbox." : PAGES[id].blurb}</span></li>)}</ul>
+            <ul className="link-list">{g.pages.map(id => <li key={id}><PageLink id={id} /><span>{id === "viewer" ? "Our SMART app, signed in to this sandbox." : id === "check" ? "Every step of the guide, run against this sandbox, saying how far it got and why it stopped." : PAGES[id].blurb}</span></li>)}</ul>
           </section>
         ))}
       </div>

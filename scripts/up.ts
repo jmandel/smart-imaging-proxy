@@ -46,7 +46,7 @@ if (!(await demoPortAnswers())) fail(`The demo didn't answer within two minutes.
 console.log(`
 Running.
 
-  Tours       ${CONFIG.demoUrl}/
+  Sandboxes   ${CONFIG.demoUrl}/
   Explore     ${CONFIG.demoUrl}/explore
   Activity    ${CONFIG.demoUrl}/activity
   Live trace  ${CONFIG.traceUrl}

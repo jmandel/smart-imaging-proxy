@@ -149,9 +149,9 @@ describe("Discovery and search", () => {
       for (const x of s.series) for (const i of x.instance) { expect(i.uid).toBeTruthy(); expect(i.sopClass.code).toStartWith("urn:oid:"); }
     }
   });
+  // The guide used to say, in so many words, that the accession number belongs in `ImagingStudy.identifier` and in
+  // `basedOn.identifier`. That wording is gone from the guide, so this checks the two places, not the sentence.
   test("the Accession Number is in both places", async () => {
-    says("it SHALL include it in `ImagingStudy.identifier[accession]`");
-    says("SHOULD also populate `ImagingStudy.basedOn.identifier`");
     const s = res(WRIST);
     expect(s.identifier[1].type.coding[0].code).toBe("ACSN");
     expect(s.basedOn[0].identifier.value).toBe(s.identifier[1].value);

@@ -166,7 +166,7 @@ export function Flow({ f, words, href, when }: { f: SessionFlow; words: EventWor
         const changes = p.writes.map(d => { const w = words.written(d); return `${w.what}${Array.isArray(d.body?.sites) ? `, at ${w.sites}` : ""}`; });
         const did = (stage: Stage) => p.studies.some(r => r.steps.some(x => x.stage === stage));
         const title = changes.length ? changes.join("; ") : did("get") ? "The app searches and retrieves" : did("check") ? "The app searches and asks for studies" : "The app searches";
-        // Later cards say how long after the first they began: a tour's run takes seconds.
+        // Later cards say how long after the first they began: a check's run takes seconds.
         const gap = p.from && start ? p.from - start : 0;
         const at = !p.from ? "" : i === 0 || gap >= 60000 ? when(p.from) : gap < 1000 ? "a moment later" : `${Math.round(gap / 1000)} s later`;
         return (

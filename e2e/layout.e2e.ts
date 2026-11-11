@@ -22,7 +22,7 @@ for (const [label, viewport] of [["desktop", { width: 1440, height: 900 }], ["ph
   await p.goto(`${O}/sandboxes`); await report(`${label} sandboxes`, p);
   await p.getByRole("button", { name: "Create a sandbox" }).click(); await p.waitForURL(u => u.pathname.startsWith("/s/")); await p.locator("#sandbox-name").waitFor(); await report(`${label} landing in a sandbox`, p);
   const sandboxBase = new URL(p.url()).pathname.match(/^\/s\/[^/]+/)![0];
-  await p.locator("#landing").getByRole("link", { name: "Viewer", exact: true }).click(); await p.waitForURL(u => u.pathname === "/viewer"); await report(`${label} viewer before connecting`, p);
+  await p.locator("#landing").getByRole("link", { name: "Viewer", exact: true }).click(); await p.waitForURL(u => u.pathname.endsWith("/viewer")); await report(`${label} viewer before connecting`, p);
   // The sign-in happens in a tab of its own.
   const [t] = await Promise.all([ctx.waitForEvent("page"), p.getByRole("button", { name: "Connect", exact: true }).click()]);
   await t.locator("input[name=username][value=josh]").check(); await t.getByRole("button", { name: "Continue" }).click();

@@ -84,8 +84,8 @@ export default function BuildAnApp() {
           <p>The App check runs your app against this sandbox while it stages what any server may do: small pages of results, a 503 with Retry-After, Endpoints in each form the guide allows. You follow a script, such as signing in as josh and opening every study, and each requirement of the guide comes back passed or failed, with the requests behind it.</p>
           <p className="guide-links"><Link to={`${sandbox.base}/app-check?${new URLSearchParams({ app: app.id })}`}>Check {app.name}</Link></p>
           <h3>Then, the hard cases</h3>
-          <p>Real systems refuse access, expire links, and let guardians act for children. The Tour plays these out, Explore shows what each sample person can reach, and Sandbox Config moves the clock so links and tokens expire.</p>
-          <p className="guide-links"><InSandbox page="tours">Tour</InSandbox> <InSandbox page="explore">Explore</InSandbox> <InSandbox page="config">Sandbox Config</InSandbox></p>
+          <p>Real systems refuse access, expire links, and let guardians act for children. Explore shows what each sample person can reach and why, the logs show every request behind it, and Sandbox Config moves the clock so links and tokens expire.</p>
+          <p className="guide-links"><InSandbox page="explore">Explore</InSandbox> <InSandbox page="activity">Logs</InSandbox> <InSandbox page="config">Sandbox Config</InSandbox></p>
         </>}
       </section>
 

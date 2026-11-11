@@ -7,7 +7,7 @@ import { generateKey } from "../lib/servers";
 import { store, stored } from "../lib/store";
 
 export type ClientType = "public" | "confidential" | "backend";
-export interface Client { id: string; name: string; type: ClientType; redirectUris: string[]; patients?: string; jwk?: { kid: string }; jwks?: { kid: string }[]; jwksUrl?: string }
+export interface Client { id: string; name: string; type: ClientType; redirectUris: string[]; patients?: string; jwk?: { kid: string }; jwks?: { kid: string }[]; jwksUrl?: string; /** One of the demo's own: it works here without being registered, and can't be removed. */ builtIn?: boolean }
 
 const KEYS_KEY = "smart-imaging-client:keys";
 const savedKeys = (): Record<string, PrivateJwk> => { try { return JSON.parse(stored(KEYS_KEY) ?? "{}"); } catch { return {}; } };
@@ -27,32 +27,39 @@ export function Registered({ c, base, removed }: { c: Client; base: string; remo
   const remove = async () => { await api("DELETE", `/api/sandbox/clients/${encodeURIComponent(c.id)}`, undefined, base); removed(); };
   return (
     <article className="panel registered" id={`app-${c.id}`}>
-      <div className="registered-head"><h3>{c.name}</h3><button type="button" className="tool" aria-label={`Remove ${c.name}`} onClick={remove}>Remove</button></div>
+      <div className="registered-head">
+        <h3>{c.name} {c.builtIn && <span className="tag info">Built in</span>}</h3>
+        {!c.builtIn && <button type="button" className="tool" aria-label={`Remove ${c.name}`} onClick={remove}>Remove</button>}
+      </div>
       <dl className="registered-facts">
         <dt>FHIR base</dt><dd><Address value={fhirBase} name="FHIR base" /></dd>
         <dt>Client ID</dt><dd><code>{c.id}</code></dd>
         <dt>Type</dt><dd>{TYPES.find(t => t[0] === c.type)?.[1] ?? c.type}</dd>
         {openRedirect ? <><dt>Redirect URI</dt><dd>Any URI allowed (<code>*</code> — not checked at sign-in)</dd></>
           : c.redirectUris.length > 0 && <><dt>{c.redirectUris.length > 1 ? "Redirect URIs" : "Redirect URI"}</dt><dd className="addr-list">{c.redirectUris.map(u => <Address key={u} value={u} name="redirect URI" />)}</dd></>}
-        {c.type === "backend" && <><dt>May reach</dt><dd>{c.patients === "any" ? "Any patient" : c.patients}</dd></>}
+        {c.type === "backend" && <><dt>May reach</dt><dd>{c.patients ? c.patients === "any" ? "Any patient" : c.patients : "What this sandbox's policy releases"}</dd></>}
         {(c.jwks ?? (c.jwk ? [c.jwk] : [])).length > 0 && <><dt>{(c.jwks?.length ?? 1) > 1 ? "Key ids" : "Key id"}</dt><dd>{(c.jwks ?? [c.jwk!]).map((k, i) => <span key={k.kid}>{i ? ", " : ""}<code>{k.kid}</code></span>)}</dd></>}
         {c.jwksUrl && <><dt>JWKS URL</dt><dd><Address value={c.jwksUrl} name="JWKS URL" /></dd></>}
       </dl>
       <div className="configure-actions">
-        <CopyButton label="Copy FHIR base" value={fhirBase} />
-        <CopyButton label="Copy client ID" value={c.id} />
-        {key && <CopyButton label="Copy private key" value={JSON.stringify(key)} />}
+        <CopyButton label="Copy FHIR base" value={fhirBase} aria={`Copy ${c.name}'s FHIR base`} />
+        <CopyButton label="Copy client ID" value={c.id} aria={`Copy ${c.name}'s client ID`} />
+        {key && <CopyButton label="Copy private key" value={JSON.stringify(key)} aria={`Copy ${c.name}'s private key`} />}
       </div>
     </article>
   );
 }
 
-/** A sandbox's registered apps, and a way to read them again. */
+/** A sandbox's registered apps, the demo's own, and a way to read them again. */
 export function useClients(base: string) {
-  const [clients, setClients] = useState<Client[]>();
-  const refresh = async () => setClients((await api<{ clients: Client[] }>("GET", "/api/sandbox/clients", undefined, base)).clients);
-  useEffect(() => { setClients(undefined); refresh(); }, [base]);
-  return { clients, refresh };
+  const [clients, setClients] = useState<Client[]>(), [builtIn, setBuiltIn] = useState<Client[]>();
+  const refresh = async () => {
+    const r = await api<{ clients: Client[]; builtIn?: Client[] }>("GET", "/api/sandbox/clients", undefined, base);
+    setClients(r.clients);
+    setBuiltIn(r.builtIn ?? []);
+  };
+  useEffect(() => { setClients(undefined); setBuiltIn(undefined); refresh(); }, [base]);
+  return { clients, builtIn, refresh };
 }
 
 export const CLIENT_KINDS = TYPES.map(t => t[0]);

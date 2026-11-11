@@ -19,7 +19,7 @@ export interface Page {
 
 export type PageId =
   | "home" | "build-an-app" | "build-a-server" | "about" | "sandboxes" | "viewer" | "servers" | "check"
-  | "sandbox" | "app-check" | "tours" | "explore" | "build" | "connect" | "activity" | "trace" | "trace-span" | "trace-log" | "config";
+  | "sandbox" | "app-check" | "explore" | "build" | "connect" | "activity" | "trace" | "trace-span" | "trace-log" | "config";
 
 const pages: Page[] = [
   { id: "home", level: "site", path: "/", name: "SMART Imaging Access", blurb: "A public sandbox and test client for the SMART Imaging Access guide." },
@@ -27,12 +27,12 @@ const pages: Page[] = [
   { id: "build-a-server", level: "site", path: "/build-a-server", name: "Build a Server", blurb: "Register our known-good viewer with your server, describe it, and check every step of the guide against it." },
   { id: "about", level: "site", path: "/about", name: "Why SMART Imaging", blurb: "What imaging interoperability makes possible, how it works, and what it takes." },
   { id: "sandboxes", level: "site", path: "/sandboxes", name: "My Sandboxes", blurb: "The sandboxes this browser has made or joined, and a new one." },
-  { id: "viewer", level: "site", path: "/viewer", name: "Viewer", blurb: "Our SMART app, signed in to one of your sandboxes or to your own server." },
+  // The viewer is a sandbox's own page, so its bar stays around it, and the site's too, at /viewer, for servers of your own.
+  { id: "viewer", level: "sandbox", path: "/viewer", name: "Viewer", blurb: "Our SMART app, signed in to this sandbox, or to a server of your own." },
   { id: "servers", level: "site", path: "/servers", name: "Your servers", blurb: "Describe your server for the viewer, and how it signs in." },
   { id: "check", level: "site", path: "/check", name: "Server check", blurb: "Every step of the guide, run against your server, saying how far it got and why it stopped.", sandboxParam: "sandbox" },
   { id: "sandbox", level: "sandbox", path: "/", name: "Home", blurb: "This sandbox: its name, sharing, and its pages." },
   { id: "app-check", level: "sandbox", path: "/app-check", name: "App check", blurb: "Your app, run against this sandbox while it stages what servers may do, graded on each requirement of the guide." },
-  { id: "tours", level: "sandbox", path: "/tours", name: "Tour", blurb: "Sharing, guardians and referrals, played out step by step." },
   { id: "explore", level: "sandbox", path: "/explore", name: "Explore", blurb: "What each sample person and service can reach, and why." },
   { id: "build", level: "sandbox", path: "/build", name: "Endpoints", blurb: "This sandbox's addresses, scopes, and sample people to sign in as." },
   { id: "connect", level: "sandbox", path: "/connect", name: "Register an app", blurb: "A public app, a confidential app, or a backend service." },
@@ -52,9 +52,9 @@ export const MENU: PageId[] = ["build-an-app", "build-a-server", "about", "sandb
 /** The site's own pages beyond the guides. */
 export const SITE_TOOLS: PageId[] = ["servers", "check", "viewer"];
 
-/** A sandbox's pages, by what they're for. The viewer is the site's, opened on the sandbox. */
+/** A sandbox's pages, by what they're for. The viewer is the sandbox's own page, and the site's at /viewer. */
 export const SANDBOX_GROUPS: { title: string; pages: (PageId)[] }[] = [
-  { title: "Try it", pages: ["viewer", "tours", "explore", "check", "app-check"] },
+  { title: "Try it", pages: ["viewer", "explore", "check", "app-check"] },
   { title: "Your app", pages: ["build", "connect", "activity", "trace"] },
   { title: "Under the hood", pages: ["config"] },
 ];

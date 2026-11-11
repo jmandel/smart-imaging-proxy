@@ -5,7 +5,7 @@ import { PAGES, type PageId } from "../sitemap";
 import { PageLink } from "../shell/Shell";
 import { AuthNotes, Endpoints, SamplePeople } from "../components/ConnectFacts";
 
-const NEXT: PageId[] = ["connect", "activity", "tours", "explore"];
+const NEXT: PageId[] = ["connect", "activity", "explore"];
 
 export default function Build() {
   return (

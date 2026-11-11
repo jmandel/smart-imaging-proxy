@@ -13,8 +13,9 @@ November 2026. The design settled with Josh, and the app as built.
   page, and React Router moves between pages in place.
 - **Shared code** in `ui/lib/`: the management API with the sandbox's admin token (`api.ts`), what the browser
   remembers (`store.ts`, whose sandbox list every open tab sees change), the viewer's servers (`servers.ts`), the
-  SMART Imaging client (`smart-imaging.ts`), and the client Tours and the sandbox checks act with (`sandbox-client.ts`).
-  The server check's steps and report are in `ui/check/`; its API for agents is `src/check-runs.ts`.
+  SMART Imaging client (`smart-imaging.ts`), and the client the server check acts with (`sandbox-client.ts`).
+  The server check's steps and report are in `ui/check/`; its API for agents is `src/check-runs.ts`. The app
+  check's grading is `src/app-check.ts`.
   Components shared by pages are in `ui/components/` (the layer chain, the image viewer, thumbnails).
 - **Styles** in `ui/styles/`, and the trace's own in `ui/trace/trace.css`, scoped to its pages.
 - **The trace service keeps only data:** its API, stream and span intake. Its pages are the app's, at `/trace/`,
@@ -24,7 +25,7 @@ November 2026. The design settled with Josh, and the app as built.
 
 1. **The viewer**, against a sandbox or your server: a real authorization code flow, in a tab of its own, which
    hands the code back to the viewer.
-2. **Tours and the sandbox checks**: a real flow, whose forms the page walks itself with `fetch`.
+2. **The server check**: a real flow, whose forms the page walks itself with `fetch`.
 3. **Explore**: no sign-in. The admin key mints the person's token.
 4. **Agents and tests**: post the forms over HTTP.
 
@@ -70,7 +71,7 @@ sandboxes, and For Agents: **Build an App · Build a Server · Why SMART Imaging
 
 Pages that hold a list open on the list (Your servers, My Sandboxes); adding or editing is a step away, in the
 address (`?add`, `?edit=`), and with nothing saved the page is the form. Numbered steps are kept for real
-sequences: the wizard, the server check, a Tour's steps. Links to the logs from the middle of a task open in a
+sequences: the wizards, the server check, an app check's script. Links to the logs from the middle of a task open in a
 new tab, so the task keeps its place.
 
 Connectathon participants use the app and server guides. A registry of external test environments, and
@@ -81,11 +82,11 @@ A guide's links go to the sandbox you were last in. With none, the first link ma
 ### Inside a sandbox
 
 A sandbox's pages have its bar under the header: its name, and its pages by what they're for, the same groups
-its home page and the footer list: **Try it** (Viewer, Tour, Explore, Server check), **Your app** (Start here,
+its home page and the footer list: **Try it** (Viewer, Explore, Server check, App check), **Your app** (Start here,
 Register an app, Logs, Live trace), **Under the hood** (Sandbox Config). On a phone, the pages open from a button.
-The Viewer and Server check are the site's own pages, opened on the sandbox: the check adds a second section,
-checks only a sandbox can run (faults, the clock, policy changed between pages), each in a fresh sandbox set up
-like it. There is no separate Conformance page; its old address opens the check.
+The Viewer is a page of the sandbox's own (`/s/{id}/viewer`), so the sandbox's bar stays around it; it's also the
+site's at `/viewer`, for servers of your own. The Server check is the site's page, opened on the sandbox with
+`?sandbox=`. There is no separate Conformance page: its old address opens the check.
 Activity is called **Logs**.
 
 **Sandbox Config** holds what makes the sandbox realistic, for the curious: the settings (clock, storage,
@@ -130,7 +131,6 @@ grow into a second management API.
 - The viewer at the root, with one redirect URI.
 - The whole UI rewritten as a React and TypeScript app.
 - Sandbox Config, with the settings out of the header.
-- The Tours sign-in setting is gone: Tours always walks its forms.
 
 ### Still to do
 
@@ -153,7 +153,6 @@ moment is held in the page too, so a radio changes as it's pressed.
 | Server check | `?sandbox=`, `?server=`, `?run=` | before |
 | Viewer | `?sandbox=` or `?server=`; `&connect` signs in at once, in the same tab | Nov 2026 |
 | App check | `?app=`, `?run=` | before |
-| Tour | `?tour=` | before |
 | Explore | `?user=&patient=`, or `?client=&referral=`; `&study=` for one opened | Nov 2026 |
 | Register an app | `?type=` (the form's kind of app), `?app=` (one registered, brought into sight) | Nov 2026 |
 | Logs | `session`, `type`, `study`, `link`, `sandbox`, `trace`, `event` | before |

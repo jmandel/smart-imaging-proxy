@@ -4,7 +4,6 @@ import { subtle } from "./api";
 import type { PrivateJwk } from "./api";
 import { checkServer, type ServerEntry } from "./server-entry";
 import { store, stored, useSandboxes } from "./store";
-import { launchViewer } from "./launch";
 
 export { checkServer, signsIn, type ServerEntry } from "./server-entry";
 
@@ -57,8 +56,6 @@ export function useServers(): ServerChoice[] {
   const yours = sandboxes.map(w => sandboxServer(w.base, w.name)).map(s => ({ ...s, id: serverKey(s), detail: "Your sandbox of sample patients" }));
   return [...yours.filter(s => !ids.has(s.id)), ...added];
 }
-/** Opens the viewer with a server chosen, ending any session it had, ready to connect. */
-export const openViewer = (server: Pick<ServerEntry, "iss" | "clientId">) => launchViewer(server);
 
 export const IMAGING = "smart-imaging-access";
 /** The two ways of connecting. Discovery says which work by SMART's own metadata: the grant each needs. */

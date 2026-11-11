@@ -1,8 +1,8 @@
 // What a viewer may see of the events a session recorded. Core's events are for operators: a search's
 // `unreached` names studies the caller may not know exist, and a decision's reason can name a label.
 // A viewer, the person or service a session acts as, sees a study only if they know of it: their
-// routes reached it, or their own work names it, such as the study a referral cites. Explore's panel,
-// a tour's steps and the activity view of a session all go through `forViewer`.
+// routes reached it, or their own work names it, such as the study a referral cites. Explore's panel and
+// the activity view of a session both go through `forViewer`.
 import type { EventRecord } from "./trace";
 
 type Listed = { study: string; why: string };

@@ -1,6 +1,6 @@
 // The log: one tile of rolled-up numbers per type of event, a timeline laned by party, one row per session, a
 // session's studies each with its path through search, link, check and retrieval, and a table per type whose rows
-// open the event in full. Filters live in the address, so Explore and the tours link here already filtered. With a
+// open the event in full. Filters live in the address, so Explore links here already filtered. With a
 // session, everything on the page is what that session's viewer may see. With none, it's the operator's view of
 // every session.
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";

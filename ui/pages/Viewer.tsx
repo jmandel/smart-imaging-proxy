@@ -1,9 +1,12 @@
 // The viewer: our general SMART app. A standalone SMART App Launch against one of your sandboxes or a server you
 // added, then its clinical and imaging data with one token, and every step of the protocol as it happens. The
 // sign-in opens in a tab of its own, which hands its address back (main.tsx), so this tab never leaves the app.
-// The server chosen is in the address (?sandbox= or ?server=), and with `connect` the viewer signs in at once.
+// It's a sandbox's own page (/s/{id}/viewer), so the sandbox's bar stays around it, and the site's at /viewer for
+// servers of your own. The server chosen is in the address (?sandbox= or ?server=), and with `connect` it signs in
+// at once.
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
+import { BASE } from "../lib/api";
 import { takeSignInTab } from "../lib/launch";
 import { Choice as Option } from "../lib/format";
 import { useReady } from "../lib/ready";
@@ -25,8 +28,8 @@ export default function Viewer() {
   const known = useServers(), sandboxes = useSandboxes();
   const [params, setParams] = useSearchParams();
   // The server the address names: a sandbox's link opens it, known in this browser or not; a server of your own
-  // only where this browser has it.
-  const base = params.get("sandbox"), wanted = params.get("server");
+  // only where this browser has it. A sandbox's own viewer starts on that sandbox.
+  const base = params.get("sandbox") ?? (BASE || null), wanted = params.get("server");
   const onSandbox: Choice | undefined = base !== null && /^(\/s\/[A-Za-z0-9_-]+)?$/.test(base)
     ? (s => ({ ...s, id: serverKey(s), detail: "Your sandbox of sample patients" }))(sandboxServer(base, sandboxes.find(w => w.base === base)?.name)) : undefined;
   const named = onSandbox ? known.find(s => s.id === onSandbox.id) ?? onSandbox : wanted ? known.find(s => s.id === wanted) : undefined;
@@ -52,7 +55,7 @@ export default function Viewer() {
     const back = returned();
     if (back) {
       // The viewer's address is left clean, without the code. The router isn't told, so the page isn't drawn afresh.
-      history.replaceState(history.state, "", "/viewer");
+      history.replaceState(history.state, "", location.pathname);
       finishSignIn(trail, back).then(connected, failed(chosen));
     }
     // A page brought back by Back is as it was left, perhaps "Connecting…" while a sign-in tab was open.

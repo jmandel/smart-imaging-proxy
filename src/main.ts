@@ -3,7 +3,7 @@
 //   bun src/main.ts [--role all|demo|proxy|imaging|auth|trace]
 //
 // A role can be a comma-separated list, as in `--role imaging,auth,trace`. `all` is the default, and
-// runs every service in this process. `demo` is the same: Explore, Tours and the settings menu change
+// runs every service in this process. `demo` is the same: Explore and the settings menu change
 // policy through the policy API, mint sandboxes, and work directly on the decision log, the proxy's
 // event log and the clocks, so they run with the services they drive. Split roles serve the root only.
 //

@@ -1,6 +1,7 @@
 # The sandbox, driven from the browser
 
-Settled with Josh, November 2026. Explore and Tours become browser apps. The page is a SMART Imaging client
+Settled with Josh, November 2026. Explore becomes a browser app. (Tours were removed later: what's left of this
+plan is Explore, the server check and the app check.) The page is a SMART Imaging client
 like the demo app. Sandbox setup and policy go through one documented management API, which the sandbox's
 admin key controls. No server endpoint does protocol work on a page's behalf.
 

@@ -10,7 +10,7 @@ A sandbox has both sides of SMART Imaging: the health system's servers, and a vi
 
 - **Building an app?** Read the shared background, then "Building an app": its rules first, then how. The page for people is `{{SITE}}/build`.
 - **Testing your own server?** Read the shared background, then "Testing your server". The page for people is `{{ORIGIN}}/servers`.
-- **Driving a sandbox** (its policy, faults, clock and tours)? "The management API". Both of the above use it too, for its admin token.
+- **Driving a sandbox** (its policy, faults and clock)? "The management API". Both of the above use it too, for its admin token.
 
 Each part stands on its own, so read only the ones you need. Any one comes on its own, with this opening, from the same file: `llms.txt?part=shared`, `?part=app`, `?part=server`, `?part=management` or `?part=references`.
 
@@ -34,7 +34,7 @@ An app starts at the clinical FHIR base. `GET $SANDBOX/fhir/.well-known/smart-co
 ## The sandbox model
 
 - A sandbox holds its own policy, approvals, tokens, registered apps, demo clock, and choice of image storage. Images and patients are shared and read-only.
-- It's saved to disk, and lasts until its owner deletes it (`DELETE /api/sandbox`). Only the throwaway sandboxes tours and checks make for themselves idle out, after 30 minutes.
+- It's saved to disk, and lasts until its owner deletes it (`DELETE /api/sandbox`). Only the throwaway sandboxes checks make for themselves idle out, after 30 minutes.
 - **Its URL is the access.** Anyone with it can read and change the sandbox, so treat it as a secret. The name is only a label.
 - Access is a union of grants. There are no deny rules: every grant only adds access.
 - The site root is read-only on public deployments. Work in a sandbox.
@@ -71,7 +71,7 @@ When a browser is the point, as for your own app or a page to show someone:
 
 {{CONTROLS_TABLE}}
 
-**Sign-in and consent are plain forms** from the Authorization Server, served without JavaScript. The viewer opens them in a tab of its own; with `connect` in its address it signs in in the same tab instead. Tours and Explore never show them.
+**Sign-in and consent are plain forms** from the Authorization Server, served without JavaScript. The viewer opens them in a tab of its own; with `connect` in its address it signs in in the same tab instead. Explore never shows them.
 
 # Building an app
 
@@ -94,6 +94,8 @@ The App check ("App check: run one for someone") grades an app against the rules
 ## Connect an app
 
 Public clients with PKCE (S256) are supported. Every endpoint an app uses (discovery, `/token`, FHIR, imaging and DICOMweb) answers CORS for any origin, so a browser app works as is. Register one in the sandbox, or use the page at `$SANDBOX/connect`.
+
+Every sandbox also has the demo's own apps, without anyone registering them: the public clients `portal-app`, `separate-viewer` and `demo-client`, and the Backend Services `hand-referral-service`, `outside-release-service` and `research-donation`. `GET /api/sandbox/clients` lists them under `builtIn`, with the apps registered here under `clients`; they can't be removed, and a service among them reaches what the sandbox's policy releases.
 
 Apps register by RFC 7591 dynamic registration, at discovery's `registration_endpoint` (`$SANDBOX/register`). The sandbox's admin token is the initial access token, sent as a bearer token: three calls, under "Manage a sandbox" in "The management API", with a key the sandbox gives out on purpose. An app or library that already registers itself this way needs nothing else.
 
@@ -214,7 +216,7 @@ Holding the id is the only access to the run, as with a server check, and runs l
 
 ## Test your server with the viewer
 
-The viewer at `{{ORIGIN}}/viewer` can connect to any SMART server, in the browser, exactly as it connects to a sandbox. It belongs to no sandbox: a sandbox is one more server in its list, signed in to with the sandbox's built-in public client, `demo-client`. What your server needs:
+The viewer can connect to any SMART server, in the browser, exactly as it connects to a sandbox. It's at `{{ORIGIN}}/viewer` for a server of your own, and at `$SANDBOX/viewer` in a sandbox, where the sandbox's bar stays around it. A sandbox is one more server in its list, signed in to with the sandbox's built-in public client, `demo-client`. What your server needs:
 
 1. **CORS** for the origin `{{ORIGIN}}`, on discovery, the token endpoint, FHIR searches and image retrieval. The browser makes every request.
 2. **Discovery** at `{FHIR base}/.well-known/smart-configuration`, with `authorization_endpoint` and `token_endpoint`. SMART Imaging is found by capability: `smart-imaging-access`, either in top-level `capabilities` or on an entry in `associated_endpoints`, whose `url` is the imaging FHIR server. The mode comes from `grant_types_supported`: `authorization_code` for app launch, `client_credentials` for Backend Services.
@@ -289,7 +291,7 @@ All paths below are under `$SANDBOX`. Bodies are JSON.
 | `PATCH /api/sandbox` `{"storage":"s3"}` | Image storage: `static-files`, `s3` or `orthanc` |
 | `DELETE /api/sandbox` | Deletes it permanently |
 | `GET /api/sandbox/storage` | Health of each image store |
-| `GET /api/sandbox/clients` | Registered apps. They register by RFC 7591, at `$SANDBOX/register`: see "Connect an app" |
+| `GET /api/sandbox/clients` | The apps registered here, and `builtIn`: the demo's own, which work in every sandbox without being registered, and can't be removed. Apps register by RFC 7591, at `$SANDBOX/register`: see "Connect an app" |
 | `DELETE /api/sandbox/clients/{id}` | Removes an app |
 | `DELETE /api/sandbox/clients?name-prefix=` | Removes every app whose name starts with the prefix, which can't be empty, and answers `{"removed":[ids]}`. For clearing up after test apps: give yours a common prefix |
 | `GET /api/sandbox/policy` | Relationships, policies, shares and approvals |
@@ -319,10 +321,6 @@ What each fault affects:
 | `endpointForms: true` | `ImagingStudy` search: Endpoints rotate, study by study, through the three forms the guide allows: a response-local `urn:uuid` entry, a contained `#wado`, and an entry with fullUrl `{imaging}/fhir/Endpoint/{id}` referenced as `Endpoint/{id}`. That address isn't served: the Endpoint is only in the Bundle | Retrieval: every form holds the same address |
 
 The last four are what the guide or FHIR lets any server do, and are what an app check stages.
-| `POST /api/sandbox/tours/{id}/start` | Starts a guided tour here, putting policy back to what's on file |
-| `GET /api/sandbox/tours/state?tour=` | A tour's steps, what the model expects of the next, and each finished step's result |
-| `POST /api/sandbox/tours/{id}/steps/{step}/begin` | Begins a step: the sandbox decides what the model expects, and returns a `plan` for you to carry out, with the `session` and `trace` to send it under |
-| `POST /api/sandbox/tours/{id}/steps/{step}/finish` `{"seen":{...}}` | Finishes it with what you saw, judged against the model |
 | `POST /api/sandbox/clock` `{"advanceSeconds":N}` or `{"reset":true}` | Moves the demo clock. `N` must be one of the choices in `GET /api/sandbox`. Tokens, study links and ages follow it; client assertions are checked by real time |
 | `POST /api/sandbox/reset` `{"confirm":true}` | Puts policy back to what's on file |
 | `POST /api/sandbox/tokens/revoke-all` | Revokes every token. As with `/revoke`, a revoked token's retrievals stop at once, through signed addresses too |
@@ -330,8 +328,6 @@ The last four are what the guide or FHIR lets any server do, and are what an app
 | `POST /api/sandbox/signing-key/rotate` | Replaces the key that signs retrieval addresses |
 
 Create a new sandbox with `POST {{ORIGIN}}/api/sandboxes`. The response has `base`, a path to add to the origin.
-
-Starting a guided tour resets a sandbox's policy, but keeps its registered apps, and other apps' tokens and approvals. `GET $SANDBOX/api/tours` lists the tours, with each one's steps and premise, the cast, and the protocol checks; `current` is the tour running here, if one is.
 
 ### The activity log
 
@@ -343,29 +339,13 @@ Every request any part of the sandbox answers is recorded as events, which the A
 | `GET $SANDBOX/api/activity/summary` | Rollups of the same events: counts by type, a timeline, sessions and studies |
 | `GET $SANDBOX/api/activity/span?session=&span=` | The request and response behind one event |
 
-Filters, on the first two: `session`, `study` (an `ImagingStudy.id`), `type`, `kind`, `outcome`, `who`, `trace` and `link`. A tour step or an Explore view has its own `session`; an app's own requests are in `unattributed@{sandbox id}`, or in the session named by the `baggage: demo.session=…` header they send. An event names the check that failed when something is refused, so `outcome=denied` with your session is the quickest answer to "why".
+Filters, on the first two: `session`, `study` (an `ImagingStudy.id`), `type`, `kind`, `outcome`, `who`, `trace` and `link`. An Explore view has its own `session`; an app's own requests are in `unattributed@{sandbox id}`, or in the session named by the `baggage: demo.session=…` header they send. An event names the check that failed when something is refused, so `outcome=denied` with your session is the quickest answer to "why".
 
 The activity log keeps a limited amount across the whole deployment, oldest first out, so read what you need soon after.
 
 ### The account page
 
 `$SANDBOX/account` is the Authorization Server's own page for a signed-in person: what they hold, sharing with a related person, stopping a share, and stopping an app. Its forms write the same policy as `/api/sandbox/policy/shares` and `/app-approvals`. It's there for a person driving the sandbox in a browser; an agent uses the management API.
-
-### Running a tour step yourself
-
-Everything the Tours page does, you can do with these calls. `begin` returns `{plan, session, trace}`. Send every request for the step with `traceparent: 00-{trace}-{16 hex}-01` and `baggage: demo.session={session}`, so the step's events land in its activity. Then `finish` with `{"seen": ...}`, using the fields below.
-
-| `plan.do` | What to do | `seen` |
-|---|---|---|
-| `sign-in` | An authorization code flow with PKCE as `plan.app`, with `plan.redirectUri`, `plan.scope` and `aud=plan.aud`, signing in as `plan.user`, choosing `plan.patient`, and approving `plan.sites` (all sites if absent). See "Sign in without a browser". Keep the token for later steps | `{"token":true,"patient":...,"expiresIn":...,"state":...}`, or `{"token":false,"error":...}` |
-| `search` | Search `{imaging}/ImagingStudy?{plan.query}` with `plan.as`'s token, following `next` links | `{"status":200,"studies":[{"id","uid","base"}]}`, with `base` the study's WADO-RS address; or `{"status":N}` |
-| `retrieve` | `GET plan.url` with `plan.as`'s token, and read the body | `{"status":N}` |
-| `service-search`, `service-retrieve` | As above, with a Backend Services token for `plan.client`, from its key in `GET /api/sandbox/keys-shared-on-purpose` | As above |
-| `management` | Each of `plan.calls` against `$SANDBOX/api/sandbox/policy{path}`, with the admin token | `{"statuses":[...]}` |
-| `referral-check` | Whether `plan.patientRef` is under `plan.clinicalFhir/Patient/` | `{"ok":true}` |
-| `none` | Nothing: the sandbox did it, such as moving its clock | `{}` |
-
-The checks only a sandbox can run, at the foot of the Server check page when it checks a sandbox (`{{ORIGIN}}/check?sandbox=/s/{id}`), have no step API. Each is a scenario a client runs against a fresh sandbox, using the calls above, `POST /api/sandbox/faults`, `POST /api/sandbox/clock` and `GET /api/sandbox/catalog`.
 
 ## Approving less at sign-in
 
@@ -454,18 +434,6 @@ interface ExploreView {   // GET /view: the studies a viewer may know of, and wh
 
 // GET /api/sandbox/catalog?patient=
 interface CatalogStudy { id: string; uid: string; site?: string; date?: string; instances: number; series: { uid: string; modality: string; instances: number }[] }
-
-// Tours, /api/sandbox/tours/*. begin answers { plan, session, trace }; finish takes { seen }.
-type Plan =
-  | { do: "sign-in"; user: string; patient: string; sites?: string[]; app: string; redirectUri: string; scope: string; aud: string }
-  | { do: "search"; as: string; query: string }
-  | { do: "retrieve"; as: string; url: string }
-  | { do: "service-search"; client: string; query: string }
-  | { do: "service-retrieve"; client: string; url: string }
-  | { do: "management"; calls: { method: string; path: string; body?: unknown }[] }
-  | { do: "referral-check"; referral: string; patientRef?: string; accession?: string; system?: string; clinicalFhir: string }
-  | { do: "none" };
-interface StepResult { ok: boolean; expected: string; actual: string; detail?: string; write?: string; eventCount: number; activityUrl: string }
 
 // Server checks, at the site's root: POST /api/checks, then GET /api/checks/{id}. See "Server check: run one for someone".
 interface CheckServer { label: string; iss: string; clientId: string; mode?: "launch" | "backend"; auth?: "public" | "private_key_jwt"; jwk?: JsonWebKey & { kid: string }; patient?: string; scope?: string; imaging?: string }

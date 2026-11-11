@@ -3,7 +3,7 @@
 // table of expected answers is drawn from this, and a test checks every answer here against real searches, so the
 // prose, the data and the behaviour can't disagree.
 import { PATIENT_NAMES, USERS } from "./auth-server";
-import { modelOf, refStudies } from "./tours";
+import { modelOf, refStudies } from "./reference";
 import { reportTitle } from "./referrals";
 import type { Faults, Sandbox } from "./sandbox";
 

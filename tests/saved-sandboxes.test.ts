@@ -9,7 +9,6 @@ import { startStack, type Stack } from "../src/stack";
 import { createDemoServer } from "../src/demo-server";
 import { registerClients } from "../src/flows";
 import { CONFIG } from "../src/config";
-import { APPROVALS_ON_FILE } from "../src/stores";
 import { adminFor } from "./admin-token";
 
 const dir = mkdtempSync(join(tmpdir(), "sandboxes-"));
@@ -61,7 +60,7 @@ test("past the open limit, a closed sandbox reopens from its file", () => {
   expect(sandbox(s, id).backend).toBe("orthanc");
   s.close();
 });
-test("a tour's or a check's sandbox leaves no file, and idles out", () => {
+test("a check's sandbox leaves no file, and idles out", () => {
   const s = sandboxes({ idleMs: 0 });
   const kept = s.mint({ saved: true }).id!, temporary = s.mint().id!;
   expect(existsSync(join(dir, `${temporary}.sqlite`))).toBe(false);
@@ -70,35 +69,6 @@ test("a tour's or a check's sandbox leaves no file, and idles out", () => {
   expect(s.has(temporary)).toBe(false);
   expect(s.has(kept)).toBe(true);
   s.close();
-});
-test("a tour started in someone's sandbox resets it and stays there", async () => {
-  const demo = createDemoServer(stack, registerClients(stack), join(import.meta.dir, ".."));
-  const w = stack.sandboxes.mint();
-  w.clock.advance(7200);
-  w.store.setNote("mine", "kept");
-  const before = stack.sandboxes.size;
-  const r = await demo.fetch(new Request(`${CONFIG.demoUrl}${w.prefix}/api/sandbox/tours/own/start`, { method: "POST", body: "{}", headers: { ...(await adminFor(demo, `${w.prefix}/api/sandbox`)), "content-type": "application/json" } }));
-  expect(r.status).toBe(201);
-  expect((await r.json() as any).sandbox.base).toBe(w.prefix);
-  expect(stack.sandboxes.size).toBe(before);
-  expect(w.clock.offset()).toBe(0);
-});
-test("a tour leaves other apps' tokens and approvals alone, and resets its own", async () => {
-  const demo = createDemoServer(stack, registerClients(stack), join(import.meta.dir, ".."));
-  const w = stack.sandboxes.mint();
-  const approval = (app: string) => ({ by: "user:josh", app, patient: "patient:josh-example" });
-  w.store.putApproval(approval("app:my-own-app"));
-  w.store.putApproval(approval("app:portal-app"));
-  const exp = w.clock.now() + 3600;
-  w.store.putToken("mine", "access", { client_id: "my-own-app", scope: "patient/*.rs", patient: "josh-example" } as any, exp);
-  w.store.putToken("tours", "access", { client_id: "portal-app", scope: "patient/*.rs", patient: "josh-example" } as any, exp);
-  const r = await demo.fetch(new Request(`${CONFIG.demoUrl}${w.prefix}/api/sandbox/tours/own/start`, { method: "POST", body: "{}", headers: { ...(await adminFor(demo, `${w.prefix}/api/sandbox`)), "content-type": "application/json" } }));
-  expect(r.status).toBe(201);
-  expect(w.store.getToken("mine", "access")).toBeDefined();
-  expect(w.store.getToken("tours", "access")).toBeUndefined();
-  // The other app's approval stays, and the tour's own app is back to what's on file, with no one's choice of sites.
-  const rows = (xs: { app: string; by: string; patient: string; sites?: string[] }[]) => xs.map(a => [a.app, a.by, a.patient, a.sites ?? null].join(" ")).sort();
-  expect(rows(w.store.approvals())).toEqual(rows([{ app: "app:my-own-app", by: "user:josh", patient: "patient:josh-example" }, ...APPROVALS_ON_FILE]));
 });
 test("only removal ends one, and it leaves no file", () => {
   const s = sandboxes();

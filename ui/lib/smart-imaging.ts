@@ -1,4 +1,4 @@
-// The client side of SMART Imaging Access, as the viewer, Explore and Tours all use it: search with paging, the
+// The client side of SMART Imaging Access, as the viewer and Explore use it: search with paging, the
 // study's WADO-RS address by Endpoint, retries the spec allows, and retrieval of one instance for the viewer.
 // Nothing here knows which page it's on: each passes how to make a request, so a page can record what it did.
 

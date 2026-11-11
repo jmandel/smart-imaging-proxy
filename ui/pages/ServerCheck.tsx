@@ -1,7 +1,7 @@
 // The server check: every step of SMART Imaging Access, and the refusals it promises, run against one server from
 // this page as far as it can go on its own, saying how far it got and why it stopped. It pauses only for a person
-// to sign in. A sandbox gets a second section, of checks only a sandbox can run. An agent can start a check for
-// its person through the API (src/check-runs.ts): the link it gives them opens here, and each step is reported back.
+// to sign in. An agent can start a check for its person through the API (src/check-runs.ts): the link it gives
+// them opens here, and each step is reported back.
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { announce, CopyButton } from "../lib/format";
@@ -11,9 +11,8 @@ import { useReady } from "../lib/ready";
 import { PageLink } from "../shell/Shell";
 import { SCOPE } from "../viewer/connect";
 import { useSteps, type Step } from "../viewer/trail";
-import { Abandoned, capital, kindOf, runCheck, sandboxOf, summary, WORD, type Line, type Mark } from "../check/run";
+import { Abandoned, capital, kindOf, runCheck, summary, WORD, type Line, type Mark } from "../check/run";
 import { download, markdown, reportOf, reportSteps } from "../check/report";
-import { SandboxChecks } from "../check/SandboxChecks";
 
 const GLYPH: Record<Mark, string> = { todo: "", running: "", paused: "…", pass: "✓", fail: "✕", skip: "–", note: "○", unreached: "" };
 /** A run an agent started: its server, without the private key, which stays on the site's server. */
@@ -131,7 +130,7 @@ function Run({ server, runId }: { server: RunServer; runId?: string }) {
   useReady(lines.length > 0);
   // The tab opens from the press itself, or the browser blocks it.
   const signIn = waiting && (() => { setWaiting(undefined); waiting(open("about:blank", "smart-imaging-sign-in")); });
-  const busy = lines.some(l => l.mark === "running"), said = summary(lines), sandbox = sandboxOf(server.iss);
+  const busy = lines.some(l => l.mark === "running"), said = summary(lines);
   const report = () => reportOf(server, said, lines);
   const save = () => { const { hasKey: _h, kid: _k, ...entry } = server; putServer(entry); setSaved(true); announce("Saved to Your servers."); };
   return <>
@@ -158,7 +157,6 @@ function Run({ server, runId }: { server: RunServer; runId?: string }) {
     </div>}
     <p className={`check-summary${busy ? "" : lines.some(l => l.mark === "fail") ? " bad" : finished && lines.every(l => l.mark === "pass" || l.mark === "note") ? " good" : ""}`} id="check-summary" role="status">{summary(lines, true)}</p>
     <ol className="check-steps">{lines.map((l, i) => <StepLine key={`${attempt}-${i}`} n={i + 1} line={l} server={server} signIn={l.mark === "paused" ? signIn : undefined} />)}</ol>
-    {sandbox !== undefined && <SandboxChecks base={sandbox} />}
   </>;
 }
 

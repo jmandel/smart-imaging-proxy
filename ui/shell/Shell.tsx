@@ -6,17 +6,13 @@ import { Link } from "react-router";
 import { useOneRow } from "./fit";
 import { api, BASE } from "../lib/api";
 import { enterSandbox, rememberName, useLinkedSandbox, useSandboxes, type KnownSandbox } from "../lib/store";
-import { openViewer, sandboxServer } from "../lib/servers";
 import { hrefOf, MENU, PAGES, REFERENCES, REPO, SANDBOX_GROUPS, SITE_TOOLS, type PageId } from "../sitemap";
 
-/** A link to a page of the map. The viewer, from a sandbox, opens on that sandbox. */
+/** A link to a page of the map, in `base`'s sandbox for a sandbox page: the viewer, from a sandbox, is that sandbox's own page. */
 export function PageLink({ id, base = BASE, current, children, className }: { id: PageId; base?: string; current?: PageId; children?: ReactNode; className?: string }) {
   const here = current === id ? { "aria-current": "page" as const } : {};
   // Its words, for the bold copy that keeps a menu item as wide as it is when it's the current page.
   const label = typeof (children ?? PAGES[id].name) === "string" ? { "data-label": (children ?? PAGES[id].name) as string } : {};
-  if (id === "viewer" && base) {
-    return <a href="/viewer" className={className} {...here} {...label} onClick={e => { e.preventDefault(); openViewer(sandboxServer(base)); }}>{children ?? PAGES.viewer.name}</a>;
-  }
   return <Link to={hrefOf(id, base)} className={className} {...here} {...label}>{children ?? PAGES[id].name}</Link>;
 }
 
