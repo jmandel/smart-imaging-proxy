@@ -295,3 +295,18 @@ describe("A long session's trace loads its newest requests first", () => {
     expect([...new Set(some.map(s => s.trace))].sort()).toEqual(newest);
   });
 });
+
+describe("A study names its patient where the Patient is", () => {
+  test("ImagingStudy.subject is an absolute reference to the clinical server's Patient, separate or unified, and it resolves", async () => {
+    for (const topology of ["separate", "unified"] as const) {
+      const w = stack.sandboxes.mint();
+      w.setTopology(topology);
+      const t = await scriptedLaunch("josh", "portal-app", { at: w.urls, scope: "launch/patient patient/*.rs" });
+      const at = topology === "unified" ? `${w.urls.auth}/fhir` : `${w.urls.imaging}/fhir`;
+      const b: any = await (await fetch(`${at}/ImagingStudy?patient=josh-example`, { headers: bearer(t) })).json();
+      const subjects = new Set(b.entry.filter((e: any) => e.resource.resourceType === "ImagingStudy").map((e: any) => e.resource.subject.reference));
+      expect([topology, [...subjects]]).toEqual([topology, [`${w.urls.auth}/fhir/Patient/josh-example`]]);
+      expect((await fetch([...subjects][0] as string, { headers: bearer(t) })).status).toBe(200);
+    }
+  });
+});
