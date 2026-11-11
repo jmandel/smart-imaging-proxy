@@ -15,7 +15,9 @@ import { reportAttachment, reportSearch, reportRead } from "./reports";
 
 /** What a token the admin gets as a person allows: what an app asks for at sign-in. */
 const PERSON_SCOPE = "launch/patient patient/*.rs";
-const IMAGING_CAPABILITIES = ["smart-imaging-access", "http://fhir.org/argonaut/smart-imaging/capabilities/app-launch", "http://fhir.org/argonaut/smart-imaging/capabilities/backend-services"];
+/** SMART Imaging's one capability string. Which ways in work is SMART's own metadata: grant_types_supported,
+ *  token_endpoint_auth_methods_supported, scopes_supported and SMART's own capabilities. */
+const IMAGING_CAPABILITIES = ["smart-imaging-access"];
 export interface Grant { client_id: string; scope: string; patient?: string; sub?: string; fhirUser?: string; family?: string; }
 
 export interface BackendClient { client_id: string; kid: string; privateKey: KeyObject; }

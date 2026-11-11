@@ -10,7 +10,7 @@ import { CONFIG, PORTS } from "../src/config";
 import { startStack, type Stack } from "../src/stack";
 
 setDefaultTimeout(30000);
-const CAPS = ["smart-imaging-access", "http://fhir.org/argonaut/smart-imaging/capabilities/app-launch"];
+const CAPS = ["smart-imaging-access"];
 let stack: Stack, demo: ReturnType<typeof Bun.serve>, fixture: ReturnType<typeof Bun.serve>, browser: Browser, sandbox: ReturnType<Stack["scopes"]["mint"]>;
 let clientId = "", FIX = "", trapHits = 0;
 const retried = new Set<string>();
@@ -50,7 +50,7 @@ beforeAll(async () => {
       const c: any = await (await fetch(`${real}/fhir/.well-known/smart-configuration`)).json();
       const base = { ...c, authorization_endpoint: `${FIX}/${kind}/authorize` }; delete base.associated_endpoints;
       if (kind === "unified") return json({ ...base, capabilities: [...c.capabilities, ...CAPS] });
-      if (kind === "no-launch") return json({ ...base, associated_endpoints: [{ url: `${FIX}/${kind}/imaging/fhir`, capabilities: ["smart-imaging-access"] }] });
+      if (kind === "no-launch") return json({ ...base, grant_types_supported: (base.grant_types_supported ?? []).filter((g: string) => g !== "authorization_code"), associated_endpoints: [{ url: `${FIX}/${kind}/imaging/fhir`, capabilities: CAPS }] });
       return json({ ...base, associated_endpoints: [{ url: `${FIX}/${kind}/imaging/fhir`, capabilities: CAPS }] });
     }
     if (path === "/authorize") { const to = new URL(`${real}/authorize${url.search}`); to.searchParams.set("aud", `${real}/fhir`); return Response.redirect(to.toString(), 302); }

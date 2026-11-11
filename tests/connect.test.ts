@@ -126,7 +126,8 @@ test("a sandbox can advertise imaging on its clinical server instead of a separa
   expect((await set.json() as any).topology.current).toBe("unified");
   const after = await config();
   expect(after.associated_endpoints).toBeUndefined();
-  expect(after.capabilities).toEqual(expect.arrayContaining(["smart-imaging-access", "http://fhir.org/argonaut/smart-imaging/capabilities/app-launch"]));
+  expect(after.capabilities).toContain("smart-imaging-access");
+  expect(after.capabilities.some((c: string) => c.startsWith("http://fhir.org/argonaut"))).toBe(false);
   expect((await fetch(`${w.urls.auth}/fhir/ImagingStudy?patient=josh-example`)).status).toBe(401);
   expect((await call("PATCH", `${w.prefix}/api/sandbox`, { topology: "nope" })).status).toBe(400);
   expect((await call("PATCH", "/api/sandbox", { topology: "unified" })).status).toBe(400);

@@ -58,11 +58,13 @@ beforeAll(async () => {
 afterAll(() => stack.stop());
 
 describe("Discovery and search", () => {
-  test("smart-imaging-access and mode capabilities are advertised", async () => {
+  test("smart-imaging-access is advertised, and the ways in by SMART's own metadata", async () => {
     says("SHALL advertise imaging support with the capability string **`smart-imaging-access`**");
-    says("SHALL additionally advertise `http://fhir.org/argonaut/smart-imaging/capabilities/backend-services`");
+    // The guide's mode capability URIs aren't advertised: SMART's grant_types_supported, auth methods and scopes
+    // already say which modes work, and an issue has been filed against the guide to drop them.
     const c: any = await (await fetch(`${CONFIG.authUrl}/fhir/.well-known/smart-configuration`)).json();
-    expect(c.associated_endpoints[0].capabilities).toEqual(expect.arrayContaining(["smart-imaging-access", "http://fhir.org/argonaut/smart-imaging/capabilities/app-launch", "http://fhir.org/argonaut/smart-imaging/capabilities/backend-services"]));
+    expect(c.associated_endpoints[0].capabilities).toEqual(["smart-imaging-access"]);
+    expect(c.scopes_supported).toContain("system/ImagingStudy.rs");
     expect(c.grant_types_supported).toEqual(expect.arrayContaining(["authorization_code", "client_credentials"]));
   });
   test("required and recommended search combinations work", async () => {

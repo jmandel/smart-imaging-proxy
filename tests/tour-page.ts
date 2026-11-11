@@ -54,9 +54,9 @@ export function tourPage(demo: Demo, base: string) {
         tokens[plan.user] = t.access_token;
         return { token: true, patient: t.patient, expiresIn: t.expires_in, state };
       }
-      case "search": return search(tokens[plan.as]!, plan.query, headers, "http://fhir.org/argonaut/smart-imaging/capabilities/app-launch");
+      case "search": return search(tokens[plan.as]!, plan.query, headers, "smart-imaging-access");
       case "retrieve": return retrieve(tokens[plan.as]!, plan.url, headers);
-      case "service-search": return search(await serviceToken(plan.client), plan.query, headers, "http://fhir.org/argonaut/smart-imaging/capabilities/backend-services");
+      case "service-search": return search(await serviceToken(plan.client), plan.query, headers, "smart-imaging-access");
       case "service-retrieve": return retrieve(await serviceToken(plan.client), plan.url, headers);
       case "referral-check": return { ok: !!plan.patientRef?.startsWith(`${plan.clinicalFhir}/Patient/`) };
       case "management": {

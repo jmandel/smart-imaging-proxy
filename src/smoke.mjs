@@ -42,7 +42,9 @@ try {
   // 4. Every page of the search, with each study's Endpoint.
   // The FHIR server itself, if it advertises imaging at the top level (a unified sandbox), or else the associated
   // endpoint that does. Never a hardcoded address: a sandbox can be switched between the two.
-  const offers = caps => caps?.includes("smart-imaging-access") && caps.includes("http://fhir.org/argonaut/smart-imaging/capabilities/app-launch");
+  // App launch is there when grant_types_supported has authorization_code: SMART's own metadata says which ways in work.
+  if (!conf.grant_types_supported?.includes("authorization_code")) throw new Error("discovery doesn't offer authorization_code");
+  const offers = caps => caps?.includes("smart-imaging-access");
   const imaging = offers(conf.capabilities) ? `${SANDBOX}/fhir` : conf.associated_endpoints?.find(e => offers(e.capabilities))?.url;
   if (!imaging) throw new Error("discovery advertises no SMART Imaging server for app launch");
   const entries = [];

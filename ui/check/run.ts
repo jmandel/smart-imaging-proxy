@@ -3,7 +3,7 @@
 // it fails; one they don't depend on fails and the run carries on. Nothing is saved, so the viewer is left as it was.
 import { diagnose, type Diagnosis } from "../lib/diagnose";
 import { bytes, plural } from "../lib/format";
-import { APP_LAUNCH, BACKEND_CAPABILITY, IMAGING, imagingOf, signsIn, type ServerEntry } from "../lib/servers";
+import { APP_LAUNCH, BACKEND_CAPABILITY, GRANT_FOR, IMAGING, imagingOf, signsIn, type ServerEntry } from "../lib/servers";
 import { fhirHeaders, NOT_IMAGES, onlyPart, patientFetch, searchAll, studiesFrom, viewerSeries, WADO_ACCEPT, type Bundle } from "../lib/smart-imaging";
 import { connectBackend, finishSignIn, signInAddress, signInReturn, type ConnectOptions } from "../viewer/connect";
 import { memoryKeeper, type Session } from "../viewer/session";
@@ -121,10 +121,10 @@ export async function runCheck(server: ServerEntry, { show, signIn, live, assert
 
   // 3. SMART Imaging, for this way of connecting, or the imaging server given under Advanced.
   step(2);
-  const capability = backend ? BACKEND_CAPABILITY : APP_LAUNCH, how = backend ? "backend services" : "app launch";
-  const found = imagingOf(config, server.iss, capability), imaging = (found?.url ?? server.imaging)?.replace(/\/$/, "");
+  const mode = backend ? BACKEND_CAPABILITY : APP_LAUNCH, how = backend ? "backend services" : "app launch";
+  const found = imagingOf(config, server.iss, mode), imaging = (found?.url ?? server.imaging)?.replace(/\/$/, "");
   const advertised: Seen[] = [
-    { ok: !!found, text: `${found && !found.unified ? "associated_endpoints[].capabilities" : "capabilities"} includes ${IMAGING} and ${capability}` },
+    { ok: !!found, text: `${found && !found.unified ? "associated_endpoints[].capabilities" : "capabilities"} includes ${IMAGING}, and grant_types_supported includes ${GRANT_FOR[mode]}` },
     ...(found ? [] : [{ ok: !!server.imaging, text: `the imaging server under Advanced${server.imaging ? `: ${server.imaging}` : " is set"}` }]),
   ];
   if (!imaging) return stop(2, `discovery doesn't advertise ${IMAGING} with ${how}, and no imaging server is set under Advanced`, { seen: advertised });

@@ -59,11 +59,16 @@ export function useServers(): ServerChoice[] {
 /** Opens the viewer with a server chosen, ending any session it had, ready to connect. */
 export const openViewer = (server: Pick<ServerEntry, "iss" | "clientId">) => launchViewer(server);
 
-export const IMAGING = "smart-imaging-access", APP_LAUNCH = "http://fhir.org/argonaut/smart-imaging/capabilities/app-launch";
-export const BACKEND_CAPABILITY = "http://fhir.org/argonaut/smart-imaging/capabilities/backend-services";
-/** Where discovery says imaging is, for a way of connecting: on this FHIR server, or an associated one. */
-export function imagingOf(config: any, iss: string, capability = APP_LAUNCH): { url: string; unified: boolean } | undefined {
-  const offers = (caps?: string[]) => !!caps?.includes(IMAGING) && caps.includes(capability);
+export const IMAGING = "smart-imaging-access";
+/** The two ways of connecting. Discovery says which work by SMART's own metadata: the grant each needs. */
+export const APP_LAUNCH = "app-launch", BACKEND_CAPABILITY = "backend-services";
+export type Mode = typeof APP_LAUNCH | typeof BACKEND_CAPABILITY;
+export const GRANT_FOR: Record<Mode, string> = { "app-launch": "authorization_code", "backend-services": "client_credentials" };
+/** Where discovery says imaging is, for a way of connecting: on this FHIR server, or an associated one, when the
+ *  server's grant_types_supported has that way's grant. */
+export function imagingOf(config: any, iss: string, mode: Mode = APP_LAUNCH): { url: string; unified: boolean } | undefined {
+  if (!(config.grant_types_supported ?? []).includes(GRANT_FOR[mode])) return undefined;
+  const offers = (caps?: string[]) => !!caps?.includes(IMAGING);
   if (offers(config.capabilities)) return { url: iss, unified: true };
   const associated = (config.associated_endpoints ?? []).find((e: any) => offers(e.capabilities));
   return associated && { url: associated.url.replace(/\/$/, ""), unified: false };

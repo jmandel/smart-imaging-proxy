@@ -171,11 +171,11 @@ export const policyFlows: Flow[] = [
     shows: "The main Backend Services case: real client assertions, a system-scoped token, and policy the proxy never sees.",
     steps: [
       {
-        id: "discover", title: "The service discovers the imaging endpoint", actor: "hand-referral-service", doc: `<p>Discovery follows the guide: <code>smart-imaging-access</code> and the Backend Services capability in <code>associated_endpoints</code>.</p>`,
+        id: "discover", title: "The service discovers the imaging endpoint", actor: "hand-referral-service", doc: `<p>Discovery: <code>smart-imaging-access</code> in <code>associated_endpoints</code>, and <code>client_credentials</code> in <code>grant_types_supported</code>, SMART's own way of saying Backend Services works.</p>`,
         run: async c => {
           const r = await c.json("hand-referral-service", "Read SMART configuration", `${c.urls.auth}/fhir/.well-known/smart-configuration`);
           const caps = r.body.associated_endpoints[0].capabilities;
-          c.check("Imaging and Backend Services capabilities are advertised", caps.includes("smart-imaging-access") && caps.includes("http://fhir.org/argonaut/smart-imaging/capabilities/backend-services"));
+          c.check("Imaging is advertised", caps.includes("smart-imaging-access"));
           c.check("client_credentials is advertised", r.body.grant_types_supported.includes("client_credentials"));
         },
       },
