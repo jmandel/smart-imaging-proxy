@@ -20,6 +20,8 @@ export interface EventQuery {
 export const EVENT_PAGE_MAX = 2000, EVENT_SUMMARY_MAX = 10000;
 
 export const DEFAULT_TRACE_DB = `${STORAGE}/traces.sqlite`;
+/** How many sessions a sandbox keeps before its oldest are the first to go, when the store is over its limits. */
+const FAIR_SHARE = 5;
 export const TRACE_LIMITS = { maxSessions: 100, maxSpansPerSession: 20000, maxBytes: 512 * 1024 * 1024 };
 
 export interface TraceStoreConfig { mode: "file" | "memory"; path?: string; maxSessions?: number; maxSpansPerSession?: number; maxBytes?: number; flushMs?: number; }
@@ -241,9 +243,16 @@ export class TraceStore {
     const count = { root: oldest.filter(s => !sandboxed(s.id)).length, sandboxed: oldest.filter(s => sandboxed(s.id)).length };
     let bytes = totals.bytes;
     const removed: string[] = [];
+    // Among sandboxes, fair shares: what goes first is the oldest of the sandboxes holding more than a few
+    // sessions, and last a sandbox's own app traffic (unattributed@{id}), which an app check grades from. So
+    // one busy sandbox's tours and views don't push out another's app's requests.
+    const sandboxOf = (id: string) => id.slice(id.lastIndexOf("@") + 1), held = new Map<string, number>();
+    for (const s of oldest) if (sandboxed(s.id)) held.set(sandboxOf(s.id), (held.get(sandboxOf(s.id)) ?? 0) + 1);
+    const rank = (id: string) => !sandboxed(id) ? 0 : id.startsWith("unattributed@") ? 2 : (held.get(sandboxOf(id)) ?? 0) > FAIR_SHARE ? 0 : 1;
+    const order = [...oldest].sort((a, b) => rank(a.id) - rank(b.id));
     this.db.transaction(() => {
       for (const kind of ["sandboxed", "root"] as const) {
-        for (const s of oldest) {
+        for (const s of order) {
           if (sandboxed(s.id) !== (kind === "sandboxed")) continue;
           if ((kind === "root" && count.root <= 1) || count.root + count.sandboxed <= 1) break;
           if (count[kind] <= this.maxSessions && bytes <= this.maxBytes) break;

@@ -296,6 +296,17 @@ describe("trace sessions belong to the sandbox that recorded them", () => {
     await settle();
     expect([...(stack.collector.sessions.get("unattributed")?.spans.values() ?? [])].some(x => x.name === "forged")).toBe(false);
   });
+  test("one busy sandbox can't push out another's app traffic: its own oldest sessions go first", () => {
+    const store = new TraceStore({ mode: "memory", maxSessions: 8, flushMs: 1 });
+    const span = (session: string, start: number, sandbox: string) => { const r = { session, trace: "t".repeat(32), span: `s${start}`, service: "demo" as const, kind: "check" as const, name: "n", start, end: start, attrs: {}, sandbox }; store.put(r, JSON.stringify(r)); store.flush(); };
+    span("unattributed@Q", 1, "Q"); span("explore-a@Q", 2, "Q");
+    for (let i = 0; i < 20; i++) span(`tour-${i}@B`, 10 + i, "B");
+    const ids = store.sessions().map(x => x.id);
+    expect(ids).toContain("unattributed@Q");
+    expect(ids).toContain("explore-a@Q");
+    expect(ids.filter(id => id.endsWith("@B")).length).toBe(6);
+    store.close();
+  });
   test("the root keeps its own budget of sessions, whatever the sandboxes do", () => {
     const store = new TraceStore({ mode: "memory", maxSessions: 2, flushMs: 1 });
     const span = (session: string, start: number, sandbox?: string) => { const r = { session, trace: "t".repeat(32), span: `s${start}`, service: "demo" as const, kind: "check" as const, name: "n", start, end: start, attrs: {}, ...(sandbox ? { sandbox } : {}) }; store.put(r, JSON.stringify(r)); store.flush(); };
