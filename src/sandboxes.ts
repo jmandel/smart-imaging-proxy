@@ -71,7 +71,8 @@ export function createSandboxes(shared: Shared, opts: { idleMs?: number; max?: n
     const sandbox = createSandbox({ id, store, clock, shared });
     const pool = poolOf(id);
     pool.live.set(id, { sandbox, usedAt: Date.now(), saved: persist });
-    while (pool.live.size > pool.max) evict(pool.live.keys().next().value!);
+    // The oldest goes first, but not one with an app check running: closing it would end the run's staging.
+    while (pool.live.size > pool.max) { const keys = [...pool.live.keys()]; evict(keys.find(k => k !== id && !pool.live.get(k)!.sandbox.appCheck) ?? keys[0]!); }
     return sandbox;
   }
   return {

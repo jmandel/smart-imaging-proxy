@@ -148,11 +148,29 @@ export function createSandbox(o: { id?: string; store: PolicyStore; clock: DemoC
     ...(o.proxyReadsTokens === false ? {} : { tokenLive: (token: string) => { const t = store.getToken(token, "access"); return !!t && !t.revoked && (t.exp === undefined || t.exp > clock.now()); } }) });
 
   let appCheck: AppCheckOn | undefined;
-  const clearRuntime = () => { auth.reset(); imaging.reset(); proxy.reset(); truncateAfter = undefined; appCheck = undefined; };
   const faults = (): Faults => {
     const s = imaging.staged;
     return { decisionOutage: imaging.outage, truncateAfter: truncateAfter ?? null, pageSize: s.pageSize ?? null, searchRetryAfter: s.retryAfter ?? null, retrievalRetryAfter: proxy.retryAfter ?? null, endpointForms: !!s.endpointForms };
   };
+  // Faults and a running app check are kept in the store's notes too, so a restart, or a saved sandbox closed
+  // and opened again, doesn't drop them silently: the faults come back, and a check the restart cut off puts
+  // the sandbox back as it was before the run, since its timer and evidence window are gone.
+  const readNote = <T>(key: string): T | undefined => { const v = store.note(key); if (!v) return undefined; try { return JSON.parse(v) as T; } catch { return undefined; } };
+  const saveFaults = () => store.setNote("faults", JSON.stringify(faults()));
+  function applyFaults(f: Partial<Faults>) {
+    if (f.decisionOutage !== undefined) imaging.setOutage(f.decisionOutage);
+    if (f.truncateAfter !== undefined) truncateAfter = f.truncateAfter ?? undefined;
+    if (f.pageSize !== undefined || f.searchRetryAfter !== undefined || f.endpointForms !== undefined) {
+      const was = faults(), pageSize = f.pageSize !== undefined ? f.pageSize : was.pageSize, retryAfter = f.searchRetryAfter !== undefined ? f.searchRetryAfter : was.searchRetryAfter;
+      imaging.setStaged({ ...(pageSize ? { pageSize } : {}), ...(retryAfter ? { retryAfter } : {}), ...((f.endpointForms ?? was.endpointForms) ? { endpointForms: true } : {}) });
+    }
+    if (f.retrievalRetryAfter !== undefined) proxy.setRetryAfter(f.retrievalRetryAfter ?? undefined);
+  }
+  const savedFaults = readNote<Partial<Faults>>("faults"), cutOff = readNote<{ before: Partial<Faults> }>("appCheck");
+  if (savedFaults) applyFaults(savedFaults);
+  if (cutOff) { applyFaults(cutOff.before); saveFaults(); store.setNote("appCheck", ""); }
+  /** Forgets what's in flight and every fault, here and in the notes. */
+  const clearRuntime = () => { auth.reset(); imaging.reset(); proxy.reset(); truncateAfter = undefined; appCheck = undefined; store.setNote("faults", ""); store.setNote("appCheck", ""); };
   return {
     id: o.id, prefix, urls, store, clock, auth, imaging, proxy, clients,
     /** This sandbox's admin client, whose token manages it. */
@@ -172,21 +190,14 @@ export function createSandbox(o: { id?: string; store: PolicyStore; clock: DemoC
     /** Back to what's on file, keeping what registered services were granted. */
     async resetPolicy() { await policy.reset(); restoreGrants(store); },
     backends: shared.backends,
-    setTruncateAfter(n: number | undefined) { truncateAfter = n; },
+    setTruncateAfter(n: number | undefined) { truncateAfter = n; saveFaults(); },
     faults,
     /** Sets the faults given, leaving the rest. Staging any of the last four starts it afresh, so first searches and retrievals are first again. */
-    setFaults(f: Partial<Faults>) {
-      if (f.decisionOutage !== undefined) imaging.setOutage(f.decisionOutage);
-      if (f.truncateAfter !== undefined) truncateAfter = f.truncateAfter ?? undefined;
-      if (f.pageSize !== undefined || f.searchRetryAfter !== undefined || f.endpointForms !== undefined) {
-        const was = faults(), pageSize = f.pageSize !== undefined ? f.pageSize : was.pageSize, retryAfter = f.searchRetryAfter !== undefined ? f.searchRetryAfter : was.searchRetryAfter;
-        imaging.setStaged({ ...(pageSize ? { pageSize } : {}), ...(retryAfter ? { retryAfter } : {}), ...((f.endpointForms ?? was.endpointForms) ? { endpointForms: true } : {}) });
-      }
-      if (f.retrievalRetryAfter !== undefined) proxy.setRetryAfter(f.retrievalRetryAfter ?? undefined);
-    },
+    setFaults(f: Partial<Faults>) { applyFaults(f); saveFaults(); },
     /** The app check run that's on here, if one is. */
     get appCheck() { return appCheck; },
-    setAppCheck(on: AppCheckOn | undefined) { appCheck = on; },
+    /** `before` is the faults to put back if a restart cuts the run off. */
+    setAppCheck(on: AppCheckOn | undefined, before?: Partial<Faults>) { appCheck = on; store.setNote("appCheck", on ? JSON.stringify({ on, before: before ?? {} }) : ""); },
     /** Replaces the signing key, then tells the proxy over HTTP, so it stops trusting the old one now. A proxy that isn't told learns within its TTL. */
     async rotateSigningKey() {
       const kid = imaging.rotateSigningKey();
@@ -204,7 +215,8 @@ export function createSandbox(o: { id?: string; store: PolicyStore; clock: DemoC
     /** Tokens expire by this sandbox's clock. */
     purgeTokens: () => store.purgeExpiredTokens(clock.now()),
     clearRuntime,
-    close() { clearRuntime(); store.close(); },
+    /** Closes it, keeping its faults and any running check in its notes, for when it's opened again. */
+    close() { auth.reset(); imaging.reset(); proxy.reset(); store.close(); },
   };
 }
 export type Sandbox = ReturnType<typeof createSandbox>;

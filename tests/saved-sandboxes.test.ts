@@ -33,6 +33,25 @@ test("a sandbox comes back after a restart, with its clock, backend, and policy"
   expect(back.store.note("marker")).toBe("kept");
   back.close();
 });
+test("faults survive a restart, and an app check a restart cut off puts the sandbox back as it was before the run", () => {
+  const first = sandboxes();
+  const w = first.mint({ saved: true }), id = w.id!;
+  w.setFaults({ decisionOutage: true, pageSize: 2 });
+  first.close();
+  const back = sandbox(sandboxes(), id);
+  expect(back.faults()).toMatchObject({ decisionOutage: true, pageSize: 2, searchRetryAfter: null });
+  // A run stages its conditions over what was there; the restart ends it, and only the run's staging goes.
+  const before = back.faults();
+  back.setAppCheck({ run: "r1", client: "app-x", script: "s", staged: [], startedAt: "", endsAt: "" }, { pageSize: before.pageSize, searchRetryAfter: null, retrievalRetryAfter: null, endpointForms: false });
+  back.setFaults({ pageSize: 1, searchRetryAfter: 1, retrievalRetryAfter: 1, endpointForms: true });
+  back.close();
+  const again = sandbox(sandboxes(), id);
+  expect(again.appCheck).toBeUndefined();
+  expect(again.faults()).toEqual({ decisionOutage: true, truncateAfter: null, pageSize: 2, searchRetryAfter: null, retrievalRetryAfter: null, endpointForms: false });
+  again.clearRuntime();
+  again.close();
+  expect(sandbox(sandboxes(), id).faults()).toMatchObject({ decisionOutage: false, pageSize: null });
+});
 test("past the open limit, a closed sandbox reopens from its file", () => {
   const s = sandboxes({ max: 1 });
   const a = s.mint({ saved: true }), id = a.id!;

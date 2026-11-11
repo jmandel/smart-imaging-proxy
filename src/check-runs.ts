@@ -166,9 +166,9 @@ export function createCheckRuns({ now = Date.now, site }: { now?: () => number; 
     if (!listClients(sandbox.store).some(c => c.id === r.app.clientId)) return json({ error: "the app is no longer registered in this sandbox" }, 409);
     const t = now();
     // Claimed before anything is awaited, so two starts can't both take the sandbox.
-    sandbox.setAppCheck({ run: r.id, client: r.app.clientId, script: r.app.script, staged: CONDITIONS.filter(c => r.app.conditions.includes(c.id)).map(c => c.text), startedAt: iso(t), endsAt: iso(t + APP_WINDOW_MS) });
     const was = sandbox.faults();
     r.before = Object.fromEntries(STAGED_FAULTS.map(k => [k, was[k]]));
+    sandbox.setAppCheck({ run: r.id, client: r.app.clientId, script: r.app.script, staged: CONDITIONS.filter(c => r.app.conditions.includes(c.id)).map(c => c.text), startedAt: iso(t), endsAt: iso(t + APP_WINDOW_MS) }, r.before);
     r.since = await site!.mark(id);
     sandbox.setFaults(faultsFor(r.app.conditions));
     Object.assign(r, { status: "running", startedAt: t, endsAt: t + APP_WINDOW_MS, updatedAt: t });

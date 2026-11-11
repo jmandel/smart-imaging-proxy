@@ -173,11 +173,33 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
   });
   const clientOf = (id: string) => PUBLIC_CLIENTS[id] ?? opts.registeredClient?.(id);
   const txns = new Map<string, { client_id: string; redirect_uri: string; state: string; scope: string; code_challenge: string; exp: number; user?: string; login_hint?: string; patient_hint?: string }>();
-  const accountSessions = new Map<string, string>();
-  const decidedBy = new Map<string, string>();
+  /** Account page sessions, by id: who, and when they signed in, in real time. */
+  const accountSessions = new Map<string, { name: string; at: number }>();
+  /** Who signed in for an authorization request's state, and when, in real time. For the demo's own reporting. */
+  const decidedBy = new Map<string, { user: string; at: number }>();
   let lastAccountSignIn: string | undefined;
-  const usedJti = new Set<string>();
+  /** Each assertion id seen, until the assertion expires (in real time): after that, its exp refuses it anyway. */
+  const usedJti = new Map<string, number>();
   const codes = new Map<string, { grant: Grant; client_id: string; redirect_uri: string; code_challenge: string; exp: number }>();
+  /**
+   * What's held for sign-ins in progress is let go once it can't be used: a pending authorization request or a
+   * code past its expiry, an assertion id past its assertion's, and a session or a record of who signed in after
+   * a day. A request that's never decided would otherwise be held until the sandbox closes. Each is also capped,
+   * dropping the oldest, so a loop of requests can't grow it without bound.
+   */
+  const DAY = 86400, HELD_MAX = 5000;
+  let sinceSweep = 0;
+  function sweep(force = false) {
+    if (!force && ++sinceSweep < 100 && txns.size < HELD_MAX && usedJti.size < HELD_MAX) return;
+    sinceSweep = 0;
+    const t = now(), real = realNow();
+    for (const [k, v] of txns) if (v.exp <= t) txns.delete(k);
+    for (const [k, v] of codes) if (v.exp <= t) codes.delete(k);
+    for (const [k, exp] of usedJti) if (exp < real) usedJti.delete(k);
+    for (const [k, v] of decidedBy) if (v.at < real - DAY) decidedBy.delete(k);
+    for (const [k, v] of accountSessions) if (v.at < real - DAY) accountSessions.delete(k);
+    for (const m of [txns, codes, decidedBy, accountSessions] as Map<string, unknown>[]) for (const k of m.keys()) { if (m.size <= HELD_MAX) break; m.delete(k); }
+  }
   const backendKeys = new Map<string, { kid: string; publicKey: KeyObject; scopes: string[] }>();
 
   const issue = (given: Grant, withRefresh: boolean, grantType: string) => {
@@ -239,7 +261,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     const algorithm = ALGORITHMS[head.alg]!;
     const ok = verify(algorithm.hash, Buffer.from(`${h}.${b}`), { key: reg!.publicKey, ...(algorithm.ieee ? { dsaEncoding: "ieee-p1363" as const } : {}) }, Buffer.from(s!, "base64url"));
     check("authorization-server", "client assertion signature verifies", ok, { client: claims.iss, kid: head.kid, alg: head.alg });
-    if (ok) usedJti.add(claims.jti);
+    if (ok) usedJti.set(claims.jti, claims.exp);
     return ok ? { client_id: claims.iss as string, scopes: reg!.scopes } : { failed: "client assertion signature verifies, with the registered key" };
   }
 
@@ -364,7 +386,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     if (!check("authorization-server", "user has signed in", !!t.txn.user)) return page("Authorization error", "<h1>Sign in first</h1>", 401);
     const txn = t.txn;
     txns.delete(t.id);
-    decidedBy.set(txn.state, txn.user!);
+    decidedBy.set(txn.state, { user: txn.user!, at: realNow() });
     const f = new URLSearchParams(await req.text());
     const back = new URL(txn.redirect_uri);
     back.searchParams.set("state", txn.state);
@@ -410,7 +432,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
   // Every account_session cookie the browser sends: a scope's and the root's can both reach a scope's
   // path, and a stale one from a dropped scope can come first. This sandbox uses the one it knows.
   const sessionIds = (req: Request) => [...(req.headers.get("cookie") ?? "").matchAll(/(?:^|;\s*)account_session=([^;]*)/g)].map(m => m[1]!);
-  const accountUser = (req: Request) => sessionIds(req).map(id => accountSessions.get(id)).find(Boolean);
+  const accountUser = (req: Request) => sessionIds(req).map(id => accountSessions.get(id)?.name).find(Boolean);
   const appName = (id: string) => clientOf(id)?.name ?? id;
 
   async function account(url: URL, req: Request): Promise<Response> {
@@ -458,7 +480,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
       const name = signIn(f);
       if (!name) return page("Sign in", `<h1>Sign in to your account</h1>${await signInForm(`${P}/account/signin${q}`, url.searchParams.get("login_hint") ?? "", NOT_AN_ACCOUNT)}`, 401);
       const id = randomBytes(24).toString("base64url");
-      accountSessions.set(id, name);
+      accountSessions.set(id, { name, at: realNow() });
       lastAccountSignIn = name;
       return new Response(null, { status: 303, headers: { Location: `${P}/account${q}`, "Set-Cookie": `account_session=${id}; HttpOnly; SameSite=Lax; Path=${P || "/"}` } });
     }
@@ -484,6 +506,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
   }
 
   const fetchHandler = traced("authorization-server", async (req: Request): Promise<Response> => {
+    sweep();
     const url = new URL(req.url);
     const tokenUrl = `${opts.issuer}/token`;
     const browserForm = req.method === "POST" && (url.pathname === "/authorize/signin" || url.pathname === "/authorize/decision" || url.pathname.startsWith("/account/"));
@@ -648,7 +671,9 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     /** What was granted to this access token, including who signed in. For the demo's own reporting. */
     grantOf(token: string): Grant | undefined { return opts.store().getToken(token, "access"); },
     /** Who signed in for the authorization request with this `state`. For the demo's own reporting. */
-    signedInFor(state: string) { return decidedBy.get(state); },
+    signedInFor(state: string) { return decidedBy.get(state)?.user; },
+    /** How many sign-in records are held, after letting go of what can't be used. For tests. */
+    held() { sweep(true); return { txns: txns.size, codes: codes.size, usedJti: usedJti.size, decidedBy: decidedBy.size, accountSessions: accountSessions.size }; },
     /** Who last signed in on the account page. For the demo's own reporting. */
     get lastAccountSignIn() { return lastAccountSignIn; },
     /** Clears in-flight sign-ins and account sessions. Token records belong to the stores. */

@@ -265,3 +265,15 @@ describe("The gateway's reasons", async () => {
     }
   });
 });
+
+describe("Sign-ins in progress aren't held forever", async () => {
+  const { advance, resetClock } = await import("../src/clock");
+  const { buildAuthorization } = await import("../src/flows/oauth");
+  test("a pending request is let go once it expires, and the number held is capped", async () => {
+    const before = stack.auth.held().txns;
+    for (let i = 0; i < 20; i++) await fetch(buildAuthorization(conf.authorization_endpoint, "portal-app").url);
+    expect(stack.auth.held().txns).toBe(before + 20);
+    advance(601);
+    try { expect(stack.auth.held().txns).toBe(0); } finally { resetClock(); }
+  });
+});

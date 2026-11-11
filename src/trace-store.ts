@@ -107,6 +107,7 @@ export class TraceStore {
       CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY, session TEXT NOT NULL, sandbox TEXT, trace TEXT NOT NULL, span TEXT, service TEXT NOT NULL, at REAL NOT NULL, kind TEXT NOT NULL, outcome TEXT NOT NULL, who TEXT, links TEXT NOT NULL, data TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS events_by_session ON events (session, seq);
       CREATE INDEX IF NOT EXISTS events_by_kind ON events (kind, seq);
+      CREATE INDEX IF NOT EXISTS events_by_sandbox ON events (sandbox, kind, seq);
       PRAGMA user_version = 1;
     `);
     this.db = db;
