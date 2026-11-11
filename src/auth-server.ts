@@ -95,7 +95,7 @@ export interface Directory {
  *  click on Approve is always the person's own. (form-action is left out: it would also govern the redirect back to the app.) */
 const PAGE_HEADERS = {
   "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'",
-  "x-frame-options": "DENY", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "cache-control": "no-store",
+  "x-frame-options": "DENY", "x-content-type-options": "nosniff", "referrer-policy": "same-origin", "cache-control": "no-store",
 };
 const PAGE_CSS = `
 :root{color-scheme:light dark;--bg:#e9f0f5;--panel:#fbfdfe;--ink:#13242f;--muted:#4f6675;--line:#cfdbe3;--accent:#0a6a9c;--accent-soft:#d9e9f2;--bad:#ad2f28;--bad-soft:#f8e2df;--warn:#845800;--warn-soft:#f6ebcd;--code:#e3ebf0}

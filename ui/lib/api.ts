@@ -1,6 +1,13 @@
 // The sandbox a page is in, and calls to it. The management API, under /api/sandbox, takes the sandbox's admin
 // token, which the page gets itself, with the sandbox's own admin key, as SMART Backend Services.
 
+/** The browser's Web Crypto, which exists only in a secure context: https, or localhost/127.0.0.1. Over plain http
+ *  to any other address there's none, so PKCE and signing can't work, and saying so beats a TypeError. */
+export function subtle(): SubtleCrypto {
+  if (globalThis.isSecureContext === false || !globalThis.crypto?.subtle) throw new Error(`This page isn't a secure context (${location.origin}), so the browser offers no Web Crypto for PKCE or signing. Open it over https, or at localhost or 127.0.0.1.`);
+  return crypto.subtle;
+}
+
 /**
  * The sandbox the page shown is in, if any: every request it makes stays there. "" is the site's root. It follows
  * the address as the app moves between pages, so read it when it's used, never into a constant at load.
@@ -38,10 +45,10 @@ export type PrivateJwk = JsonWebKey & { kid: string };
 
 /** A client assertion for `tokenEndpoint`, signed here with the client's private ES256 key, expiring by the sandbox's clock when given. */
 export async function signAssertion(jwk: PrivateJwk, clientId: string, tokenEndpoint: string, now = Math.floor(Date.now() / 1000)) {
-  const key = await crypto.subtle.importKey("jwk", jwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
+  const key = await subtle().importKey("jwk", jwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
   const jti = b64url(crypto.getRandomValues(new Uint8Array(16)));
   const head = `${jsonPart({ alg: "ES256", kid: jwk.kid, typ: "JWT" })}.${jsonPart({ iss: clientId, sub: clientId, aud: tokenEndpoint, exp: now + 240, jti })}`;
-  const signature = new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, new TextEncoder().encode(head)));
+  const signature = new Uint8Array(await subtle().sign({ name: "ECDSA", hash: "SHA-256" }, key, new TextEncoder().encode(head)));
   return `${head}.${b64url(signature)}`;
 }
 

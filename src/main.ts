@@ -50,6 +50,8 @@ if (whole) {
   stopping = () => { demoServers.forEach(s => s.stop(true)); stack.stop(); };
   const info = stack.store.info();
   console.log(`SMART Imaging Proxy: ${CONFIG.demoUrl}${TAILNET ? " (tailnet)" : ""}`);
+  // A browser offers Web Crypto only in a secure context: plain http to a tailnet address isn't one, so PKCE and signing fail there.
+  if (TAILNET && CONFIG.demoUrl.startsWith("http://")) console.warn(`Note: ${CONFIG.demoUrl} is plain http to a tailnet address, which browsers don't treat as secure: the viewer and Connect pages can't do PKCE or sign there. Use http://127.0.0.1 on this machine, DEMO_TAILNET=0, or put https in front (tailscale serve).`);
   console.log(`Explore: ${CONFIG.demoUrl}/explore`);
   console.log(`Activity: ${CONFIG.demoUrl}/activity`);
   console.log(`Live trace: ${CONFIG.demoUrl}/trace/`);

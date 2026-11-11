@@ -1,5 +1,6 @@
 // Connecting: a standalone SMART App Launch with PKCE, in a tab of its own, or as a backend service with a
 // signed assertion and no one signing in. Each request is a step on the trail.
+import { subtle } from "../lib/api";
 import { ASSERTION_TYPE, b64url, signAssertion } from "../lib/api";
 import { BACKEND_CAPABILITY, imagingOf, VIEWER_URL, type ServerEntry } from "../lib/servers";
 import { viewerKeeper, type Keeper, type Session } from "./session";
@@ -33,7 +34,7 @@ export async function signInAddress(trail: Trail, server: ServerEntry, { keeper 
   // Nobody signs in to a server this app can't use.
   if (!imagingOf(config, iss) && !server.imaging) throw new Error(NO_LAUNCH);
   const verifier = random(), state = random();
-  const challenge = b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
+  const challenge = b64url(new Uint8Array(await subtle().digest("SHA-256", new TextEncoder().encode(verifier))));
   keeper.save({ pending: { verifier, state, config, iss, clientId, imaging: server.imaging, label: server.label, jwk: server.jwk } });
   const url = new URL(config.authorization_endpoint);
   Object.entries({ response_type: "code", client_id: clientId, redirect_uri: VIEWER_URL, scope, aud: iss, state, code_challenge: challenge, code_challenge_method: "S256" }).forEach(([k, v]) => url.searchParams.set(k, v));

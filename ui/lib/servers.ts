@@ -1,5 +1,6 @@
 // The servers the viewer can connect to: your sandboxes, and servers of your own kept in this browser. Your
 // servers writes them and the viewer reads them, so both agree on what an entry must hold.
+import { subtle } from "./api";
 import type { PrivateJwk } from "./api";
 import { checkServer, type ServerEntry } from "./server-entry";
 import { store, stored, useSandboxes } from "./store";
@@ -75,7 +76,7 @@ export function imagingOf(config: any, iss: string, mode: Mode = APP_LAUNCH): { 
 }
 /** A fresh ES256 pair, made here, so the server only ever sees the public half. */
 export async function generateKey(): Promise<{ priv: PrivateJwk; pub: JsonWebKey & { kid: string } }> {
-  const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
-  const kid = crypto.randomUUID(), [priv, pub] = await Promise.all([crypto.subtle.exportKey("jwk", pair.privateKey), crypto.subtle.exportKey("jwk", pair.publicKey)]);
+  const pair = await subtle().generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+  const kid = crypto.randomUUID(), [priv, pub] = await Promise.all([subtle().exportKey("jwk", pair.privateKey), subtle().exportKey("jwk", pair.publicKey)]);
   return { priv: { ...priv, kid }, pub: { kty: pub.kty, crv: pub.crv, x: pub.x, y: pub.y, kid } };
 }

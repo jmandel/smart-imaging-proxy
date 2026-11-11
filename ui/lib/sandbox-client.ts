@@ -2,6 +2,7 @@
 // retrieval with the tokens this page holds, a service's own Backend Services token, and the sandbox's
 // management API. Every request carries the page's trace session, and the trace it's part of, so the activity
 // log shows what the page did, and how the proxy decided each retrieval.
+import { subtle } from "./api";
 import { api, b64url, backendToken, keysOf } from "./api";
 import { APP_LAUNCH, imagingOf } from "./servers";
 import { fhirHeaders, patientFetch, searchAll, studiesFrom, type Study } from "./smart-imaging";
@@ -82,7 +83,7 @@ export function sandboxClient(base: string, session: string) {
     const o = { app: "portal-app", redirectUri: `${location.origin}${base}/oauth/callback`, scope: DEFAULT_SCOPE, aud: fhirBase, ...given };
     const config = await discovery(), headers = headersFor(trace);
     const verifier = b64url(crypto.getRandomValues(new Uint8Array(32))), state = b64url(crypto.getRandomValues(new Uint8Array(16)));
-    const challenge = b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
+    const challenge = b64url(new Uint8Array(await subtle().digest("SHA-256", new TextEncoder().encode(verifier))));
     // A redirect can't carry trace headers, so the demo's own fields name the session, as the server's flows do.
     const q = new URLSearchParams({ response_type: "code", client_id: o.app, redirect_uri: o.redirectUri, scope: o.scope, state, aud: o.aud, code_challenge: challenge, code_challenge_method: "S256", login_hint: o.user, ...(o.patient ? { demo_patient: o.patient } : {}), demo_traceparent: headers.traceparent, demo_session: session });
     const back = await authorize(`${config.authorization_endpoint}?${q}`, o);
