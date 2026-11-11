@@ -142,6 +142,7 @@ a.tool { display:inline-flex; align-items:center; justify-content:center; color:
 #register .client-type label { font-weight:600; margin:.35rem 0 0; }
 .client-type span { display:block; font-weight:400; color:var(--muted); font-size:.85rem; margin-left:1.5rem; }
 #register textarea { width:100%; font:.8rem/1.4 var(--mono); color:inherit; background:var(--plate); border:1px solid var(--line); border-radius:6px; padding:.45rem .55rem; }
+#register textarea:disabled { opacity:.55; cursor:not-allowed; }
 #register select { width:100%; }
 #register input[type=text], #register input[type=url] { width:100%; background:var(--plate); border:1px solid var(--line); border-radius:6px; padding:.5rem .6rem; font:inherit; color:inherit; }
 #register .note { color:var(--muted); font-size:.85rem; margin:.3rem 0 .7rem; }
@@ -482,7 +483,7 @@ a.path p:not(.path-kicker) { color:var(--muted); }
 .wizard-nav { display:flex; gap:.6rem; justify-content:space-between; margin:1.5rem 0 0; padding-top:1rem; border-top:1px solid var(--line); }
 .wizard-nav .primary { margin-left:auto; }
 /* A checkbox and its words, aligned on the first line, with room before what follows. */
-label.check { display:flex; align-items:baseline; flex-wrap:wrap; gap:.25rem .5rem; margin:.4rem 0 1rem; font-weight:500; }
+#register label.check, label.check { display:flex; align-items:baseline; flex-wrap:wrap; gap:.25rem .5rem; margin:.4rem 0 1rem; font-weight:500; }
 label.check input { align-self:center; margin:0; width:1.1rem; height:1.1rem; }
 label.check code { font-size:.85em; }
 

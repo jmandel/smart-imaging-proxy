@@ -76,9 +76,14 @@ export function addClient(store: PolicyStore, input: { name?: unknown; type?: un
   const client: RegisteredClient = { id: `app-${randomBytes(6).toString("hex")}`, name, type, redirectUris: [] };
   if (type !== "backend") {
     const uris = input.redirectUris;
-    if (!Array.isArray(uris) || !uris.length || uris.length > 10) return { error: "give between 1 and 10 redirect URIs" };
-    for (const uri of uris) { const problem = redirectProblem(uri); if (problem) return { error: problem }; }
-    client.redirectUris = uris.map(String);
+    if (!Array.isArray(uris) || !uris.length || uris.length > 10) return { error: 'give between 1 and 10 redirect URIs, or ["*"] to allow any redirect URI' };
+    if (uris.includes("*")) {
+      if (uris.length > 1) return { error: 'a redirect URI of "*" allows any redirect URI, so give ["*"] on its own, or list specific redirect URIs' };
+      client.redirectUris = ["*"];
+    } else {
+      for (const uri of uris) { const problem = redirectProblem(uri); if (problem) return { error: problem }; }
+      client.redirectUris = [...new Set(uris.map(String))];
+    }
   }
   if (type !== "public") {
     if (typeof input.jwksUrl === "string" && input.jwksUrl) {

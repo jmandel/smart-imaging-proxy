@@ -1,10 +1,9 @@
-// Registering an app in a sandbox, and trying it in our viewer: the Register an app page and Build an App's
-// wizard both use these. A key made here stays in this browser.
+// Registering an app in a sandbox: the Register an app page, Build an App's wizard, and App check all use these.
+// A key made here stays in this browser, for the app developer to copy.
 import { useEffect, useState, type FormEvent } from "react";
 import { api, type PrivateJwk } from "../lib/api";
 import { Address, announce, Choice, CopyButton } from "../lib/format";
-import { generateKey, savedServers, saveServers, VIEWER_URL, type ServerEntry } from "../lib/servers";
-import { launchViewer } from "../lib/launch";
+import { generateKey } from "../lib/servers";
 import { store, stored } from "../lib/store";
 
 export type ClientType = "public" | "confidential" | "backend";
@@ -22,19 +21,9 @@ const PATIENTS = ["josh-example", "sam-example", "riley-example", "robin-example
 /** A sandbox's FHIR base. */
 const fhirBaseOf = (base: string) => `${location.origin}${base}/fhir`;
 
-/** Whether the viewer can act as this client: it holds the key, and for sign-in, the viewer's address is registered. */
-export const canTry = (c: Client) => (c.type === "public" || !!savedKeys()[c.id]) && (c.type === "backend" || c.redirectUris.includes(VIEWER_URL));
-/** The viewer, connecting at once as this app: the sign-in tab, if any, opens from this click. */
-export function tryInViewer(c: Client, base: string) {
-  const jwk = savedKeys()[c.id];
-  const entry: ServerEntry = { label: c.name, iss: fhirBaseOf(base), clientId: c.id, ...(c.type === "backend" ? { mode: "backend" as const, jwk, patient: c.patients === "any" ? "josh-example" : c.patients, scope: "system/ImagingStudy.rs" } : c.type === "confidential" ? { auth: "private_key_jwt" as const, jwk } : {}) };
-  saveServers([...savedServers().filter(s => s.clientId !== c.id), entry]);
-  launchViewer(entry, { connect: true });
-}
-
-/** A registered app: what its developer needs, and trying it in the viewer. */
+/** A registered app, with the details its developer needs to connect it. */
 export function Registered({ c, base, removed }: { c: Client; base: string; removed: () => void }) {
-  const key = savedKeys()[c.id], fhirBase = fhirBaseOf(base);
+  const key = savedKeys()[c.id], fhirBase = fhirBaseOf(base), openRedirect = c.redirectUris.includes("*");
   const remove = async () => { await api("DELETE", `/api/sandbox/clients/${encodeURIComponent(c.id)}`, undefined, base); removed(); };
   return (
     <article className="panel registered" id={`app-${c.id}`}>
@@ -43,7 +32,8 @@ export function Registered({ c, base, removed }: { c: Client; base: string; remo
         <dt>FHIR base</dt><dd><Address value={fhirBase} name="FHIR base" /></dd>
         <dt>Client ID</dt><dd><code>{c.id}</code></dd>
         <dt>Type</dt><dd>{TYPES.find(t => t[0] === c.type)?.[1] ?? c.type}</dd>
-        {c.redirectUris.length > 0 && <><dt>Redirect URI</dt><dd className="addr-list">{c.redirectUris.map(u => <Address key={u} value={u} name="redirect URI" />)}</dd></>}
+        {openRedirect ? <><dt>Redirect URI</dt><dd>Any URI allowed (<code>*</code> — not checked at sign-in)</dd></>
+          : c.redirectUris.length > 0 && <><dt>{c.redirectUris.length > 1 ? "Redirect URIs" : "Redirect URI"}</dt><dd className="addr-list">{c.redirectUris.map(u => <Address key={u} value={u} name="redirect URI" />)}</dd></>}
         {c.type === "backend" && <><dt>May reach</dt><dd>{c.patients === "any" ? "Any patient" : c.patients}</dd></>}
         {(c.jwks ?? (c.jwk ? [c.jwk] : [])).length > 0 && <><dt>{(c.jwks?.length ?? 1) > 1 ? "Key ids" : "Key id"}</dt><dd>{(c.jwks ?? [c.jwk!]).map((k, i) => <span key={k.kid}>{i ? ", " : ""}<code>{k.kid}</code></span>)}</dd></>}
         {c.jwksUrl && <><dt>JWKS URL</dt><dd><Address value={c.jwksUrl} name="JWKS URL" /></dd></>}
@@ -51,9 +41,7 @@ export function Registered({ c, base, removed }: { c: Client; base: string; remo
       <div className="configure-actions">
         <CopyButton label="Copy FHIR base" value={fhirBase} />
         <CopyButton label="Copy client ID" value={c.id} />
-        <CopyButton label="Copy viewer config" value={JSON.stringify({ label: c.name, iss: fhirBase, clientId: c.id })} />
         {key && <CopyButton label="Copy private key" value={JSON.stringify(key)} />}
-        {canTry(c) && <button type="button" className="primary" onClick={() => tryInViewer(c, base)}>Try it in the viewer</button>}
       </div>
     </article>
   );
@@ -79,9 +67,9 @@ const clientOf = (m: RegisteredMetadata): Client => ({
 } as Client);
 
 export function RegisterForm({ base, registered, title = "Register an app", kind }: { base: string; registered: (c: Client) => void; title?: string; kind?: [ClientType, (t: ClientType) => void] }) {
-  const [name, setName] = useState(""), [ownType, setOwnType] = useState<ClientType>("public"), [redirect, setRedirect] = useState("");
+  const [name, setName] = useState(""), [ownType, setOwnType] = useState<ClientType>("public"), [redirects, setRedirects] = useState("");
   const [type, setType] = kind ?? [ownType, setOwnType];
-  const [viewerToo, setViewerToo] = useState(true);
+  const [anyRedirect, setAnyRedirect] = useState(false);
   const [jwks, setJwks] = useState(""), [pasted, setPasted] = useState(""), [patients, setPatients] = useState("any");
   const [error, setError] = useState<string>();
   const register = async (e: FormEvent) => {
@@ -91,8 +79,14 @@ export function RegisterForm({ base, registered, title = "Register an app", kind
       // RFC 7591 client metadata: the kind of app follows from how it authenticates, and its grant.
       const body: Record<string, unknown> = { client_name: name, token_endpoint_auth_method: type === "public" ? "none" : "private_key_jwt", grant_types: type === "backend" ? ["client_credentials"] : ["authorization_code"] };
       let priv: PrivateJwk | undefined;
-      // Its own redirect URI, and ours too unless asked not to, so it can be tried in our viewer.
-      if (type !== "backend") body.redirect_uris = [...new Set([redirect.trim(), ...(viewerToo ? [VIEWER_URL] : [])].filter(Boolean))];
+      if (type !== "backend") {
+        if (anyRedirect) body.redirect_uris = ["*"];
+        else {
+          const uris = [...new Set(redirects.split(/\r?\n/).map(s => s.trim()).filter(Boolean))];
+          if (!uris.length) throw new Error("Enter at least one redirect URI, or allow any redirect URI.");
+          body.redirect_uris = uris;
+        }
+      }
       if (type !== "public") {
         if (jwks.trim()) body.jwks_uri = jwks.trim();
         else if (pasted.trim()) { try { body.jwks = { keys: [JSON.parse(pasted)] }; } catch { throw new Error("The key isn't valid JSON."); } }
@@ -101,7 +95,7 @@ export function RegisterForm({ base, registered, title = "Register an app", kind
       if (type === "backend") body.patients = patients;
       const made = clientOf(await api<RegisteredMetadata>("POST", "/register", body, base));
       if (priv) keepKey(made.id, priv);
-      setName(""); setType("public"); setRedirect(""); setJwks(""); setPasted(""); setPatients("any");
+      setName(""); setType("public"); setRedirects(""); setAnyRedirect(false); setJwks(""); setPasted(""); setPatients("any");
       announce(`${made.name} registered.`);
       registered(made);
     } catch (x) { setError((x as Error).message); }
@@ -115,10 +109,10 @@ export function RegisterForm({ base, registered, title = "Register an app", kind
         {TYPES.map(([v, label, what]) => <Choice key={v} type="radio" name="type" value={v} checked={type === v} onChange={() => setType(v)} label={label} detail={what} />)}
       </fieldset>
       {type !== "backend" && <div id="redirect-field">
-        <label htmlFor="app-redirect">Redirect URI</label>
-        <input type="url" id="app-redirect" placeholder="https://example.org/callback" autoComplete="off" autoCapitalize="off" spellCheck={false} value={redirect} onChange={e => setRedirect(e.target.value)} />
-        <p className="note">Your app's, matched exactly at sign-in. Use https, or http on localhost, 127.0.0.1 or [::1].</p>
-        <label className="check"><input type="checkbox" checked={viewerToo} onChange={e => setViewerToo(e.target.checked)} /> Also let our viewer sign in as this app, at <code>{VIEWER_URL}</code></label>
+        <label htmlFor="app-redirect">Redirect URIs</label>
+        <textarea id="app-redirect" rows={2} disabled={anyRedirect} placeholder={"https://example.org/callback\nhttp://localhost:3000/callback"} autoComplete="off" autoCapitalize="off" spellCheck={false} value={redirects} onChange={e => setRedirects(e.target.value)} />
+        <p className="note">One per line, matched exactly at sign-in. Use https, or http on localhost, 127.0.0.1 or [::1].</p>
+        <label className="check"><input type="checkbox" checked={anyRedirect} onChange={e => setAnyRedirect(e.target.checked)} /> Allow any redirect URI (don't check at sign-in, for testing)</label>
       </div>}
       {type !== "public" && <div id="key-field">
         <label htmlFor="app-jwks">JWKS URL</label>

@@ -21,19 +21,65 @@ const authorize = (w: ReturnType<Stack["scopes"]["mint"]>, client: string, redir
 
 test("redirect URIs and names are checked", () => {
   const w = stack.sandboxes.mint();
-  for (const redirectUris of [["http://app.example/cb"], ["https://app.example/cb#x"], ["not a url"], []]) expect(addClient(w.store, { name: "A", redirectUris })).toHaveProperty("error");
+  for (const redirectUris of [["http://app.example/cb"], ["https://app.example/cb#x"], ["not a url"], [], ["*", REDIRECT]]) expect(addClient(w.store, { name: "A", redirectUris })).toHaveProperty("error");
   expect(addClient(w.store, { name: "", redirectUris: [REDIRECT] })).toHaveProperty("error");
   expect(addClient(w.store, { name: "Local", redirectUris: ["http://localhost:3000/cb"] })).toHaveProperty("id");
+  expect(addClient(w.store, { name: "Open", redirectUris: ["*"] })).toHaveProperty("redirectUris", ["*"]);
 });
-test("a registered app can start sign-in in its own sandbox, and only with its own redirect", async () => {
+test("a registered app can register multiple redirect URIs, and sign in with any of them", async () => {
   const w = stack.sandboxes.mint(), other = stack.sandboxes.mint();
-  const r = await call("POST", `${w.prefix}/register`, { client_name: "My app", redirect_uris: [REDIRECT] });
+  const second = "http://localhost:3000/callback";
+  const r = await call("POST", `${w.prefix}/register`, { client_name: "My app", redirect_uris: [REDIRECT, second, REDIRECT] });
   expect(r.status).toBe(201);
-  const { client_id: id } = await r.json() as any;
-  expect((await authorize(w, id)).status).toBe(200);
+  const { client_id: id, redirect_uris } = await r.json() as any;
+  expect(redirect_uris).toEqual([REDIRECT, second]);
+  expect((await authorize(w, id, REDIRECT)).status).toBe(200);
+  expect((await authorize(w, id, second)).status).toBe(200);
   expect((await authorize(w, id, "https://evil.example/cb")).status).toBe(400);
   expect((await authorize(other, id)).status).toBe(400);
   expect((await (await call("GET", `${w.prefix}/api/sandbox/clients`)).json() as any).clients.map((c: any) => c.id)).toEqual([id]);
+});
+test("an app registered with redirect_uris [\"*\"] accepts any safe redirect URI at /authorize, and still binds the code at /token", async () => {
+  const w = stack.sandboxes.mint(), S = w.urls.auth;
+  const badMix = await call("POST", `${w.prefix}/register`, { client_name: "Mixed", redirect_uris: ["*", REDIRECT] });
+  expect([badMix.status, ((await badMix.json()) as any).error]).toEqual([400, "invalid_redirect_uri"]);
+  const made = await call("POST", `${w.prefix}/register`, { client_name: "Open dev app", redirect_uris: ["*"] });
+  expect(made.status).toBe(201);
+  const { client_id: id, redirect_uris } = await made.json() as any;
+  expect(redirect_uris).toEqual(["*"]);
+  for (const ok of ["https://anywhere.example/cb", "http://192.168.1.50:5173/cb", "myapp://callback", "com.example.app:/oauth2redirect"]) {
+    expect((await authorize(w, id, ok)).status).toBe(200);
+  }
+  for (const unsafe of ["javascript:alert(1)", "JAVASCRIPT:alert(1)", "data:text/html,hi", "blob:https://app.example/1", "file:///etc/passwd", "about:blank", "https://anywhere.example/cb#frag", "myapp://callback#frag", "/relative", ""]) {
+    const res = await authorize(w, id, unsafe);
+    expect(res.status).toBe(400);
+    expect(res.headers.get("location")).toBeNull();
+  }
+  // Full PKCE code flow with a custom-scheme redirect URI: /token still checks redirect_uri matches /authorize.
+  const customRedirect = "com.example.app:/oauth2redirect";
+  const verifier = Buffer.from("0123456789abcdef0123456789abcdef").toString("base64url");
+  const challenge = require("node:crypto").createHash("sha256").update(verifier).digest("base64url");
+  const url = new URL(`${S}/authorize`);
+  Object.entries({ response_type: "code", client_id: id, redirect_uri: customRedirect, scope: "launch/patient patient/*.rs", aud: `${S}/fhir`, state: "st", code_challenge: challenge, code_challenge_method: "S256" }).forEach(([k, v]) => url.searchParams.set(k, v));
+  const act = (html: string, base: string) => new URL(html.match(/<form[^>]*action="([^"]+)"/)![1]!.replace(/&amp;/g, "&"), base).toString();
+  const post = (to: string, o: Record<string, string>) => fetch(to, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(o).toString(), redirect: "manual" });
+  const signedIn = await post(act(await (await fetch(url)).text(), url.toString()), { username: "josh" });
+  const consentUrl = new URL(signedIn.headers.get("location")!, S).toString();
+  const consentHtml = await (await fetch(consentUrl)).text();
+  expect(consentHtml).toContain("com.example.app:/oauth2redirect");
+  expect(consentHtml).toContain("redirect URI checking turned off");
+  const back = await post(act(consentHtml, consentUrl), { decision: "approve", patient: "josh-example" });
+  const returned = new URL(back.headers.get("location")!);
+  expect(`${returned.protocol}${returned.pathname}`).toBe(customRedirect);
+  // Wrong redirect_uri at /token fails; matching redirect_uri on a fresh code succeeds.
+  expect((await post(`${S}/token`, { grant_type: "authorization_code", code: returned.searchParams.get("code")!, redirect_uri: "https://other.example/cb", client_id: id, code_verifier: verifier })).status).toBe(400);
+  const signedIn2 = await post(act(await (await fetch(url)).text(), url.toString()), { username: "josh" });
+  const consentUrl2 = new URL(signedIn2.headers.get("location")!, S).toString();
+  const back2 = await post(act(await (await fetch(consentUrl2)).text(), consentUrl2), { decision: "approve", patient: "josh-example" });
+  const code2 = new URL(back2.headers.get("location")!).searchParams.get("code")!;
+  const tok = await post(`${S}/token`, { grant_type: "authorization_code", code: code2, redirect_uri: customRedirect, client_id: id, code_verifier: verifier });
+  expect(tok.status).toBe(200);
+  expect(((await tok.json()) as any).patient).toBe("josh-example");
 });
 test("a tour leaves registrations alone, and removal ends them", async () => {
   const w = stack.sandboxes.mint();

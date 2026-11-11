@@ -316,13 +316,29 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     return `${several ? `<style>form:has(input[name=patient][value="${esc(r.patient)}"]:not(:checked)) [data-sites-for="${esc(r.patient)}"]{display:none}</style>` : ""}${body}`;
   }).join("");
   const chosenSites = (f: URLSearchParams, patient: string) => ({ shown: !!(f.get("sites_shown") || f.get(`sites_shown@${patient}`)), sites: [...f.getAll("sites"), ...f.getAll(`sites@${patient}`)] });
+  const UNSAFE_SCHEMES = new Set(["javascript:", "data:", "vbscript:", "blob:", "file:", "about:"]);
+  /** What `/authorize` accepts when a sandbox app registered `redirect_uris: ["*"]`: any absolute http(s) or
+   *  custom-scheme URI without a fragment, never an executable or local-file scheme. */
+  const safeRedirectUri = (uri: string) => {
+    if (!uri) return false;
+    let u: URL;
+    try { u = new URL(uri); } catch { return false; }
+    if (u.hash || !/^[a-z][a-z0-9+.-]*:$/i.test(u.protocol) || UNSAFE_SCHEMES.has(u.protocol.toLowerCase())) return false;
+    return (u.protocol !== "http:" && u.protocol !== "https:") || !!u.hostname;
+  };
 
   async function authorize(url: URL): Promise<Response> {
     const q = url.searchParams;
     const client = clientOf(q.get("client_id") ?? "");
     // Client and redirect URI errors must not redirect, since the target can't be trusted.
     if (!check("authorization-server", "client is registered", !!client, { client: q.get("client_id") })) return page("Authorization error", "<h1>Unknown client</h1>", 400);
-    if (!check("authorization-server", "redirect_uri exactly matches registration", client!.redirectUris.includes(q.get("redirect_uri") ?? ""), { redirect_uri: q.get("redirect_uri") })) return page("Authorization error", "<h1>Unregistered redirect URI</h1>", 400);
+    const redirectUri = q.get("redirect_uri") ?? "", openRedirect = client!.redirectUris.includes("*");
+    if (!check(
+      "authorization-server",
+      openRedirect ? 'redirect_uri is a safe absolute URI without a fragment (client registered "*")' : "redirect_uri exactly matches registration",
+      openRedirect ? safeRedirectUri(redirectUri) : client!.redirectUris.includes(redirectUri),
+      { redirect_uri: redirectUri, ...(openRedirect ? { registered: "*" } : {}) },
+    )) return page("Authorization error", openRedirect ? "<h1>Invalid redirect URI</h1>" : "<h1>Unregistered redirect URI</h1>", 400);
     // Every error the app is sent back with says why, in error_description (RFC 6749, section 4.1.2.1).
     const back = (error: string, description: string) => { const u = new URL(q.get("redirect_uri")!); u.searchParams.set("error", error); u.searchParams.set("error_description", description); if (q.get("state")) u.searchParams.set("state", q.get("state")!); return new Response(null, { status: 302, headers: { Location: u.toString() } }); };
     if (!check("authorization-server", "response_type is code", q.get("response_type") === "code")) return back("unsupported_response_type", `response_type is code, not ${q.get("response_type") ?? "missing"}`);
@@ -371,9 +387,11 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
       const when = (d?: string) => d && /^\d{8}$/.test(d) ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}` : d;
       return `<input type="hidden" name="${esc(field)}_listed" value="${esc(site)}"><details><summary>${here.length === 1 ? "1 study" : `${here.length} studies`}</summary>${here.map(st => `<label><input type="checkbox" name="${esc(field)}" value="${esc(st.id)}" ${!g?.sites || g.sites.includes(site) || g.studies?.includes(st.id) ? "checked" : ""}> ${esc([when(st.date), st.description ?? st.id].filter(Boolean).join(" · "))}</label>`).join("")}</details>`;
     });
+    const reg = opts.registeredClient?.(t.txn.client_id);
+    const redirectTarget = (() => { const u = new URL(t.txn.redirect_uri); return u.origin !== "null" && u.host ? u.host : t.txn.redirect_uri.split("?")[0]!; })();
     return page("Authorize app", `<h1>Let ${esc(client.name)} access imaging records?</h1>
       <p class="who">Signed in as ${esc(user.name)} (<code>${esc(user.fhirUser)}</code>).</p>
-      ${opts.registeredClient?.(t.txn.client_id) ? `<p class="who">Approving sends you to <strong>${esc(new URL(t.txn.redirect_uri).host)}</strong>. This app was registered by someone using this sandbox.</p>` : ""}
+      ${reg ? `<p class="who">Approving sends you to <strong>${esc(redirectTarget)}</strong>. This app was registered by someone using this sandbox${reg.redirectUris.includes("*") ? ", with redirect URI checking turned off" : ""}.</p>` : ""}
       <form method="post" action="${esc(action)}">
         <fieldset class="accounts"><legend>Whose records</legend>${whoseRadios(access.records, selected)}${access.records.length > 1 ? `<p class="note">This app gets one person's records. Choosing someone else later is a new authorization, with its own approval.</p>` : ""}</fieldset>
         <fieldset><legend>Requested permissions</legend><ul class="scopes">${t.txn.scope.split(" ").map(s => `<li><code>${esc(s)}</code></li>`).join("")}</ul></fieldset>

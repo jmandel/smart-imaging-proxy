@@ -102,7 +102,7 @@ curl -X POST "$SANDBOX/register" -H "authorization: Bearer $ADMIN" -H 'content-t
   -d '{"client_name":"My app","redirect_uris":["https://example.org/callback"],"token_endpoint_auth_method":"none","grant_types":["authorization_code"]}'
 ```
 
-The answer is `201` with the client metadata as registered, its `client_id` and `client_id_issued_at`. Redirect URIs must match exactly, and use https, or http on loopback (`localhost`, `127.0.0.1` or `[::1]`). Authorize with `aud=$SANDBOX/fhir` and `scope=launch/patient patient/*.rs`. A refusal is RFC 7591's: `400` with `error` (`invalid_redirect_uri` or `invalid_client_metadata`) and `error_description`; with no admin token, `401` and `invalid_token`. `/register` answers CORS, so a browser app can register itself from its own origin with the admin token.
+The answer is `201` with the client metadata as registered, its `client_id` and `client_id_issued_at`. Give one or more `redirect_uris` (matched exactly at sign-in; https, or http on loopback: `localhost`, `127.0.0.1` or `[::1]`), or `["*"]` to skip redirect URI matching for testing (accepting any http, https or custom-scheme URI without a fragment; `/token` still checks that `redirect_uri` matches the authorization request). Authorize with `aud=$SANDBOX/fhir` and `scope=launch/patient patient/*.rs`. A refusal is RFC 7591's: `400` with `error` (`invalid_redirect_uri` or `invalid_client_metadata`) and `error_description`; with no admin token, `401` and `invalid_token`. `/register` answers CORS, so a browser app can register itself from its own origin with the admin token.
 
 The kind of client follows from how it authenticates and its grant. Both signing kinds sign a `private_key_jwt` assertion with ES256, ES384 or RS384, and register the public half as `jwks`, or publish keys at a public https address and register it as `jwks_uri`, which also lets them rotate. Internal addresses are refused.
 
@@ -498,7 +498,8 @@ interface AppCheckRun {
 
 // POST $SANDBOX/register: RFC 7591 client metadata, and the same, with client_id and client_id_issued_at, in answer.
 interface ClientMetadata {
-  client_name?: string; redirect_uris?: string[]; grant_types?: ["authorization_code"] | ["authorization_code", "refresh_token"] | ["client_credentials"]; response_types?: ["code"];
+  client_name?: string; redirect_uris?: string[];   // one or more redirect URIs, or ["*"] to skip redirect checking
+  grant_types?: ["authorization_code"] | ["authorization_code", "refresh_token"] | ["client_credentials"]; response_types?: ["code"];
   token_endpoint_auth_method?: "none" | "private_key_jwt"; jwks?: { keys: (JsonWebKey & { kid: string })[] }; jwks_uri?: string; scope?: string;
   patients?: "any" | string;   // this sandbox's extension, for a backend service
 }

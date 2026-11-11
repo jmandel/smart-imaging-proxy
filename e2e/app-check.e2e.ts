@@ -65,16 +65,20 @@ describe("the app check", () => {
     await startRun(check, w.prefix, id);
     expect(await check.locator("#app-check-banner").innerText()).toContain("Search pages hold at most 2 studies");
     await shots(check, "running");
-    // Build an App's Try it step links here, and opens our viewer as the app.
-    // This browser knows the sandbox, as one that made it would.
-    await context.addInitScript(base => { if (!localStorage.getItem("smart-imaging-client:sandboxes")) localStorage.setItem("smart-imaging-client:sandboxes", JSON.stringify([{ base, joined: true }])); }, w.prefix);
+    // Build an App's Try it step links to App check for this app, and to our reference viewer independently.
+    // To grade our viewer as `Test viewer`, configure `Test viewer` in Your servers and connect.
+    await context.addInitScript(([base, clientId, origin]) => {
+      if (!localStorage.getItem("smart-imaging-client:sandboxes")) localStorage.setItem("smart-imaging-client:sandboxes", JSON.stringify([{ base, joined: true }]));
+      if (!localStorage.getItem("smart-imaging-client:servers")) localStorage.setItem("smart-imaging-client:servers", JSON.stringify([{ label: "Test viewer", iss: `${origin}${base}/fhir`, clientId }]));
+    }, [w.prefix, id, ORIGIN] as const);
     const viewer = await context.newPage();
     viewer.on("pageerror", e => problems.push(e.message));
     await viewer.goto(`${ORIGIN}${w.prefix}/`);
     await viewer.locator("#app-check-banner").waitFor();
     await viewer.goto(`${ORIGIN}/build-an-app?step=try&app=${id}`);
     expect(await viewer.getByRole("link", { name: "Check Test viewer" }).getAttribute("href")).toBe(`${w.prefix}/app-check?app=${id}`);
-    const [tab] = await Promise.all([context.waitForEvent("page"), viewer.getByRole("button", { name: "Try it in our viewer" }).click()]);
+    await viewer.goto(`${ORIGIN}/viewer?server=${encodeURIComponent(`${ORIGIN}${w.prefix}/fhir|${id}`)}`);
+    const [tab] = await Promise.all([context.waitForEvent("page"), viewer.getByRole("button", { name: "Connect", exact: true }).click()]);
     await tab.waitForURL(/\/authorize/);
     await tab.locator("input[name=username][value=josh]").check();
     await tab.getByRole("button", { name: "Continue" }).click();

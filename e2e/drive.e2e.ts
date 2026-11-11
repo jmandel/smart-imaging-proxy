@@ -60,6 +60,7 @@ test("every control in llms.txt's table is found by its role and name", async ()
   await open(page, `${base}/connect`);
   await expectControls(page, "register");
   await page.getByRole("textbox", { name: "App name", exact: true }).fill(fill.app!);
+  await page.getByRole("textbox", { name: "Redirect URIs", exact: true }).fill("https://app.example/callback");
   await page.getByRole("button", { name: "Register", exact: true }).click();
   await page.waitForURL(u => u.searchParams.has("app"));
   const app = new URL(page.url()).searchParams.get("app")!;

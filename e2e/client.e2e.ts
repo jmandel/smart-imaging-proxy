@@ -419,21 +419,31 @@ describe("the demo client", () => {
     expect(await page.locator("nav.pages a", { hasText: "For agents" }).getAttribute("href")).toBe("/llms.txt");
     await context.close();
   });
-  test("an app registered on /connect shows what its developer needs", async () => {
+  test("an app registered on /connect supports multiple redirect URIs or skipping redirect checking", async () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     const base = await signIn(page, "josh");
     await page.goto(`${ORIGIN}${base}/connect`);
     await page.getByLabel("App name").fill("My test app");
-    await page.getByLabel("Redirect URI").fill("https://app.example/callback");
+    await page.getByLabel("Redirect URIs").fill("https://app.example/callback\nhttp://localhost:3000/callback");
     await page.getByRole("button", { name: "Register" }).click();
     await page.getByRole("heading", { name: "My test app" }).waitFor();
     await page.getByText(`${ORIGIN}${base}/fhir`).first().waitFor();
+    await page.getByText("https://app.example/callback").waitFor();
+    await page.getByText("http://localhost:3000/callback").waitFor();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
     await shot(page, "connect");
+    // And an app registered with redirect checking turned off.
+    await page.getByLabel("App name").fill("Open dev app");
+    await page.getByLabel(/Allow any redirect URI/).check();
+    expect(await page.getByLabel("Redirect URIs").isDisabled()).toBe(true);
+    await page.getByRole("button", { name: "Register" }).click();
+    await page.getByRole("heading", { name: "Open dev app" }).waitFor();
+    await page.getByText(/Any URI allowed/).waitFor();
     await page.reload();
     await page.getByRole("heading", { name: "My test app" }).waitFor();
     await page.getByRole("button", { name: "Remove My test app" }).click();
+    await page.getByRole("button", { name: "Remove Open dev app" }).click();
     await page.getByText("None yet.").waitFor();
     await context.close();
   });
@@ -501,7 +511,7 @@ describe("the demo client", () => {
     await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
     await context.close();
   });
-  test.skipIf(!!process.env.BASE_URL)("a backend service registered on /connect works in the viewer with no sign-in", async () => {
+  test.skipIf(!!process.env.BASE_URL)("a backend service registered on /connect gives a client ID and private key that work on Your servers", async () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     const base = await signIn(page, "josh");
@@ -511,8 +521,18 @@ describe("the demo client", () => {
     await page.getByRole("button", { name: "Register" }).click();
     await page.getByRole("heading", { name: "Referral service" }).waitFor();
     await shot(page, "connect-backend");
+    const clientId = (await page.getByRole("button", { name: "Copy client ID" }).getAttribute("data-copy"))!;
+    const privKey = (await page.getByRole("button", { name: "Copy private key" }).getAttribute("data-copy"))!;
+    await page.goto(`${ORIGIN}/servers?add&how=backend`);
+    await page.getByLabel("FHIR base URL").fill(`${ORIGIN}${base}/fhir`);
+    await page.getByLabel("Name", { exact: true }).fill("Referral service");
+    await page.getByRole("button", { name: "Paste a private key instead" }).click();
+    await page.getByLabel("Private key (JWK)").fill(privKey);
+    await page.getByLabel("Client ID").fill(clientId);
+    await page.getByLabel("Patient").fill("josh-example");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
     // A service connects at once, with no one to sign in.
-    await page.getByRole("button", { name: "Try it in the viewer" }).click();
+    await page.getByRole("button", { name: "Open in the viewer" }).click();
     await page.waitForURL(u => u.pathname === "/viewer");
     await page.getByText("Backend service: no one signed in").waitFor();
     await page.locator(".study-button").nth(5).waitFor();
@@ -522,16 +542,26 @@ describe("the demo client", () => {
     await shot(page, "backend-viewer");
     await context.close();
   });
-  test.skipIf(!!process.env.BASE_URL)("a confidential app registered on /connect signs in and proves its key", async () => {
+  test.skipIf(!!process.env.BASE_URL)("a confidential app registered on /connect with open redirect checking signs in and proves its key", async () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     const base = await signIn(page, "josh");
     await page.goto(`${ORIGIN}${base}/connect`);
     await page.getByLabel("App name").fill("Confidential one");
     await page.getByRole("radio", { name: /Confidential app/ }).check();
-    await page.getByLabel("Redirect URI").fill(`${ORIGIN}/viewer`);
+    await page.getByLabel(/Allow any redirect URI/).check();
     await page.getByRole("button", { name: "Register" }).click();
-    await approveIn(await signInTab(page, () => page.getByRole("button", { name: "Try it in the viewer" }).click()), "josh");
+    await page.getByRole("heading", { name: "Confidential one" }).waitFor();
+    const clientId = (await page.getByRole("button", { name: "Copy client ID" }).getAttribute("data-copy"))!;
+    const privKey = (await page.getByRole("button", { name: "Copy private key" }).getAttribute("data-copy"))!;
+    await page.goto(`${ORIGIN}/servers?add&how=confidential`);
+    await page.getByLabel("FHIR base URL").fill(`${ORIGIN}${base}/fhir`);
+    await page.getByLabel("Name", { exact: true }).fill("Confidential one");
+    await page.getByRole("button", { name: "Paste a private key instead" }).click();
+    await page.getByLabel("Private key (JWK)").fill(privKey);
+    await page.getByLabel("Client ID").fill(clientId);
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await approveIn(await signInTab(page, () => page.getByRole("button", { name: "Open in the viewer" }).click()), "josh");
     await page.locator(".study-button").nth(5).waitFor();
     await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
     await context.close();
@@ -689,11 +719,17 @@ describe("the demo client", () => {
     await page.getByLabel("App name").fill("Referral service");
     await page.getByRole("radio", { name: /Backend service/ }).check();
     await page.getByRole("button", { name: "Register" }).click();
-    // Trying it saves it as one of your servers, which the check then offers.
-    await page.getByRole("button", { name: "Try it in the viewer" }).click();
-    await page.waitForURL(u => u.pathname === "/viewer");
-    await page.goto(`${ORIGIN}/check`);
-    await page.getByRole("link", { name: /Referral service/ }).click();
+    await page.getByRole("heading", { name: "Referral service" }).waitFor();
+    const clientId = (await page.getByRole("button", { name: "Copy client ID" }).getAttribute("data-copy"))!;
+    const privKey = (await page.getByRole("button", { name: "Copy private key" }).getAttribute("data-copy"))!;
+    await page.goto(`${ORIGIN}/servers?add&how=backend`);
+    await page.getByLabel("FHIR base URL").fill(`${ORIGIN}${base}/fhir`);
+    await page.getByLabel("Name", { exact: true }).fill("Referral service");
+    await page.getByRole("button", { name: "Paste a private key instead" }).click();
+    await page.getByLabel("Private key (JWK)").fill(privKey);
+    await page.getByLabel("Client ID").fill(clientId);
+    await page.getByLabel("Patient").fill("josh-example");
+    await page.getByRole("button", { name: "Save and check" }).click();
     await page.waitForURL(u => u.pathname === "/check" && u.searchParams.has("server"));
     // A service may be granted many patients, so another patient's studies aren't its to be refused.
     await page.locator("#check-summary", { hasText: "Ran all 12 steps: 10 passed, and steps 8 and 12 had nothing to check." }).waitFor({ timeout: 30000 });

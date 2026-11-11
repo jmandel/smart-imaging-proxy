@@ -8,7 +8,7 @@ import { Address, Choice } from "../lib/format";
 import { useReady } from "../lib/ready";
 import { SandboxPicker } from "../components/SandboxPicker";
 import { AuthNotes, Endpoints, SamplePeople } from "../components/ConnectFacts";
-import { canTry, RegisterForm, tryInViewer, useClients, type Client } from "../components/RegisterApp";
+import { RegisterForm, useClients, type Client } from "../components/RegisterApp";
 import { InSandbox } from "../components/InSandbox";
 
 const STEPS = [
@@ -74,11 +74,11 @@ export default function BuildAnApp() {
 
         {step === "try" && sandbox && app && <>
           <h2 id="wizard-title">Try {app.name}</h2>
-          {app.type !== "backend" && <><p>Sign in as one of the sample people: there are no passwords.</p><SamplePeople /></>}
+          {app.type !== "backend" ? <><p>Launch your app against the addresses from the previous step, and sign in as one of the sample people:</p><SamplePeople /></>
+            : <p>Have your service request a token at the token endpoint with its signed assertion, then search <code>ImagingStudy</code> for a patient.</p>}
           <p className="wizard-actions">
-            {canTry(app) ? <button type="button" className="primary" onClick={() => tryInViewer(app, sandbox.base)}>Try it in our viewer</button>
-              : <span className="note">{app.type === "backend" || app.type === "public" ? "Our viewer can't sign in as this app: register the viewer's address as one of its redirect URIs." : "Our viewer can't sign in as this app: its private key was made elsewhere."}</span>}
             <a href={`${sandbox.base}/activity`} target="_blank" rel="noopener">See its requests in the logs</a>
+            <InSandbox page="viewer">Open our reference viewer on this sandbox</InSandbox>
           </p>
           <h3>Then, grade it</h3>
           <p>The App check runs your app against this sandbox while it stages what any server may do: small pages of results, a 503 with Retry-After, Endpoints in each form the guide allows. You follow a script, such as signing in as josh and opening every study, and each requirement of the guide comes back passed or failed, with the requests behind it.</p>
