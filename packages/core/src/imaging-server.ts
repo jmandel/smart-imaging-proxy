@@ -81,8 +81,22 @@ function parseLastUpdated(text: string): InstantRange | undefined {
   }
 }
 
+/**
+ * Whether a scope string grants `op` (`r` read or `s` search) on a type at a level: SMART v2's permissions
+ * (`.rs`, `.s`, `.cruds` and the rest, letters in order), or v1's `.read` or `.*`, by the type's name or `*`.
+ */
+export function scopeAllows(scope: string, level: "patient" | "user" | "system", type: string, op: "r" | "s"): boolean {
+  return scope.split(" ").some(s => {
+    const m = s.match(/^(patient|user|system)\/([A-Za-z]+|\*)\.(.+)$/);
+    if (!m || m[1] !== level || (m[2] !== type && m[2] !== "*")) return false;
+    const perm = m[3]!;
+    if (perm === "read" || perm === "*") return true;
+    return /^c?r?u?d?s?$/.test(perm) && perm.includes(op);
+  });
+}
+/** Whether a scope lets a token search ImagingStudy, and so retrieve what search gives it. */
 export function hasImagingScope(scope: string, level: "patient" | "system"): boolean {
-  return scope.split(" ").some(s => s === `${level}/ImagingStudy.rs` || s === `${level}/ImagingStudy.read` || s === `${level}/*.rs` || s === `${level}/*.read`);
+  return scopeAllows(scope, level, "ImagingStudy", "s");
 }
 
 /** System-level access is for Backend Services tokens, which no user authorized. A user's token needs a patient. */

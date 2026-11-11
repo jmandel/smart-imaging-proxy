@@ -620,9 +620,11 @@ describe("The Clinical FHIR Server's Patient", () => {
   });
   test("answers a token for that patient, and no other", async () => {
     await stack.resetAll();
-    const josh = await scriptedLaunch("josh");
+    const josh = await scriptedLaunch("josh", "portal-app", { scope: "launch/patient patient/Patient.rs" });
     const r = await read("josh-example", josh.access_token);
     expect(r.status).toBe(200);
+    // A token whose scope doesn't name Patient can't read it.
+    expect((await read("josh-example", (await scriptedLaunch("josh")).access_token)).status).toBe(403);
     expect(((await r.json()) as any).id).toBe("josh-example");
     expect((await read("robin-example", josh.access_token)).status).toBe(403);
     expect((await read("nobody", josh.access_token)).status).toBe(403);

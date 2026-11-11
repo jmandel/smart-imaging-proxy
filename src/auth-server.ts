@@ -8,7 +8,7 @@ import { derivedKey, SANDBOX_ADMIN } from "./sandbox-keys";
 import { refuseWrite } from "./settings-api";
 import { PORTS, PUBLIC_DEMO } from "./config";
 import { check, recordEvent, traced } from "./trace";
-import { clinicalSearch, demographics, hasClinicalScope, isClinicalType } from "./clinical";
+import { asksClinical, clinicalSearch, demographics, grantedScope, hasClinicalScope, isClinicalType } from "./clinical";
 import { BACKEND_SCOPES } from "./clients";
 import { jwksKey } from "./jwks";
 import { reportAttachment, reportSearch, reportRead } from "./reports";
@@ -351,6 +351,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
       <form method="post" action="${esc(action)}">
         <fieldset class="accounts"><legend>Whose records</legend>${whoseRadios(access.records, selected)}${access.records.length > 1 ? `<p class="note">This app gets one person's records. Choosing someone else later is a new authorization, with its own approval.</p>` : ""}</fieldset>
         <fieldset><legend>Requested permissions</legend><ul class="scopes">${t.txn.scope.split(" ").map(s => `<li><code>${esc(s)}</code></li>`).join("")}</ul></fieldset>
+        ${asksClinical(t.txn.scope) ? `<fieldset><legend>Clinical information</legend><input type="hidden" name="clinical_shown" value="1"><label><input type="checkbox" name="share_clinical" value="1" checked> Also share conditions, medications and allergies</label><p class="note">Left unticked, the app's token doesn't include them, and its scope says so.</p></fieldset>` : ""}
         ${sites}
         <div class="buttons"><button class="primary" name="decision" value="approve">Approve</button><button name="decision" value="deny">Deny</button></div>
       </form>`, 200);
@@ -391,8 +392,13 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     }
     const approved = await opts.directory.recordConsent({ client: txn.client_id, user: txn.user!, fhirUser: user.fhirUser, patient: record!.patient, ...(chosen.shown ? { sites: approvedSites, ...(approvedStudies.length ? { studies: approvedStudies } : {}) } : { sites: null }) });
     if (!check("authorization-server", "the Imaging Server recorded the approval", !approved.refused, { refused: approved.refused })) return deny();
-    const grant: Grant = { client_id: txn.client_id, scope: txn.scope, sub: txn.user!, fhirUser: user.fhirUser };
-    if (/(^| )launch\/patient( |$)/.test(txn.scope)) grant.patient = record!.patient;
+    // The scope granted is what this server honors of what was asked, less the clinical record if it wasn't shared. A form
+    // that didn't show the choice shares it, as approving everything offered does.
+    const clinical = !f.get("clinical_shown") || f.get("share_clinical") === "1";
+    const scope = grantedScope(txn.scope, { clinical });
+    check("authorization-server", "grant the scope this server honors of what was asked", true, { requested: txn.scope, granted: scope, clinical });
+    const grant: Grant = { client_id: txn.client_id, scope, sub: txn.user!, fhirUser: user.fhirUser };
+    if (/(^| )launch\/patient( |$)/.test(scope)) grant.patient = record!.patient;
     const code = randomBytes(24).toString("base64url");
     codes.set(code, { grant, client_id: txn.client_id, redirect_uri: txn.redirect_uri, code_challenge: txn.code_challenge, exp: now() + 60 });
     check("authorization-server", "issue single-use authorization code", true, { lifetime_seconds: 60, patient: grant.patient, user: grant.sub, sites: chosen.sites.join(", ") || undefined });
@@ -490,7 +496,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
         grant_types_supported: ["authorization_code", "client_credentials", "refresh_token"],
         response_types_supported: ["code"], code_challenge_methods_supported: ["S256"],
         token_endpoint_auth_methods_supported: ["none", "private_key_jwt"], token_endpoint_auth_signing_alg_values_supported: ["ES256", "ES384", "RS384"],
-        scopes_supported: ["patient/ImagingStudy.rs", "patient/Patient.rs", "patient/DiagnosticReport.rs", "patient/AllergyIntolerance.rs", "patient/Condition.rs", "patient/MedicationRequest.rs", "patient/*.rs", "system/ImagingStudy.rs", "launch/patient", "online_access"],
+        scopes_supported: ["patient/ImagingStudy.rs", "patient/Patient.rs", "patient/DiagnosticReport.rs", "patient/AllergyIntolerance.rs", "patient/Condition.rs", "patient/MedicationRequest.rs", "patient/*.rs", "system/ImagingStudy.rs", "launch/patient", "online_access", "offline_access"],
         capabilities: ["launch-standalone", "client-public", "client-confidential-asymmetric", "permission-v2", "context-standalone-patient", ...(opts.unified?.() ? IMAGING_CAPABILITIES : [])],
         ...(opts.unified?.() ? {} : { associated_endpoints: [{ url: opts.imagingFhirBase, capabilities: IMAGING_CAPABILITIES }] }),
       });
@@ -591,6 +597,7 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
       const t = bearer ? opts.store().getToken(bearer, "access") : undefined;
       if (!check("authorization-server", "patient read has a live access token", !!t && !t.revoked && t.exp! > now(), { token_hash: bearer && ath(bearer).slice(0, 10) })) return new Response(null, { status: 401, headers: { "WWW-Authenticate": bearer ? 'Bearer error="invalid_token"' : "Bearer" } });
       if (!check("authorization-server", "the token's patient context is this patient", t!.patient === id, { patient: id, patient_context: t!.patient })) return new Response(null, { status: 403, headers: { "WWW-Authenticate": 'Bearer error="insufficient_scope"' } });
+      if (!check("authorization-server", "scope covers reading Patient", hasClinicalScope(t!.scope, "Patient", "r"), { scope: t!.scope })) return Response.json({ resourceType: "OperationOutcome", issue: [{ severity: "error", code: "forbidden", diagnostics: "scope does not cover Patient" }] }, { status: 403, headers: { "content-type": "application/fhir+json", "WWW-Authenticate": 'Bearer error="insufficient_scope"' } });
       if (!Object.hasOwn(PATIENT_NAMES, id)) return new Response(null, { status: 404 });
       return Response.json({ resourceType: "Patient", id, name: [{ family: "Example", given: [PATIENT_NAMES[id]!.split(" ")[0]] }], ...demographics(id) });
     }
@@ -601,7 +608,8 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
       const t = bearer ? opts.store().getToken(bearer, "access") : undefined;
       if (!check("authorization-server", "report read has a live access token", !!t && !t.revoked && t.exp! > now(), {})) return new Response(null, { status: 401, headers: { "WWW-Authenticate": bearer ? 'Bearer error="invalid_token"' : "Bearer" } });
       const refused = (status: number, code: string, diagnostics: string) => Response.json({ resourceType: "OperationOutcome", issue: [{ severity: "error", code, diagnostics }] }, { status, headers: { "content-type": "application/fhir+json" } });
-      if (!t!.patient || !hasClinicalScope(t!.scope, "DiagnosticReport")) return refused(403, "forbidden", "scope does not cover DiagnosticReport");
+      // A report or its attachment by id is a read; the type alone is a search.
+      if (!t!.patient || !hasClinicalScope(t!.scope, "DiagnosticReport", reportPath[1] || reportPath[2] ? "r" : "s")) return refused(403, "forbidden", "scope does not cover DiagnosticReport");
       const released = await opts.releasedStudies(t!), fhir = `${opts.issuer}/fhir`, imagingBase = opts.unified?.() ? fhir : opts.imagingFhirBase, json = (b: unknown) => Response.json(b, { headers: { "content-type": "application/fhir+json" } });
       if (reportPath[2]) { const file = reportAttachment(reportPath[2], released, fhir); return file ? new Response(file.bytes as any, { headers: { "content-type": file.contentType } }) : refused(404, "not-found", "no such report"); }
       if (reportPath[1]) { const found = reportRead(reportPath[1], released, fhir, imagingBase); return found ? json(found) : refused(404, "not-found", "no such report"); }

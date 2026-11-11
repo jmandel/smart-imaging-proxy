@@ -1,6 +1,7 @@
 // The clinical FHIR server's read surface, beside the Authorization Server: who the patient is, and the
 // active allergies, conditions and medications an app shows next to the images. A small fixed record
 // from data/clinical.json, all of it invented, and enough for an app to work as it would against an EHR.
+import { scopeAllows } from "@smart-imaging-proxy/core";
 import patientFile from "../data/patient.json";
 import clinicalFile from "../data/clinical.json";
 
@@ -14,9 +15,40 @@ export const isClinicalType = (t: string): t is ClinicalType => (CLINICAL_TYPES 
 const clinical = clinicalFile as unknown as Record<string, Partial<Record<ClinicalType, Row[]>>>;
 const onFile = new Map([patientFile, ...patientFile.otherPatients].map(p => [p.id, p as { id: string; mrn: string; birthDate?: string; gender?: string }]));
 
-/** Whether a scope string lets an app search this type for its patient: SMART v2's `.rs` or `.s`, or v1's `.read`, by name or `*`. */
-export function hasClinicalScope(scope: string, type: string): boolean {
-  return scope.split(" ").some(s => s === `patient/${type}.rs` || s === `patient/${type}.s` || s === `patient/${type}.read` || s === "patient/*.rs" || s === "patient/*.s" || s === "patient/*.read");
+/** Whether a scope string lets an app search (`s`, the default) or read (`r`) this type for its patient: SMART v2's permissions, or v1's `.read`, by name or `*`. */
+export function hasClinicalScope(scope: string, type: string, op: "r" | "s" = "s"): boolean {
+  return scopeAllows(scope, "patient", type, op);
+}
+
+/** The types an app's patient-level scope can reach here: imaging and its reports, who the patient is, and the clinical record. */
+export const IMAGING_TYPES = ["ImagingStudy", "DiagnosticReport", "Patient"] as const;
+const HONORED = new Set<string>([...IMAGING_TYPES, ...CLINICAL_TYPES]);
+const CONTEXT_SCOPES = new Set(["launch/patient", "online_access", "offline_access"]);
+
+/** Whether a requested scope asks for the clinical record: its types by name, or `patient/*`. */
+export const asksClinical = (scope: string) => scope.split(" ").some(s => /^patient\/\*\./.test(s) || CLINICAL_TYPES.some(t => s.startsWith(`patient/${t}.`)));
+
+/**
+ * The scope a sign-in grants: what was asked, less what this server doesn't honor, and less the clinical
+ * record if the person didn't share it. Reads and searches only, in the form they were asked (v2's `.cruds`
+ * becomes `.rs`); `patient/*` without the clinical record becomes the types still shared, by name. An
+ * `openid` or `fhirUser` is left out, since no id_token is issued.
+ */
+export function grantedScope(requested: string, o: { clinical: boolean }): string {
+  const out: string[] = [];
+  const add = (s: string) => { if (!out.includes(s)) out.push(s); };
+  for (const s of requested.split(" ").filter(Boolean)) {
+    if (CONTEXT_SCOPES.has(s)) { add(s); continue; }
+    const m = s.match(/^patient\/([A-Za-z]+|\*)\.(.+)$/);
+    if (!m) continue;
+    const [, type, perm] = m as unknown as [string, string, string];
+    const read = perm === "read" || perm === "*" ? "read" : /^c?r?u?d?s?$/.test(perm) ? perm.replace(/[cud]/g, "") : "";
+    if (!read) continue;
+    if (type === "*") { if (o.clinical) add(`patient/*.${read}`); else for (const t of IMAGING_TYPES) add(`patient/${t}.${read}`); continue; }
+    if (!HONORED.has(type) || (!o.clinical && isClinicalType(type))) continue;
+    add(`patient/${type}.${read}`);
+  }
+  return out.join(" ");
 }
 
 export const patientOnFile = (id: string) => onFile.get(id);

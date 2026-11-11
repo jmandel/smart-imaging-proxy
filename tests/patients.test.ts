@@ -367,7 +367,7 @@ describe("choosing on the Authorization Server's pages", () => {
     expect(html).toContain("People who can sign in and see records you hold");
   });
   test("every patient has a Patient resource, for a token for that patient", async () => {
-    const t = await launchFor("riley-example");
+    const t = await scriptedLaunch(SAM_ACCOUNT, "portal-app", { patient: "riley-example", scope: "launch/patient patient/Patient.rs patient/ImagingStudy.rs" });
     const r = await fetch(`${CLINICAL_FHIR}/Patient/riley-example`, { headers: { Authorization: `Bearer ${t.access_token}` } });
     expect(await r.json()).toMatchObject({ resourceType: "Patient", id: "riley-example", name: [{ family: "Example", given: ["Riley"] }], birthDate: "2011-01-01" });
     expect((await fetch(`${CLINICAL_FHIR}/Patient/sam-example`, { headers: { Authorization: `Bearer ${t.access_token}` } })).status).toBe(403);

@@ -12,7 +12,7 @@ const bearer = (t: any) => ({ authorization: `Bearer ${t.access_token}`, accept:
 
 describe("The clinical FHIR server is read-only", () => {
   test("anything but GET is 405, with Allow and an OperationOutcome, and changes nothing", async () => {
-    const t = await scriptedLaunch("josh");
+    const t = await scriptedLaunch("josh", "portal-app", { scope: "launch/patient patient/*.rs" });
     for (const [method, path] of [["PUT", "Patient/josh-example"], ["DELETE", "Patient/josh-example"], ["POST", "Condition"], ["PATCH", "DiagnosticReport"]] as const) {
       const r = await fetch(`${CLINICAL_FHIR}/${path}`, { method, headers: { ...bearer(t), "content-type": "application/fhir+json" }, body: method === "DELETE" ? undefined : "{}" });
       expect([method, path, r.status, r.headers.get("allow")]).toEqual([method, path, 405, "GET"]);
@@ -124,5 +124,46 @@ describe("The policy API refuses what would mean nothing", () => {
     expect(await share({})).toMatchObject({ ok: true });
     await expect(p.putRelationship({ subject: "user:sam-caregiver", relation: "owner_of", object: "patient:josh-example" })).rejects.toThrow("guardian_of");
     await expect(p.putRelationship({ subject: "user:nobody", relation: "guardian_of", object: "patient:josh-example" })).rejects.toThrow("people");
+  });
+});
+
+describe("The token's scope is what was granted", () => {
+  const consentWith = async (scope: string, form: Record<string, string>) => {
+    const { buildAuthorization, tokenRequestBody } = await import("../src/flows/oauth");
+    const a = buildAuthorization(conf.authorization_endpoint, "portal-app", scope);
+    const act = (html: string, base: string) => new URL(html.match(/<form[^>]*action="([^"]+)"/)![1]!.replace(/&amp;/g, "&"), base).toString();
+    const post = (to: string, o: Record<string, string>) => fetch(to, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(o).toString(), redirect: "manual" });
+    const signedIn = await post(act(await (await fetch(a.url)).text(), a.url), { username: "josh" });
+    const consentUrl = new URL(signedIn.headers.get("location")!, a.url).toString();
+    const page = await (await fetch(consentUrl)).text();
+    const back = await post(act(page, consentUrl), { decision: "approve", patient: "josh-example", ...form });
+    const code = new URL(back.headers.get("location")!).searchParams.get("code")!;
+    const t: any = await (await fetch(conf.token_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: tokenRequestBody(a, code) })).json();
+    return { page, t };
+  };
+  test("only what this server honors: no writes, no user- or unknown-type scopes, and no openid without an id_token", async () => {
+    const { t } = await consentWith("launch/patient patient/*.cruds user/*.* patient/Observation.rs openid fhirUser bogus offline_access", {});
+    expect(t.scope).toBe("launch/patient patient/*.rs offline_access");
+    expect(t.refresh_token).toBeString();
+  });
+  test("the consent page offers the clinical record, and unticked, the scope leaves it out and its reads are refused", async () => {
+    const { page, t } = await consentWith("launch/patient patient/*.rs", { clinical_shown: "1" });
+    expect(page).toContain('name="share_clinical"');
+    expect(t.scope).toBe("launch/patient patient/ImagingStudy.rs patient/DiagnosticReport.rs patient/Patient.rs");
+    for (const type of ["Condition", "MedicationRequest", "AllergyIntolerance"]) expect((await fetch(`${CLINICAL_FHIR}/${type}?patient=josh-example`, { headers: bearer(t) })).status).toBe(403);
+    expect((await fetch(`${CLINICAL_FHIR}/Patient/josh-example`, { headers: bearer(t) })).status).toBe(200);
+    expect((await fetch(`${conf.associated_endpoints[0].url}/ImagingStudy?patient=josh-example`, { headers: bearer(t) })).status).toBe(200);
+  });
+  test("ticked, or posted without the choice, the clinical record is shared", async () => {
+    for (const form of [{ clinical_shown: "1", share_clinical: "1" }, {}]) {
+      const { t } = await consentWith("launch/patient patient/*.rs", form);
+      expect(t.scope).toBe("launch/patient patient/*.rs");
+      expect((await fetch(`${CLINICAL_FHIR}/Condition?patient=josh-example`, { headers: bearer(t) })).status).toBe(200);
+    }
+  });
+  test("a request that asks for no clinical type isn't offered the choice", async () => {
+    const { page, t } = await consentWith("launch/patient patient/ImagingStudy.rs", {});
+    expect(page).not.toContain("share_clinical");
+    expect(t.scope).toBe("launch/patient patient/ImagingStudy.rs");
   });
 });

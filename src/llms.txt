@@ -87,7 +87,7 @@ The binding part, for an app or a client library. Each rule is explained, with e
 6. **Retrieve only under `Endpoint.address`**, as given, with the same token as the search, and an `Accept` header. A study's UID is its `urn:dicom:uid` identifier, less `urn:oid:` ("Read data").
 7. **Wait out a 503 with `Retry-After`**, then repeat the identical request: searches and retrievals may both answer it ("Read data").
 8. **Fetch images on demand.** A first instance can be several MB, and a whole study far more: josh's six first instances come to about 46 MB.
-9. **Learn what you may see only from search.** Access can be narrowed in ways the token doesn't show: the person's choices at sign-in, the health system's policy, a guardian's limits. The `scope` reads the same either way. A study can be withheld, with its report, and a small or empty result is correct for some people ("Sample accounts", and `contract.json`).
+9. **Learn what you may see only from search.** Access to images can be narrowed in ways the token doesn't show: the person's choices of sites and studies at sign-in, the health system's policy, a guardian's limits. The `scope` reads the same either way. (The scope does show the types granted: see "Approving less at sign-in".) A study can be withheld, with its report, and a small or empty result is correct for some people ("Sample accounts", and `contract.json`).
 
 The App check ("App check: run one for someone") grades an app against the rules that are spec requirements, from the sandbox's side.
 
@@ -130,9 +130,11 @@ An agent can walk the forms a person would:
 1. `GET $SANDBOX/authorize?response_type=code&client_id=...&redirect_uri=...&scope=...&aud=...&state=...&code_challenge=...&code_challenge_method=S256`. The response is a form. Take its `action`.
 2. `POST` that action with the form field `username=josh`. Follow the 303 to the consent page, and take its form `action`.
 3. `POST` that action with `decision=approve` and `patient=josh-example`, approving everything offered. The 302 `Location` has the `code`.
-4. `POST $SANDBOX/token` with `grant_type=authorization_code`, `code`, `redirect_uri`, `client_id` and `code_verifier`. The response has `access_token`, `patient` (a bare FHIR id, such as `josh-example`), `scope` (as requested), and `expires_in` in seconds of the demo clock.
+4. `POST $SANDBOX/token` with `grant_type=authorization_code`, `code`, `redirect_uri`, `client_id` and `code_verifier`. The response has `access_token`, `patient` (a bare FHIR id, such as `josh-example`), `scope` (what was granted: see below), and `expires_in` in seconds of the demo clock.
 
-A person can approve less on the consent page, and so can an agent driving it: see "Approving less at sign-in" under "The management API". An app can't tell from its token which it got.
+A person can approve less on the consent page, and so can an agent driving it: see "Approving less at sign-in" under "The management API". An app can't tell from its token which sites or studies it got.
+
+The token's `scope` is what was granted, not an echo of the request: patient-level reads and searches of `ImagingStudy`, `DiagnosticReport`, `Patient`, `Condition`, `MedicationRequest` and `AllergyIntolerance` (by name or `*`), with `launch/patient`, `online_access` and `offline_access`. Write permissions narrow to reads (`patient/*.cruds` is granted as `patient/*.rs`), and anything else is left out, `openid` and `fhirUser` too, since no `id_token` is issued. Each read is checked against it: reading `Patient` takes a scope that covers `Patient`.
 
 ## Refresh tokens
 
@@ -348,6 +350,8 @@ The checks only a sandbox can run, at the foot of the Server check page when it 
 To approve less than everything at sign-in, as a person can on the consent page: this sandbox models that choice by site, a stand-in for whatever a real health system lets a person choose, and not part of SMART Imaging. To limit the approval to some sites, add `sites_shown=1` and a `sites` field per site, with the site's name exactly: `Northside Pathology`, `Lakeside Imaging` or `Riverside Hospital`. Sites left out aren't approved. A name that isn't a site at all is refused: the redirect carries `error=invalid_request` and an `error_description` listing the sites. A real site the person doesn't hold for that patient is dropped.
 
 To approve only some studies at a site, as the consent page's study boxes do: add `study_listed` with the site's name, and a `study` field with the id of each study to approve there. A site with `study_listed` approves just the studies named; one without it approves the whole site, including studies that arrive later. A study id is `ImagingStudy.id`, and `contract.json` lists them. When the person can act for more than one patient, the page names each field for its patient instead: `sites@{patient}`, `study@{patient}`, `study@{patient}_listed` and `sites_shown@{patient}`.
+
+When the request asks for any of the clinical record (`Condition`, `MedicationRequest`, `AllergyIntolerance`, or `patient/*`), the consent page also asks whether to share it: a checkbox, ticked to start with. Unticked, the form posts `clinical_shown=1` with no `share_clinical`, and the granted scope leaves those types out (`patient/*.rs` becomes `patient/ImagingStudy.rs patient/DiagnosticReport.rs patient/Patient.rs`), so their searches are `403`. A form posted without `clinical_shown` shares it, as approving everything offered does.
 
 Each sign-in's choice replaces that app's approval for that patient, so a later sign-in that approves fewer sites narrows what earlier tokens' searches return. A consent form posted with no site fields approves every site, as a form that showed none would.
 
