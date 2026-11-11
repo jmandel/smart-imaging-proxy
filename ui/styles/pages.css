@@ -381,7 +381,8 @@ a.path p:not(.path-kicker) { color:var(--muted); }
 .check-step > details > summary:hover { background:var(--accent-soft); }
 .check-step > details > summary .chevron { align-self:flex-start; margin-top:.5rem; }
 .check-step > details[open] > summary .chevron { transform:rotate(-135deg); margin-bottom:-.15rem; }
-.check-step .mark { flex:none; width:1.25rem; line-height:1.5; text-align:center; font-weight:700; font-size:1rem; color:var(--muted); }
+/* display, min-height and white-space undo the site header's .mark (the logo), whose name this shares. */
+.check-step .mark { flex:none; display:block; min-height:0; white-space:normal; width:1.25rem; line-height:1.5; text-align:center; font-weight:700; font-size:1rem; color:var(--muted); }
 .check-step .what { flex:1 1 auto; min-width:0; line-height:1.5; overflow-wrap:anywhere; }
 .check-step .what b { font-weight:600; }
 .check-step .said { display:block; color:var(--muted); font-size:.9rem; }
@@ -391,7 +392,6 @@ a.path p:not(.path-kicker) { color:var(--muted); }
 .check-step[data-state=fail] .said { color:var(--ink); }
 .check-step[data-state=paused] .state, .check-step[data-state=running] .state { color:var(--accent); font-weight:600; }
 .check-step[data-state=todo] .what, .check-step[data-state=unreached] .what { color:var(--muted); }
-.check-step[data-state=unreached] .mark::before, .check-step[data-state=todo] .mark::before { content:""; display:inline-block; width:.65rem; height:.65rem; border:2px solid var(--line); border-radius:50%; vertical-align:middle; }
 @media (max-width:40rem) { .check-facts { grid-template-columns:minmax(0,1fr); gap:0; } .check-facts dd { margin-bottom:.35rem; } .check-actions .check-another { margin-left:0; } }
 .check-step .spinner { margin:0; }
 .step-body { padding:0 .2rem .7rem 2.1rem; font-size:.9rem; }
@@ -401,12 +401,14 @@ a.path p:not(.path-kicker) { color:var(--muted); }
 /* What to register before signing in: the values, each with its copy button. */
 .register-first { font-size:.9rem; }
 .register-first p { margin:0 0 .4rem; }
-.register-first dl { display:grid; grid-template-columns:max-content minmax(0,1fr); gap:.3rem .8rem; margin:0; align-items:center; }
+/* Name, value and its Copy button in three columns, so the buttons line up whatever each value's length. */
+.register-first dl { display:grid; grid-template-columns:max-content minmax(0,max-content) max-content; gap:.35rem .8rem; margin:0; align-items:center; }
 .register-first dt { color:var(--muted); }
-.register-first dd { margin:0; display:flex; flex-wrap:wrap; align-items:center; gap:.3rem .5rem; min-width:0; }
+.register-first dd { display:contents; }
+.register-first .register-text { grid-column:2 / -1; }
 .register-first dd code { overflow-wrap:anywhere; min-width:0; }
 .register-first .tool { min-height:2rem; padding:.1rem .55rem; font-size:.82rem; }
-@media (max-width:30rem) { .register-first dl { grid-template-columns:minmax(0,1fr); } .register-first dd { margin-bottom:.3rem; } }
+@media (max-width:30rem) { .register-first dl { grid-template-columns:minmax(0,1fr) max-content; } .register-first dt { grid-column:1 / -1; } }
 .check-run-note { display:flex; flex-wrap:wrap; align-items:center; gap:.3rem 1rem; margin:0 0 .4rem; }
 .check-run-note p { margin:0; }
 .check-step[data-state=note] .mark, .check-step[data-state=note] .state { color:var(--muted); }

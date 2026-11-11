@@ -10,10 +10,12 @@ export const SERVICES: Record<string, [string, string]> = {
   user: ["user", "--svc-user"], app: ["app", "--svc-app"], "authorization-server": ["auth", "--svc-as"], "imaging-fhir": ["imaging", "--svc-fhir"],
   policy: ["policy", "--svc-policy"], "dicomweb-proxy": ["proxy", "--svc-proxy"], backend: ["backend", "--svc-backend"], demo: ["expected", "--svc-demo"],
 };
-export const sessionLabel = (id: string) => id === UNATTRIBUTED ? "Calls outside any flow" : id;
+/** The calls outside any flow: `unattributed` at the root, and `unattributed@{sandbox}` in a sandbox. */
+export const isUnattributed = (id: string) => id === UNATTRIBUTED || id.startsWith(`${UNATTRIBUTED}@`);
+export const sessionLabel = (id: string) => isUnattributed(id) ? "Calls outside any flow" : id;
 
 /** A long session shows its newest requests first: drawing thousands at once holds the page for seconds. */
-const RECENT_TRACES = 200;
+export const RECENT_TRACES = 50;
 
 export class LiveTrace {
   sessions: SessionInfo[] = [];
@@ -64,7 +66,7 @@ export class LiveTrace {
   private notify() { for (const fn of this.listeners) fn(); }
 
   /** Newest flow, by activity. Calls with no flow don't take over the view while a flow is running. */
-  activeSession() { return this.chosen || (this.sessions.find(s => s.id !== UNATTRIBUTED) ?? this.sessions[0])?.id; }
+  activeSession() { return this.chosen || (this.sessions.find(s => !isUnattributed(s.id)) ?? this.sessions[0])?.id; }
   get waitingCount() { return this.waiting.length; }
 
   private keep(s: Span) {
@@ -190,7 +192,7 @@ export class LiveTrace {
     }));
     es.addEventListener("span", this.live<Span>(s => {
       const m = this.sessions.find(x => x.id === s.session);
-      if (m && this.sessions[0] !== m && s.session !== UNATTRIBUTED) {
+      if (m && this.sessions[0] !== m && !isUnattributed(s.session)) {
         this.sessions = [m, ...this.sessions.filter(x => x !== m)];
         if (!this.chosen) { this.load(); return; }
       }

@@ -42,7 +42,7 @@ function Register({ server }: { server: RunServer }) {
         <dt>Redirect URI</dt><dd><code>{VIEWER_URL}</code><CopyButton label="Copy" value={VIEWER_URL} aria="Copy the redirect URI" /></dd>
         <dt>Client ID</dt><dd><code>{server.clientId}</code><CopyButton label="Copy" value={server.clientId} aria="Copy the client ID" /></dd>
         <dt>Scope</dt><dd><code>{scope}</code><CopyButton label="Copy" value={scope} aria="Copy the scope" /></dd>
-        {signsIn(server) && kid && <><dt>Signs with</dt><dd>The key whose kid is <code>{kid}</code>, as <code>private_key_jwt</code></dd></>}
+        {signsIn(server) && kid && <><dt>Signs with</dt><dd><span className="register-text">The key whose kid is <code>{kid}</code>, as <code>private_key_jwt</code></span></dd></>}
       </dl>
     </div>
   );
