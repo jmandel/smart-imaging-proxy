@@ -29,7 +29,7 @@ export const VIEW_LINKS: ViewLink[] = [
 
 /** Where a control is found: the state a page is in when it shows it. The e2e test opens each of these. */
 export type Where =
-  | "sandboxes" | "wizard" | "register" | "registered" | "servers-form" | "server-check" | "app-check-setup" | "app-check-run"
+  | "sandboxes" | "wizard" | "wizard-server" | "register" | "registered" | "servers-form" | "server-check" | "app-check-setup" | "app-check-run"
   | "viewer" | "sign-in" | "consent" | "explore" | "view-link";
 
 /** A control. `{x}` in its name is the name of the thing itself, as `NAMED` says. */
@@ -42,11 +42,14 @@ export const CONTROLS: Control[] = [
   { where: "sandboxes", page: "My Sandboxes", control: "Make a sandbox", role: "button", name: "Create a sandbox" },
   { where: "wizard", page: "Build an App", control: "A step, once it can be reached", role: "link", name: "Your app" },
   { where: "wizard", page: "Build an App", control: "The next step", role: "button", name: "Next: Your app" },
+  { where: "wizard-server", page: "Build a Server", control: "A step, once it can be reached", role: "link", name: "Your server" },
+  { where: "wizard-server", page: "Build a Server", control: "The viewer is registered at the server, so go on", role: "button", name: "I've registered it" },
   { where: "register", page: "Register an app", control: "Its name", role: "textbox", name: "App name" },
   { where: "register", page: "Register an app", control: "Its kind", role: "radio", name: "Confidential app" },
   { where: "register", page: "Register an app", control: "Its redirect URIs", role: "textbox", name: "Redirect URIs" },
   { where: "register", page: "Register an app", control: "Skip redirect check", role: "checkbox", name: "Allow any redirect URI (don't check at sign-in, for testing)" },
   { where: "register", page: "Register an app", control: "Register it", role: "button", name: "Register" },
+  { where: "registered", page: "Register an app", control: "Its client ID, to copy", role: "button", name: "Copy {app}'s client ID" },
   { where: "registered", page: "Register an app", control: "Remove it", role: "button", name: "Remove {app}" },
   { where: "servers-form", page: "Your servers", control: "The server's FHIR base", role: "textbox", name: "FHIR base URL" },
   { where: "servers-form", page: "Your servers", control: "Read its discovery", role: "button", name: "Check discovery" },

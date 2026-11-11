@@ -8,8 +8,8 @@
 
 A sandbox has both sides of SMART Imaging: the health system's servers, and a viewer app. Most people need one side.
 
-- **Building an app?** Read the shared background, then "Building an app": its rules first, then how. The page for people is `{{SITE}}/build`.
-- **Testing your own server?** Read the shared background, then "Testing your server". The page for people is `{{ORIGIN}}/servers`.
+- **Building an app?** Read the shared background, then "Building an app": its rules first, then how. The page for people is `{{ORIGIN}}/build-an-app`, a wizard that ends at this sandbox's endpoints (`{{SITE}}/build`).
+- **Testing your own server?** Read the shared background, then "Testing your server". The page for people is `{{ORIGIN}}/build-a-server`, a wizard that ends at the server check.
 - **Driving a sandbox** (its policy, faults and clock)? "The management API". Both of the above use it too, for its admin token.
 
 Each part stands on its own, so read only the ones you need. Any one comes on its own, with this opening, from the same file: `llms.txt?part=shared`, `?part=app`, `?part=server`, `?part=management` or `?part=references`.
@@ -308,6 +308,11 @@ All paths below are under `$SANDBOX`. Bodies are JSON.
 | `GET /api/sandbox/catalog?patient=` | A patient's studies as the catalog holds them, with UIDs, sites, dates and image counts, in the order search returns them |
 | `GET /api/sandbox/faults` | The faults on now, and the app check running here, if any: `{faults, appCheck}` |
 | `POST /api/sandbox/faults` with any of the fields below | Sets those faults and leaves the rest, answering with what's on now. `false` and `null` clear them. Refused with 409 while an app check runs here |
+| `POST /api/sandbox/clock` `{"advanceSeconds":N}` or `{"reset":true}` | Moves the demo clock. `N` must be one of the choices in `GET /api/sandbox`. Tokens, study links and ages follow it; client assertions are checked by real time |
+| `POST /api/sandbox/reset` `{"confirm":true}` | Puts policy back to what's on file |
+| `POST /api/sandbox/tokens/revoke-all` | Revokes every token. As with `/revoke`, a revoked token's retrievals stop at once, through signed addresses too |
+| `POST /api/sandbox/proxy/flush` | Forgets cached access decisions. A policy change otherwise reaches a cached decision, or a signed address, only when it expires (at most `contextLifetimeSeconds`, 300 by default) |
+| `POST /api/sandbox/signing-key/rotate` | Replaces the key that signs retrieval addresses |
 
 What each fault affects:
 
@@ -321,11 +326,6 @@ What each fault affects:
 | `endpointForms: true` | `ImagingStudy` search: Endpoints rotate, study by study, through the three forms the guide allows: a response-local `urn:uuid` entry, a contained `#wado`, and an entry with fullUrl `{imaging}/fhir/Endpoint/{id}` referenced as `Endpoint/{id}`. That address isn't served: the Endpoint is only in the Bundle | Retrieval: every form holds the same address |
 
 The last four are what the guide or FHIR lets any server do, and are what an app check stages.
-| `POST /api/sandbox/clock` `{"advanceSeconds":N}` or `{"reset":true}` | Moves the demo clock. `N` must be one of the choices in `GET /api/sandbox`. Tokens, study links and ages follow it; client assertions are checked by real time |
-| `POST /api/sandbox/reset` `{"confirm":true}` | Puts policy back to what's on file |
-| `POST /api/sandbox/tokens/revoke-all` | Revokes every token. As with `/revoke`, a revoked token's retrievals stop at once, through signed addresses too |
-| `POST /api/sandbox/proxy/flush` | Forgets cached access decisions. A policy change otherwise reaches a cached decision, or a signed address, only when it expires (at most `contextLifetimeSeconds`, 300 by default) |
-| `POST /api/sandbox/signing-key/rotate` | Replaces the key that signs retrieval addresses |
 
 Create a new sandbox with `POST {{ORIGIN}}/api/sandboxes`. The response has `base`, a path to add to the origin.
 
