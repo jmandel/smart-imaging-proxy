@@ -51,13 +51,15 @@ fi
 
 echo "== Waiting for the certificate, and for a sandbox to answer"
 # A page alone doesn't prove much: a sandbox minted and then read proves one pod answered both, with its own state.
-READY=
-for _ in $(seq 1 90); do
-  base="${base:-$(curl -sf -m 5 -X POST "$ORIGIN/api/sandboxes" | sed -n 's/.*"base":"\([^"]*\)".*/\1/p')}"
-  if [ -n "$base" ] && curl -sf -m 5 -o /dev/null "$ORIGIN$base/contract.json"; then READY="$base"; break; fi
-  read -rt 2 <> <(:) || true
+# A pod's first mint is slow — it's the first thing that reads the catalog and writes a store — so it gets minutes,
+# not seconds, and the same sandbox is read until it answers rather than minting another each time.
+READY= base=
+for _ in $(seq 1 40); do
+  if [ -z "$base" ]; then base="$(curl -sf -m 120 -X POST "$ORIGIN/api/sandboxes" | sed -n 's/.*"base":"\([^"]*\)".*/\1/p')"; fi
+  if [ -n "$base" ] && curl -sf -m 20 -o /dev/null "$ORIGIN$base/contract.json"; then READY="$base"; break; fi
+  read -rt 3 <> <(:) || true
 done
-[ "$READY" ] || { echo "$ORIGIN never answered with a sandbox of its own" >&2; exit 1; }
+[ "$READY" ] || { echo "$ORIGIN never answered with a sandbox of its own: / answers $(curl -s -o /dev/null -w '%{http_code}' "$ORIGIN/")" >&2; exit 1; }
 curl -sf -m 5 -o /dev/null "$ORIGIN/" || { echo "$ORIGIN never answered 200 with a valid certificate" >&2; exit 1; }
 echo "== Checking, against a sandbox it just made ($READY)"
 timeout -k 5 180 env BASE_URL="$ORIGIN" bun test --timeout 40000 ./e2e/client.e2e.ts
