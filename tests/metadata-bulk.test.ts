@@ -195,7 +195,19 @@ for (const backend of BACKENDS) {
     }, 60000);
 
     test("every bulk link, at every level, gives exactly its element's bytes from the retrieved instance", async () => {
-      let links = 0, nested = 0;
+      // The first backend is a census, which pins the contract for every link. The others check a uniform
+      // 30% sample: with ~770 links that is ~230 checks, and a defect present in 2% of links (15) is missed
+      // with probability ≈ 0.7^15 ≈ 0.005, so ≥99.5% detection. The first link of every element-path class
+      // is always checked, so a systematic per-tag bug cannot slip past the draw. FULL_BULK=1 restores a
+      // census on every backend.
+      const census = process.env.FULL_BULK === "1" || backend === BACKENDS[0];
+      const classes = new Set<string>();
+      const sample = (key: string) => {
+        let h = 2166136261;
+        for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619) >>> 0;
+        return (h % 1000) / 1000;
+      };
+      let links = 0, nested = 0, checked = 0;
       for (const [id, { uid, base }] of bases) {
         const meta = await getJson(`${base}/studies/${uid}/metadata`, token);
         expect([id, meta.status]).toEqual([id, 200]);
@@ -203,32 +215,40 @@ for (const backend of BACKENDS) {
         for (const series of hierarchyOf(id).series) {
           const got = await retrieve(`${base}/studies/${uid}/series/${series.uid}`, token);
           expect([id, series.uid, got.status, got.instances.size]).toEqual([id, series.uid, 200, series.instances.length]);
-          const work: { sop: string; path: string; uri: string }[] = [];
+          const work: { path: string; uri: string; bytes: Uint8Array }[] = [];
           for (const [sop, bytes] of got.instances) {
             const digest = sha(bytes);
             if (!instanceDigests.has(sop)) instanceDigests.set(sop, digest);
             expect([sop, digest]).toEqual([sop, instanceDigests.get(sop)!]);
             const item = bySop.get(sop);
             expect(item).toBeDefined();
-            for (const link of bulkLinks(item)) work.push({ sop, ...link });
+            for (const link of bulkLinks(item)) {
+              // The link names the element it stands for, and leads through this study's proxy base.
+              const uri = `${base}/studies/${uid}/series/${series.uid}/instances/${sop}/bulk/${link.path}`;
+              expect(link.uri).toBe(uri);
+              links++;
+              if (link.path.includes("/")) nested++;
+              const cls = link.path.replace(/\d+/g, "#");
+              const firstOfClass = !classes.has(cls);
+              classes.add(cls);
+              if (census || firstOfClass || sample(`${backend}:${sop}:${link.path}`) < 0.3) work.push({ path: link.path, uri, bytes });
+            }
           }
-          await mapLimit(work, 6, async ({ sop, path, uri }) => {
-            // The link names the element it stands for, and leads through this study's proxy base.
-            expect(uri).toBe(`${base}/studies/${uid}/series/${series.uid}/instances/${sop}/bulk/${path}`);
-            const expected = elementAt(got.instances.get(sop)!, path);
+          checked += work.length;
+          await mapLimit(work, 6, async ({ path, uri, bytes }) => {
+            const expected = elementAt(bytes, path);
             expect([path, expected !== undefined]).toEqual([path, true]);
             const r = await fetchBulk(uri, token);
             expect([uri, r.status]).toEqual([uri, 200]);
             if (backend !== "orthanc") expect(r.length).toBe(String(r.bytes.length));
             expect([path, r.bytes.length, sha(r.bytes)]).toEqual([path, expected!.length, sha(expected!)]);
-            links++;
-            if (path.includes("/")) nested++;
           });
         }
       }
       // The X-rays' LUT Data and the slide's ICC profiles are nested.
       expect(nested).toBeGreaterThanOrEqual(14);
       expect(links).toBeGreaterThan(700);
+      if (!census) expect(checked).toBeGreaterThan(links * 0.2);
     }, 600000);
 
     test("metadata at study, series and instance level holds exactly that level's instances", async () => {

@@ -108,7 +108,7 @@ export default function BuildAServer() {
         <h2 id="h-yours">Your servers</h2>
         <p className="note">Described already, and kept in this browser: check one, open it in the viewer, or change it.</p>
         <Yours list={saved} onEdit={s => go("server", serverKey(s))} onRemove={remove} />
-        {!wizard && <button type="button" className="add-server" id="add-server" onClick={addAnother}>Add another server</button>}
+        <button type="button" className="add-server" id="add-server" aria-expanded={wizard} onClick={wizard ? close : addAnother}>{wizard ? "Hide" : "Add another server"}</button>
       </section>}
 
       {wizard && <>

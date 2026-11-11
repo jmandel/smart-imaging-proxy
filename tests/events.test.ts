@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { startStack, type Stack } from "../src/stack";
 import { defaultsFor, FLOWS, registerClients, runStep, startFlow } from "../src/flows";
 import { createCollector } from "../src/trace-collector";
+import { traceSettled } from "../src/trace";
 
 const ROOT = join(import.meta.dir, "..");
 const SPANS = "test-span-credential";
@@ -17,7 +18,7 @@ test("a flow's sign-in, search and retrieval each record events, linked by the t
   const flow = FLOWS.find(f => f.id === "patient-sites")!;
   const c = await startFlow(stack, clients, flow);
   for (const s of ["consent", "search", "retrieve"]) await runStep(c, flow, s, defaultsFor(c, flow, s));
-  await Bun.sleep(150);
+  await traceSettled();
   const events = stack.collector.store.events({ session: c.session });
   const kinds = events.map(e => e.kind);
   for (const k of ["token.issued", "policy.written", "search.returned", "context.signed", "proxy.fast-path", "stream.done"]) expect(kinds).toContain(k);

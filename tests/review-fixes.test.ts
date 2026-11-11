@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { startStack, type Stack } from "../src/stack";
 import { CLINICAL_FHIR, scriptedLaunch } from "../src/flows/oauth";
+import { traceSettled } from "../src/trace";
 
 let stack: Stack, conf: any;
 beforeAll(async () => { stack = await startStack(join(import.meta.dir, "..")); await stack.resetAll(); conf = await (await fetch(`${CLINICAL_FHIR}/.well-known/smart-configuration`)).json(); });
@@ -282,7 +283,7 @@ describe("A long session's trace loads its newest requests first", () => {
   test("?traces=N gives the newest N traces whole, and X-Trace-Count says how many there are", async () => {
     const session = `long-${Date.now()}`, hex = (n: number) => [...crypto.getRandomValues(new Uint8Array(n))].map(b => b.toString(16).padStart(2, "0")).join("");
     for (let i = 0; i < 5; i++) await fetch(`${CLINICAL_FHIR}/.well-known/smart-configuration`, { headers: { traceparent: `00-${hex(16)}-${hex(8)}-01`, baggage: `demo.session=${session}` } });
-    await Bun.sleep(300);
+    await traceSettled();
     const { CONFIG } = await import("../src/config");
     const all: any[] = await (await fetch(`${CONFIG.traceUrl}/api/sessions/${session}/spans`)).json();
     const r = await fetch(`${CONFIG.traceUrl}/api/sessions/${session}/spans?traces=2`);

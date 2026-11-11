@@ -11,7 +11,7 @@ import { createDemoServer } from "../src/demo-server";
 import { buildAuthorization, scriptedLaunch, submitConsent, tokenRequestBody } from "../src/flows/oauth";
 import { CONFIG, localUrl, ONE_ORIGIN, PORTS, urlsFor } from "../src/config";
 import { createSandboxes, splitSandbox } from "../src/sandboxes";
-import { flushTraces } from "../src/trace";
+import { traceSettled } from "../src/trace";
 import { TraceStore } from "../src/trace-store";
 import { resetClock } from "../src/clock";
 import type { Sandbox } from "../src/sandbox";
@@ -263,12 +263,11 @@ describe("sandbox lifetimes", () => {
 });
 
 describe("trace sessions belong to the sandbox that recorded them", () => {
-  const settle = async () => { flushTraces(); await Bun.sleep(150); };
   test("each sandbox has its own unattributed bucket, and the root's stays the root's", async () => {
     const w = stack.sandboxes.mint();
     await get(`${CONFIG.imagingUrl}/fhir/metadata`);
     await get(`${w.urls.imaging}/fhir/metadata`);
-    await settle();
+    await traceSettled();
     expect(stack.collector.sandboxOf("unattributed")).toBeUndefined();
     const listed = ((await (await get(`${urlsFor(`/s/${w.id}`).trace}/api/sessions`)).json()) as any[]).map(x => x.id);
     expect(listed).not.toContain("unattributed");
@@ -282,7 +281,7 @@ describe("trace sessions belong to the sandbox that recorded them", () => {
     const baggage = { baggage: `demo.session=${victim}` };
     await get(`${CONFIG.imagingUrl}/fhir/metadata`, { headers: baggage });
     await get(`${w.urls.imaging}/fhir/metadata`, { headers: baggage });
-    await settle();
+    await traceSettled();
     expect(stack.collector.sandboxOf(victim)).toBeUndefined();
     expect([...stack.collector.sessions.get(victim)!.spans.values()].every(x => !x.id)).toBe(true);
     const listed = ((await (await get(`${urlsFor(`/s/${w.id}`).trace}/api/sessions`)).json()) as any[]).map(x => x.id);
@@ -293,7 +292,7 @@ describe("trace sessions belong to the sandbox that recorded them", () => {
     expect((await fetch(`http://127.0.0.1:${PORTS.trace}/v1/spans`, { method: "POST", headers: { "content-type": "application/json" }, body: forged })).status).toBe(401);
     expect((await fetch(`http://127.0.0.1:${PORTS.trace}/v1/spans`, { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer guess" }, body: forged })).status).toBe(401);
     if (ONE_ORIGIN) expect((await get(`${CONFIG.traceUrl}/v1/spans`, { method: "POST", headers: { "content-type": "application/json" }, body: forged })).status).toBe(404);
-    await settle();
+    await traceSettled();
     expect([...(stack.collector.sessions.get("unattributed")?.spans.values() ?? [])].some(x => x.name === "forged")).toBe(false);
   });
   test("one busy sandbox can't push out another's app traffic: its own oldest sessions go first", () => {
@@ -331,8 +330,7 @@ describe("the trace, filtered to a sandbox", () => {
     const other = stack.sandboxes.mint();
     await scriptedLaunch("josh", "portal-app", { at: other.urls });
     await scriptedLaunch("josh");
-    flushTraces();
-    await Bun.sleep(150);
+    await traceSettled();
     const traceOf = (prefix: string) => urlsFor(prefix).trace;
     const listed = async (prefix: string) => ((await (await get(`${traceOf(prefix)}/api/sessions`)).json()) as any[]).map(s => s.id);
     const mine = await listed(sandbox.base);

@@ -450,11 +450,13 @@ a.path p:not(.path-kicker) { color:var(--muted); }
 .guide-section { padding:1.25rem 0 0; margin-top:1.25rem; border-top:1px solid var(--line); }
 .guide-section h2 { margin:0 0 .5rem; font-size:1.2rem; }
 
-/* Your servers: one row per server, its actions on the row. */
+/* Your servers: one row per server, its actions on the row. The box's heading is a step above the row
+   names, as "My Sandboxes" is above its list's names. */
+.panel.your-servers > h2 { font-size:1.2rem; }
 .server-rows { list-style:none; margin:0 0 1.25rem; padding:0; border-top:1px solid var(--line); }
 .server-rows > li { display:flex; flex-wrap:wrap; align-items:center; gap:.6rem 1.25rem; padding:.85rem .25rem; border-bottom:1px solid var(--line); }
 .server-row-what { flex:1 1 18rem; min-width:0; }
-.server-row-what h3 { font-size:1.05rem; margin:0 0 .15rem; overflow-wrap:anywhere; }
+.server-row-what h3 { font-size:1.1rem; margin:0 0 .15rem; overflow-wrap:anywhere; }
 .server-row-what p { margin:0; line-height:1.5; }
 .server-row-what > p:first-of-type code { max-width:100%; }
 .server-row-what .note code { display:inline; vertical-align:baseline; }
@@ -465,6 +467,8 @@ a.path p:not(.path-kicker) { color:var(--muted); }
 
 /* Build an App: the wizard's steps, one at a time. Numbered, since they are a sequence. */
 .wizard-steps { list-style:none; counter-reset:wz; display:flex; flex-wrap:wrap; gap:.25rem; margin:0 0 1.25rem; padding:0; border-bottom:1px solid var(--line); }
+/* Build a Server: when the wizard opens under "Your servers", the step bar needs room from the box's edge. */
+.panel + .wizard-steps { margin-top:1.25rem; }
 .wizard-steps li { counter-increment:wz; }
 .wizard-steps li > * { display:inline-flex; align-items:center; gap:.5rem; min-height:2.75rem; padding:0 .9rem 0 .1rem; margin-bottom:-1px; border-bottom:3px solid transparent; color:var(--muted); text-decoration:none; font-weight:600; }
 .wizard-steps li > *::before { content:counter(wz); display:inline-flex; align-items:center; justify-content:center; width:1.5rem; height:1.5rem; border-radius:50%; border:1.5px solid currentColor; font-size:.8rem; }

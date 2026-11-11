@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createProxy, type Backend } from "@smart-imaging-proxy/core";
 import { demoClock } from "../src/clock";
-import { flushTraces, setTraceSink, traceObserver, type SpanRecord } from "../src/trace";
+import { setTraceSink, traceObserver, traceSettled, type SpanRecord } from "../src/trace";
 import { EVRLE, FakeBackend, fakeInstance, key, large, request, sleep, until } from "../packages/core/tests/fake-backend";
 
 const proxyOver = (backend: Backend) => createProxy({ publicBase: () => "http://proxy", keys: new Map([[key.kid, key.publicKey]]), decisionUrl: "http://127.0.0.1:1/none", serviceSecret: "s", backend: () => backend, observer: traceObserver, clock: demoClock });
@@ -16,7 +16,7 @@ describe("spans measure delivery", () => {
     const sink = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) { if (new URL(req.url).pathname === "/v1/spans") for (const r of await req.json() as SpanRecord[]) seen.set(r.span, r); return new Response(null, { status: 204 }); } });
     cleanups.push(() => sink.stop(true));
     setTraceSink(`http://127.0.0.1:${sink.port}`);
-    try { await run(); flushTraces(); await sleep(60); } finally { setTraceSink(""); }
+    try { await run(); await traceSettled(); } finally { setTraceSink(""); }
     return [...seen.values()].filter(r => r.session === "delivery-test");
   }
   // How a caller's trace reaches any service here.

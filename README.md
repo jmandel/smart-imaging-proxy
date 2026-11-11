@@ -324,11 +324,17 @@ Sam Example's and Riley Example's are invented people, and they're the only ones
 ## Tests
 
 ```sh
-bun test                         # every flow on every backend, core's tests, and the rest
-BACKENDS=static-files bun test   # flows, Explore, rotation, and conformance on one backend
+bun run test                     # every flow on static-files, core's tests, and the rest
+bun run test:unit                # the 13 files with no stack or services (about 2 s)
+bun run test:parallel            # static-files, files across every CPU core
+bun run test:matrix              # every flow on every backend, in parallel
+bun test                         # direct: every backend, serial
+FULL_BULK=1 bun test tests/metadata-bulk.test.ts  # every bulk link on every backend
 cd packages/core && bun test     # core alone, with no demo
 ```
-`bun run test:ui` drives the pages in real Chromium: focus, overflow, contrast, popups, thumbnails decoded in the page, and what the pages draw from real responses. It runs its own stack in memory, at port offset 3000 unless `DEMO_PORT_OFFSET` says otherwise, and takes the browser from `CHROMIUM`, or `/usr/bin/chromium`.
+`bun run test` and `bun run test:parallel` default to `BACKENDS=static-files`; set `BACKENDS=static-files,s3,orthanc` or run `test:matrix` for every backend. A plain `bun test` does not read the package script, so it keeps all three backends. `bun run test:parallel` gives each worker its own `DEMO_PORT_OFFSET` from `tests/preload.ts`, so the stacks don't collide. The first bulk-link backend is a census; the others check a random sample with ≥99.5% detection of a 2% defect, plus every distinct element-path class. `FULL_BULK=1` restores a census everywhere.
+
+`bun run test:ui` drives the pages in real Chromium: focus, overflow, contrast, popups, thumbnails decoded in the page, and what the pages draw from real responses. It runs its own stack in memory, at port offset 3100 unless `DEMO_PORT_OFFSET` says otherwise, and takes the browser from `CHROMIUM`, or `/usr/bin/chromium`. `bun run test:e2e` runs all six browser suites in sequence; each uses its own offset (client 3000, ui 3100, spec 3200, drive 3300, layout 3400, app-check 3500), so any two can also run side by side.
 
 
 The tests use the same ports as the demo, so stop the demo first, with `bun run down` or by ending `bun run start`, or give the test run its own `DEMO_PORT_OFFSET`. The suite also creates and deletes a temporary bucket in the S3 store it points at. They need the setup steps above, with the S3 store and Orthanc running, even with `BACKENDS` set. Spec checks read the guide's text from the `focused-access-updates` branch on GitHub, or from a local clone named by `SPEC_REPO`, at `SPEC_REF`.

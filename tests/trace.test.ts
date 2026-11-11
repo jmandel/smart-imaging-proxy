@@ -14,7 +14,7 @@ import { createCollector, MAX_SPANS_BODY } from "../src/trace-collector";
 /** The span credential the collectors these tests build take. */
 const SPANS = "test-span-credential";
 import { DEFAULT_TRACE_DB, traceStoreConfigFromEnv } from "../src/trace-store";
-import { redactUrl, setCaptureLimitsForTest, traced, type SpanRecord } from "../src/trace";
+import { redactUrl, setCaptureLimitsForTest, traceSettled, traced, type SpanRecord } from "../src/trace";
 
 let stack: Stack; let clients: any;
 beforeAll(async () => { stack = await startStack(join(import.meta.dir, "..")); clients = registerClients(stack); });
@@ -24,7 +24,7 @@ async function run(id: string) {
   const flow = FLOWS.find(f => f.id === id)!;
   const c = await startFlow(stack, clients, flow);
   for (const s of flow.steps) await runStep(c, flow, s.id, defaultsFor(c, flow, s.id));
-  await Bun.sleep(150);
+  await traceSettled();
   return [...stack.collector.sessions.get(c.session)!.spans.values()];
 }
 
@@ -73,7 +73,7 @@ test("exchanges are captured in full, and hold no secrets", async () => {
   await runStep(c, flow, "consent", defaultsFor(c, flow, "consent"));
   const token = c.state.token as string;
   await runStep(c, flow, "search", defaultsFor(c, flow, "search"));
-  await Bun.sleep(200);
+  await traceSettled();
   const session = stack.collector.sessions.get(c.session)!;
   const spans = [...session.spans.values()];
   const tokenCall = spans.find(s => s.kind === "server" && s.http?.url.endsWith("/token"))!;
@@ -96,7 +96,7 @@ test("the stream carries summaries, and the full exchange loads on demand", asyn
   const flow = FLOWS.find(f => f.id === "patient-sites")!;
   const c = await startFlow(stack, clients, flow);
   await runStep(c, flow, "consent", defaultsFor(c, flow, "consent"));
-  await Bun.sleep(200);
+  await traceSettled();
   const base = CONFIG.traceUrl;
   const list: any[] = await (await fetch(`${base}/api/sessions/${c.session}/spans`)).json();
   const one = list.find(s => s.http?.url.endsWith("/token") && s.kind === "server");
@@ -115,12 +115,12 @@ test("the stream carries summaries, and the full exchange loads on demand", asyn
 });
 
 test("everything a flow does appears in its session", async () => {
-  await Bun.sleep(200);
+  await traceSettled();
   for (const flow of FLOWS) {
     const before = stack.collector.sessions.get("unattributed")?.spans.size ?? 0;
     const c = await startFlow(stack, clients, flow);
     for (const s of flow.steps) await runStep(c, flow, s.id, defaultsFor(c, flow, s.id));
-    await Bun.sleep(150);
+    await traceSettled();
     const all = [...(stack.collector.sessions.get("unattributed")?.spans.values() ?? [])];
     expect(all.slice(before).map(s => `${flow.id}: ${s.name}`)).toEqual([]);
   }
@@ -167,7 +167,7 @@ test("no raw secret reaches a span, including a code that only ever travels in a
     expect(code.length).toBeGreaterThan(20);
     expect((await fetch(back, { headers: baggage })).status).toBe(200);
     expect((await fetch(`${CONFIG.authUrl}/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", ...baggage }, body: tokenRequestBody(a, code) })).status).toBe(200);
-    await Bun.sleep(250);
+    await traceSettled();
     const text = await exported(session);
     const callback = stack.collector.sessions.get(session)!.spans;
     const hop = [...callback.values()].find(s => s.name === "Redirect back to the app: /oauth/callback")!;
@@ -180,7 +180,7 @@ test("no raw secret reaches a span, including a code that only ever travels in a
     // A decision call, a backend client's assertion, and a related person's cookie.
     const sessions = [session];
     for (const id of ["token-refresh", "backend-referral", "caregiver"]) sessions.push((await run(id))[0]!.session);
-    await Bun.sleep(250);
+    await traceSettled();
     const all = (await Promise.all(sessions.map(exported))).join("\n");
     expect(rec.raw.size).toBeGreaterThan(10);
     const leaked = [...rec.raw].filter(v => all.includes(v) || all.includes(encodeURIComponent(v)));
@@ -214,7 +214,7 @@ test("a body over the capture limit is cut, flagged, and still redacted", async 
     const c = await startFlow(stack, clients, flow);
     await runStep(c, flow, "consent", defaultsFor(c, flow, "consent"));
     await runStep(c, flow, "search", defaultsFor(c, flow, "search"));
-    await Bun.sleep(200);
+    await traceSettled();
     const search = [...stack.collector.sessions.get(c.session)!.spans.values()].find(s => s.kind === "server" && s.http?.url.includes("/ImagingStudy"))!;
     expect(search.http!.response!.truncated).toBe(true);
     expect(search.http!.response!.body!.length).toBeLessThanOrEqual(4096);

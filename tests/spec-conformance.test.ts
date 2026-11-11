@@ -15,9 +15,14 @@ import { now } from "../src/clock";
 const SPEC_REPO = process.env.SPEC_REPO;
 const SPEC_REF = process.env.SPEC_REF ?? (SPEC_REPO ? "origin/focused-access-updates" : "focused-access-updates");
 const SPEC_PATH = "input/pagecontent/specification.md";
-const specText = SPEC_REPO
-  ? new TextDecoder().decode(Bun.spawnSync(["git", "-C", SPEC_REPO, "show", `${SPEC_REF}:${SPEC_PATH}`]).stdout)
-  : await (await fetch(`https://raw.githubusercontent.com/argonautproject/smart-imaging/${SPEC_REF}/${SPEC_PATH}`)).text();
+const specUrl = `https://raw.githubusercontent.com/argonautproject/smart-imaging/${SPEC_REF}/${SPEC_PATH}`;
+// This runs before any test, in a suite whose files are serial: bound the wait instead of hanging the run.
+const specText = await (async () => {
+  if (SPEC_REPO) return new TextDecoder().decode(Bun.spawnSync(["git", "-C", SPEC_REPO, "show", `${SPEC_REF}:${SPEC_PATH}`]).stdout);
+  const response = await fetch(specUrl, { signal: AbortSignal.timeout(15_000) });
+  if (!response.ok) throw new Error(`The guide's text is unavailable at ${SPEC_REF} (${response.status}). Set SPEC_REPO or SPEC_REF.`);
+  return response.text();
+})();
 const says = (quote: string) => { if (!specText.includes(quote)) throw new Error(`Not in ${SPEC_REF}: ${quote}`); };
 
 const part = (s: string, q?: number) => `multipart/related; type=application/dicom; transfer-syntax=${s}${q !== undefined ? `; q=${q}` : ""}`;

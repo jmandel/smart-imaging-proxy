@@ -4,9 +4,22 @@
 // same records into its own new, empty catalog, after checking each study still resolves to the same patient there.
 // Only builds startStack makes are reused: one a test makes itself always queries Orthanc. Set
 // ORTHANC_CATALOG_EACH_TIME=1 to query Orthanc for every stack as well.
-import { mock } from "bun:test";
+import { mock, setDefaultTimeout } from "bun:test";
 import * as core from "@smart-imaging-proxy/core";
 import type { CatalogStore } from "@smart-imaging-proxy/core";
+
+// `bun test --parallel` runs files in worker processes. Each worker would otherwise bind the same ports,
+// since src/config.ts derives them all from DEMO_PORT_OFFSET; the six services span offset+0..+5, so a
+// stride of 10 separates workers. Hooks inherit the test timeout, and a stack boot on a loaded machine
+// can exceed the 5 s default.
+const worker = Number(process.env.BUN_TEST_WORKER_ID ?? 0);
+if (worker > 0) {
+	// The preload runs again for every file under --isolate, so keep the untouched base beside it.
+	const base = process.env.DEMO_PORT_OFFSET_BASE ?? process.env.DEMO_PORT_OFFSET ?? "0";
+	process.env.DEMO_PORT_OFFSET_BASE = base;
+	process.env.DEMO_PORT_OFFSET = String(Number(base) + worker * 10);
+}
+setDefaultTimeout(30_000);
 
 type Build = typeof core.catalogFromOrthanc;
 interface Recorded { lookups: [string, string, string | undefined][]; publications: unknown[]; report: Awaited<ReturnType<Build>> }
