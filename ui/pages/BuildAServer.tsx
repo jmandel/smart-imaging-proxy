@@ -75,19 +75,19 @@ export default function BuildAServer() {
     if (t === "public") q.delete("how"); else q.set("how", t);
     setParams(q, { replace: true, preventScrollReset: true });
   };
-  // The first step is where the page opens, so it's left out of the address: a link to it is the bare page.
+  // A step in the address is what opens the wizard, so every step is written, the first included.
   const go = (id: StepId, server?: string) => setParams(p => {
     const q = new URLSearchParams(p);
-    if (id === "register") q.delete("step"); else q.set("step", id);
+    q.set("step", id);
     if (server) q.set("server", server); else q.delete("server");
     return q;
   });
-  /** To the wizard's first step, where another server is added, with the list above it left as it is. */
-  const addAnother = () => {
-    setKey(null);
-    go("register");
-    document.getElementById("wizard-title")?.scrollIntoView({ block: "start" });
-  };
+  /** Whether the wizard shows: always when there's nothing described yet, and otherwise when a step is asked for. */
+  const wizard = saved.length === 0 || params.has("step") || params.has("how") || params.has("server");
+  /** Opens the wizard below the list, at its first step, for another server. */
+  const addAnother = () => { setKey(null); go("register"); };
+  /** Back to the servers described, with the wizard closed. */
+  const close = () => setParams({});
   const remove = (s: ServerEntry) => {
     saveServers(savedServers().filter(x => serverKey(x) !== serverKey(s)));
     if (params.get("server") === serverKey(s)) go("register");
@@ -105,14 +105,13 @@ export default function BuildAServer() {
       <p className="lead">Connect our viewer, a known-good SMART Imaging app, to your server: register a client with it, describe it here, then check every step of the guide against it. When something fails, you'll know it's the server, not the app.</p>
 
       {saved.length > 0 && <section className="panel your-servers" aria-labelledby="h-yours">
-        <div className="your-sandboxes-head">
-          <h2 id="h-yours">Your servers</h2>
-          <button type="button" className="button" id="add-server" onClick={addAnother}>Add another</button>
-        </div>
-        <p className="note">Described already, and kept in this browser: check one, open it in the viewer, or change it. Adding another is the wizard below.</p>
+        <h2 id="h-yours">Your servers</h2>
+        <p className="note">Described already, and kept in this browser: check one, open it in the viewer, or change it.</p>
         <Yours list={saved} onEdit={s => go("server", serverKey(s))} onRemove={remove} />
+        {!wizard && <button type="button" className="add-server" id="add-server" onClick={addAnother}>Add another server</button>}
       </section>}
 
+      {wizard && <>
       <ol className="wizard-steps" aria-label="Steps">
         {STEPS.map((s, i) => (
           <li key={s.id} aria-current={s.id === step ? "step" : undefined} className={i < at ? "done" : undefined}>
@@ -149,13 +148,13 @@ export default function BuildAServer() {
             keyPair={key ?? entry?.jwk ?? null} onKeyPair={setKey}
             editing={entry}
             withRegister={false} withKey
-            onCancel={saved.length ? () => go("register") : undefined}
+            onCancel={saved.length ? close : undefined}
             onSaved={(form, action) => {
               putServer(form, entry ? serverKey(entry) : serverKey(form));
               // The key is the server's own now: kept with it in Your servers, not as this tab's pending one.
               setKey(null);
               reload();
-              if (action === "check") go("check", serverKey(form)); else go("register");
+              if (action === "check") go("check", serverKey(form)); else close();
             }}
           />
         </>}
@@ -182,9 +181,11 @@ export default function BuildAServer() {
 
       <div className="wizard-nav">
         {at > 0 && <button type="button" className="secondary" onClick={() => go(STEPS[at - 1]!.id, entry ? serverKey(entry) : undefined)}>Back</button>}
+        {step === "register" && saved.length > 0 && <button type="button" className="tool" onClick={close}>Cancel</button>}
         {step === "register" && <button type="button" className="primary" onClick={() => go("server")}>I've registered it</button>}
         {step === "check" && !entry && <button type="button" className="primary" onClick={() => go("server")}>Describe your server</button>}
       </div>
+      </>}
 
       <section aria-labelledby="h-json">
         <h2 id="h-json" className="sr-only">This browser's servers, as data</h2>

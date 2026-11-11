@@ -251,8 +251,9 @@ describe("the demo client", () => {
     expect(await page.getByLabel("Client ID").inputValue()).toBe(ext.clientId);
     await page.getByRole("button", { name: "Cancel" }).click();
     await page.waitForURL(u => !u.searchParams.has("step"));
-    await page.getByRole("button", { name: "Add another" }).click();
-    await page.waitForURL(u => !u.searchParams.has("step"));
+    // With the wizard closed on the list, "Add another server" opens it under the list.
+    await page.getByRole("button", { name: "Add another server" }).click();
+    await page.waitForURL(u => u.searchParams.get("step") === "register");
     await page.getByRole("heading", { name: "Add a server" }).waitFor();
     await page.getByRole("button", { name: "Remove Another server" }).click();
     await page.locator(".your-servers").waitFor({ state: "detached" });
@@ -283,7 +284,7 @@ describe("the demo client", () => {
     expect(await page.getByLabel("Patient").count()).toBe(1);
     expect(await page.getByRole("radio", { name: /Backend service/ }).count()).toBe(0);
     await page.getByRole("button", { name: "Back" }).click();
-    await page.waitForURL(u => !u.searchParams.has("step"));
+    await page.waitForURL(u => u.searchParams.get("step") === "register");
     expect(await page.getByRole("radio", { name: /Backend service/ }).isChecked()).toBe(true);
     await context.close();
   });
@@ -400,6 +401,8 @@ describe("the demo client", () => {
     const yours = page.locator(".your-servers");
     await yours.getByRole("heading", { name: "Your servers" }).waitFor();
     await yours.getByText("St. Elsewhere").waitFor();
+    // The wizard isn't on the page until it's asked for: the servers described are the page.
+    expect(await page.locator(".wizard-steps").count()).toBe(0);
     expect(await yours.getByRole("link", { name: "Check it" }).getAttribute("href")).toBe(`/check?${new URLSearchParams({ server: key })}`);
     // Edit opens the step that describes it, filled in.
     await yours.getByRole("button", { name: "Edit St. Elsewhere" }).click();

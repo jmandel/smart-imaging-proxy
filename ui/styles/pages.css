@@ -140,7 +140,10 @@ a.tool { display:inline-flex; align-items:center; justify-content:center; color:
 .client-type { border:1px solid var(--line); border-radius:6px; margin:.7rem 0 0; padding:.4rem .7rem .6rem; min-width:0; }
 .client-type legend { font-weight:600; padding:0 .3rem; }
 #register .client-type label { font-weight:600; margin:.35rem 0 0; }
-.client-type span { display:block; font-weight:400; color:var(--muted); font-size:.85rem; margin-left:1.5rem; }
+/* A radio, its name beside it on one line, and its line under, both aligned with the name: not the radio. */
+.client-type label { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:center; column-gap:.55rem; row-gap:.1rem; }
+.client-type label > input { grid-column:1; grid-row:1; margin:0; width:1.05rem; height:1.05rem; }
+.client-type span { display:block; grid-column:2; grid-row:2; font-weight:400; color:var(--muted); font-size:.85rem; }
 #register textarea { width:100%; font:.8rem/1.4 var(--mono); color:inherit; background:var(--plate); border:1px solid var(--line); border-radius:6px; padding:.45rem .55rem; }
 #register textarea:disabled { opacity:.55; cursor:not-allowed; }
 #register select { width:100%; }
@@ -339,6 +342,9 @@ a.path p:not(.path-kicker) { color:var(--muted); }
 .way p { margin:0 0 .35rem; color:var(--muted); flex:1; }
 .more-links { list-style:none; display:flex; flex-wrap:wrap; gap:.3rem 1.5rem; margin:1.4rem 0 0; padding:1rem 0 0; border-top:1px solid var(--line); }
 .your-sandboxes-head { display:flex; align-items:center; justify-content:space-between; gap:1rem; }
+/* Add another server: a dashed row at the foot of the list, which opens the wizard under it. */
+.add-server { display:flex; align-items:center; justify-content:center; width:100%; margin:.15rem 0 0; min-height:2.75rem; padding:.5rem 1rem; background:transparent; border:1px dashed var(--accent); border-radius:8px; color:var(--accent); font-weight:700; }
+.add-server:hover:not(:disabled) { background:var(--accent-soft); }
 @media (max-width:40rem) {
   .ways { grid-template-columns:minmax(0, 1fr); gap:1.4rem; }
   .way, .way:first-child { padding:0; }
