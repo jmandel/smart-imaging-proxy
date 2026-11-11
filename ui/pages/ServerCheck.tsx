@@ -83,7 +83,7 @@ function Picker({ servers, unknown }: { servers: ServerChoice[]; unknown?: strin
       {servers.length ? <ul className="check-servers">{servers.map(s => (
         <li key={s.id}><Link to={`/check?server=${encodeURIComponent(s.id)}`}><b>{s.label}</b><span>{s.detail}</span><span>{capital(kindOf(s))}</span></Link></li>
       ))}</ul> : <p className="note">None yet. Make a sandbox on <PageLink id="sandboxes" />, or add a server of your own.</p>}
-      <p>Add or change a server on <PageLink id="servers" />.</p>
+      <p>Add or change a server on <PageLink id="build-a-server" />.</p>
     </section>
   );
 }
@@ -151,7 +151,7 @@ function Run({ server, runId }: { server: RunServer; runId?: string }) {
     {runId && <div className="check-run-note">
       <p className="note">Each step is sent back to the agent as it happens. The link lasts a day.</p>
       {reportFailed && <p className="error" role="alert">{reportFailed}</p>}
-      {saved ? <p className="note">This server is in <PageLink id="servers" />.</p>
+      {saved ? <p className="note">This server is in <PageLink id="build-a-server">Your servers</PageLink>.</p>
         : server.hasKey ? <p className="note">Its private key stays with the run, on this site's server, so to keep it in Your servers, add it there with its key.</p>
         : <button type="button" className="tool" onClick={save}>Save to Your servers</button>}
     </div>}

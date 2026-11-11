@@ -18,7 +18,7 @@ export interface Page {
 }
 
 export type PageId =
-  | "home" | "build-an-app" | "build-a-server" | "about" | "sandboxes" | "viewer" | "servers" | "check"
+  | "home" | "build-an-app" | "build-a-server" | "about" | "sandboxes" | "viewer" | "check"
   | "sandbox" | "app-check" | "explore" | "build" | "connect" | "activity" | "trace" | "trace-span" | "trace-log" | "config";
 
 const pages: Page[] = [
@@ -29,7 +29,6 @@ const pages: Page[] = [
   { id: "sandboxes", level: "site", path: "/sandboxes", name: "My Sandboxes", blurb: "The sandboxes this browser has made or joined, and a new one." },
   // The viewer is a sandbox's own page, so its bar stays around it, and the site's too, at /viewer, for servers of your own.
   { id: "viewer", level: "sandbox", path: "/viewer", name: "Viewer", blurb: "Our SMART app, signed in to this sandbox, or to a server of your own." },
-  { id: "servers", level: "site", path: "/servers", name: "Your servers", blurb: "Describe your server for the viewer, and how it signs in." },
   { id: "check", level: "site", path: "/check", name: "Server check", blurb: "Every step of the guide, run against your server, saying how far it got and why it stopped.", sandboxParam: "sandbox" },
   { id: "sandbox", level: "sandbox", path: "/", name: "Home", blurb: "This sandbox: its name, sharing, and its pages." },
   { id: "app-check", level: "sandbox", path: "/app-check", name: "App check", blurb: "Your app, run against this sandbox while it stages what servers may do, graded on each requirement of the guide." },
@@ -46,11 +45,11 @@ const pages: Page[] = [
 
 export const PAGES = Object.fromEntries(pages.map(p => [p.id, p])) as Record<PageId, Page>;
 
-/** The menu in every page's header: the two ways in, what it's all for, your sandboxes; then the guide for agents. */
+/** The menu in every page's header: the two ways in, what it's all for, and your sandboxes; then the guide for agents. */
 export const MENU: PageId[] = ["build-an-app", "build-a-server", "about", "sandboxes"];
 
-/** The site's own pages beyond the guides. */
-export const SITE_TOOLS: PageId[] = ["servers", "check", "viewer"];
+/** The site's own pages beyond the guides: the check, and the viewer for a server of your own. */
+export const SITE_TOOLS: PageId[] = ["check", "viewer"];
 
 /** A sandbox's pages, by what they're for. The viewer is the sandbox's own page, and the site's at /viewer. */
 export const SANDBOX_GROUPS: { title: string; pages: (PageId)[] }[] = [

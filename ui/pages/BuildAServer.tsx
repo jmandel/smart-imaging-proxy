@@ -1,14 +1,17 @@
-// Build a Server: a wizard, one step at a time, for connecting our viewer to a server of your own. Register a client
-// with your server, describe it here, then check every step of the guide against it. The step, the way the viewer
-// connects, and the server described are in the address, so Back, Forward and a reload keep the place.
+// Build a Server: the servers this browser has, and the wizard that adds one. Register a client with your server,
+// describe it here, then check every step of the guide against it. The servers are kept in this browser; the wizard's
+// step, the way the viewer connects, and the server described are in the address, so Back, Forward and a reload keep
+// the place.
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import type { PrivateJwk } from "../lib/api";
-import { Address, Choice } from "../lib/format";
-import { generateKey, putServer, savedServers, serverKey, type ServerEntry } from "../lib/servers";
+import { Address, announce, Choice } from "../lib/format";
+import { generateKey, putServer, savedServers, saveServers, serverKey, type ServerEntry } from "../lib/servers";
 import { session } from "../lib/store";
+import { launchViewer } from "../lib/launch";
 import { ClientMetadata, CLIENT_TYPES, type ClientType } from "../components/ClientMetadata";
 import { HOW_LABEL, howOf, ServerForm } from "../components/ServerForm";
+import { ServerJson } from "../components/ServerJson";
 import { CONFORMANCE_PLAN } from "../sitemap";
 
 const STEPS = [
@@ -32,8 +35,26 @@ const CONNECTS_AS: Record<ClientType, string> = {
   backend: "a backend service, with no one to sign in",
 };
 
+/** The servers this browser has: what each is, and what can be done with it. */
+function Yours({ list, onEdit, onRemove }: { list: ServerEntry[]; onEdit: (s: ServerEntry) => void; onRemove: (s: ServerEntry) => void }) {
+  return <ul className="server-rows">{list.map(s => <li key={serverKey(s)}>
+    <div className="server-row-what">
+      <h3>{s.label}</h3>
+      <p><code>{s.iss}</code></p>
+      <p className="note">{HOW_LABEL[howOf(s)]}, client ID <code>{s.clientId}</code>{s.patient ? <>, patient <code>{s.patient}</code></> : null}</p>
+    </div>
+    <div className="server-row-actions">
+      <Link className="button" to={checkOf(s)}>Check it</Link>
+      <button type="button" className="secondary" onClick={() => launchViewer(s, { connect: true })}>Open in the viewer</button>
+      <button type="button" className="tool" onClick={() => onEdit(s)} aria-label={`Edit ${s.label}`}>Edit</button>
+      <button type="button" className="tool quiet-danger" onClick={() => onRemove(s)} aria-label={`Remove ${s.label}`}>Remove</button>
+    </div>
+  </li>)}</ul>;
+}
+
 export default function BuildAServer() {
   const [params, setParams] = useSearchParams();
+  const [saved, setSaved] = useState<ServerEntry[]>(savedServers);
   const step: StepId = STEPS.some(s => s.id === params.get("step")) ? params.get("step") as StepId : "register";
   const at = STEPS.findIndex(s => s.id === step);
   // The way of connecting is in the address (?how=), so a link opens the wizard on it.
@@ -46,26 +67,52 @@ export default function BuildAServer() {
   const setKey = (k: PrivateJwk | null) => { held(k); session.set(KEY, k ? JSON.stringify(k) : null); };
   useEffect(() => { if (how !== "public" && !key) generateKey().then(k => setKey(k.priv)); }, [how]);
   // The server described, once it's saved: named in the address, so Back from the check finds it again.
-  const entry = savedServers().find(s => serverKey(s) === params.get("server"));
+  const entry = saved.find(s => serverKey(s) === params.get("server"));
+  const reload = () => setSaved(savedServers());
   const choose = (t: ClientType) => {
     setHow(t);
     const q = new URLSearchParams(params);
     if (t === "public") q.delete("how"); else q.set("how", t);
     setParams(q, { replace: true, preventScrollReset: true });
   };
+  // The first step is where the page opens, so it's left out of the address: a link to it is the bare page.
   const go = (id: StepId, server?: string) => setParams(p => {
     const q = new URLSearchParams(p);
-    q.set("step", id);
+    if (id === "register") q.delete("step"); else q.set("step", id);
     if (server) q.set("server", server); else q.delete("server");
     return q;
   });
+  /** To the wizard's first step, where another server is added, with the list above it left as it is. */
+  const addAnother = () => {
+    setKey(null);
+    go("register");
+    document.getElementById("wizard-title")?.scrollIntoView({ block: "start" });
+  };
+  const remove = (s: ServerEntry) => {
+    saveServers(savedServers().filter(x => serverKey(x) !== serverKey(s)));
+    if (params.get("server") === serverKey(s)) go("register");
+    reload();
+    announce(`Removed ${s.label}.`);
+  };
   // A step that needs the server described can't be reached until it is.
   const reachable = (id: StepId) => id !== "check" || !!entry;
+  // A server already described knows its own way of connecting, whatever the address says.
+  const shownHow = entry ? howOf(entry) : how;
 
   return (
     <main className="landing guide wizard">
       <h1>Build an imaging server</h1>
       <p className="lead">Connect our viewer, a known-good SMART Imaging app, to your server: register a client with it, describe it here, then check every step of the guide against it. When something fails, you'll know it's the server, not the app.</p>
+
+      {saved.length > 0 && <section className="panel your-servers" aria-labelledby="h-yours">
+        <div className="your-sandboxes-head">
+          <h2 id="h-yours">Your servers</h2>
+          <button type="button" className="button" id="add-server" onClick={addAnother}>Add another</button>
+        </div>
+        <p className="note">Described already, and kept in this browser: check one, open it in the viewer, or change it. Adding another is the wizard below.</p>
+        <Yours list={saved} onEdit={s => go("server", serverKey(s))} onRemove={remove} />
+      </section>}
+
       <ol className="wizard-steps" aria-label="Steps">
         {STEPS.map((s, i) => (
           <li key={s.id} aria-current={s.id === step ? "step" : undefined} className={i < at ? "done" : undefined}>
@@ -76,7 +123,7 @@ export default function BuildAServer() {
 
       <section className="wizard-step" aria-labelledby="wizard-title">
         {step === "register" && <>
-          <h2 id="wizard-title">Register the viewer with your server</h2>
+          <h2 id="wizard-title">{saved.length ? "Add a server" : "Register the viewer with your server"}</h2>
           <p>Your server needs a client for our viewer. Register one in its admin console, or by posting the JSON to its dynamic registration, then note the client ID it gives you.</p>
           <fieldset className="client-type"><legend>How the viewer connects</legend>
             {CLIENT_TYPES.map(([v, label, what]) => <Choice key={v} type="radio" name="guide-how" value={v} checked={how === v} onChange={() => choose(v)} label={label} detail={what} />)}
@@ -93,21 +140,22 @@ export default function BuildAServer() {
         </>}
 
         {step === "server" && <>
-          <h2 id="wizard-title">Describe your server</h2>
-          <p>The viewer connects as {CONNECTS_AS[how]}. Changing that is the first step, in the row above.</p>
+          <h2 id="wizard-title">{entry ? `Edit ${entry.label}` : "Describe your server"}</h2>
+          <p>The viewer connects as {CONNECTS_AS[shownHow]}. Changing that is the first step, in the row above.</p>
           <ServerForm
             key={entry ? serverKey(entry) : "new"}
-            title={entry ? `Edit ${entry.label}` : "Your server"}
-            how={how}
+            title="The server"
+            how={shownHow}
             keyPair={key ?? entry?.jwk ?? null} onKeyPair={setKey}
             editing={entry}
             withRegister={false} withKey
-            withSave={false}
-            onSaved={saved => {
-              putServer(saved, entry ? serverKey(entry) : serverKey(saved));
+            onCancel={saved.length ? () => go("register") : undefined}
+            onSaved={(form, action) => {
+              putServer(form, entry ? serverKey(entry) : serverKey(form));
               // The key is the server's own now: kept with it in Your servers, not as this tab's pending one.
               setKey(null);
-              go("check", serverKey(saved));
+              reload();
+              if (action === "check") go("check", serverKey(form)); else go("register");
             }}
           />
         </>}
@@ -118,7 +166,7 @@ export default function BuildAServer() {
           <dl className="addresses">
             <div className="address"><dt>FHIR base</dt><dd><Address value={entry.iss} name="FHIR base" /></dd></div>
             <div className="address"><dt>Client ID</dt><dd><Address value={entry.clientId} name="client ID" /></dd></div>
-            <div className="address"><dt>Connects as</dt><dd>{HOW_LABEL[howOf(entry)]}</dd></div>
+            <div className="address"><dt>Connects as</dt><dd>{HOW_LABEL[shownHow]}</dd></div>
           </dl>
           <p className="wizard-actions">
             <Link className="button" id="run-check" to={checkOf(entry)}>Run the check</Link>
@@ -137,6 +185,12 @@ export default function BuildAServer() {
         {step === "register" && <button type="button" className="primary" onClick={() => go("server")}>I've registered it</button>}
         {step === "check" && !entry && <button type="button" className="primary" onClick={() => go("server")}>Describe your server</button>}
       </div>
+
+      <section aria-labelledby="h-json">
+        <h2 id="h-json" className="sr-only">This browser's servers, as data</h2>
+        <ServerJson list={saved} replaced={reload} />
+      </section>
+
       <p className="note agents">Working with an AI agent? Give it <a href="/llms.txt">llms.txt</a>. Everything on this page has an API, and it's all described there.</p>
     </main>
   );

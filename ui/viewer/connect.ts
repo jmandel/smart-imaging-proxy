@@ -8,7 +8,7 @@ import { requestLine, type Trail } from "./trail";
 
 /** The scopes asked for when an entry names none: a sign-in's, and a backend service's. */
 export const SCOPE = "launch/patient patient/*.rs", BACKEND_SCOPE = "system/ImagingStudy.rs";
-const NO_LAUNCH = "This server doesn't advertise SMART Imaging with App Launch. If you know where its imaging FHIR server is, add it under Advanced in Your servers.";
+const NO_LAUNCH = "This server doesn't advertise SMART Imaging with App Launch. If you know where its imaging FHIR server is, add it under Advanced in Build a Server.";
 const random = () => b64url(crypto.getRandomValues(new Uint8Array(32)));
 /**
  * How a connection is made. `keeper` is where it saves its state (the viewer's tab, unless given), `config`

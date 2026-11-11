@@ -394,6 +394,15 @@ export function uiRoutes(): Record<string, UiRoute> {
   const routes: Record<string, UiRoute> = { [SHELL]: app };
   // The server guide's old address: it became a wizard, Build a Server.
   routes["/run-a-server"] = async (req: Request) => new Response(null, { status: 308, headers: { location: `/build-a-server${new URL(req.url).search}` } });
+  // Your servers, too: the list and its form are Build a Server's now. A link to add or edit one keeps its place.
+  routes["/servers"] = async (req: Request) => {
+    const q = new URL(req.url).searchParams, to = new URLSearchParams();
+    const edit = q.get("edit");
+    if (edit) { to.set("step", "server"); to.set("server", edit); } else if (q.has("add")) to.set("step", "server");
+    const how = q.get("how"); if (how) to.set("how", how);
+    const s = to.toString();
+    return new Response(null, { status: 308, headers: { location: `/build-a-server${s ? `?${s}` : ""}` } });
+  };
   const at = (id: PageId) => (req: Request, server: Served) => pageShell(id, req, server);
   for (const p of Object.values(PAGES)) {
     if (p.level === "site") { routes[p.path] = at(p.id); continue; }

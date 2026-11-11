@@ -70,7 +70,7 @@ test("every control in llms.txt's table is found by its role and name", async ()
   await expectControls(page, "wizard");
   await open(page, "/build-a-server");
   await expectControls(page, "wizard-server");
-  await open(page, "/servers?add");
+  await open(page, "/build-a-server?step=server");
   await expectControls(page, "servers-form");
 
   await open(page, `${base}/app-check?app=${encodeURIComponent(app)}`);

@@ -191,18 +191,21 @@ describe("the demo client", () => {
     await context.close();
   });
   // A deployment's root is read-only, so it can't stand in for another server. There, this needs a real one.
-  test.skipIf(!!process.env.BASE_URL && !process.env.EXTERNAL_ISS)("a server described on Your servers, checked by its own discovery, then connected with PKCE", async () => {
+  test.skipIf(!!process.env.BASE_URL && !process.env.EXTERNAL_ISS)("a server described on Build a Server, checked by its own discovery, then connected with PKCE", async () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     const base = await enterSandbox(page);
-    // Through the menu: Build a Server, then the form that describes one, on Your servers.
+    // Through the menu: Build a Server, whose first step registers the viewer, and whose second describes the server.
     await page.locator("nav.pages").getByRole("link", { name: "Build a Server", exact: true }).click();
     await page.waitForURL(u => u.pathname === "/build-a-server");
     await page.getByRole("heading", { name: "Build an imaging server" }).waitFor();
-    await page.locator("footer").getByRole("link", { name: "Your servers", exact: true }).click();
-    await page.waitForURL(u => u.pathname === "/servers");
-    // With none saved, the page is the form.
-    await page.getByRole("heading", { name: "Add your first server" }).waitFor();
+    // With none saved, there's no list, and the wizard is the page.
+    expect(await page.locator(".your-servers").count()).toBe(0);
+    // What to register, as client metadata: each field copies on its own.
+    expect(await page.locator("#register-facts [data-field=redirect_uris] button").getAttribute("data-copy")).toBe(`${ORIGIN}/viewer`);
+    expect(await page.locator("#register-facts [data-field=token_endpoint_auth_method] button").getAttribute("data-copy")).toBe("none");
+    await page.getByRole("button", { name: "I've registered it" }).click();
+    await page.waitForURL(u => u.searchParams.get("step") === "server");
     // An empty form can't be saved, and says what it needs first.
     expect(await page.getByRole("button", { name: "Save", exact: true }).isDisabled()).toBe(true);
     await page.locator("#form-missing", { hasText: "it needs a name." }).waitFor();
@@ -213,17 +216,20 @@ describe("the demo client", () => {
     await page.getByRole("button", { name: "Check discovery" }).click();
     await page.locator("#discovery li", { hasText: "SMART Imaging" }).waitFor();
     if (!process.env.EXTERNAL_ISS) expect(await page.locator("#discovery li[data-state=bad]").count()).toBe(0);
-    // What to register, as client metadata: each field copies on its own.
-    expect(await page.locator("#register-facts [data-field=redirect_uris] button").getAttribute("data-copy")).toBe(`${ORIGIN}/viewer`);
-    expect(await page.locator("#register-facts [data-field=token_endpoint_auth_method] button").getAttribute("data-copy")).toBe("none");
     await page.getByLabel("Name", { exact: true }).fill("Another server");
     await page.getByLabel("Client ID").fill(ext.clientId);
     await shot(page, "server-builder");
     expect(await page.locator("#form-missing").count()).toBe(0);
-    await page.getByRole("button", { name: "Save", exact: true }).click();
-    // Saved, with its check, and the viewer opened on it connects at once: the sign-in tab opens from that click.
-    expect(await page.getByRole("link", { name: "Check it" }).getAttribute("href")).toBe(`/check?${new URLSearchParams({ server: `${ext.iss}|${ext.clientId}` })}`);
-    await approveIn(await signInTab(page, () => page.getByRole("button", { name: "Open in the viewer" }).click()), "josh");
+    await page.getByRole("button", { name: "Save and check" }).click();
+    // Saved: the last step offers the check, and the page's list offers the server itself.
+    await page.waitForURL(u => u.searchParams.get("step") === "check");
+    await page.getByRole("link", { name: "Run the check" }).waitFor();
+    await page.goto(`${ORIGIN}/build-a-server`);
+    const yours = page.locator(".your-servers");
+    await yours.getByRole("heading", { name: "Your servers" }).waitFor();
+    // The viewer opened on it connects at once: the sign-in tab opens from that click.
+    expect(await yours.getByRole("link", { name: "Check it" }).getAttribute("href")).toBe(`/check?${new URLSearchParams({ server: `${ext.iss}|${ext.clientId}` })}`);
+    await approveIn(await signInTab(page, () => yours.getByRole("button", { name: "Open in the viewer" }).click()), "josh");
     await page.locator("#app").waitFor({ state: "visible" });
     expect(new URL(page.url()).pathname).toBe("/viewer");
     await page.getByText("Connected to Another server").waitFor();
@@ -233,22 +239,24 @@ describe("the demo client", () => {
     expect(await page.locator(".study-button").count()).toBe(6);
     expect(await litPixels(page)).toBeGreaterThan(0.01);
     await shot(page, process.env.EXTERNAL_ISS ? "external-server" : "configured-server");
-    // Saved: offered again, editable, and removable.
-    await page.goto(`${ORIGIN}/servers`);
+    // The list stays on the page; editing is a step of the wizard, and its address survives a reload.
+    await page.goto(`${ORIGIN}/build-a-server`);
     await page.getByRole("heading", { name: "Another server" }).waitFor();
-    // Saved, the page opens on the list; the form is a step away, and its address survives a reload.
     expect(await page.locator("#server-form").count()).toBe(0);
     await page.getByRole("button", { name: "Edit Another server" }).click();
+    await page.waitForURL(u => u.searchParams.get("step") === "server");
     await page.getByRole("heading", { name: "Edit Another server" }).waitFor();
     await page.reload();
     await page.getByRole("heading", { name: "Edit Another server" }).waitFor();
     expect(await page.getByLabel("Client ID").inputValue()).toBe(ext.clientId);
     await page.getByRole("button", { name: "Cancel" }).click();
-    await page.getByRole("link", { name: "Add a server" }).click();
+    await page.waitForURL(u => !u.searchParams.has("step"));
+    await page.getByRole("button", { name: "Add another" }).click();
+    await page.waitForURL(u => !u.searchParams.has("step"));
     await page.getByRole("heading", { name: "Add a server" }).waitFor();
-    await page.getByRole("button", { name: "Cancel" }).click();
     await page.getByRole("button", { name: "Remove Another server" }).click();
-    await page.getByRole("heading", { name: "Add your first server" }).waitFor();
+    await page.locator(".your-servers").waitFor({ state: "detached" });
+    await page.getByRole("heading", { name: "Register the viewer with your server" }).waitFor();
     await context.close();
   });
   test("Build a Server shows the metadata for the client type chosen, and carries the way of connecting into the step that describes the server", async () => {
@@ -275,7 +283,7 @@ describe("the demo client", () => {
     expect(await page.getByLabel("Patient").count()).toBe(1);
     expect(await page.getByRole("radio", { name: /Backend service/ }).count()).toBe(0);
     await page.getByRole("button", { name: "Back" }).click();
-    await page.waitForURL(u => u.searchParams.get("step") === "register");
+    await page.waitForURL(u => !u.searchParams.has("step"));
     expect(await page.getByRole("radio", { name: /Backend service/ }).isChecked()).toBe(true);
     await context.close();
   });
@@ -283,13 +291,11 @@ describe("the demo client", () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     const base = await enterSandbox(page);
-    await page.goto(`${ORIGIN}/servers`);
-    await page.getByLabel("FHIR base URL").fill(`${ORIGIN}${base}/fhir`);
+    await page.goto(`${ORIGIN}/build-a-server?how=confidential`);
     await page.getByRole("radio", { name: /Confidential app/ }).check();
-    // A signing client needs a key before it can be saved.
-    await page.locator("#form-missing", { hasText: "Generate a key pair, or paste a private key" }).waitFor();
-    await page.getByRole("button", { name: "Generate a key pair" }).click();
-    // The public key, at an address this site serves it at: what a server that only takes a jwks_uri registers.
+    // A signing client gets a key made here, at an address this site serves it at: what a server that only takes a
+    // jwks_uri registers.
+    await page.locator("#register-facts [data-field=jwks_uri]").waitFor();
     const jwksUri = (await page.locator("#register-facts [data-field=jwks_uri] button").getAttribute("data-copy"))!;
     expect(jwksUri.startsWith(`${ORIGIN}/jwks/`)).toBe(true);
     const served = await (await page.request.get(jwksUri)).json();
@@ -298,6 +304,10 @@ describe("the demo client", () => {
     // Or the key itself, in the metadata: the same key.
     await page.getByRole("radio", { name: /jwks the key itself/ }).check();
     expect(JSON.parse((await page.locator("#register-facts [data-field=jwks] button").getAttribute("data-copy"))!).keys[0]).toEqual(served.keys[0]);
+    // The form, a step on: the key it signs with can be made again or pasted there.
+    await page.getByRole("button", { name: "I've registered it" }).click();
+    await page.waitForURL(u => u.searchParams.get("step") === "server");
+    await page.getByLabel("FHIR base URL").fill(`${ORIGIN}${base}/fhir`);
     await page.getByRole("button", { name: "Check discovery" }).click();
     await page.locator("#discovery li", { hasText: "Signed assertions" }).waitFor();
     expect(await page.locator("#discovery li[data-state=bad]").count()).toBe(0);
@@ -308,7 +318,8 @@ describe("the demo client", () => {
     await page.getByLabel("Client ID").fill(made.id);
     await shot(page, "server-builder-confidential");
     await page.getByRole("button", { name: "Save", exact: true }).click();
-    await approveIn(await signInTab(page, () => page.getByRole("button", { name: "Open in the viewer" }).click()), "josh");
+    await page.waitForURL(u => !u.searchParams.has("step"));
+    await approveIn(await signInTab(page, () => page.locator(".your-servers").getByRole("button", { name: "Open in the viewer" }).click()), "josh");
     await page.locator("#app").waitFor({ state: "visible" });
     await page.locator(".study-button").nth(5).waitFor();
     expect(await page.locator("#connected").textContent()).toBe("Connected to Signed in");
@@ -370,6 +381,34 @@ describe("the demo client", () => {
     await page.waitForURL(u => u.pathname === "/sandboxes");
     await page.locator(`.sandbox-list a[href="${base}/"]`).waitFor();
     expect(await page.locator("#create").isEnabled()).toBe(true);
+    await context.close();
+  });
+  test("Build a Server offers the servers this browser already has, to check or edit, without registering again", async () => {
+    const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    const base = await enterSandbox(page);
+    // A server described here, as Build a Server's second step describes one.
+    const key = `${ORIGIN}${base}/fhir|demo-client`;
+    await page.goto(`${ORIGIN}/build-a-server?step=server`);
+    await page.getByLabel("FHIR base URL").fill(`${ORIGIN}${base}/fhir`);
+    await page.getByLabel("Name", { exact: true }).fill("St. Elsewhere");
+    await page.getByLabel("Client ID").fill("demo-client");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await page.getByRole("heading", { name: "St. Elsewhere" }).waitFor();
+    // The wizard opens on it, not on a blank form: one press gets to the check.
+    await page.goto(`${ORIGIN}/build-a-server`);
+    const yours = page.locator(".your-servers");
+    await yours.getByRole("heading", { name: "Your servers" }).waitFor();
+    await yours.getByText("St. Elsewhere").waitFor();
+    expect(await yours.getByRole("link", { name: "Check it" }).getAttribute("href")).toBe(`/check?${new URLSearchParams({ server: key })}`);
+    // Edit opens the step that describes it, filled in.
+    await yours.getByRole("button", { name: "Edit St. Elsewhere" }).click();
+    await page.waitForURL(u => u.searchParams.get("step") === "server" && u.searchParams.get("server") === key);
+    expect(await page.getByLabel("Client ID").inputValue()).toBe("demo-client");
+    await page.getByRole("heading", { name: "Edit St. Elsewhere" }).waitFor();
+    // And the check is one press from the wizard's own last step.
+    await page.goto(`${ORIGIN}/build-a-server?step=check&server=${encodeURIComponent(key)}`);
+    expect(await page.getByRole("link", { name: "Run the check" }).getAttribute("href")).toBe(`/check?${new URLSearchParams({ server: key })}`);
     await context.close();
   });
   test("inside a sandbox, choosing a server of your own in the viewer sticks the first time", async () => {
@@ -548,7 +587,7 @@ describe("the demo client", () => {
     await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
     await context.close();
   });
-  test.skipIf(!!process.env.BASE_URL)("a backend service registered on /connect gives a client ID and private key that work on Your servers", async () => {
+  test.skipIf(!!process.env.BASE_URL)("a backend service registered on /connect gives a client ID and private key that work on Build a Server", async () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     const base = await signIn(page, "josh");
@@ -560,7 +599,7 @@ describe("the demo client", () => {
     await shot(page, "connect-backend");
     const clientId = (await page.getByRole("button", { name: "Copy Referral service's client ID" }).getAttribute("data-copy"))!;
     const privKey = (await page.getByRole("button", { name: "Copy Referral service's private key" }).getAttribute("data-copy"))!;
-    await page.goto(`${ORIGIN}/servers?add&how=backend`);
+    await page.goto(`${ORIGIN}/build-a-server?step=server&how=backend`);
     await page.getByLabel("FHIR base URL").fill(`${ORIGIN}${base}/fhir`);
     await page.getByLabel("Name", { exact: true }).fill("Referral service");
     await page.getByRole("button", { name: "Paste a private key instead" }).click();
@@ -569,7 +608,7 @@ describe("the demo client", () => {
     await page.getByLabel("Patient").fill("josh-example");
     await page.getByRole("button", { name: "Save", exact: true }).click();
     // A service connects at once, with no one to sign in.
-    await page.getByRole("button", { name: "Open in the viewer" }).click();
+    await page.locator(".your-servers").getByRole("button", { name: "Open in the viewer" }).click();
     await page.waitForURL(u => u.pathname === "/viewer");
     await page.getByText("Backend service: no one signed in").waitFor();
     await page.locator(".study-button").nth(5).waitFor();
@@ -591,14 +630,15 @@ describe("the demo client", () => {
     await page.getByRole("heading", { name: "Confidential one" }).waitFor();
     const clientId = (await page.getByRole("button", { name: "Copy Confidential one's client ID" }).getAttribute("data-copy"))!;
     const privKey = (await page.getByRole("button", { name: "Copy Confidential one's private key" }).getAttribute("data-copy"))!;
-    await page.goto(`${ORIGIN}/servers?add&how=confidential`);
+    await page.goto(`${ORIGIN}/build-a-server?step=server&how=confidential`);
     await page.getByLabel("FHIR base URL").fill(`${ORIGIN}${base}/fhir`);
     await page.getByLabel("Name", { exact: true }).fill("Confidential one");
     await page.getByRole("button", { name: "Paste a private key instead" }).click();
     await page.getByLabel("Private key (JWK)").fill(privKey);
     await page.getByLabel("Client ID").fill(clientId);
     await page.getByRole("button", { name: "Save", exact: true }).click();
-    await approveIn(await signInTab(page, () => page.getByRole("button", { name: "Open in the viewer" }).click()), "josh");
+    await page.waitForURL(u => !u.searchParams.has("step"));
+    await approveIn(await signInTab(page, () => page.locator(".your-servers").getByRole("button", { name: "Open in the viewer" }).click()), "josh");
     await page.locator(".study-button").nth(5).waitFor();
     await page.locator("#stage-note:empty").waitFor({ state: "attached", timeout: 15000 });
     await context.close();
@@ -757,7 +797,7 @@ describe("the demo client", () => {
     await page.getByRole("heading", { name: "Referral service" }).waitFor();
     const clientId = (await page.getByRole("button", { name: "Copy Referral service's client ID" }).getAttribute("data-copy"))!;
     const privKey = (await page.getByRole("button", { name: "Copy Referral service's private key" }).getAttribute("data-copy"))!;
-    await page.goto(`${ORIGIN}/servers?add&how=backend`);
+    await page.goto(`${ORIGIN}/build-a-server?step=server&how=backend`);
     await page.getByLabel("FHIR base URL").fill(`${ORIGIN}${base}/fhir`);
     await page.getByLabel("Name", { exact: true }).fill("Referral service");
     await page.getByRole("button", { name: "Paste a private key instead" }).click();
@@ -765,6 +805,8 @@ describe("the demo client", () => {
     await page.getByLabel("Client ID").fill(clientId);
     await page.getByLabel("Patient").fill("josh-example");
     await page.getByRole("button", { name: "Save and check" }).click();
+    await page.waitForURL(u => u.searchParams.get("step") === "check");
+    await page.getByRole("link", { name: "Run the check" }).click();
     await page.waitForURL(u => u.pathname === "/check" && u.searchParams.has("server"));
     // A service may be granted many patients, so another patient's studies aren't its to be refused.
     await page.locator("#check-summary", { hasText: "Ran all 12 steps: 10 passed, and steps 8 and 12 had nothing to check." }).waitFor({ timeout: 30000 });

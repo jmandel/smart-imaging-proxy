@@ -63,14 +63,16 @@ sandboxes, and For Agents: **Build an App · Build a Server · Why SMART Imaging
 
 - **Build an App:** a wizard, one step at a time, with the step in the address: choose a sandbox, choose or
   register the app in place, see where to point it, then try it. It never sends you elsewhere to finish a step.
-- **Build a Server:** the same wizard, for the other side: what the server needs (advice and gotchas), then
-  register our viewer with it (the client metadata, ready to copy), then describe the server in place, then
-  check it. Its last step hands the server to the server check. `/run-a-server` redirects here.
+- **Build a Server:** the same wizard, for the other side, and the one page for your servers: the servers this
+  browser has, right at the top, each to check, open in the viewer, edit or remove, with the wizard below it to
+  add another (register our viewer with it, from the client metadata ready to copy, describe the server in
+  place, then check it). Its last step hands the server to the server check. With none described, the page is
+  the wizard alone. `/run-a-server` and `/servers` redirect here.
 - **Why SMART Imaging:** what it makes possible, how it works (the diagram), see it work, what it takes.
 - **My Sandboxes:** the sandboxes this browser made or joined, and Create.
 
-Pages that hold a list open on the list (Your servers, My Sandboxes); adding or editing is a step away, in the
-address (`?add`, `?edit=`), and with nothing saved the page is the form. Numbered steps are kept for real
+Pages that hold a list open on the list (My Sandboxes, and Build a Server's); adding or editing is a step away,
+in the address, and with nothing saved the page is the form. Numbered steps are kept for real
 sequences: the wizards, the server check, an app check's script. Links to the logs from the middle of a task open in a
 new tab, so the task keeps its place.
 
@@ -97,7 +99,7 @@ topology, resets, ending access), with room for the full policy editor still to 
 Quiet and clean, with small annotations and details; it does this well already. It's both a reference client
 and a demo.
 
-It lives at the site's root, `/viewer`, beside **Your servers** (`/servers`), and belongs to no sandbox. Its
+It lives at the site's root, `/viewer`, beside **Build a Server**, and belongs to no sandbox. Its
 own address is its redirect URI, the same for every server, and the sign-in tab it opens hands the code back to
 it. A sandbox is one more server in its list, signed in to with the sandbox's built-in public client,
 `demo-client`, whose one redirect URI is the viewer. A link from a sandbox opens the viewer with that sandbox
@@ -149,7 +151,6 @@ moment is held in the page too, so a radio changes as it's pressed.
 |---|---|---|
 | Build an App | `?step=`, `?app=` | before |
 | Build a Server | `?step=` (`register`, `server`, `check`), `?how=` (the way the viewer connects), `?server=` | Nov 2026 |
-| Your servers | `?add`, `?edit=`, and `?how=` with `?add` | `how` follows the form since Nov 2026 |
 | Server check | `?sandbox=`, `?server=`, `?run=` | before |
 | Viewer | `?sandbox=` or `?server=`; `&connect` signs in at once, in the same tab | Nov 2026 |
 | App check | `?app=`, `?run=` | before |

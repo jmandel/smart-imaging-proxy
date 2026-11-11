@@ -1,7 +1,6 @@
 // Describing a server of your own for the viewer: its FHIR base, how the viewer signs in, and the client ID it gave
-// you. Discovery is checked here, from the browser, the way the viewer itself will read it. Your servers uses this
-// form on its own, with the way of connecting among its fields; Build a Server uses it as a step, the way of
-// connecting and the client metadata chosen there.
+// you. Discovery is checked here, from the browser, the way the viewer itself will read it. Build a Server uses it as
+// a step, with the way of connecting and the client metadata chosen in the step before.
 import { useState, type FormEvent, type ReactNode } from "react";
 import type { PrivateJwk } from "../lib/api";
 import { Choice } from "../lib/format";
@@ -111,10 +110,17 @@ export function ServerForm({ how, onHow, keyPair, onKeyPair, editing, withRegist
   const set = (k: keyof Fields) => (e: { target: { value: string } }) => setFields(f => ({ ...f, [k]: e.target.value }));
   const signs = how !== "public";
 
-  // A name to start from, from the address, until someone types their own.
-  const issChanged = () => {
-    if (fields.label.trim() && !autoLabel) return;
-    try { const host = new URL(fields.iss.trim()).host; setFields(f => ({ ...f, label: host })); setAutoLabel(true); } catch {}
+  /**
+   * The FHIR base, and the name it suggests while the name is still ours. It's filled as the address is typed, in
+   * the same event, and never on blur: a blur's write could land after a name already typed there, and the two
+   * would end up run together.
+   */
+  const setIss = (value: string) => {
+    const ours = !fields.label.trim() || autoLabel;
+    let host: string | undefined;
+    if (ours) { try { host = new URL(value.trim()).host || undefined; } catch {} }
+    setFields(f => ({ ...f, iss: value, ...(ours && host ? { label: host } : {}) }));
+    if (ours && host) setAutoLabel(true);
   };
   const pasteChanged = (text: string) => {
     setFields(f => ({ ...f, pasted: text }));
@@ -174,7 +180,7 @@ export function ServerForm({ how, onHow, keyPair, onKeyPair, editing, withRegist
       <h2 id="form-title">{title}</h2>
       <label htmlFor="srv-iss">FHIR base URL</label>
       <div className="inline-field">
-        <input type="url" id="srv-iss" required placeholder="https://ehr.example.org/fhir" autoComplete="off" autoCapitalize="off" spellCheck={false} value={fields.iss} onChange={set("iss")} onBlur={issChanged} />
+        <input type="url" id="srv-iss" required placeholder="https://ehr.example.org/fhir" autoComplete="off" autoCapitalize="off" spellCheck={false} value={fields.iss} onChange={e => setIss(e.target.value)} />
         <button type="button" className="secondary" id="check" disabled={checking} onClick={check}>{checking ? "Checking…" : "Check discovery"}</button>
       </div>
       <p className="note">Where an app starts: the server whose <code>/.well-known/smart-configuration</code> names its sign-in and imaging endpoints.</p>

@@ -124,7 +124,7 @@ export default function Viewer() {
           </div>
         </fieldset>
         <div className="connect-actions"><button type="button" className="primary" id="connect" disabled={!chosen} onClick={() => connect()}>Connect</button></div>
-        <p className="note">Add or change servers in <PageLink id="servers" />. To test a server step by step, use the <PageLink id="check" />.</p>
+        <p className="note">Add or change servers in <PageLink id="build-a-server">Build a Server</PageLink>. To test a server step by step, use the <PageLink id="check" />.</p>
       </section>
       {failure && <Failed failure={failure} trail={trail} />}
     </main>
@@ -140,7 +140,7 @@ function Failed({ failure, trail }: { failure: { server: Choice; message: string
       <h2 id="h-failed">Couldn't connect to {failure.server.label}</h2>
       <p className="failed-what">{bad ? <><b>{bad.title}</b> failed: {bad.diagnosis?.cause ?? failure.message}</> : failure.message}</p>
       {bad?.diagnosis?.check && <pre className="failed-check">{bad.diagnosis.check}</pre>}
-      <p className="failed-next"><Link to={check}>Check this server, step by step</Link> <PageLink id="servers">Edit it in Your servers</PageLink></p>
+      <p className="failed-next"><Link to={check}>Check this server, step by step</Link> <PageLink id="build-a-server">Edit it in Build a Server</PageLink></p>
       {steps.length > 0 && <Protocol trail={trail} />}
     </section>
   );

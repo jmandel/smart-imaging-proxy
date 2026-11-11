@@ -9,7 +9,7 @@ import { UI_PAGES } from "./pages";
 
 /** Pages that follow their own query as it changes (a story, a wizard's step, a form), and so keep what they've
  *  loaded when only the query changes. Every other page reads its query once, when it starts. */
-const FOLLOWS_QUERY = new Set<PageId>(["build-an-app", "build-a-server", "servers", "app-check", "explore", "viewer", "connect", "trace", "trace-log", "config"]);
+const FOLLOWS_QUERY = new Set<PageId>(["build-an-app", "build-a-server", "app-check", "explore", "viewer", "connect", "trace", "trace-log", "config"]);
 
 /** A page of the map, in its sandbox when the route names one. A new address starts the page afresh. */
 function PageAt({ id }: { id: PageId }) {

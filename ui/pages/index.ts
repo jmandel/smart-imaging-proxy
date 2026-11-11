@@ -10,7 +10,6 @@ import Sandboxes from "./Sandboxes";
 import Build from "./Build";
 import Connect from "./Connect";
 import Viewer from "./Viewer";
-import Servers from "./Servers";
 import ServerCheck from "./ServerCheck";
 import AppCheck from "./AppCheck";
 import Explore from "./Explore";
@@ -25,7 +24,7 @@ export const UI_PAGES: Partial<Record<PageId, ComponentType>> = {
   "build-an-app": BuildAnApp, "build-a-server": BuildAServer, about: About, sandboxes: Sandboxes,
   build: Build, connect: Connect,
   viewer: Viewer,
-  servers: Servers, check: ServerCheck, "app-check": AppCheck,
+  check: ServerCheck, "app-check": AppCheck,
   explore: Explore,
   activity: Activity, config: Config,
   trace: Trace, "trace-span": TraceSpan, "trace-log": TraceLog,
