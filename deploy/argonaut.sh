@@ -35,15 +35,30 @@ if "${KUBE[@]}" -n "$OLD" get ingress reference >/dev/null 2>&1; then
   "${KUBE[@]}" -n "$OLD" delete ingress reference launcher --timeout=60s
   "${KUBE[@]}" -n "$OLD" scale deploy/reference deploy/launcher deploy/orthanc --replicas=0
 fi
+# The pods serving before this deploy: they hold their own sandboxes in memory, so the checks below wait until
+# none is left. While one is, a sandbox a check mints can be answered by the old pod and then be unknown.
+mapfile -t WAS < <("${KUBE[@]}" -n "$NS" get pods -l app=smart-imaging -o name 2>/dev/null || true)
 "${KUBE[@]}" apply -k .run/argonaut
 if ! timeout -k 5 1000 "${KUBE[@]}" -n "$NS" rollout status deploy/smart-imaging --timeout="${ROLLOUT_TIMEOUT:-900s}"; then
   "${KUBE[@]}" -n "$NS" get pods; "${KUBE[@]}" -n "$NS" logs deploy/smart-imaging -c prepare --tail=30 || true; "${KUBE[@]}" -n "$NS" logs deploy/smart-imaging -c app --tail=30 || true
   exit 1
 fi
 
-echo "== Waiting for the certificate and the page"
+if [ "${#WAS[@]}" -gt 0 ]; then
+  echo "== Waiting for the pods this deploy replaces to go"
+  "${KUBE[@]}" -n "$NS" wait --for=delete "${WAS[@]}" --timeout=300s >/dev/null || { echo "the old pods are still there" >&2; exit 1; }
+fi
+
+echo "== Waiting for the certificate, and for a sandbox to answer"
+# A page alone doesn't prove much: a sandbox minted and then read proves one pod answered both, with its own state.
 READY=
-for _ in $(seq 1 90); do curl -sf -m 5 -o /dev/null "$ORIGIN/" && { READY=1; break; }; read -rt 2 <> <(:) || true; done
-[ "$READY" ] || { echo "$ORIGIN never answered 200 with a valid certificate" >&2; exit 1; }
-timeout -k 5 90 env BASE_URL="$ORIGIN" bun test --timeout 40000 ./e2e/client.e2e.ts
+for _ in $(seq 1 90); do
+  base="${base:-$(curl -sf -m 5 -X POST "$ORIGIN/api/sandboxes" | sed -n 's/.*"base":"\([^"]*\)".*/\1/p')}"
+  if [ -n "$base" ] && curl -sf -m 5 -o /dev/null "$ORIGIN$base/contract.json"; then READY="$base"; break; fi
+  read -rt 2 <> <(:) || true
+done
+[ "$READY" ] || { echo "$ORIGIN never answered with a sandbox of its own" >&2; exit 1; }
+curl -sf -m 5 -o /dev/null "$ORIGIN/" || { echo "$ORIGIN never answered 200 with a valid certificate" >&2; exit 1; }
+echo "== Checking, against a sandbox it just made ($READY)"
+timeout -k 5 180 env BASE_URL="$ORIGIN" bun test --timeout 40000 ./e2e/client.e2e.ts
 echo "Running at $ORIGIN/"
