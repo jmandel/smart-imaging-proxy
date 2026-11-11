@@ -81,10 +81,8 @@ With no prefix, every service uses saved policy, the one real policy database. `
 
 Each service's listener sends a sandbox path to that sandbox's own instance of the same service, with the prefix taken off, and the one origin forwards the prefix through, so sandboxes work the same with `DEMO_ONE_ORIGIN=0`. A sandbox's pages are its tour, Explore, its activity, its account page, and its live trace at `/s/{sandbox}/trace/`, which lists only its own sessions.
 
-- **A minted id:** `POST /api/sandboxes` returns `{ sandbox, base, urls }`, with a random 22-character id, seeded from what's on file. So does starting a flow.
-- **An inline seed:** `/s/~{seed}/`, where the seed is deflate-raw compressed JSON, base64url encoded: the policy API's document in all three levels, `{ relationships, policies, shares, approvals }`, with `contextLifetimeSeconds` and `maxSeriesInContext`, any part of it. The relationships and policies it names are that sandbox's on file, and a reset there puts them back. Where it names none, they're the ones on file. Labels are the catalog's, and birth dates the patient records'. The first request builds the sandbox from it, and later ones reuse it, along with any changes made there. A seed is at most 4,096 characters, and 64 KiB of JSON. One that doesn't validate gets a `400` saying why. `encodeSeed` in `src/sandboxes.ts` makes one.
-- **Lifetimes:** a sandbox sits idle for 30 minutes at most. Minted sandboxes and seeds are separate pools, at most 64 of each, the least recently used going first, so seeds never push out a minted sandbox. An unknown or dropped minted id gets a `404` saying so. A dropped seed builds again from its document. A restart drops every scope.
-- **A seed sandbox is shared** by everyone who uses the same seed: its policy changes, its tokens' effects, its live trace, and the response bodies the trace holds. Use a minted id for anything one person shouldn't see of another's.
+- **A minted id:** `POST /api/sandboxes` returns `{ sandbox, base, urls }`, with a random 22-character id, starting from what's on file. So does starting a flow. It's the one way to make a sandbox; its policy changes go through its management API.
+- **Lifetimes:** a sandbox made by `POST /api/sandboxes` is saved, and lasts until its owner deletes it. The ones tours and checks make for themselves live in memory and idle out after 30 minutes, at most 64 open, the least recently used going first. An unknown id gets a `404` saying so.
 
 ## Connecting a browser app
 
@@ -198,7 +196,7 @@ Then restart `bun run start`.
 | `src/config.ts` | Ports, addresses, storage paths, the Host check, and backend credentials |
 | `src/stores.ts` | Saved policy's store, and what's on file: guardians and birth dates from `data/patient.json`, and the organization's guardian and sharing policies |
 | `src/sandbox.ts` | One sandbox: an Authorization Server, Imaging Server and proxy, with their own policy, keys and clock |
-| `src/sandboxes.ts` | Sandboxes: minting, inline seeds, idling out, and the `/s/{sandbox}` prefix |
+| `src/sandboxes.ts` | Sandboxes: minting, saving, idling out, and the `/s/{sandbox}` prefix |
 | `src/gateway.ts`, `src/cors.ts` | The one origin apps are given, and the services' CORS |
 | `src/auth-server.ts` | SMART launch and Backend Services, sign-in, consent, account page, introspection |
 | `src/flows/` | The flows, shared by the web page and tests, and the launch client |

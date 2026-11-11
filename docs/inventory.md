@@ -135,7 +135,7 @@ grow into a second management API.
 
 1. Sandbox Config's policy editor: see, edit, and named scenarios.
 2. The sample-logins table shows each login's patients and studies.
-3. Cuts: `src/flows` moves into the tests; URL-seeded sandboxes go.
+3. Cuts: `src/flows` moves into the tests; URL-seeded sandboxes go (done).
 4. More of the sandbox's checks against your own server, where a client alone can do them (issue #1).
 
 #### What's in the address

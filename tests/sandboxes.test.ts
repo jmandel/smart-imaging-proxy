@@ -10,7 +10,7 @@ import { defaultsFor, FLOWS, registerClients, runStep, startFlow } from "../src/
 import { createDemoServer } from "../src/demo-server";
 import { buildAuthorization, scriptedLaunch, submitConsent, tokenRequestBody } from "../src/flows/oauth";
 import { CONFIG, localUrl, ONE_ORIGIN, PORTS, urlsFor } from "../src/config";
-import { createSandboxes, decodeSeed, encodeSeed, MAX_SEED_BYTES, MAX_SEED_CHARS, splitSandbox } from "../src/sandboxes";
+import { createSandboxes, splitSandbox } from "../src/sandboxes";
 import { flushTraces } from "../src/trace";
 import { TraceStore } from "../src/trace-store";
 import { resetClock } from "../src/clock";
@@ -216,67 +216,19 @@ describe("every URL a sandbox issues carries its prefix", () => {
   });
 });
 
-describe("inline seeds", () => {
-  test("a seed builds its sandbox on first use, the same one after, and its changes stay there", async () => {
-    const seed = encodeSeed({ policies: [RULE], contextLifetimeSeconds: 120 });
-    expect(seed).toMatch(/^~[A-Za-z0-9_-]+$/);
-    const first = stack.sandboxes.resolve(seed);
-    expect("sandbox" in first).toBe(true);
-    const w = (first as { sandbox: Sandbox }).sandbox;
-    expect(services(w.store)).toEqual([RULE]);
-    expect(w.store.getSettings().contextLifetimeSeconds).toBe(120);
-    expect(w.store.relationships().map(fact)).toEqual(stack.store.relationships().map(fact));
-    expect(w.store.policies()).toEqual([RULE]);
-    // Over HTTP, the same sandbox.
-    const conf: any = await (await get(`${w.urls.clinicalFhir}/.well-known/smart-configuration`)).json();
-    expect(conf.issuer).toBe(w.urls.auth);
-    expect(new URL(conf.issuer).pathname.startsWith(`/s/${seed}`)).toBe(true);
-    await w.policy.replacePolicies("service-access", []);
-    expect((stack.sandboxes.resolve(seed) as { sandbox: Sandbox }).sandbox).toBe(w);
-    expect(services(w.store)).toEqual([]);
-    expect(services(stack.store)).toEqual([]);
-  });
-  test("a seed's relationships and policies, when it names them, replace the ones on file, and its choices go in beside them", async () => {
-    const share = { from: "user:josh", with: "user:alex-neighbor", patient: "patient:josh-example", sites: ["Lakeside Imaging"], label: "friend" };
-    const w = (stack.sandboxes.resolve(encodeSeed({ relationships: [], shares: [share] })) as { sandbox: Sandbox }).sandbox;
-    expect(w.store.relationships()).toEqual([]);
-    expect(w.store.policies()).toEqual(stack.store.policies());
-    expect(w.store.shares()).toMatchObject([{ ...share, basis: "self" }]);
-    // A reset there puts the seed's facts back, and clears its choices.
-    w.store.putRelationship({ subject: "user:sam-caregiver", relation: "guardian_of", object: "patient:riley-example" });
-    w.store.resetPolicy();
-    expect([w.store.relationships(), w.store.shares()]).toEqual([[], []]);
-    const g = (stack.sandboxes.resolve(encodeSeed({ policies: [] })) as { sandbox: Sandbox }).sandbox;
-    expect([g.store.policies(), g.store.relationships().map(fact)]).toEqual([[], stack.store.relationships().map(fact)]);
-  });
-  test("a seed that isn't a valid policy, or is too large, gets a 400 naming why", async () => {
-    const raw = (doc: unknown) => `~${deflateRawSync(Buffer.from(JSON.stringify(doc))).toString("base64url")}`;
-    for (const [seg, why] of [
-      [raw({ policies: "nope" }), "policies must be an array"],
-      [raw({ policies: [{ id: "x" }] }), "policies[0]"],
-      [raw({ rules: [RULE] }), 'unknown field "rules"'],
-      [raw({ contextLifetimeSeconds: "soon" }), "contextLifetimeSeconds"],
-      [raw([1, 2]), "JSON object"],
-      [`~${deflateRawSync(Buffer.from("not json")).toString("base64url")}`, "isn't JSON"],
-      ["~notdeflate", "deflate-raw"],
-      [`~${"A".repeat(MAX_SEED_CHARS + 1)}`, "at most"],
-      [raw({ policies: [{ ...RULE, description: "x".repeat(MAX_SEED_BYTES) }] }), `${MAX_SEED_BYTES} bytes`],
-    ] as const) {
-      const r = stack.sandboxes.resolve(seg);
-      expect([why, "error" in r && r.status, "error" in r && r.error.includes(why)]).toEqual([why, 400, true]);
-    }
-    const over = await get(`${urlsFor(`/s/${raw({ policies: "nope" })}`).clinicalFhir}/.well-known/smart-configuration`);
-    expect(over.status).toBe(400);
-    expect(((await over.json()) as any).error).toContain("policies must be an array");
-    expect(decodeSeed(encodeSeed({ policies: [RULE] }))).toEqual({ seed: { policies: [RULE] } });
+describe("one way to make a sandbox", () => {
+  test("a ~ address, which once built a sandbox from a policy in the URL, isn't a sandbox", async () => {
+    const r = await get(`${urlsFor("/s/~abc").clinicalFhir}/.well-known/smart-configuration`);
+    expect(r.status).toBe(404);
+    expect(((await r.json()) as any).error).toContain("that isn't a sandbox");
   });
 });
 
 describe("sandbox lifetimes", () => {
   const catalog = createCatalog();
   const shared = { catalogs: { archive: catalog, orthanc: catalog }, backends: {} as any, clientKeys: new Map(), initialBackend: () => "static-files" as const };
-  test("past the cap, the least recently used go first; an evicted id is gone, and an evicted seed builds again", () => {
-    const sandboxes = createSandboxes(shared, { max: 2, maxSeeds: 1 });
+  test("past the cap, the least recently used go first, and an evicted id is gone", () => {
+    const sandboxes = createSandboxes(shared, { max: 2 });
     const a = sandboxes.mint(), b = sandboxes.mint();
     expect(sandboxes.resolve(a.id!)).toMatchObject({ sandbox: a });
     const c = sandboxes.mint();
@@ -284,36 +236,8 @@ describe("sandbox lifetimes", () => {
     expect(sandboxes.resolve(b.id!)).toMatchObject({ status: 404 });
     expect(sandboxes.resolve(a.id!)).toMatchObject({ sandbox: a });
     expect(sandboxes.resolve(c.id!)).toMatchObject({ sandbox: c });
-    const seed = encodeSeed({ policies: [RULE] });
-    const s1 = (sandboxes.resolve(seed) as { sandbox: Sandbox }).sandbox;
-    s1.store.setDocument({ policies: [] });
-    sandboxes.resolve(encodeSeed({ policies: [] }));
-    const s2 = (sandboxes.resolve(seed) as { sandbox: Sandbox }).sandbox;
-    expect(s2).not.toBe(s1);
-    expect(services(s2.store)).toEqual([RULE]);
     sandboxes.close();
   });
-  test("seeds have a pool of their own, so any number of them never evicts a minted sandbox", () => {
-    const sandboxes = createSandboxes(shared, { max: 2, maxSeeds: 2 });
-    const a = sandboxes.mint(), b = sandboxes.mint();
-    for (let i = 0; i < 10; i++) expect("sandbox" in sandboxes.resolve(encodeSeed({ contextLifetimeSeconds: 60 + i }))).toBe(true);
-    expect(sandboxes.resolve(a.id!)).toMatchObject({ sandbox: a });
-    expect(sandboxes.resolve(b.id!)).toMatchObject({ sandbox: b });
-    expect(sandboxes.size).toBe(4);
-    // The seeds' own cap still holds, least recently used first, and a dropped one builds again.
-    const kept = encodeSeed({ contextLifetimeSeconds: 69 });
-    const w = (sandboxes.resolve(kept) as { sandbox: Sandbox }).sandbox;
-    expect((sandboxes.resolve(kept) as { sandbox: Sandbox }).sandbox).toBe(w);
-    sandboxes.resolve(encodeSeed({ contextLifetimeSeconds: 1 })); sandboxes.resolve(encodeSeed({ contextLifetimeSeconds: 2 }));
-    expect((sandboxes.resolve(kept) as { sandbox: Sandbox }).sandbox).not.toBe(w);
-    sandboxes.close();
-  });
-  test("a minted sandbox survives a page full of seeds", async () => {
-    const r = await get(`${CONFIG.demoUrl}/api/sandboxes`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
-    const { base } = (await r.json()) as any;
-    for (let i = 0; i < 70; i++) expect(await get(`${urlsFor(`/s/${encodeSeed({ contextLifetimeSeconds: 100 + i })}`).clinicalFhir}/.well-known/smart-configuration`).then(x => x.status)).toBe(200);
-    expect((await get(`${CONFIG.demoUrl}${base}/api/sandbox/keys-shared-on-purpose`)).status).toBe(200);
-  }, 60000);
   test("an idle sandbox is dropped", async () => {
     const sandboxes = createSandboxes(shared, { idleMs: 40 });
     const a = sandboxes.mint(), b = sandboxes.mint();

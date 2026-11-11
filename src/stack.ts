@@ -69,7 +69,7 @@ export function sandboxHandler(root: Sandbox, sandboxes: Sandboxes, serviceOf: (
  * With no store config, the root's store is in memory, and with no catalog path, so are the catalogs:
  * only src/main.ts reads the POLICY_* and CATALOG_DB settings.
  */
-export async function startStack(root: string, opts: { store?: StoreConfig; traces?: TraceStoreConfig; purgeIntervalMs?: number; catalog?: string; sandboxes?: { idleMs?: number; max?: number; maxSeeds?: number } } = {}) {
+export async function startStack(root: string, opts: { store?: StoreConfig; traces?: TraceStoreConfig; purgeIntervalMs?: number; catalog?: string; sandboxes?: { idleMs?: number; max?: number } } = {}) {
   const store = openRootStore(opts.store);
   const catalogs = await openCatalogs(root, opts.catalog);
   // Only the services send spans: the one origin doesn't forward the route, and it takes this credential.
