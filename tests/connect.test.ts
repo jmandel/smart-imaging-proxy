@@ -251,3 +251,16 @@ test("what can't be fetched gives the same answer as what isn't there", async ()
   expect(r.status).toBe(400);
   expect(await fetchJwks("http://127.0.0.1:1/jwks", true)).toBeUndefined();
 });
+
+test("a client registered with a JWKS of several keys can sign with any of them, and each is recognized by its kid", async () => {
+  const w = stack.sandboxes.mint(), a = pair(), b = pair(), aud = `${w.urls.auth}/token`;
+  const made = await call("POST", `${w.prefix}/register`, { client_name: "Two keys", grant_types: ["client_credentials"], token_endpoint_auth_method: "private_key_jwt", patients: "josh-example", jwks: { keys: [a.jwk, b.jwk] } });
+  const m: any = await made.json();
+  expect([made.status, m.jwks.keys.map((k: any) => k.kid)]).toEqual([201, [a.jwk.kid, b.jwk.kid]]);
+  for (const k of [a, b]) expect((await tokenCall(w, m.client_id, assertion(k.privateKey, k.jwk.kid, m.client_id, aud))).status).toBe(200);
+  // A kid that isn't registered, or a key signing under another's kid, is refused.
+  expect((await tokenCall(w, m.client_id, assertion(a.privateKey, "nope", m.client_id, aud))).status).toBe(401);
+  expect((await tokenCall(w, m.client_id, assertion(a.privateKey, b.jwk.kid, m.client_id, aud))).status).toBe(401);
+  const dup = await call("POST", `${w.prefix}/register`, { client_name: "Same kid", grant_types: ["client_credentials"], token_endpoint_auth_method: "private_key_jwt", patients: "any", jwks: { keys: [a.jwk, { ...b.jwk, kid: a.jwk.kid }] } });
+  expect([dup.status, ((await dup.json()) as any).error_description]).toEqual([400, expect.stringContaining("two keys have the kid")]);
+});

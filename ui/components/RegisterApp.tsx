@@ -8,7 +8,7 @@ import { launchViewer } from "../lib/launch";
 import { store, stored } from "../lib/store";
 
 export type ClientType = "public" | "confidential" | "backend";
-export interface Client { id: string; name: string; type: ClientType; redirectUris: string[]; patients?: string; jwk?: { kid: string }; jwksUrl?: string }
+export interface Client { id: string; name: string; type: ClientType; redirectUris: string[]; patients?: string; jwk?: { kid: string }; jwks?: { kid: string }[]; jwksUrl?: string }
 
 const KEYS_KEY = "smart-imaging-client:keys";
 const savedKeys = (): Record<string, PrivateJwk> => { try { return JSON.parse(stored(KEYS_KEY) ?? "{}"); } catch { return {}; } };
@@ -45,7 +45,7 @@ export function Registered({ c, base, removed }: { c: Client; base: string; remo
         <dt>Type</dt><dd>{TYPES.find(t => t[0] === c.type)?.[1] ?? c.type}</dd>
         {c.redirectUris.length > 0 && <><dt>Redirect URI</dt><dd className="addr-list">{c.redirectUris.map(u => <Address key={u} value={u} name="redirect URI" />)}</dd></>}
         {c.type === "backend" && <><dt>May reach</dt><dd>{c.patients === "any" ? "Any patient" : c.patients}</dd></>}
-        {c.jwk && <><dt>Key id</dt><dd><code>{c.jwk.kid}</code></dd></>}
+        {(c.jwks ?? (c.jwk ? [c.jwk] : [])).length > 0 && <><dt>{(c.jwks?.length ?? 1) > 1 ? "Key ids" : "Key id"}</dt><dd>{(c.jwks ?? [c.jwk!]).map((k, i) => <span key={k.kid}>{i ? ", " : ""}<code>{k.kid}</code></span>)}</dd></>}
         {c.jwksUrl && <><dt>JWKS URL</dt><dd><Address value={c.jwksUrl} name="JWKS URL" /></dd></>}
       </dl>
       <div className="configure-actions">
@@ -75,7 +75,7 @@ interface RegisteredMetadata { client_id: string; client_name: string; token_end
 const clientOf = (m: RegisteredMetadata): Client => ({
   id: m.client_id, name: m.client_name, redirectUris: m.redirect_uris ?? [],
   type: m.grant_types.includes("client_credentials") ? "backend" : m.token_endpoint_auth_method === "private_key_jwt" ? "confidential" : "public",
-  ...(m.jwks ? { jwk: m.jwks.keys[0] } : {}), ...(m.jwks_uri ? { jwksUrl: m.jwks_uri } : {}), ...(m.patients ? { patients: m.patients } : {}),
+  ...(m.jwks ? { jwk: m.jwks.keys[0], jwks: m.jwks.keys } : {}), ...(m.jwks_uri ? { jwksUrl: m.jwks_uri } : {}), ...(m.patients ? { patients: m.patients } : {}),
 } as Client);
 
 export function RegisterForm({ base, registered, title = "Register an app", kind }: { base: string; registered: (c: Client) => void; title?: string; kind?: [ClientType, (t: ClientType) => void] }) {

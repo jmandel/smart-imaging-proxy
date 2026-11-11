@@ -9,7 +9,10 @@ export type ClientType = "public" | "confidential" | "backend";
 export interface RegisteredClient {
   id: string; name: string; type: ClientType; redirectUris: string[];
   /** The public key a confidential app or a service signs with. */
+  /** The first registered key. Kept for clients saved before `jwks`; read keys with `keysOf`. */
   jwk?: JsonWebKey & { kid: string };
+  /** Every public key registered, each with its own kid: an assertion is checked with the one its header names. */
+  jwks?: (JsonWebKey & { kid: string })[];
   /** Or where it publishes its keys, so it can rotate them. */
   jwksUrl?: string;
   /** Which patients a service may reach: any, or one. */
@@ -32,9 +35,23 @@ function redirectProblem(uri: unknown): string | undefined {
   if (u.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname)) return undefined;
   return "a redirect URI must use https, or http on loopback: localhost, 127.0.0.1 or [::1]";
 }
-/** A public key for ES256, ES384 or RS384, as one JWK or a JWKS of one, or why not. A private key is refused rather than stored. */
-export function publicKeyOf(input: any): (JsonWebKey & { kid: string }) | { error: string } {
-  const k = Array.isArray(input?.keys) ? input.keys[0] : input;
+/** A client's registered public keys: all of them, or the one a client saved before there could be several had. */
+export const keysOf = (c: { jwk?: JsonWebKey & { kid: string }; jwks?: (JsonWebKey & { kid: string })[] }) => c.jwks ?? (c.jwk ? [c.jwk] : []);
+/** Every public key in a JWK or a JWKS, each for ES256, ES384 or RS384 with a kid of its own, or why not. */
+export function publicKeysOf(input: any): (JsonWebKey & { kid: string })[] | { error: string } {
+  const list: unknown[] = Array.isArray(input?.keys) ? input.keys : [input];
+  if (!list.length || list.length > 10) return { error: "give between 1 and 10 public keys" };
+  const out: (JsonWebKey & { kid: string })[] = [];
+  for (const [i, k] of list.entries()) {
+    const key = publicKeyOf(k);
+    if ("error" in key) return { error: list.length > 1 ? `key ${i + 1} (${(k as any)?.kid ?? "no kid"}): ${key.error}` : key.error };
+    if (out.some(o => o.kid === key.kid)) return { error: `two keys have the kid ${key.kid}: each needs its own, so an assertion's kid names one` };
+    out.push(key);
+  }
+  return out;
+}
+/** One public key for ES256, ES384 or RS384, or why not. A private key is refused rather than stored. */
+export function publicKeyOf(k: any): (JsonWebKey & { kid: string }) | { error: string } {
   if (typeof k !== "object" || k === null) return { error: "give a public key as a JWK" };
   if ("d" in k) return { error: "that's a private key: give only the public part" };
   if (typeof k.kid !== "string" || !k.kid) return { error: "the key needs a kid" };
@@ -69,9 +86,10 @@ export function addClient(store: PolicyStore, input: { name?: unknown; type?: un
       if (check.jwksReachable && !check.jwksReachable(input.jwksUrl)) return { error: JWKS_REFUSED };
       client.jwksUrl = input.jwksUrl;
     } else {
-      const key = publicKeyOf(input.jwk);
-      if ("error" in key) return key;
-      client.jwk = key;
+      const keys = publicKeysOf(input.jwk);
+      if ("error" in keys) return keys;
+      client.jwk = keys[0];
+      client.jwks = keys;
     }
   }
   if (type === "backend") {
@@ -114,7 +132,7 @@ export function metadataOf(c: RegisteredClient): ClientMetadata & { client_id: s
     // A refresh token comes with online_access or offline_access, for any app that signs in.
     grant_types: c.type === "backend" ? ["client_credentials"] : ["authorization_code", "refresh_token"],
     token_endpoint_auth_method: signs ? "private_key_jwt" : "none",
-    ...(c.jwk ? { jwks: { keys: [c.jwk] } } : {}), ...(c.jwksUrl ? { jwks_uri: c.jwksUrl } : {}),
+    ...(keysOf(c).length ? { jwks: { keys: keysOf(c) } } : {}), ...(c.jwksUrl ? { jwks_uri: c.jwksUrl } : {}),
     scope: c.type === "backend" ? BACKEND_SCOPES.join(" ") : "launch/patient patient/*.rs",
     ...(c.type === "backend" ? { patients: c.patients } : {}),
   };

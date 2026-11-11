@@ -9,7 +9,7 @@ import { refuseWrite } from "./settings-api";
 import { PORTS, PUBLIC_DEMO } from "./config";
 import { check, recordEvent, traced } from "./trace";
 import { asksClinical, clinicalCapability, clinicalSearch, demographics, grantedScope, hasClinicalScope, isClinicalType } from "./clinical";
-import { BACKEND_SCOPES } from "./clients";
+import { BACKEND_SCOPES, keysOf } from "./clients";
 import { jwksKey } from "./jwks";
 import { reportAttachment, reportSearch, reportRead } from "./reports";
 
@@ -162,7 +162,7 @@ form.inline{display:inline}
  * Every URL it issues starts at `issuer`, including the paths in its own pages and redirects, so it can
  * be served under a prefix. It answers requests with the prefix already taken off.
  */
-export function createAuthServer(opts: { issuer: string; imagingFhirBase: string; serviceSecret: string; redirectUri: string; demoClientRedirectUri: string; unified?: () => boolean; releasedStudies?: (token: Grant) => Promise<CatalogStudy[]>; imagingFetch?: (req: Request) => Response | Promise<Response>; registeredClient?: (id: string) => { name: string; type?: string; redirectUris: string[]; jwk?: JsonWebKey & { kid: string }; jwksUrl?: string } | undefined; directory: Directory; store: () => PolicyStore; clock?: Clock; siteNames?: () => string[] }) {
+export function createAuthServer(opts: { issuer: string; imagingFhirBase: string; serviceSecret: string; redirectUri: string; demoClientRedirectUri: string; unified?: () => boolean; releasedStudies?: (token: Grant) => Promise<CatalogStudy[]>; imagingFetch?: (req: Request) => Response | Promise<Response>; registeredClient?: (id: string) => { name: string; type?: string; redirectUris: string[]; jwk?: JsonWebKey & { kid: string }; jwks?: (JsonWebKey & { kid: string })[]; jwksUrl?: string } | undefined; directory: Directory; store: () => PolicyStore; clock?: Clock; siteNames?: () => string[] }) {
   const clock = opts.clock ?? demoClock;
   const now = () => clock.now();
   /** The path the issuer adds, which every path this server writes into a page or a redirect starts with. */
@@ -249,7 +249,8 @@ export function createAuthServer(opts: { issuer: string; imagingFhirBase: string
     if (!check("authorization-server", "client assertion is a three-part JWT", !!(head && claims && s))) return { failed: "client assertion is a three-part JWT" };
     const registered = opts.registeredClient?.(claims.iss);
     const publishedKey = registered?.jwksUrl && typeof head.kid === "string" ? await jwksKey(registered.jwksUrl, head.kid, PUBLIC_DEMO) : undefined;
-    const clientKey = registered?.jwk ?? publishedKey;
+    // A registered JWKS can hold several keys: the assertion's kid says which signed it.
+    const clientKey = (registered ? keysOf(registered).find(k => k.kid === head.kid) : undefined) ?? publishedKey;
     const reg = registered ? (clientKey ? { kid: (clientKey as any).kid as string, publicKey: createPublicKey({ key: clientKey as any, format: "jwk" }), scopes: registered.type === "backend" ? BACKEND_SCOPES : [] } : undefined) : backendKeys.get(claims.iss);
     if (!check("authorization-server", "client is registered, with its public key on file", !!reg && head.kid === reg.kid, { client: claims.iss, kid: head.kid, registered_scopes: reg?.scopes.join(" ") })) return { failed: "client is registered, with its public key on file" };
     if (!check("authorization-server", "assertion's algorithm suits its key, and iss equals sub", algorithmFits(head.alg, reg!.publicKey) && claims.sub === claims.iss, { alg: head.alg, iss: claims.iss, sub: claims.sub })) return { failed: "assertion's algorithm suits its key, and iss equals sub" };
