@@ -1,4 +1,5 @@
-// What revocation controls really do to retrieval, on every backend. An old URL means one signed
+// What revocation controls really do to retrieval, on every backend: revoking ends a token's access on
+// every path at once; flushing and rotating end what a policy change would otherwise leave until expiry. An old URL means one signed
 // before a rotation. Each case reads the whole response, and reports how the proxy authorized it.
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -124,7 +125,7 @@ for (const backend of BACKENDS) {
       expect(await get(url, next.body.access_token)).toMatchObject({ status: 200, authz: "asked" });
     });
 
-    test("each control alone leaves a path open, and the three together end access at once", async () => {
+    test("revoking ends access at once on every path: the fast path, and cached decisions, signed or plain", async () => {
       const { t, uid, url } = await launchAndSearch();
       const plain = `${CONFIG.proxyUrl}/wado/-/studies/${uid}`;
       const next = await refreshed(t.refresh_token);
@@ -136,21 +137,8 @@ for (const backend of BACKENDS) {
       expect(await get(url, newer)).toMatchObject({ status: 200, authz: "cached" });
       expect(await get(plain, newer)).toMatchObject({ status: 200, authz: "cached" });
 
-      // Revoking alone: the fast path and the cache both keep serving.
+      // Revoking alone ends all three: the proxy checks the token is live before the fast path or a cached answer.
       await admin("/tokens/revoke-all");
-      expect(await get(url, t.access_token)).toMatchObject({ status: 200, authz: "instant" });
-      expect(await get(url, newer)).toMatchObject({ status: 200, authz: "cached" });
-      expect(await get(plain, newer)).toMatchObject({ status: 200, authz: "cached" });
-
-      // Flushing as well: decisions are gone, and the fast path still serves.
-      await admin("/proxy/flush");
-      expect(stack.proxy.cachedDecisions).toBe(0);
-      expect(await get(url, t.access_token)).toMatchObject({ status: 200, authz: "instant" });
-      expect(await get(url, newer)).toEqual({ status: 401, parts: 0, authz: "asked" });
-      expect(await get(plain, newer)).toEqual({ status: 401, parts: 0, authz: "asked" });
-
-      // Rotating as well: nothing is left.
-      await admin("/signing-key/rotate");
       for (const [u, token] of [[url, t.access_token], [url, newer], [plain, t.access_token], [plain, newer]] as const) {
         expect(await get(u, token)).toEqual({ status: 401, parts: 0, authz: "asked" });
       }
@@ -159,16 +147,17 @@ for (const backend of BACKENDS) {
       expect((await refreshed(next.body.refresh_token)).status).toBe(400);
     });
 
-    test("revoke and rotate without a flush leave a plain URL's cached decision until it's flushed", async () => {
-      const { t, uid } = await launchAndSearch();
+    test("for a live token, flushing forgets cached decisions and rotating takes old URLs off the fast path; neither refuses it", async () => {
+      const { t, uid, url } = await launchAndSearch();
       const plain = `${CONFIG.proxyUrl}/wado/-/studies/${uid}`;
+      expect(await get(url, t.access_token)).toMatchObject({ status: 200, authz: "instant" });
       await get(plain, t.access_token);
       expect(await get(plain, t.access_token)).toMatchObject({ status: 200, authz: "cached" });
-      await admin("/tokens/revoke-all");
-      await admin("/signing-key/rotate");
-      expect(await get(plain, t.access_token)).toMatchObject({ status: 200, authz: "cached" });
       await admin("/proxy/flush");
-      expect(await get(plain, t.access_token)).toEqual({ status: 401, parts: 0, authz: "asked" });
+      expect(stack.proxy.cachedDecisions).toBe(0);
+      expect(await get(plain, t.access_token)).toMatchObject({ status: 200, authz: "asked" });
+      await admin("/signing-key/rotate");
+      expect(await get(url, t.access_token)).toMatchObject({ status: 200, authz: "asked" });
     });
   });
 }

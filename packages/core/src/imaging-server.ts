@@ -166,8 +166,9 @@ export function createImagingServer(opts: ImagingServerOptions) {
   const keys = new Map([[key.kid, key.publicKey]]);
   let outage = false;
   let staged: SearchStaging = {};
-  /** Whether the staged 503 has been given: once, to the first search after staging began. */
-  let searchDelayed = false;
+  /** The tokens the staged 503 has been given to: once each, on its first search after staging began, so one app's
+   *  search doesn't spend another's. By token hash, and bounded. */
+  const searchDelayed = new Set<string>();
   const decisions: any[] = [];
   const cursorKey = opts.cursorKey ?? randomBytes(32);
   const pageBytes = opts.pageBytes ?? PAGE_BYTES;
@@ -400,9 +401,10 @@ export function createImagingServer(opts: ImagingServerOptions) {
     const policy = snapshotOf(patient);
     if (level === "system" && !model.preAuthorized(policy, t.client_id, patient).length) return fail(403, "forbidden", "this patient is outside the client's authorized access");
     // Staged: results "being assembled", which the guide lets a server say with 503 and Retry-After (Finding studies).
-    if (staged.retryAfter && !searchDelayed) {
-      searchDelayed = true;
-      e.reason = `staged: the first search answers 503 with Retry-After: ${staged.retryAfter}`;
+    if (staged.retryAfter && !searchDelayed.has(ath(bearer))) {
+      if (searchDelayed.size >= 10000) searchDelayed.clear();
+      searchDelayed.add(ath(bearer));
+      e.reason = `staged: each token's first search answers 503 with Retry-After: ${staged.retryAfter}`;
       return new Response(null, { status: 503, headers: { "Retry-After": String(staged.retryAfter) } });
     }
 
@@ -600,7 +602,7 @@ export function createImagingServer(opts: ImagingServerOptions) {
     fetchAt(req: Request, base: string) { askedAt.set(req, base); return this.fetch(req); },
     setOutage(on: boolean) { outage = on; },
     /** Stages what any server may do, starting afresh: every token's next search is its first again. */
-    setStaged(s: SearchStaging) { staged = { ...s }; searchDelayed = false; },
+    setStaged(s: SearchStaging) { staged = { ...s }; searchDelayed.clear(); },
     get staged(): SearchStaging { return { ...staged }; },
     get outage() { return outage; },
     get signingKid() { return key.kid; },
@@ -613,6 +615,6 @@ export function createImagingServer(opts: ImagingServerOptions) {
     },
     decisions,
     /** Clears the outage switch, anything staged and the decision log. Policy belongs to the stores. */
-    reset() { outage = false; staged = {}; searchDelayed = false; decisions.length = 0; },
+    reset() { outage = false; staged = {}; searchDelayed.clear(); decisions.length = 0; },
   };
 }

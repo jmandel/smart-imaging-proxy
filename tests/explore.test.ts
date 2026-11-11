@@ -436,13 +436,20 @@ describe("sandboxes", () => {
     expect(activity.events.length).toBeGreaterThan(0);
     expect(activity.events.every((e: any) => e.sandbox === made.sandbox)).toBe(true);
   }, 60000);
-  test("a revoked token keeps its signed URLs until they expire, and then gets 401", async () => {
+  test("a revoked token's signed URLs stop at once: the fast path checks the token is live, and a cached decision isn't used", async () => {
     const b = page();
     const s = await b.pick("josh");
+    expect(await b.retrieve(s, SMALL)).toMatchObject({ status: 200, authz: "instant" });
     stack.store.revokeAllTokens();
+    expect((await b.retrieve(s, SMALL)).status).toBe(401);
+  }, 60000);
+  test("a policy change, unlike a revocation, leaves a signed URL working until it expires", async () => {
+    const b = page();
+    const s = await b.pick("josh");
+    await b.policy("DELETE", `/app-approvals?${new URLSearchParams({ by: "user:josh", app: "app:portal-app", patient: "patient:josh-example" })}`);
     expect(await b.retrieve(s, SMALL)).toMatchObject({ status: 200, authz: "instant" });
     stack.root.clock.advance(stack.store.getSettings().contextLifetimeSeconds + 1);
-    expect((await b.retrieve(s, SMALL)).status).toBe(401);
+    expect((await b.retrieve(s, SMALL)).status).toBe(404);
   }, 60000);
   test("Explore's reads need the admin token", async () => {
     for (const path of ["/api/sandbox/explore/cast", "/api/sandbox/explore/referrals", "/api/sandbox/explore/view?user=josh&session=x"]) expect((await demo.fetch(new Request(`${CONFIG.demoUrl}${path}`))).status).toBe(401);

@@ -140,6 +140,8 @@ The token's `scope` is what was granted, not an echo of the request: patient-lev
 
 Ask for `online_access` or `offline_access` in `scope` at sign-in, and the token response also has a `refresh_token` (the two mean the same here). `POST $SANDBOX/token` with `grant_type=refresh_token`, `refresh_token` and `client_id` gets a new access token and a new refresh token, with the same patient, scope and approval; a confidential app also sends its `client_assertion`, as at the code exchange. Each refresh token works once. Presenting one that was already used is `invalid_grant`, and revokes every token in its chain, as a leaked token would need. A refresh token lasts 30 days of the demo clock unless the sandbox's settings say otherwise, and only the app it was issued to can use it.
 
+`POST $SANDBOX/revoke` with the form field `token` (RFC 7009) revokes an access or refresh token, and answers `200` whatever it was. A revoked access token stops at once everywhere: search, reports, and image retrieval through the signed `Endpoint.address` it was given.
+
 ## Read data
 
 To look at real answers before your app can sign in, the sandbox's admin key can get a token as a person for an app, with no forms: see "The same assertion, … gets a token as that person" under "Manage a sandbox". Your app should still sign in as below; the App check grades only its own tokens.
@@ -310,8 +312,8 @@ What each fault affects:
 | `decisionOutage: true` | Image retrieval the proxy can't decide from the signed address alone, so asks the Imaging Server's decision API: an address with no signed context, or an expired or restricted one, with no cached decision. These answer `503` with `Retry-After` | `ImagingStudy` search, which decides access itself and still answers `200`; retrievals whose signed context the proxy verifies on its own |
 | `truncateAfter: N` | Image retrieval: the image store stops after `N` instances, so a multipart response is cut off with no closing boundary | Search, and metadata |
 | `pageSize: N` (1 to 100) | `ImagingStudy` search: at most `N` studies a page, with the rest behind `next` links that repeat the `_count` asked for | Retrieval |
-| `searchRetryAfter: N` (1 to 30) | `ImagingStudy` search: the first search after it's set, once access is checked, answers `503` with `Retry-After: N`, once; later ones answer normally | Retrieval, and refusals: a search that would be 401 or 403 still is |
-| `retrievalRetryAfter: N` (1 to 30) | Image retrieval, including metadata: the first allowed request after it's set answers `503` with `Retry-After: N`, once | Search, and refused requests |
+| `searchRetryAfter: N` (1 to 30) | `ImagingStudy` search: each token's first search after it's set, once access is checked, answers `503` with `Retry-After: N`, once; later ones answer normally. Each token has its own, so another app's search doesn't use up yours | Retrieval, and refusals: a search that would be 401 or 403 still is |
+| `retrievalRetryAfter: N` (1 to 30) | Image retrieval, including metadata: each token's first allowed request after it's set answers `503` with `Retry-After: N`, once | Search, and refused requests |
 | `endpointForms: true` | `ImagingStudy` search: Endpoints rotate, study by study, through the three forms the guide allows: a response-local `urn:uuid` entry, a contained `#wado`, and an entry with fullUrl `{imaging}/fhir/Endpoint/{id}` referenced as `Endpoint/{id}`. That address isn't served: the Endpoint is only in the Bundle | Retrieval: every form holds the same address |
 
 The last four are what the guide or FHIR lets any server do, and are what an app check stages.
@@ -321,8 +323,8 @@ The last four are what the guide or FHIR lets any server do, and are what an app
 | `POST /api/sandbox/tours/{id}/steps/{step}/finish` `{"seen":{...}}` | Finishes it with what you saw, judged against the model |
 | `POST /api/sandbox/clock` `{"advanceSeconds":N}` or `{"reset":true}` | Moves the demo clock. `N` must be one of the choices in `GET /api/sandbox`. Tokens, study links and ages follow it; client assertions are checked by real time |
 | `POST /api/sandbox/reset` `{"confirm":true}` | Puts policy back to what's on file |
-| `POST /api/sandbox/tokens/revoke-all` | Revokes every token |
-| `POST /api/sandbox/proxy/flush` | Forgets cached access decisions |
+| `POST /api/sandbox/tokens/revoke-all` | Revokes every token. As with `/revoke`, a revoked token's retrievals stop at once, through signed addresses too |
+| `POST /api/sandbox/proxy/flush` | Forgets cached access decisions. A policy change otherwise reaches a cached decision, or a signed address, only when it expires (at most `contextLifetimeSeconds`, 300 by default) |
 | `POST /api/sandbox/signing-key/rotate` | Replaces the key that signs retrieval addresses |
 
 Create a new sandbox with `POST {{ORIGIN}}/api/sandboxes`. The response has `base`, a path to add to the origin.

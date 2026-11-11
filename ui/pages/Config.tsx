@@ -117,7 +117,7 @@ export default function Config() {
       </Section>
 
       <Section id="end" said={said} title="End access now">
-        <p>Signed links and cached decisions otherwise last until they expire.</p>
+        <p>Revoking ends every token's access at once, signed links included. After a policy change, a signed link or a cached decision lasts until it expires: flushing and rotating end those sooner.</p>
         <div className="row">
           {([["/tokens/revoke-all", "Revoke every token"], ["/proxy/flush", "Flush cached decisions"], ["/signing-key/rotate", "Rotate the signing key"]] as const).map(([route, label]) =>
             <button key={route} type="button" className="secondary" onClick={() => act("end", "POST", route, undefined, `${label}: done.`)}>{label}</button>)}

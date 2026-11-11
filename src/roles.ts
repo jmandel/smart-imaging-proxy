@@ -47,7 +47,7 @@ export async function startRoles(root: string, roles: Role[], env: Record<string
   // The demo's Backend Services clients get keys derived from SERVICE_SECRET, so every process agrees on them.
   const clientKeys = new Map(DEMO_BACKEND_CLIENTS.map(id => [id, derivedBackendClient(id, serviceSecret).privateKey]));
   const sandbox = createSandbox({
-    store, clock: demoClock, serviceSecret, policySecret: policySecret ?? randomBytes(24).toString("base64url"), jwksTtlSeconds: Number(env.JWKS_TTL_SECONDS ?? DEFAULT_JWKS_TTL_SECONDS),
+    store, clock: demoClock, serviceSecret, proxyReadsTokens: has("imaging") || has("auth"), policySecret: policySecret ?? randomBytes(24).toString("base64url"), jwksTtlSeconds: Number(env.JWKS_TTL_SECONDS ?? DEFAULT_JWKS_TTL_SECONDS),
     shared: { catalogs: { archive: catalog, orthanc: catalog }, backends, clientKeys, initialBackend: () => name },
   });
   if (has("auth")) {

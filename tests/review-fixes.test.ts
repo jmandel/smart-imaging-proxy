@@ -167,3 +167,44 @@ describe("The token's scope is what was granted", () => {
     expect(t.scope).toBe("launch/patient patient/ImagingStudy.rs");
   });
 });
+
+describe("Staged one-shot 503s are each token's own", () => {
+  test("one app's first search and retrieval don't spend another's", async () => {
+    const w = stack.sandboxes.mint();
+    w.setFaults({ searchRetryAfter: 1, retrievalRetryAfter: 1 });
+    const imaging = `${w.urls.imaging}/fhir/ImagingStudy?patient=josh-example&_include=ImagingStudy:endpoint`;
+    const sam = await scriptedLaunch("josh", "portal-app", { at: w.urls }), josh = await scriptedLaunch("josh", "portal-app", { at: w.urls });
+    const search = (t: any) => fetch(imaging, { headers: bearer(t) });
+    expect((await search(sam)).status).toBe(503);
+    expect((await search(josh)).status).toBe(503);
+    expect((await search(josh)).status).toBe(200);
+    const b: any = await (await search(sam)).json();
+    const study = b.entry.find((e: any) => e.resource.resourceType === "ImagingStudy").resource;
+    const address = b.entry.find((e: any) => e.resource.resourceType === "Endpoint").resource.address;
+    const uid = study.identifier.find((i: any) => i.system === "urn:dicom:uid").value.replace("urn:oid:", "");
+    // The context in the address is bound to the token that searched; the other token gets its own address.
+    const meta = (t: any, a: string) => fetch(`${a}/studies/${uid}/metadata`, { headers: { authorization: `Bearer ${t.access_token}`, accept: "application/dicom+json" } });
+    expect((await meta(sam, address)).status).toBe(503);
+    expect((await meta(sam, address)).status).toBe(200);
+    const jb: any = await (await search(josh)).json();
+    const jaddress = jb.entry.find((e: any) => e.resource.resourceType === "Endpoint").resource.address;
+    expect((await meta(josh, jaddress)).status).toBe(503);
+    expect((await meta(josh, jaddress)).status).toBe(200);
+  });
+});
+
+describe("Revoking a token ends its retrievals at once", () => {
+  test("by /revoke: search, the signed address and an unsigned one all refuse it", async () => {
+    const w = stack.sandboxes.mint();
+    const t = await scriptedLaunch("josh", "portal-app", { at: w.urls });
+    const b: any = await (await fetch(`${w.urls.imaging}/fhir/ImagingStudy?patient=josh-example&_include=ImagingStudy:endpoint`, { headers: bearer(t) })).json();
+    const study = b.entry.find((e: any) => e.resource.resourceType === "ImagingStudy").resource;
+    const address = b.entry.find((e: any) => e.resource.resourceType === "Endpoint").resource.address;
+    const uid = study.identifier.find((i: any) => i.system === "urn:dicom:uid").value.replace("urn:oid:", "");
+    const meta = (a: string) => fetch(`${a}/studies/${uid}/metadata`, { headers: { authorization: `Bearer ${t.access_token}`, accept: "application/dicom+json" } });
+    const unsigned = `${w.urls.proxy}/wado/-`;
+    expect([(await meta(address)).status, (await meta(unsigned)).status]).toEqual([200, 200]);
+    await fetch(`${w.urls.auth}/revoke`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token: t.access_token }) });
+    expect([(await meta(address)).status, (await meta(unsigned)).status]).toEqual([401, 401]);
+  });
+});

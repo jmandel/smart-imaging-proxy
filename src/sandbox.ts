@@ -79,7 +79,7 @@ export type Topology = "separate" | "unified";
 export interface Faults { decisionOutage: boolean; truncateAfter: number | null; pageSize: number | null; searchRetryAfter: number | null; retrievalRetryAfter: number | null; endpointForms: boolean }
 /** An app check's run while it's on here: what the banner on every page says. */
 export interface AppCheckOn { run: string; client: string; script: string; staged: string[]; startedAt: string; endsAt: string }
-export function createSandbox(o: { id?: string; store: PolicyStore; clock: DemoClock; shared: Shared; serviceSecret?: string; policySecret?: string; jwksTtlSeconds?: number }) {
+export function createSandbox(o: { id?: string; store: PolicyStore; clock: DemoClock; shared: Shared; serviceSecret?: string; policySecret?: string; jwksTtlSeconds?: number; /** False for a proxy in its own process, whose store holds no tokens. */ proxyReadsTokens?: boolean }) {
   const { store, clock, shared } = o;
   // A sandbox remembers its own choice, with the rest of its state.
   const remembered = o.id ? store.note("backend") as BackendName | undefined : undefined;
@@ -142,7 +142,10 @@ export function createSandbox(o: { id?: string; store: PolicyStore; clock: DemoC
   let truncateAfter: number | undefined;
   const wrapped = new Map<Backend, Backend>();
   const backend = () => { const b = shared.backends[current]; let w = wrapped.get(b); if (!w) wrapped.set(b, w = withTruncation(b, () => truncateAfter)); return w; };
-  const proxy = createProxy({ publicBase: () => urls.proxy, jwksUrl: `${urls.imaging}/.well-known/jwks.json`, jwksTtlSeconds: o.jwksTtlSeconds, decisionUrl: `${urls.imaging}/access/v1/evaluation`, serviceSecret, backend, observer: traceObserver, clock });
+  const proxy = createProxy({ publicBase: () => urls.proxy, jwksUrl: `${urls.imaging}/.well-known/jwks.json`, jwksTtlSeconds: o.jwksTtlSeconds, decisionUrl: `${urls.imaging}/access/v1/evaluation`, serviceSecret, backend, observer: traceObserver, clock,
+    // The proxy shares this sandbox's token store, so revoking a token ends its retrievals at once. A proxy in a process
+    // of its own can't see tokens, and its signed contexts last until they expire.
+    ...(o.proxyReadsTokens === false ? {} : { tokenLive: (token: string) => { const t = store.getToken(token, "access"); return !!t && !t.revoked && (t.exp === undefined || t.exp > clock.now()); } }) });
 
   let appCheck: AppCheckOn | undefined;
   const clearRuntime = () => { auth.reset(); imaging.reset(); proxy.reset(); truncateAfter = undefined; appCheck = undefined; };

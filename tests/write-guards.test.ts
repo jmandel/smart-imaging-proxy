@@ -184,7 +184,7 @@ test("every service refuses another host name, and a Host that doesn't parse get
 });
 
 test("the Bearer scheme is case-insensitive on the Clinical FHIR Server, and an empty search has no empty entry array", async () => {
-  const { access_token: token } = await scriptedLaunch("josh");
+  const { access_token: token } = await scriptedLaunch("josh", "portal-app", { scope: "launch/patient patient/*.rs" });
   for (const scheme of ["Bearer", "bearer", "BEARER"]) expect((await fetch(`${CONFIG.authUrl}/fhir/Patient/josh-example`, { headers: { Authorization: `${scheme} ${token}` } })).status).toBe(200);
   const empty: any = await (await fetch(`${CONFIG.imagingUrl}/fhir/ImagingStudy?patient=josh-example&identifier=nothing`, { headers: { Authorization: `Bearer ${token}` } })).json();
   expect(empty.total).toBe(0);

@@ -78,6 +78,12 @@ type KeyOption = { jwksUrl: string; jwksTtlSeconds?: number; jwksCooldownSeconds
 export function createProxy(opts: KeyOption & {
   publicBase: () => string; decisionUrl: string; serviceSecret: string; backend: () => Backend; maxDecisions?: number; maxEvents?: number;
   observer?: Observer; clock?: Clock;
+  /**
+   * Whether the presented access token is still live: issued, unrevoked and unexpired. Where the proxy can
+   * ask (it shares the token store), a revoked token stops at once, on the fast path and in the decision
+   * cache; without it, a signed context works until it expires, whatever happened to its token.
+   */
+  tokenLive?: (token: string) => boolean | Promise<boolean>;
 }) {
   const obs = opts.observer ?? noopObserver, clock = opts.clock ?? systemClock;
   const now = () => clock.now();
@@ -90,7 +96,9 @@ export function createProxy(opts: KeyOption & {
   const events: ProxyEvent[] = [];
   let seq = 0;
   /** Staged for an app check: the first retrieval answers 503 with Retry-After of this many seconds, once. */
-  let retryAfter: number | undefined, retryAfterSpent = false;
+  let retryAfter: number | undefined;
+  /** The tokens given the staged 503: once each, so one app's retrieval doesn't spend another's. By token hash, and bounded. */
+  const retryAfterSpent = new Set<string>();
 
   const verified = async (ctx: string) => verifyJws(ctx, await keySource.keysFor(kidOf(ctx)));
 
@@ -110,7 +118,8 @@ export function createProxy(opts: KeyOption & {
   async function canI(token: string, ctx: string | undefined, study: string, operation: string): Promise<Outcome> {
     const key = `${sha(token)}|${ctx ? sha(ctx) : "-"}|${study}|${operation}`;
     // A decision cached for a signed URL lasts only while that URL's signature still verifies.
-    const hit = !ctx || await verified(ctx) ? cache.get(key) : undefined;
+    // And only while its token is live: a revoked token's cached answers are never used.
+    const hit = (!ctx || await verified(ctx)) && (!opts.tokenLive || await opts.tokenLive(token)) ? cache.get(key) : undefined;
     if (hit && hit.until <= now()) cache.delete(key);
     if (check("dicomweb-proxy", "decision cache lookup", !!(hit && hit.until > now()), { hit: !!hit, fresh: !!hit && hit.until > now(), study })) return { ...hit!.outcome, via: "cached" };
     let res: Response;
@@ -159,6 +168,7 @@ export function createProxy(opts: KeyOption & {
     if (!pass("fast path: context hasn't expired", claims.exp > now(), { exp: claims.exp, now: now() })) return undefined;
     if (!pass("fast path: requested study is in the context", claims.study === study, { requested: study, context: claims.study })) return undefined;
     if (!pass("fast path: token hash matches ath", claims.ath === ath(token), { presented: ath(token).slice(0, 10), context: String(claims.ath).slice(0, 10) })) return undefined;
+    if (opts.tokenLive && !pass("fast path: token hasn't been revoked", await opts.tokenLive(token))) return undefined;
     if (series && !pass("fast path: requested series is released", !claims.series || claims.series.includes(series), { series, listed: claims.series?.length ?? "whole study" })) return undefined;
     if (!pass("fast path: study version is understood", validVersion(claims.ver), { version: claims.ver })) return undefined;
     return { allowed: true, release: claims.series ? { series: claims.series } : "study", via: "instant", ...(claims.ver !== undefined ? { version: claims.ver } : {}) };
@@ -548,9 +558,10 @@ export function createProxy(opts: KeyOption & {
     if (!series && typeof released === "object") scope.onlySeries = released.series;
     // A server assembling a study may answer 503 with Retry-After first (the guide's Retrieving images). Staged
     // once: one is enough to see whether the app waits, and more only make a run slower.
-    if (retryAfter && !retryAfterSpent) {
-      retryAfterSpent = true;
-      ev.note = `staged: the first retrieval answers 503 with Retry-After: ${retryAfter}`;
+    if (retryAfter && !retryAfterSpent.has(ath(token!))) {
+      if (retryAfterSpent.size >= 10000) retryAfterSpent.clear();
+      retryAfterSpent.add(ath(token!));
+      ev.note = `staged: each token's first retrieval answers 503 with Retry-After: ${retryAfter}`;
       return new Response(null, { status: 503, headers: { "Retry-After": String(retryAfter) } });
     }
 
@@ -593,9 +604,9 @@ export function createProxy(opts: KeyOption & {
       return res;
     }),
     events,
-    reset() { cache.clear(); events.length = 0; retryAfter = undefined; retryAfterSpent = false; },
-    /** Stages a 503 with Retry-After on the next retrieval, once, or none. */
-    setRetryAfter(seconds: number | undefined) { retryAfter = seconds; retryAfterSpent = false; },
+    reset() { cache.clear(); events.length = 0; retryAfter = undefined; retryAfterSpent.clear(); },
+    /** Stages a 503 with Retry-After on each token's next retrieval, once, or none. */
+    setRetryAfter(seconds: number | undefined) { retryAfter = seconds; retryAfterSpent.clear(); },
     get retryAfter() { return retryAfter; },
     flushDecisions() { cache.clear(); },
     refreshKeys: () => keySource.refresh(),
