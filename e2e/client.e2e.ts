@@ -372,6 +372,30 @@ describe("the demo client", () => {
     expect(await page.locator("#create").isEnabled()).toBe(true);
     await context.close();
   });
+  test("inside a sandbox, choosing a server of your own in the viewer sticks the first time", async () => {
+    const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
+    const page = await context.newPage();
+    const base = await enterSandbox(page);
+    // A server of your own in this browser's list, beside the sandbox: the sandbox's viewer starts on the sandbox,
+    // and choosing the other one has to hold.
+    const key = `${ORIGIN}${base}/fhir|portal-app`;
+    await page.evaluate(([iss, key]) => localStorage.setItem("smart-imaging-client:servers", JSON.stringify([{ label: "Elsewhere", iss, clientId: key.split("|")[1] }])), [`${ORIGIN}${base}/fhir`, key] as const);
+    await page.goto(`${ORIGIN}${base}/viewer`);
+    const sandboxRadio = page.locator(`input[name=server][value="${ORIGIN}${base}/fhir|demo-client"]`), otherRadio = page.locator(`input[name=server][value="${key}"]`);
+    await page.getByRole("radio", { name: "Elsewhere" }).waitFor();
+    expect(await sandboxRadio.isChecked()).toBe(true);
+    await page.getByRole("radio", { name: "Elsewhere" }).check();
+    // The address names it at once, and the choice holds: nothing redraws it back to the sandbox.
+    await page.waitForURL(u => u.searchParams.get("server") === key);
+    await page.waitForTimeout(300);
+    expect(await otherRadio.isChecked()).toBe(true);
+    expect(await sandboxRadio.isChecked()).toBe(false);
+    // And it survives a reload, which reads the address afresh.
+    await page.reload();
+    await page.getByRole("radio", { name: "Elsewhere" }).waitFor();
+    expect(await page.locator(`input[name=server][value="${key}"]`).isChecked()).toBe(true);
+    await context.close();
+  });
   test("the viewer brought back with Back, its sign-in tab still open, offers Connect again", async () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();

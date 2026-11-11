@@ -32,7 +32,9 @@ export default function Viewer() {
   const base = params.get("sandbox") ?? (BASE || null), wanted = params.get("server");
   const onSandbox: Choice | undefined = base !== null && /^(\/s\/[A-Za-z0-9_-]+)?$/.test(base)
     ? (s => ({ ...s, id: serverKey(s), detail: "Your sandbox of sample patients" }))(sandboxServer(base, sandboxes.find(w => w.base === base)?.name)) : undefined;
-  const named = onSandbox ? known.find(s => s.id === onSandbox.id) ?? onSandbox : wanted ? known.find(s => s.id === wanted) : undefined;
+  // The address names the server: one of your own where it says `?server=`, and otherwise this sandbox, which is what
+  // the sandbox's own viewer starts on. A choice of your own must win here, or the sandbox would take it back.
+  const named = wanted ? known.find(s => s.id === wanted) : onSandbox ? known.find(s => s.id === onSandbox.id) ?? onSandbox : undefined;
   const servers = named && !known.some(s => s.id === named.id) ? [named, ...known] : known;
   // The one just picked leads the address by a moment, so its radio changes as it's pressed.
   const [picked, setPicked] = useState<string>();
