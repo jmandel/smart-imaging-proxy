@@ -9,7 +9,8 @@ export interface ViewLink { page: PageId; query: string; opens: string }
 /** `{x}` in a query stands for a value to fill in. A sandbox page's address is under `$SANDBOX`. */
 export const VIEW_LINKS: ViewLink[] = [
   { page: "build-an-app", query: "?step=try&app={client id}", opens: "The wizard at a step (`sandbox`, `app`, `connect`, `try`), with an app chosen" },
-  { page: "run-a-server", query: "?how=confidential", opens: "Registering the viewer as a `public`, `confidential` or `backend` client" },
+  { page: "build-a-server", query: "?step=server&how=confidential", opens: "The wizard at a step (`register`, `server`, `check`), with a way of connecting; `&server={iss}|{client id}` names the server described" },
+  { page: "build-a-server", query: "?how=backend", opens: "Registering the viewer as a `public`, `confidential` or `backend` client" },
   { page: "servers", query: "?add&how=backend", opens: "The form for a new server, with a way of connecting chosen" },
   { page: "servers", query: "?edit={iss}|{client id}", opens: "The form for a saved server" },
   { page: "check", query: "?sandbox=/s/{id}", opens: "The server check, run on a sandbox; `?server={iss}|{client id}` runs it on a saved server" },

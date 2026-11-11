@@ -16,9 +16,9 @@ export default function Home() {
           <PageLink id="build-an-app" className="button">Build an App</PageLink>
         </div>
         <div className="way">
-          <h2>Running a server?</h2>
-          <p>Connect our known-good viewer to it, and see which step it gets wrong.</p>
-          <PageLink id="run-a-server" className="button">Run a Server</PageLink>
+          <h2>Building a server?</h2>
+          <p>Register our known-good viewer with it, then check which step it gets wrong.</p>
+          <PageLink id="build-a-server" className="button">Build a Server</PageLink>
         </div>
       </section>
       <ul className="more-links" aria-label="More">

@@ -3,8 +3,9 @@ import type { ComponentType } from "react";
 import type { PageId } from "../sitemap";
 import Home from "./Home";
 import SandboxHome from "./SandboxHome";
-import { About, RunAServer } from "./Guides";
+import { About } from "./Guides";
 import BuildAnApp from "./BuildAnApp";
+import BuildAServer from "./BuildAServer";
 import Sandboxes from "./Sandboxes";
 import Build from "./Build";
 import Connect from "./Connect";
@@ -22,7 +23,7 @@ import TraceLog from "./TraceLog";
 
 export const UI_PAGES: Partial<Record<PageId, ComponentType>> = {
   home: Home, sandbox: SandboxHome,
-  "build-an-app": BuildAnApp, "run-a-server": RunAServer, about: About, sandboxes: Sandboxes,
+  "build-an-app": BuildAnApp, "build-a-server": BuildAServer, about: About, sandboxes: Sandboxes,
   build: Build, connect: Connect,
   viewer: Viewer,
   tours: Tours,

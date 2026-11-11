@@ -18,13 +18,13 @@ export interface Page {
 }
 
 export type PageId =
-  | "home" | "build-an-app" | "run-a-server" | "about" | "sandboxes" | "viewer" | "servers" | "check"
+  | "home" | "build-an-app" | "build-a-server" | "about" | "sandboxes" | "viewer" | "servers" | "check"
   | "sandbox" | "app-check" | "tours" | "explore" | "build" | "connect" | "activity" | "trace" | "trace-span" | "trace-log" | "config";
 
 const pages: Page[] = [
   { id: "home", level: "site", path: "/", name: "SMART Imaging Access", blurb: "A public sandbox and test client for the SMART Imaging Access guide." },
   { id: "build-an-app", level: "site", path: "/build-an-app", name: "Build an App", blurb: "Connect your SMART app to a sandbox health system with sample patients and studies." },
-  { id: "run-a-server", level: "site", path: "/run-a-server", name: "Run a Server", blurb: "Connect our known-good viewer to your server, and see what it needs." },
+  { id: "build-a-server", level: "site", path: "/build-a-server", name: "Build a Server", blurb: "Register our known-good viewer with your server, describe it, and check every step of the guide against it." },
   { id: "about", level: "site", path: "/about", name: "Why SMART Imaging", blurb: "What imaging interoperability makes possible, how it works, and what it takes." },
   { id: "sandboxes", level: "site", path: "/sandboxes", name: "My Sandboxes", blurb: "The sandboxes this browser has made or joined, and a new one." },
   { id: "viewer", level: "site", path: "/viewer", name: "Viewer", blurb: "Our SMART app, signed in to one of your sandboxes or to your own server." },
@@ -47,7 +47,7 @@ const pages: Page[] = [
 export const PAGES = Object.fromEntries(pages.map(p => [p.id, p])) as Record<PageId, Page>;
 
 /** The menu in every page's header: the two ways in, what it's all for, your sandboxes; then the guide for agents. */
-export const MENU: PageId[] = ["build-an-app", "run-a-server", "about", "sandboxes"];
+export const MENU: PageId[] = ["build-an-app", "build-a-server", "about", "sandboxes"];
 
 /** The site's own pages beyond the guides. */
 export const SITE_TOOLS: PageId[] = ["servers", "check", "viewer"];

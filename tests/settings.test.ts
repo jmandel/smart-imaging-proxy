@@ -53,7 +53,7 @@ describe("pages", () => {
     // The site's own pages are the site's alone: no sandbox has a copy.
     for (const p of Object.values(PAGES).filter(p => p.level === "site")) expect(routes.some(r => r.startsWith("/s/:sandbox") && r.endsWith(p.path) && p.path !== "/")).toBe(false);
     const base = await mint();
-    for (const path of ["/viewer", "/servers", "/build-an-app", "/run-a-server", "/about", "/sandboxes", "/check"]) expect([path, (await call("GET", `${base}${path}`)).status]).toEqual([path, 404]);
+    for (const path of ["/viewer", "/servers", "/build-an-app", "/build-a-server", "/about", "/sandboxes", "/check"]) expect([path, (await call("GET", `${base}${path}`)).status]).toEqual([path, 404]);
     for (const path of ["/browse", "/admin", "/app.js", "/admin.js", "/browse.js", "/cards.js", "/api/explore/events", "/api/browse/options", "/api/admin/status"]) expect([path, (await call("GET", path)).status]).toEqual([path, 404]);
   });
 });

@@ -392,6 +392,8 @@ type UiRoute = typeof app | ((req: Request, server: Served) => Promise<Response>
  */
 export function uiRoutes(): Record<string, UiRoute> {
   const routes: Record<string, UiRoute> = { [SHELL]: app };
+  // The server guide's old address: it became a wizard, Build a Server.
+  routes["/run-a-server"] = async (req: Request) => new Response(null, { status: 308, headers: { location: `/build-a-server${new URL(req.url).search}` } });
   const at = (id: PageId) => (req: Request, server: Served) => pageShell(id, req, server);
   for (const p of Object.values(PAGES)) {
     if (p.level === "site") { routes[p.path] = at(p.id); continue; }

@@ -192,10 +192,11 @@ describe("the demo client", () => {
     const context = await newContext({ viewport: { width: 1280, height: 800 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     const base = await enterSandbox(page);
-    // Through the menu: Run a Server, whose links go to this sandbox, then Your servers.
-    await page.locator("nav.pages").getByRole("link", { name: "Run a Server", exact: true }).click();
-    await page.waitForURL(u => u.pathname === "/run-a-server");
-    await page.locator("main").getByRole("link", { name: "Your servers" }).click();
+    // Through the menu: Build a Server, then the form that describes one, on Your servers.
+    await page.locator("nav.pages").getByRole("link", { name: "Build a Server", exact: true }).click();
+    await page.waitForURL(u => u.pathname === "/build-a-server");
+    await page.getByRole("heading", { name: "Build an imaging server" }).waitFor();
+    await page.locator("footer").getByRole("link", { name: "Your servers", exact: true }).click();
     await page.waitForURL(u => u.pathname === "/servers");
     // With none saved, the page is the form.
     await page.getByRole("heading", { name: "Add your first server" }).waitFor();
@@ -247,10 +248,10 @@ describe("the demo client", () => {
     await page.getByRole("heading", { name: "Add your first server" }).waitFor();
     await context.close();
   });
-  test("Run a Server shows the metadata for the client type chosen, and Add this server carries the type and its key to the form", async () => {
+  test("Build a Server shows the metadata for the client type chosen, and carries the way of connecting into the step that describes the server", async () => {
     const context = await newContext({ viewport: { width: 390, height: 844 }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
-    await page.goto(`${ORIGIN}/run-a-server`);
+    await page.goto(`${ORIGIN}/build-a-server`);
     expect(await page.locator("#register-facts [data-field=jwks_uri]").count()).toBe(0);
     await page.getByRole("radio", { name: /Backend service/ }).check();
     await page.locator("#register-facts [data-field=jwks_uri]").waitFor();
@@ -262,10 +263,17 @@ describe("the demo client", () => {
     expect(served.keys[0].d).toBeUndefined();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
     await shot(page, "guide-register");
-    await page.getByRole("button", { name: "Add this server" }).click();
-    await page.waitForURL(u => u.pathname === "/servers");
+    // The button says what has happened: the client is registered at the server, and now the server is described.
+    await page.getByRole("button", { name: "I've registered it" }).click();
+    await page.waitForURL(u => u.pathname === "/build-a-server" && u.searchParams.get("step") === "server");
+    expect(new URL(page.url()).searchParams.get("how")).toBe("backend");
+    await page.getByRole("heading", { name: "Describe your server" }).waitFor();
+    // A backend service names its patient; the way of connecting isn't asked again here.
+    expect(await page.getByLabel("Patient").count()).toBe(1);
+    expect(await page.getByRole("radio", { name: /Backend service/ }).count()).toBe(0);
+    await page.getByRole("button", { name: "Back" }).click();
+    await page.waitForURL(u => u.searchParams.get("step") === "register");
     expect(await page.getByRole("radio", { name: /Backend service/ }).isChecked()).toBe(true);
-    expect(await page.locator("#register-facts [data-field=jwks_uri] button").getAttribute("data-copy")).toBe(meta.jwks_uri);
     await context.close();
   });
   test("a confidential client made on Your servers signs with the key it generated, registered by the jwks_uri this site serves it at", async () => {
@@ -312,7 +320,7 @@ describe("the demo client", () => {
     // On a phone the menu is behind a button.
     expect(await page.locator("nav.pages a:visible").count()).toBe(0);
     await page.getByRole("button", { name: "Menu" }).click();
-    expect(await page.locator("nav.pages a:visible").allInnerTexts()).toEqual(["Build an App", "Run a Server", "Why SMART Imaging", "My Sandboxes", "For Agents"]);
+    expect(await page.locator("nav.pages a:visible").allInnerTexts()).toEqual(["Build an App", "Build a Server", "Why SMART Imaging", "My Sandboxes", "For Agents"]);
     const first = await enterSandbox(page), second = await enterSandbox(page);
     await page.goto(`${ORIGIN}/sandboxes`);
     await page.locator(`.sandbox-list a[href="${first}/"]`).waitFor();
@@ -406,7 +414,7 @@ describe("the demo client", () => {
       await page.locator(".sandbox-bar").waitFor();
       const hrefs = (sel: string) => page.locator(sel).evaluateAll(as => as.map(a => a.getAttribute("href")));
       // The header is the site's: its guides, at the root, and this sandbox's guide for agents.
-      expect([path, await hrefs("nav.pages a")]).toEqual([path, ["/build-an-app", "/run-a-server", "/about", "/sandboxes", `${base}/llms.txt`]]);
+      expect([path, await hrefs("nav.pages a")]).toEqual([path, ["/build-an-app", "/build-a-server", "/about", "/sandboxes", `${base}/llms.txt`]]);
       // The sandbox's bar, and the footer's map of it, stay in it, but for the site's one viewer and its server check, opened on it.
       const own = [`${base}/`, "/viewer", `${base}/tours`, `${base}/explore`, `/check?sandbox=${encodeURIComponent(base)}`, `${base}/app-check`, `${base}/build`, `${base}/connect`, `${base}/activity`, `${base}/trace/`, `${base}/config`];
       expect([path, await hrefs(".sandbox-bar a")]).toEqual([path, own]);

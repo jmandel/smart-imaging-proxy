@@ -121,7 +121,7 @@ describe("every page, on desktop and phone, in light and dark", () => {
           // Every page of the site, the trace's too, ends with the site map and the source.
           if (!path.startsWith(CONFIG.authUrl)) expect([path, await page.locator(".site-footer a[href='https://github.com/jmandel/smart-imaging-proxy']").count()]).toEqual([path, 2]);
           if (!path.startsWith("http") && path !== "/") {
-            expect(await page.locator(".pages a").allInnerTexts()).toEqual(["Build an App", "Run a Server", "Why SMART Imaging", "My Sandboxes", "For Agents"]);
+            expect(await page.locator(".pages a").allInnerTexts()).toEqual(["Build an App", "Build a Server", "Why SMART Imaging", "My Sandboxes", "For Agents"]);
           }
         } finally { await own.close(); }
       }));

@@ -58,12 +58,13 @@ Settled with Josh, November 2026. This replaces earlier plans.
 ### A guide for each audience
 
 The home page shows what SMART Imaging adds, as one diagram, and the two ways in. The menu is the guides, your
-sandboxes, and For Agents: **Build an App · Run a Server · Why SMART Imaging · My Sandboxes · For Agents**.
+sandboxes, and For Agents: **Build an App · Build a Server · Why SMART Imaging · My Sandboxes · For Agents**.
 
 - **Build an App:** a wizard, one step at a time, with the step in the address: choose a sandbox, choose or
   register the app in place, see where to point it, then try it. It never sends you elsewhere to finish a step.
-- **Run a Server:** what the server needs (advice and gotchas); register our viewer; add the server on Your
-  servers and check it; compare with a working sandbox and its logs.
+- **Build a Server:** the same wizard, for the other side: what the server needs (advice and gotchas), then
+  register our viewer with it (the client metadata, ready to copy), then describe the server in place, then
+  check it. Its last step hands the server to the server check. `/run-a-server` redirects here.
 - **Why SMART Imaging:** what it makes possible, how it works (the diagram), see it work, what it takes.
 - **My Sandboxes:** the sandboxes this browser made or joined, and Create.
 
@@ -147,7 +148,7 @@ moment is held in the page too, so a radio changes as it's pressed.
 | Page | In the address | Since |
 |---|---|---|
 | Build an App | `?step=`, `?app=` | before |
-| Run a Server | `?how=` (the way the viewer connects) | Nov 2026 |
+| Build a Server | `?step=` (`register`, `server`, `check`), `?how=` (the way the viewer connects), `?server=` | Nov 2026 |
 | Your servers | `?add`, `?edit=`, and `?how=` with `?add` | `how` follows the form since Nov 2026 |
 | Server check | `?sandbox=`, `?server=`, `?run=` | before |
 | Viewer | `?sandbox=` or `?server=`; `&connect` signs in at once, in the same tab | Nov 2026 |
